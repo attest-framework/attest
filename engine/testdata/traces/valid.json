@@ -1,0 +1,48 @@
+{
+  "schema_version": 1,
+  "trace_id": "trc_valid001",
+  "agent_id": "customer-service-agent",
+  "input": {
+    "user_message": "I want a refund for order ORD-123",
+    "context": {}
+  },
+  "steps": [
+    {
+      "type": "llm_call",
+      "name": "reasoning",
+      "args": {
+        "model": "gpt-4.1",
+        "prompt": "You are a customer service agent. User: I want a refund for order ORD-123"
+      },
+      "result": {
+        "completion": "I need to look up the order to verify eligibility."
+      },
+      "metadata": {"duration_ms": 1200, "cost_usd": 0.003}
+    },
+    {
+      "type": "tool_call",
+      "name": "lookup_order",
+      "args": {"order_id": "ORD-123"},
+      "result": {"status": "delivered", "amount": 89.99, "eligible_for_refund": true},
+      "metadata": {"duration_ms": 45}
+    },
+    {
+      "type": "tool_call",
+      "name": "process_refund",
+      "args": {"order_id": "ORD-123", "amount": 89.99},
+      "result": {"refund_id": "RFD-001", "estimated_days": 3},
+      "metadata": {"duration_ms": 120}
+    }
+  ],
+  "output": {
+    "message": "Your refund of $89.99 has been processed. You'll see it in 3 business days. Refund ID: RFD-001.",
+    "structured": {"refund_id": "RFD-001", "confidence": 0.95}
+  },
+  "metadata": {
+    "total_tokens": 1350,
+    "cost_usd": 0.0067,
+    "latency_ms": 4200,
+    "model": "gpt-4.1",
+    "timestamp": "2026-02-18T10:30:00Z"
+  }
+}

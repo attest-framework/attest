@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "trace_id": "trc_valid001",
+  "agent_id": "test-agent",
+  "input": {"user_message": "Hello"},
+  "steps": [
+    {
+      "type": "llm_call",
+      "name": "reasoning",
+      "args": {"prompt": "Hello"},
+      "result": {"completion": "Hi there!"}
+    },
+    {
+      "type": "tool_call",
+      "name": "lookup_info",
+      "args": {"query": "test"},
+      "result": {"data": "some result"}
+    },
+    {
+      "type": "retrieval",
+      "name": "vector_search",
+      "args": {"query": "test"},
+      "result": {"documents": []}
+    }
+  ],
+  "output": {"message": "Hello! How can I help you today?"},
+  "metadata": {
+    "total_tokens": 100,
+    "cost_usd": 0.001,
+    "latency_ms": 500
+  }
+}

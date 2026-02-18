@@ -1,0 +1,8 @@
+{
+  "_comment": "This fixture documents the too_many_steps failure case. The engine rejects traces with more than 10000 steps. Integration tests generate the oversize payload programmatically.",
+  "schema_version": 1,
+  "trace_id": "trc_too_many_steps",
+  "agent_id": "test-agent",
+  "steps": [],
+  "output": {"message": "placeholder — real test generates 10001 steps in memory"}
+}

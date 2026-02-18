@@ -1,0 +1,6 @@
+{
+  "schema_version": 1,
+  "agent_id": "test-agent",
+  "steps": [],
+  "output": {"message": "result"}
+}

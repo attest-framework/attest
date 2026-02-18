@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "trace_id": "trc_invalid_step_type",
+  "agent_id": "test-agent",
+  "steps": [
+    {
+      "type": "unknown",
+      "name": "bad_step",
+      "args": {},
+      "result": {}
+    }
+  ],
+  "output": {"message": "result"}
+}

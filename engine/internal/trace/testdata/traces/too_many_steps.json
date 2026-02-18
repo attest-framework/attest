@@ -1,0 +1,7 @@
+{
+  "schema_version": 1,
+  "trace_id": "trc_too_many_steps",
+  "agent_id": "test-agent",
+  "steps": [],
+  "output": {"message": "this trace has a comment explaining that the steps array would have 10001 entries in production; in this fixture it is empty because generating 10001 steps inline is impractical — the test generates the oversize trace programmatically"}
+}

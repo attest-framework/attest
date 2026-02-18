@@ -1,0 +1,77 @@
+{
+  "schema_version": 1,
+  "trace_id": "trc_depth_1",
+  "agent_id": "agent-1",
+  "steps": [
+    {
+      "type": "agent_call",
+      "name": "sub_agent_1",
+      "args": {},
+      "result": {},
+      "sub_trace": {
+        "schema_version": 1,
+        "trace_id": "trc_depth_2",
+        "agent_id": "agent-2",
+        "steps": [
+          {
+            "type": "agent_call",
+            "name": "sub_agent_2",
+            "args": {},
+            "result": {},
+            "sub_trace": {
+              "schema_version": 1,
+              "trace_id": "trc_depth_3",
+              "agent_id": "agent-3",
+              "steps": [
+                {
+                  "type": "agent_call",
+                  "name": "sub_agent_3",
+                  "args": {},
+                  "result": {},
+                  "sub_trace": {
+                    "schema_version": 1,
+                    "trace_id": "trc_depth_4",
+                    "agent_id": "agent-4",
+                    "steps": [
+                      {
+                        "type": "agent_call",
+                        "name": "sub_agent_4",
+                        "args": {},
+                        "result": {},
+                        "sub_trace": {
+                          "schema_version": 1,
+                          "trace_id": "trc_depth_5",
+                          "agent_id": "agent-5",
+                          "steps": [
+                            {
+                              "type": "agent_call",
+                              "name": "sub_agent_5",
+                              "args": {},
+                              "result": {},
+                              "sub_trace": {
+                                "schema_version": 1,
+                                "trace_id": "trc_depth_6",
+                                "agent_id": "agent-6",
+                                "steps": [],
+                                "output": {"message": "deep result"}
+                              }
+                            }
+                          ],
+                          "output": {"message": "depth 5"}
+                        }
+                      }
+                    ],
+                    "output": {"message": "depth 4"}
+                  }
+                }
+              ],
+              "output": {"message": "depth 3"}
+            }
+          }
+        ],
+        "output": {"message": "depth 2"}
+      }
+    }
+  ],
+  "output": {"message": "depth 1"}
+}
