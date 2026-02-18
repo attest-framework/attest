@@ -4,7 +4,7 @@
 
 Attest is an open-source testing framework purpose-built for AI agents and LLM-powered systems. It treats deterministic assertions as first-class citizens alongside probabilistic evaluation — because 70% of your agent's testable surface is deterministic.
 
-> **Status:** Pre-release (v0.1.0-dev). Phase 0 scaffolding complete. Engine and SDK under active development.
+> **Status:** v0.2.0 — Layers 1–6 operational. Engine, Python SDK, ONNX local embeddings, judge meta-evaluation, and CI integration shipped.
 
 ---
 
@@ -70,6 +70,9 @@ SDK (Python/TS/Go) ──stdin/stdout──▶ Engine Process (Go)
 - **Soft failure budgets** — scores between 0.5–0.8 warn without blocking CI
 - **Cost as a test metric** — assert on token usage, API cost, and latency
 - **Framework-agnostic** — adapters for OpenAI, Anthropic, Gemini, Ollama, LangChain, LlamaIndex
+- **Local ONNX embeddings** — optional all-MiniLM-L6-v2 provider, zero API cost for Layer 5
+- **Judge meta-evaluation** — 3x judge runs with median scoring and variance detection
+- **CI-ready** — composite GitHub Action, tiered testing workflow, adversarial hardening
 - **Simulation runtime** — mock LLMs, simulated users, fault injection (planned)
 - **Multi-agent testing** — hierarchical trace trees, cross-agent assertions (planned)
 - **Single binary engine** — no runtime dependencies, cross-platform
@@ -87,8 +90,10 @@ attest/
 │   ├── python/         # Python SDK (PyPI: attest-ai)
 │   ├── typescript/     # TypeScript SDK (npm: @attest-ai/core)
 │   └── go/             # Go SDK
+├── .github/
+│   └── actions/        # Reusable composite actions (setup-attest)
 ├── docs/               # Documentation
-├── examples/           # Standalone example projects
+├── examples/           # Standalone example projects (incl. CI workflows)
 └── scripts/            # Build and development scripts
 ```
 
@@ -114,7 +119,7 @@ make test
 
 # Verify engine
 ./bin/attest-engine version
-# attest-engine 0.1.0-dev
+# attest-engine 0.2.0
 ```
 
 ## Roadmap
@@ -122,8 +127,8 @@ make test
 | Phase | Version | Status       | Description                                                          |
 | ----- | ------- | ------------ | -------------------------------------------------------------------- |
 | 0     | —       | **Complete** | Repository scaffolding, toolchain, protocol spec                     |
-| 1     | v0.1    | Planned      | Go engine (Layers 1–4), Python SDK, pytest plugin, 4 LLM adapters    |
-| 2     | v0.2    | Planned      | Layers 5–6 (embeddings, LLM-as-judge), soft failures, CI integration |
+| 1     | v0.1    | **Complete** | Go engine (Layers 1–4), Python SDK, pytest plugin, 4 LLM adapters    |
+| 2     | v0.2    | **Complete** | Layers 5–6 (embeddings, LLM-as-judge), soft failures, CI integration |
 | 3     | v0.3    | Planned      | Simulation runtime, multi-agent testing, TypeScript SDK              |
 | 4     | v0.4    | Planned      | Continuous eval, plugin system, LangChain/LlamaIndex adapters        |
 | 5     | v0.5    | Planned      | Go SDK, Attest Cloud MVP, benchmark registry                         |
