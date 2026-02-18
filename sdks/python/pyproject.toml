@@ -1,0 +1,56 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "attest-ai"
+version = "0.1.0.dev0"
+description = "Test framework for AI agents"
+readme = "README.md"
+license = "Apache-2.0"
+requires-python = ">=3.10"
+authors = [{ name = "Attest Contributors" }]
+keywords = ["testing", "ai", "agents", "llm", "evaluation"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Framework :: Pytest",
+    "Intended Audience :: Developers",
+    "Topic :: Software Development :: Testing",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+    "jsonschema>=4.20",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "ruff>=0.4",
+    "mypy>=1.10",
+]
+openai = ["openai>=1.30"]
+anthropic = ["anthropic>=0.30"]
+gemini = ["google-genai>=1.0"]
+ollama = ["ollama>=0.4"]
+all = ["attest-ai[openai,anthropic,gemini,ollama]"]
+
+[project.entry-points.pytest11]
+attest = "attest.plugin"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/attest"]
+
+[tool.ruff]
+target-version = "py310"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W", "UP"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.mypy]
+python_version = "3.10"
+strict = true
