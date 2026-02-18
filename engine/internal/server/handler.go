@@ -3,93 +3,239 @@ package server
 import (
 	"encoding/json"
 	"fmt"
+	"log/slog"
+	"os"
+	"path/filepath"
+	"strconv"
 
 	"github.com/attest-ai/attest/engine/internal/assertion"
+	"github.com/attest-ai/attest/engine/internal/assertion/embedding"
+	"github.com/attest-ai/attest/engine/internal/assertion/judge"
+	"github.com/attest-ai/attest/engine/internal/cache"
+	"github.com/attest-ai/attest/engine/internal/llm"
 	"github.com/attest-ai/attest/engine/internal/trace"
 	"github.com/attest-ai/attest/engine/pkg/types"
 )
 
 const (
-	engineVersion   = "0.1.0"
+	engineVersion   = "0.2.0"
 	protocolVersion = 1
 )
 
-// supportedCapabilities lists all capabilities this engine supports for v0.1.
-var supportedCapabilities = []string{"layers_1_4"}
-
 // RegisterBuiltinHandlers registers the built-in JSON-RPC handlers on s.
+// It reads ATTEST_* env vars to configure Layer 5/6 providers and caches.
 func RegisterBuiltinHandlers(s *Server) {
-	pipeline := assertion.NewPipeline(assertion.NewRegistry())
+	opts, caps := buildRegistryOptions(s.logger)
+	registry := assertion.NewRegistry(opts...)
+	pipeline := assertion.NewPipeline(registry)
 
-	s.RegisterHandler("initialize", handleInitialize)
+	s.RegisterHandler("initialize", handleInitialize(caps))
 	s.RegisterHandler("shutdown", handleShutdown)
 	s.RegisterHandler("evaluate_batch", handleEvaluateBatch(pipeline))
 	s.RegisterHandler("submit_plugin_result", handleSubmitPluginResult())
 }
 
-func handleInitialize(session *Session, params json.RawMessage) (any, *types.RPCError) {
-	if session.State() != StateUninitialized {
-		return nil, types.NewRPCError(
-			types.ErrSessionError,
-			"initialize called on already-initialized session",
-			types.ErrTypeSessionError,
-			false,
-			"initialize may only be called once per session",
-		)
+// buildRegistryOptions reads env vars and constructs RegistryOption values
+// for Layer 5 (embedding) and Layer 6 (judge) evaluators. Returns the
+// options and the list of supported capabilities.
+func buildRegistryOptions(logger *slog.Logger) ([]assertion.RegistryOption, []string) {
+	caps := []string{"layers_1_4"}
+	var opts []assertion.RegistryOption
+
+	// ── Layer 5: Embedding ──
+	openAIKey := os.Getenv("ATTEST_OPENAI_API_KEY")
+	embeddingProvider := os.Getenv("ATTEST_EMBEDDING_PROVIDER") // "openai" or "auto" (default)
+	if embeddingProvider == "" {
+		embeddingProvider = "auto"
 	}
 
-	var p types.InitializeParams
-	if err := json.Unmarshal(params, &p); err != nil {
-		return nil, types.NewRPCError(
-			types.ErrSessionError,
-			"invalid initialize params",
-			types.ErrTypeSessionError,
-			false,
-			err.Error(),
-		)
-	}
-
-	if p.ProtocolVersion != protocolVersion {
-		return nil, types.NewRPCError(
-			types.ErrSessionError,
-			fmt.Sprintf("protocol version %d not supported; engine supports version %d", p.ProtocolVersion, protocolVersion),
-			types.ErrTypeSessionError,
-			false,
-			"Upgrade the engine binary or downgrade the SDK protocol_version",
-		)
-	}
-
-	// Compute missing capabilities.
-	supported := make(map[string]bool, len(supportedCapabilities))
-	for _, c := range supportedCapabilities {
-		supported[c] = true
-	}
-
-	var missing []string
-	for _, req := range p.RequiredCapabilities {
-		if !supported[req] {
-			missing = append(missing, req)
+	if openAIKey != "" && (embeddingProvider == "auto" || embeddingProvider == "openai") {
+		embedder, err := embedding.NewOpenAIEmbedder(embedding.EmbedderConfig{
+			APIKey: openAIKey,
+		})
+		if err != nil {
+			logger.Warn("failed to create OpenAI embedder", "err", err)
+		} else {
+			var embCache *cache.EmbeddingCache
+			cacheDir := cacheDirectory()
+			maxMB := envInt("ATTEST_EMBEDDING_CACHE_MAX_MB", 500)
+			dbPath := filepath.Join(cacheDir, "attest.db")
+			if err := os.MkdirAll(cacheDir, 0o755); err != nil {
+				logger.Warn("failed to create cache dir", "dir", cacheDir, "err", err)
+			} else {
+				c, err := cache.NewEmbeddingCache(dbPath, maxMB)
+				if err != nil {
+					logger.Warn("failed to create embedding cache", "err", err)
+				} else {
+					embCache = c
+				}
+			}
+			opts = append(opts, assertion.WithEmbedding(embedder, embCache))
+			caps = append(caps, "embedding")
+			logger.Info("layer 5 (embedding) enabled", "provider", "openai")
 		}
 	}
 
-	compatible := len(missing) == 0
-	if missing == nil {
-		missing = []string{}
+	// ── Layer 6: LLM Judge ──
+	judgeProvider, providerName := buildJudgeProvider(logger)
+	if judgeProvider != nil {
+		rubrics := judge.NewRubricRegistry()
+
+		var jCache *cache.JudgeCache
+		cacheDir := cacheDirectory()
+		dbPath := filepath.Join(cacheDir, "attest.db")
+		if err := os.MkdirAll(cacheDir, 0o755); err != nil {
+			logger.Warn("failed to create cache dir", "dir", cacheDir, "err", err)
+		} else {
+			c, err := cache.NewJudgeCache(dbPath, 100)
+			if err != nil {
+				logger.Warn("failed to create judge cache", "err", err)
+			} else {
+				jCache = c
+			}
+		}
+		opts = append(opts, assertion.WithJudge(judgeProvider, rubrics, jCache))
+		caps = append(caps, "llm_judge")
+		logger.Info("layer 6 (judge) enabled", "provider", providerName)
 	}
 
-	session.SetState(StateInitialized)
+	if len(caps) > 1 {
+		caps = append(caps, "layers_5_6")
+	}
 
-	return &types.InitializeResult{
-		EngineVersion:         engineVersion,
-		ProtocolVersion:       protocolVersion,
-		Capabilities:          supportedCapabilities,
-		Missing:               missing,
-		Compatible:            compatible,
-		Encoding:              "json",
-		MaxConcurrentRequests: 64,
-		MaxTraceSizeBytes:     10 * 1024 * 1024,
-		MaxStepsPerTrace:      10000,
-	}, nil
+	return opts, caps
+}
+
+// buildJudgeProvider selects and constructs an LLM provider for judging.
+// Reads ATTEST_JUDGE_PROVIDER and corresponding API keys.
+func buildJudgeProvider(logger *slog.Logger) (llm.Provider, string) {
+	preferred := os.Getenv("ATTEST_JUDGE_PROVIDER")
+	model := os.Getenv("ATTEST_JUDGE_MODEL")
+
+	// Try preferred provider first, then fall through in priority order
+	providers := []string{"openai", "anthropic", "gemini", "ollama"}
+	if preferred != "" {
+		providers = []string{preferred}
+	}
+
+	for _, name := range providers {
+		switch name {
+		case "openai":
+			key := os.Getenv("ATTEST_OPENAI_API_KEY")
+			if key == "" {
+				continue
+			}
+			p, err := llm.NewOpenAIProvider(key, model, "")
+			if err != nil {
+				logger.Warn("failed to create OpenAI judge provider", "err", err)
+				continue
+			}
+			return p, "openai"
+
+		case "anthropic":
+			// Anthropic provider not implemented yet in llm package — skip
+			continue
+
+		case "gemini":
+			// Gemini provider not implemented yet in llm package — skip
+			continue
+
+		case "ollama":
+			// Ollama provider not implemented yet in llm package — skip
+			continue
+		}
+	}
+
+	return nil, ""
+}
+
+// cacheDirectory returns the cache directory from env or default.
+func cacheDirectory() string {
+	if dir := os.Getenv("ATTEST_CACHE_DIR"); dir != "" {
+		return dir
+	}
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, ".attest", "cache")
+}
+
+// envInt reads an int from an env var with a fallback default.
+func envInt(key string, fallback int) int {
+	v := os.Getenv(key)
+	if v == "" {
+		return fallback
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil {
+		return fallback
+	}
+	return n
+}
+
+func handleInitialize(caps []string) Handler {
+	return func(session *Session, params json.RawMessage) (any, *types.RPCError) {
+		if session.State() != StateUninitialized {
+			return nil, types.NewRPCError(
+				types.ErrSessionError,
+				"initialize called on already-initialized session",
+				types.ErrTypeSessionError,
+				false,
+				"initialize may only be called once per session",
+			)
+		}
+
+		var p types.InitializeParams
+		if err := json.Unmarshal(params, &p); err != nil {
+			return nil, types.NewRPCError(
+				types.ErrSessionError,
+				"invalid initialize params",
+				types.ErrTypeSessionError,
+				false,
+				err.Error(),
+			)
+		}
+
+		if p.ProtocolVersion != protocolVersion {
+			return nil, types.NewRPCError(
+				types.ErrSessionError,
+				fmt.Sprintf("protocol version %d not supported; engine supports version %d", p.ProtocolVersion, protocolVersion),
+				types.ErrTypeSessionError,
+				false,
+				"Upgrade the engine binary or downgrade the SDK protocol_version",
+			)
+		}
+
+		// Compute missing capabilities.
+		supported := make(map[string]bool, len(caps))
+		for _, c := range caps {
+			supported[c] = true
+		}
+
+		var missing []string
+		for _, req := range p.RequiredCapabilities {
+			if !supported[req] {
+				missing = append(missing, req)
+			}
+		}
+
+		compatible := len(missing) == 0
+		if missing == nil {
+			missing = []string{}
+		}
+
+		session.SetState(StateInitialized)
+
+		return &types.InitializeResult{
+			EngineVersion:         engineVersion,
+			ProtocolVersion:       protocolVersion,
+			Capabilities:          caps,
+			Missing:               missing,
+			Compatible:            compatible,
+			Encoding:              "json",
+			MaxConcurrentRequests: 64,
+			MaxTraceSizeBytes:     10 * 1024 * 1024,
+			MaxStepsPerTrace:      10000,
+		}, nil
+	}
 }
 
 func handleShutdown(session *Session, _ json.RawMessage) (any, *types.RPCError) {
