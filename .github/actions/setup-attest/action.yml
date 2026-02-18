@@ -1,0 +1,42 @@
+name: 'Setup Attest'
+description: 'Install Attest engine and Python SDK for CI'
+
+inputs:
+  go-version:
+    description: 'Go version to install'
+    default: '1.24'
+  python-version:
+    description: 'Python version to install'
+    default: '3.12'
+  install-extras:
+    description: 'Python SDK extras to install (e.g. dev, test)'
+    default: 'dev'
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Install Go
+      uses: actions/setup-go@v6
+      with:
+        go-version: ${{ inputs.go-version }}
+
+    - name: Build engine
+      shell: bash
+      run: cd engine && go build -o ../bin/attest-engine ./cmd/attest-engine/
+
+    - name: Add engine to PATH
+      shell: bash
+      run: echo "${{ github.workspace }}/bin" >> "$GITHUB_PATH"
+
+    - name: Install Python
+      uses: actions/setup-python@v6
+      with:
+        python-version: ${{ inputs.python-version }}
+
+    - name: Install uv
+      shell: bash
+      run: pip install uv
+
+    - name: Install Python SDK
+      shell: bash
+      run: cd sdks/python && uv pip install --system -e ".[${{ inputs.install-extras }}]"
