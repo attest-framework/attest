@@ -1,0 +1,52 @@
+# Tiered Attest Testing — example GitHub Actions workflow
+#
+# Tier 1 (push):     Deterministic assertions only (schema, constraint, trace, content).
+# Tier 2 (PR):       Adds embedding similarity and LLM judge assertions.
+# Tier 3 (nightly):  Full suite with budget cap for cost control.
+#
+# Copy this file to .github/workflows/ and adjust paths to match your project.
+
+name: Tiered Attest Testing
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: '0 2 * * *' # nightly at 2 AM UTC
+
+jobs:
+  tier1-deterministic:
+    name: 'Tier 1: Deterministic'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/setup-attest
+      - name: Run deterministic assertions
+        run: pytest tests/ --attest-tier=1 -v
+
+  tier2-probabilistic:
+    name: 'Tier 2: Embedding + Judge'
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request' || github.event_name == 'schedule'
+    needs: tier1-deterministic
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/setup-attest
+      - name: Run probabilistic assertions
+        env:
+          ATTEST_OPENAI_API_KEY: ${{ secrets.ATTEST_OPENAI_API_KEY }}
+        run: pytest tests/ --attest-tier=2 -v
+
+  tier3-full:
+    name: 'Tier 3: Full Suite'
+    runs-on: ubuntu-latest
+    if: github.event_name == 'schedule'
+    needs: tier2-probabilistic
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/setup-attest
+      - name: Run full suite with budget
+        env:
+          ATTEST_OPENAI_API_KEY: ${{ secrets.ATTEST_OPENAI_API_KEY }}
+        run: pytest tests/ --attest-tier=3 --attest-budget=5 -v

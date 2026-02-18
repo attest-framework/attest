@@ -49,31 +49,55 @@ func buildRegistryOptions(logger *slog.Logger) ([]assertion.RegistryOption, []st
 		embeddingProvider = "auto"
 	}
 
+	var embedder embedding.Embedder
+	var embProviderName string
+
 	if openAIKey != "" && (embeddingProvider == "auto" || embeddingProvider == "openai") {
-		embedder, err := embedding.NewOpenAIEmbedder(embedding.EmbedderConfig{
+		e, err := embedding.NewOpenAIEmbedder(embedding.EmbedderConfig{
 			APIKey: openAIKey,
 		})
 		if err != nil {
 			logger.Warn("failed to create OpenAI embedder", "err", err)
 		} else {
-			var embCache *cache.EmbeddingCache
-			cacheDir := cacheDirectory()
-			maxMB := envInt("ATTEST_EMBEDDING_CACHE_MAX_MB", 500)
-			dbPath := filepath.Join(cacheDir, "attest.db")
-			if err := os.MkdirAll(cacheDir, 0o755); err != nil {
-				logger.Warn("failed to create cache dir", "dir", cacheDir, "err", err)
-			} else {
-				c, err := cache.NewEmbeddingCache(dbPath, maxMB)
-				if err != nil {
-					logger.Warn("failed to create embedding cache", "err", err)
-				} else {
-					embCache = c
-				}
-			}
-			opts = append(opts, assertion.WithEmbedding(embedder, embCache))
-			caps = append(caps, "embedding")
-			logger.Info("layer 5 (embedding) enabled", "provider", "openai")
+			embedder = e
+			embProviderName = "openai"
 		}
+	}
+
+	// ONNX fallback: explicit "onnx" provider or auto-detect when no OpenAI key
+	if embedder == nil && (embeddingProvider == "onnx" || (embeddingProvider == "auto" && openAIKey == "")) {
+		if embedding.ONNXAvailable {
+			modelDir := os.Getenv("ATTEST_ONNX_MODEL_DIR")
+			e, err := embedding.NewONNXEmbedder(embedding.EmbedderConfig{ModelDir: modelDir})
+			if err != nil {
+				logger.Warn("failed to create ONNX embedder", "err", err)
+			} else {
+				embedder = e
+				embProviderName = "onnx"
+			}
+		} else if embeddingProvider == "onnx" {
+			logger.Warn("ONNX embedding requested but not compiled in — rebuild with -tags onnx")
+		}
+	}
+
+	if embedder != nil {
+		var embCache *cache.EmbeddingCache
+		cacheDir := cacheDirectory()
+		maxMB := envInt("ATTEST_EMBEDDING_CACHE_MAX_MB", 500)
+		dbPath := filepath.Join(cacheDir, "attest.db")
+		if err := os.MkdirAll(cacheDir, 0o755); err != nil {
+			logger.Warn("failed to create cache dir", "dir", cacheDir, "err", err)
+		} else {
+			c, err := cache.NewEmbeddingCache(dbPath, maxMB)
+			if err != nil {
+				logger.Warn("failed to create embedding cache", "err", err)
+			} else {
+				embCache = c
+			}
+		}
+		opts = append(opts, assertion.WithEmbedding(embedder, embCache))
+		caps = append(caps, "embedding")
+		logger.Info("layer 5 (embedding) enabled", "provider", embProviderName)
 	}
 
 	// ── Layer 6: LLM Judge ──
