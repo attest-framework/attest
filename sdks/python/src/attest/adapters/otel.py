@@ -96,7 +96,7 @@ class OTelAdapter:
                 # Accumulate tokens
                 input_tokens = attrs.get("gen_ai.usage.input_tokens", 0)
                 output_tokens = attrs.get("gen_ai.usage.output_tokens", 0)
-                span_tokens = int(input_tokens) + int(output_tokens)  # type: ignore[arg-type]
+                span_tokens = int(input_tokens) + int(output_tokens)
                 if span_tokens > 0:
                     total_tokens = (total_tokens or 0) + span_tokens
 
@@ -174,9 +174,9 @@ class OTelAdapter:
         if "gen_ai.completion" in attrs:
             result["completion"] = str(attrs["gen_ai.completion"])
         if "gen_ai.usage.input_tokens" in attrs:
-            result["input_tokens"] = int(attrs["gen_ai.usage.input_tokens"])  # type: ignore[arg-type]
+            result["input_tokens"] = int(attrs["gen_ai.usage.input_tokens"])
         if "gen_ai.usage.output_tokens" in attrs:
-            result["output_tokens"] = int(attrs["gen_ai.usage.output_tokens"])  # type: ignore[arg-type]
+            result["output_tokens"] = int(attrs["gen_ai.usage.output_tokens"])
         if "gen_ai.response.model" in attrs:
             result["model"] = str(attrs["gen_ai.response.model"])
 
