@@ -37,7 +37,7 @@ jobs:
         run: cd engine && go build -o ../bin/attest-engine ./cmd/attest-engine/
       - name: Verify binary
         run: ./bin/attest-engine version
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: attest-engine-linux-amd64
           path: bin/attest-engine
