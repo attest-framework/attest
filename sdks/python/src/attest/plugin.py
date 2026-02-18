@@ -170,7 +170,8 @@ class AttestEngineFixture:
         # Enforce budget
         if budget is not None and _session_cost > budget:
             pytest.fail(
-                f"Attest budget exceeded: cumulative cost ${_session_cost:.6f} > budget ${budget:.6f}",
+                f"Attest budget exceeded: cost ${_session_cost:.6f}"
+                f" > budget ${budget:.6f}",
                 pytrace=False,
             )
 

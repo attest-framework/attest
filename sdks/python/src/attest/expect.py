@@ -347,7 +347,7 @@ class ExpectChain:
         model: str | None = None,
         soft: bool = False,
     ) -> ExpectChain:
-        """Assert output message is semantically similar to reference using embedding cosine similarity."""
+        """Assert output is semantically similar to reference via embeddings."""
         return self._add(
             TYPE_EMBEDDING,
             {

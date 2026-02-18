@@ -101,9 +101,11 @@ class OTelAdapter:
                     total_tokens = (total_tokens or 0) + span_tokens
 
                 if model is None:
-                    model = str(attrs["gen_ai.response.model"]) if "gen_ai.response.model" in attrs else None
+                    key = "gen_ai.response.model"
+                    model = str(attrs[key]) if key in attrs else None
                     if model is None:
-                        model = str(attrs["gen_ai.request.model"]) if "gen_ai.request.model" in attrs else None
+                        key = "gen_ai.request.model"
+                        model = str(attrs[key]) if key in attrs else None
 
             elif step_type == "tool_call":
                 step_args, step_result = self._extract_tool_step(attrs, span.name)
