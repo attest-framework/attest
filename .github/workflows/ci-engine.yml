@@ -1,0 +1,43 @@
+name: Engine CI
+
+on:
+  push:
+    paths: ["engine/**", "proto/**"]
+    branches: [main]
+  pull_request:
+    paths: ["engine/**", "proto/**"]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+      - name: Run tests
+        run: cd engine && go test ./... -v -race
+      - name: Vet
+        run: cd engine && go vet ./...
+      - name: Vulnerability check
+        run: |
+          cd engine
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          govulncheck ./...
+
+  build:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+      - name: Build engine binary
+        run: cd engine && go build -o ../bin/attest-engine ./cmd/attest-engine/
+      - name: Verify binary
+        run: ./bin/attest-engine version
+      - uses: actions/upload-artifact@v4
+        with:
+          name: attest-engine-linux-amd64
+          path: bin/attest-engine
