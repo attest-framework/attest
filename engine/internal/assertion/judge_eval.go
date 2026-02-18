@@ -4,6 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
+	"sort"
+	"strings"
+	"sync"
 	"time"
 
 	"github.com/attest-ai/attest/engine/internal/assertion/judge"
@@ -33,7 +37,12 @@ type judgeSpec struct {
 	Threshold float64 `json:"threshold"`
 	Soft      bool    `json:"soft"`
 	Model     string  `json:"model"`
+	MetaEval  bool    `json:"meta_eval"`
 }
+
+const metaEvalRuns = 3
+const metaEvalTemperature = 0.3
+const metaEvalVarianceThreshold = 0.2
 
 // Evaluate runs the LLM judge assertion against the trace.
 func (e *JudgeEvaluator) Evaluate(trace *types.Trace, assertion *types.Assertion) *types.AssertionResult {
@@ -78,43 +87,19 @@ func (e *JudgeEvaluator) Evaluate(trace *types.Trace, assertion *types.Assertion
 		}
 	}
 
-	// Call LLM
+	// Build LLM request
 	ctx := context.Background()
 	wrapped := judge.WrapAgentOutput(targetStr)
 	userContent := wrapped
 	if spec.Criteria != "" {
 		userContent = fmt.Sprintf("Evaluation criteria: %s\n\n%s", spec.Criteria, wrapped)
 	}
-	req := &llm.CompletionRequest{
-		Model:        model,
-		SystemPrompt: rubric.SystemPrompt,
-		Messages:     []llm.Message{{Role: "user", Content: userContent}},
-		Temperature:  0.0,
-		MaxTokens:    256,
+
+	if metaEvalEnabled(spec) {
+		return e.evaluateWithMetaEval(ctx, assertion, rubric, model, userContent, spec, start, targetStr, rubricName)
 	}
 
-	resp, err := e.provider.Complete(ctx, req)
-	if err != nil {
-		return failResult(assertion, start, fmt.Sprintf("LLM call failed: %v", err))
-	}
-
-	scoreResult, err := judge.ParseScoreResult(resp.Content)
-	if err != nil {
-		return failResult(assertion, start, fmt.Sprintf("parse judge response: %v", err))
-	}
-
-	durationMS := time.Since(start).Milliseconds()
-
-	// Cache result (best-effort)
-	if e.cache != nil {
-		contentHash := cache.JudgeContentHash(targetStr)
-		_ = e.cache.Put(contentHash, rubricName, model, &cache.JudgeCacheEntry{
-			Score:       scoreResult.Score,
-			Explanation: scoreResult.Explanation,
-		})
-	}
-
-	return e.buildResult(assertion, scoreResult.Score, scoreResult.Explanation, spec.Threshold, spec.Soft, durationMS, resp.Cost)
+	return e.evaluateSinglePass(ctx, assertion, rubric, model, userContent, spec, start, targetStr, rubricName)
 }
 
 func (e *JudgeEvaluator) buildResult(
@@ -144,4 +129,159 @@ func (e *JudgeEvaluator) buildResult(
 		DurationMS:  durationMS,
 		RequestID:   assertion.RequestID,
 	}
+}
+
+// metaEvalEnabled returns true if meta-evaluation is requested via spec or env var.
+func metaEvalEnabled(spec judgeSpec) bool {
+	if spec.MetaEval {
+		return true
+	}
+	return os.Getenv("ATTEST_JUDGE_META_EVAL") == "true"
+}
+
+// evaluateSinglePass runs the judge once (default behavior).
+func (e *JudgeEvaluator) evaluateSinglePass(
+	ctx context.Context,
+	assertion *types.Assertion,
+	rubric *judge.Rubric,
+	model, userContent string,
+	spec judgeSpec,
+	start time.Time,
+	targetStr, rubricName string,
+) *types.AssertionResult {
+	req := &llm.CompletionRequest{
+		Model:        model,
+		SystemPrompt: rubric.SystemPrompt,
+		Messages:     []llm.Message{{Role: "user", Content: userContent}},
+		Temperature:  0.0,
+		MaxTokens:    256,
+	}
+
+	resp, err := e.provider.Complete(ctx, req)
+	if err != nil {
+		return failResult(assertion, start, fmt.Sprintf("LLM call failed: %v", err))
+	}
+
+	scoreResult, err := judge.ParseScoreResult(resp.Content)
+	if err != nil {
+		return failResult(assertion, start, fmt.Sprintf("parse judge response: %v", err))
+	}
+
+	durationMS := time.Since(start).Milliseconds()
+
+	if e.cache != nil {
+		contentHash := cache.JudgeContentHash(targetStr)
+		_ = e.cache.Put(contentHash, rubricName, model, &cache.JudgeCacheEntry{
+			Score:       scoreResult.Score,
+			Explanation: scoreResult.Explanation,
+		})
+	}
+
+	return e.buildResult(assertion, scoreResult.Score, scoreResult.Explanation, spec.Threshold, spec.Soft, durationMS, resp.Cost)
+}
+
+// metaEvalResult holds one judge run's output.
+type metaEvalResult struct {
+	score       float64
+	explanation string
+	cost        float64
+	err         error
+}
+
+// evaluateWithMetaEval runs the judge 3x concurrently, takes the median score,
+// and flags high variance in the explanation.
+func (e *JudgeEvaluator) evaluateWithMetaEval(
+	ctx context.Context,
+	assertion *types.Assertion,
+	rubric *judge.Rubric,
+	model, userContent string,
+	spec judgeSpec,
+	start time.Time,
+	targetStr, rubricName string,
+) *types.AssertionResult {
+	results := make([]metaEvalResult, metaEvalRuns)
+	var wg sync.WaitGroup
+
+	for i := 0; i < metaEvalRuns; i++ {
+		wg.Add(1)
+		go func(idx int) {
+			defer wg.Done()
+			req := &llm.CompletionRequest{
+				Model:        model,
+				SystemPrompt: rubric.SystemPrompt,
+				Messages:     []llm.Message{{Role: "user", Content: userContent}},
+				Temperature:  metaEvalTemperature,
+				MaxTokens:    256,
+			}
+
+			resp, err := e.provider.Complete(ctx, req)
+			if err != nil {
+				results[idx] = metaEvalResult{err: err}
+				return
+			}
+
+			sr, err := judge.ParseScoreResult(resp.Content)
+			if err != nil {
+				results[idx] = metaEvalResult{err: err}
+				return
+			}
+
+			results[idx] = metaEvalResult{
+				score:       sr.Score,
+				explanation: sr.Explanation,
+				cost:        resp.Cost,
+			}
+		}(i)
+	}
+
+	wg.Wait()
+
+	// Collect successful results
+	var scores []float64
+	var explanations []string
+	var totalCost float64
+	var firstErr error
+
+	for i, r := range results {
+		if r.err != nil {
+			if firstErr == nil {
+				firstErr = r.err
+			}
+			continue
+		}
+		scores = append(scores, r.score)
+		explanations = append(explanations, fmt.Sprintf("Run %d: %s", i+1, r.explanation))
+		totalCost += r.cost
+	}
+
+	// Need at least 1 successful run
+	if len(scores) == 0 {
+		return failResult(assertion, start, fmt.Sprintf("all %d meta-eval runs failed: %v", metaEvalRuns, firstErr))
+	}
+
+	// Sort and take median
+	sort.Float64s(scores)
+	medianScore := scores[len(scores)/2]
+
+	// Calculate variance (spread)
+	spread := scores[len(scores)-1] - scores[0]
+	var varianceNote string
+	if spread > metaEvalVarianceThreshold {
+		varianceNote = fmt.Sprintf(" [HIGH VARIANCE: spread=%.2f across %d runs]", spread, len(scores))
+	}
+
+	combinedExplanation := strings.Join(explanations, " | ") + " | Median selected." + varianceNote
+
+	durationMS := time.Since(start).Milliseconds()
+
+	// Cache the median result
+	if e.cache != nil {
+		contentHash := cache.JudgeContentHash(targetStr)
+		_ = e.cache.Put(contentHash, rubricName, model, &cache.JudgeCacheEntry{
+			Score:       medianScore,
+			Explanation: combinedExplanation,
+		})
+	}
+
+	return e.buildResult(assertion, medianScore, combinedExplanation, spec.Threshold, spec.Soft, durationMS, totalCost)
 }
