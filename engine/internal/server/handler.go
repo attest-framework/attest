@@ -1,31 +1,34 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"strconv"
+	"time"
 
 	"github.com/attest-ai/attest/engine/internal/assertion"
 	"github.com/attest-ai/attest/engine/internal/assertion/embedding"
 	"github.com/attest-ai/attest/engine/internal/assertion/judge"
 	"github.com/attest-ai/attest/engine/internal/cache"
 	"github.com/attest-ai/attest/engine/internal/llm"
+	"github.com/attest-ai/attest/engine/internal/simulation"
 	"github.com/attest-ai/attest/engine/internal/trace"
 	"github.com/attest-ai/attest/engine/pkg/types"
 )
 
 const (
-	engineVersion   = "0.2.0"
+	engineVersion   = "0.3.0"
 	protocolVersion = 1
 )
 
 // RegisterBuiltinHandlers registers the built-in JSON-RPC handlers on s.
 // It reads ATTEST_* env vars to configure Layer 5/6 providers and caches.
 func RegisterBuiltinHandlers(s *Server) {
-	opts, caps := buildRegistryOptions(s.logger)
+	opts, caps, judgeProvider := buildRegistryOptions(s.logger)
 	registry := assertion.NewRegistry(opts...)
 	pipeline := assertion.NewPipeline(registry)
 
@@ -33,13 +36,17 @@ func RegisterBuiltinHandlers(s *Server) {
 	s.RegisterHandler("shutdown", handleShutdown)
 	s.RegisterHandler("evaluate_batch", handleEvaluateBatch(pipeline))
 	s.RegisterHandler("submit_plugin_result", handleSubmitPluginResult())
+	s.RegisterHandler("validate_trace_tree", handleValidateTraceTree())
+	if judgeProvider != nil {
+		s.RegisterHandler("generate_user_message", handleGenerateUserMessage(judgeProvider))
+	}
 }
 
 // buildRegistryOptions reads env vars and constructs RegistryOption values
 // for Layer 5 (embedding) and Layer 6 (judge) evaluators. Returns the
-// options and the list of supported capabilities.
-func buildRegistryOptions(logger *slog.Logger) ([]assertion.RegistryOption, []string) {
-	caps := []string{"layers_1_4"}
+// options, the list of supported capabilities, and the judge provider (may be nil).
+func buildRegistryOptions(logger *slog.Logger) ([]assertion.RegistryOption, []string, llm.Provider) {
+	caps := []string{"layers_1_4", "trace_tree"}
 	var opts []assertion.RegistryOption
 
 	// ── Layer 5: Embedding ──
@@ -119,15 +126,15 @@ func buildRegistryOptions(logger *slog.Logger) ([]assertion.RegistryOption, []st
 			}
 		}
 		opts = append(opts, assertion.WithJudge(judgeProvider, rubrics, jCache))
-		caps = append(caps, "llm_judge")
+		caps = append(caps, "llm_judge", "simulation")
 		logger.Info("layer 6 (judge) enabled", "provider", providerName)
 	}
 
-	if len(caps) > 1 {
+	if embedder != nil || judgeProvider != nil {
 		caps = append(caps, "layers_5_6")
 	}
 
-	return opts, caps
+	return opts, caps, judgeProvider
 }
 
 // buildJudgeProvider selects and constructs an LLM provider for judging.
@@ -363,5 +370,115 @@ func handleSubmitPluginResult() Handler {
 		session.IncrementAssertions(1)
 
 		return &types.SubmitPluginResultResponse{Accepted: true}, nil
+	}
+}
+
+func handleValidateTraceTree() Handler {
+	return func(session *Session, params json.RawMessage) (any, *types.RPCError) {
+		if session.State() != StateInitialized {
+			return nil, types.NewRPCError(
+				types.ErrSessionError,
+				"validate_trace_tree called before initialize",
+				types.ErrTypeSessionError,
+				false,
+				"call initialize first to establish a session",
+			)
+		}
+
+		var p types.ValidateTraceTreeParams
+		if err := json.Unmarshal(params, &p); err != nil {
+			return nil, types.NewRPCError(
+				types.ErrInvalidTrace,
+				"invalid validate_trace_tree params",
+				types.ErrTypeInvalidTrace,
+				false,
+				err.Error(),
+			)
+		}
+
+		result := &types.ValidateTraceTreeResult{}
+
+		if err := trace.ValidateTraceTree(&p.Trace); err != nil {
+			result.Valid = false
+			result.Errors = []string{err.Error()}
+		} else {
+			result.Valid = true
+		}
+
+		result.Depth = trace.TreeDepth(&p.Trace)
+		agentIDs := trace.AgentIDs(&p.Trace)
+		result.AgentIDs = agentIDs
+		result.AgentCount = len(agentIDs)
+
+		totalTokens, totalCostUSD, totalLatencyMS, _ := trace.AggregateMetadata(&p.Trace)
+		result.AggregateTokens = totalTokens
+		result.AggregateCostUSD = totalCostUSD
+		result.AggregateLatencyMS = totalLatencyMS
+
+		return result, nil
+	}
+}
+
+func handleGenerateUserMessage(provider llm.Provider) Handler {
+	return func(session *Session, params json.RawMessage) (any, *types.RPCError) {
+		if session.State() != StateInitialized {
+			return nil, types.NewRPCError(
+				types.ErrSessionError,
+				"generate_user_message called before initialize",
+				types.ErrTypeSessionError,
+				false,
+				"call initialize first to establish a session",
+			)
+		}
+
+		var p types.GenerateUserMessageParams
+		if err := json.Unmarshal(params, &p); err != nil {
+			return nil, types.NewRPCError(
+				types.ErrAssertionError,
+				"invalid generate_user_message params",
+				types.ErrTypeAssertionError,
+				false,
+				err.Error(),
+			)
+		}
+
+		persona := simulation.Persona{
+			Name:         p.Persona.Name,
+			SystemPrompt: p.Persona.SystemPrompt,
+			Style:        p.Persona.Style,
+			Temperature:  p.Persona.Temperature,
+			MaxTokens:    p.Persona.MaxTokens,
+		}
+
+		var prov llm.Provider = provider
+		if p.FaultConfig != nil {
+			fc := simulation.FaultConfig{
+				ErrorRate:         p.FaultConfig.ErrorRate,
+				LatencyJitter:     time.Duration(p.FaultConfig.LatencyJitterMS) * time.Millisecond,
+				ContentCorruption: p.FaultConfig.ContentCorruption,
+				TimeoutAfter:      time.Duration(p.FaultConfig.TimeoutAfterMS) * time.Millisecond,
+			}
+			prov = simulation.NewFaultInjector(prov, fc)
+		}
+
+		user := simulation.NewSimulatedUser(persona, prov)
+
+		messages := make([]llm.Message, 0, len(p.ConversationHistory))
+		for _, m := range p.ConversationHistory {
+			messages = append(messages, llm.Message{Role: m.Role, Content: m.Content})
+		}
+
+		msg, err := user.GenerateMessage(context.Background(), messages)
+		if err != nil {
+			return nil, types.NewRPCError(
+				types.ErrEngineError,
+				fmt.Sprintf("generate_user_message failed: %v", err),
+				types.ErrTypeEngineError,
+				true,
+				"check LLM provider availability and retry",
+			)
+		}
+
+		return &types.GenerateUserMessageResult{Message: msg}, nil
 	}
 }

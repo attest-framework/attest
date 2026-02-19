@@ -93,3 +93,55 @@ type SubmitPluginResultParams struct {
 type SubmitPluginResultResponse struct {
 	Accepted bool `json:"accepted"`
 }
+
+// SimulatePersona describes the personality and LLM parameters for a simulated user.
+type SimulatePersona struct {
+	Name         string  `json:"name"`
+	SystemPrompt string  `json:"system_prompt"`
+	Style        string  `json:"style"`
+	Temperature  float64 `json:"temperature"`
+	MaxTokens    int     `json:"max_tokens,omitempty"`
+}
+
+// SimulateFaultConfig describes optional fault injection parameters for simulation.
+type SimulateFaultConfig struct {
+	ErrorRate         float64 `json:"error_rate"`
+	LatencyJitterMS   int     `json:"latency_jitter_ms"`
+	ContentCorruption bool    `json:"content_corruption"`
+	TimeoutAfterMS    int     `json:"timeout_after_ms"`
+}
+
+// ConversationMessage is a single message in a conversation history.
+type ConversationMessage struct {
+	Role    string `json:"role"`
+	Content string `json:"content"`
+}
+
+// GenerateUserMessageParams holds parameters for the generate_user_message RPC method.
+type GenerateUserMessageParams struct {
+	Persona             SimulatePersona      `json:"persona"`
+	ConversationHistory []ConversationMessage `json:"conversation_history"`
+	FaultConfig         *SimulateFaultConfig  `json:"fault_config,omitempty"`
+}
+
+// GenerateUserMessageResult holds the result of the generate_user_message RPC method.
+type GenerateUserMessageResult struct {
+	Message string `json:"message"`
+}
+
+// ValidateTraceTreeParams holds parameters for the validate_trace_tree RPC method.
+type ValidateTraceTreeParams struct {
+	Trace Trace `json:"trace"`
+}
+
+// ValidateTraceTreeResult holds the result of the validate_trace_tree RPC method.
+type ValidateTraceTreeResult struct {
+	Valid              bool     `json:"valid"`
+	Errors             []string `json:"errors,omitempty"`
+	Depth              int      `json:"depth"`
+	AgentCount         int      `json:"agent_count"`
+	AgentIDs           []string `json:"agent_ids"`
+	AggregateTokens    int      `json:"aggregate_tokens"`
+	AggregateCostUSD   float64  `json:"aggregate_cost_usd"`
+	AggregateLatencyMS int      `json:"aggregate_latency_ms"`
+}
