@@ -21,6 +21,7 @@ var layerOrder = map[string]int{
 	types.TypeSchema:     1,
 	types.TypeConstraint: 2,
 	types.TypeTrace:      3,
+	types.TypeTraceTree:  3,
 	types.TypeContent:    4,
 	types.TypeEmbedding:  5,
 	types.TypeLLMJudge:   6,

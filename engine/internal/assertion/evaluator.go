@@ -59,6 +59,7 @@ func NewRegistry(opts ...RegistryOption) *Registry {
 	r.Register(types.TypeSchema, &SchemaEvaluator{})
 	r.Register(types.TypeConstraint, &ConstraintEvaluator{})
 	r.Register(types.TypeTrace, &TraceEvaluator{})
+	r.Register(types.TypeTraceTree, &TraceTreeEvaluator{})
 	r.Register(types.TypeContent, &ContentEvaluator{})
 
 	var cfg registryConfig
