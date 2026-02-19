@@ -4,13 +4,13 @@
 
 Attest is an open-source testing framework purpose-built for AI agents and LLM-powered systems. It treats deterministic assertions as first-class citizens alongside probabilistic evaluation — because 70% of your agent's testable surface is deterministic.
 
-> **Status:** v0.2.0 — Layers 1–6 operational. Engine, Python SDK, ONNX local embeddings, judge meta-evaluation, and CI integration shipped.
+> **Status:** v0.3.0 — Layers 1–6 + simulation runtime + multi-agent trace trees. Engine, Python SDK, ONNX embeddings, LLM judge, simulated users, fault injection, and cross-agent assertions shipped.
 
 ---
 
 ## Why Attest
 
-The current ecosystem defaults to LLM-as-judge for everything. This creates cost explosion, flaky tests, and slow suites. Attest provides a graduated 6-layer assertion model that reaches for the cheapest valid assertion first:
+The current ecosystem defaults to LLM-as-judge for everything. This creates cost explosion, flaky tests, and slow suites. Attest provides a graduated 7-layer assertion model that reaches for the cheapest valid assertion first:
 
 ```
 Layer 1: Schema Validation        — free, instant, deterministic
@@ -19,6 +19,7 @@ Layer 3: Trace/Behavioral Checks  — free, instant, deterministic
 Layer 4: Content Pattern Matching  — free, instant, near-deterministic
 Layer 5: Embedding Similarity      — ~$0.001, ~100ms, near-deterministic
 Layer 6: LLM-as-Judge             — ~$0.01+, ~1-3s, non-deterministic
+Layer 7: Trace Tree (Multi-Agent)  — free, instant, deterministic
 ```
 
 ## What It Looks Like
@@ -66,15 +67,15 @@ SDK (Python/TS/Go) ──stdin/stdout──▶ Engine Process (Go)
 
 ## Key Features
 
-- **6-layer assertion pipeline** — graduated from free/deterministic to paid/probabilistic
+- **7-layer assertion pipeline** — graduated from free/deterministic to paid/probabilistic
 - **Soft failure budgets** — scores between 0.5–0.8 warn without blocking CI
 - **Cost as a test metric** — assert on token usage, API cost, and latency
-- **Framework-agnostic** — adapters for OpenAI, Anthropic, Gemini, Ollama, LangChain, LlamaIndex
+- **Framework-agnostic** — adapters for OpenAI, Anthropic, Gemini, Ollama, OTel
 - **Local ONNX embeddings** — optional all-MiniLM-L6-v2 provider, zero API cost for Layer 5
 - **Judge meta-evaluation** — 3x judge runs with median scoring and variance detection
 - **CI-ready** — composite GitHub Action, tiered testing workflow, adversarial hardening
-- **Simulation runtime** — mock LLMs, simulated users, fault injection (planned)
-- **Multi-agent testing** — hierarchical trace trees, cross-agent assertions (planned)
+- **Simulation runtime** — simulated users with personas, mock tools, fault injection, multi-turn orchestration
+- **Multi-agent testing** — hierarchical trace trees, cross-agent assertions, delegation tracking, aggregate metrics
 - **Single binary engine** — no runtime dependencies, cross-platform
 
 ## Repository Layout
@@ -119,7 +120,7 @@ make test
 
 # Verify engine
 ./bin/attest-engine version
-# attest-engine 0.2.0
+# attest-engine 0.3.0
 ```
 
 ## Roadmap
@@ -129,7 +130,7 @@ make test
 | 0     | —       | **Complete** | Repository scaffolding, toolchain, protocol spec                     |
 | 1     | v0.1    | **Complete** | Go engine (Layers 1–4), Python SDK, pytest plugin, 4 LLM adapters    |
 | 2     | v0.2    | **Complete** | Layers 5–6 (embeddings, LLM-as-judge), soft failures, CI integration |
-| 3     | v0.3    | Planned      | Simulation runtime, multi-agent testing, TypeScript SDK              |
+| 3     | v0.3    | **In Progress** | Simulation runtime, multi-agent testing (**done**); TypeScript SDK (pending) |
 | 4     | v0.4    | Planned      | Continuous eval, plugin system, LangChain/LlamaIndex adapters        |
 | 5     | v0.5    | Planned      | Go SDK, Attest Cloud MVP, benchmark registry                         |
 

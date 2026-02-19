@@ -7,4 +7,4 @@ from attest import __version__
 
 def test_version() -> None:
     """Verify attest version string."""
-    assert __version__ == "0.2.0"
+    assert __version__ == "0.3.0"
