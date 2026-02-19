@@ -13,6 +13,7 @@ const (
 	TypeContent    = "content"
 	TypeEmbedding  = "embedding"
 	TypeLLMJudge   = "llm_judge"
+	TypeTraceTree  = "trace_tree"
 )
 
 // Assertion defines an assertion to evaluate against a trace.

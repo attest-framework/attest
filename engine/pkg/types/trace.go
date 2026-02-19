@@ -38,4 +38,10 @@ type TraceMetadata struct {
 	LatencyMS   *int     `json:"latency_ms,omitempty"`
 	Model       *string  `json:"model,omitempty"`
 	Timestamp   *string  `json:"timestamp,omitempty"`
+
+	// Aggregate fields for multi-agent trace trees.
+	AggregateTokens    *int     `json:"aggregate_tokens,omitempty"`
+	AggregateCostUSD   *float64 `json:"aggregate_cost_usd,omitempty"`
+	AggregateLatencyMS *int     `json:"aggregate_latency_ms,omitempty"`
+	AgentCount         *int     `json:"agent_count,omitempty"`
 }
