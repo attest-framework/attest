@@ -108,7 +108,12 @@ func buildRegistryOptions(logger *slog.Logger) ([]assertion.RegistryOption, []st
 	}
 
 	// ── Layer 6: LLM Judge ──
-	judgeProvider, providerName := buildJudgeProvider(logger)
+	judgeProvider, providerName, judgeErr := buildJudgeProvider(logger)
+	if judgeErr != nil {
+		logger.Error("judge provider configuration error", "err", judgeErr)
+		fmt.Fprintf(os.Stderr, "fatal: %v\n", judgeErr)
+		os.Exit(1)
+	}
 	if judgeProvider != nil {
 		rubrics := judge.NewRubricRegistry()
 
@@ -139,45 +144,63 @@ func buildRegistryOptions(logger *slog.Logger) ([]assertion.RegistryOption, []st
 
 // buildJudgeProvider selects and constructs an LLM provider for judging.
 // Reads ATTEST_JUDGE_PROVIDER and corresponding API keys.
-func buildJudgeProvider(logger *slog.Logger) (llm.Provider, string) {
+// Returns an error if the provider is explicitly set to an unimplemented or unknown value.
+func buildJudgeProvider(logger *slog.Logger) (llm.Provider, string, error) {
 	preferred := os.Getenv("ATTEST_JUDGE_PROVIDER")
 	model := os.Getenv("ATTEST_JUDGE_MODEL")
 
-	// Try preferred provider first, then fall through in priority order
-	providers := []string{"openai", "anthropic", "gemini", "ollama"}
+	// If explicitly set, validate before attempting construction.
 	if preferred != "" {
-		providers = []string{preferred}
-	}
-
-	for _, name := range providers {
-		switch name {
+		switch preferred {
 		case "openai":
-			key := os.Getenv("ATTEST_OPENAI_API_KEY")
-			if key == "" {
-				continue
-			}
-			p, err := llm.NewOpenAIProvider(key, model, "")
-			if err != nil {
-				logger.Warn("failed to create OpenAI judge provider", "err", err)
-				continue
-			}
-			return p, "openai"
-
-		case "anthropic":
-			// Anthropic provider not implemented yet in llm package — skip
-			continue
-
-		case "gemini":
-			// Gemini provider not implemented yet in llm package — skip
-			continue
-
-		case "ollama":
-			// Ollama provider not implemented yet in llm package — skip
-			continue
+			// handled below
+		case "anthropic", "gemini", "ollama":
+			return nil, "", fmt.Errorf(
+				"ATTEST_JUDGE_PROVIDER=%q is not yet implemented; supported: openai",
+				preferred,
+			)
+		default:
+			return nil, "", fmt.Errorf(
+				"ATTEST_JUDGE_PROVIDER=%q is unknown; supported: openai",
+				preferred,
+			)
 		}
 	}
 
-	return nil, ""
+	// Try OpenAI (the only implemented provider).
+	key := os.Getenv("ATTEST_OPENAI_API_KEY")
+	if key == "" {
+		return nil, "", nil
+	}
+
+	p, err := llm.NewOpenAIProvider(key, model, "")
+	if err != nil {
+		logger.Warn("failed to create OpenAI judge provider", "err", err)
+		return nil, "", nil
+	}
+
+	// Wrap with rate limiter.
+	rlCfg := buildRateLimiterConfig()
+	rlp, rlErr := llm.NewRateLimitedProvider(p, rlCfg)
+	if rlErr != nil {
+		logger.Warn("rate limiter init failed, using bare provider", "err", rlErr)
+		return p, "openai", nil
+	}
+	logger.Info("judge provider rate limiter configured", "rpm", rlCfg.RequestsPerMinute, "burst", rlCfg.Burst)
+	return rlp, "openai", nil
+}
+
+// buildRateLimiterConfig reads ATTEST_JUDGE_RPM and ATTEST_JUDGE_BURST env vars,
+// falling back to DefaultRateLimiterConfig values.
+func buildRateLimiterConfig() llm.RateLimiterConfig {
+	cfg := llm.DefaultRateLimiterConfig
+	if rpm := envInt("ATTEST_JUDGE_RPM", 0); rpm > 0 {
+		cfg.RequestsPerMinute = float64(rpm)
+	}
+	if burst := envInt("ATTEST_JUDGE_BURST", 0); burst > 0 {
+		cfg.Burst = burst
+	}
+	return cfg
 }
 
 // cacheDirectory returns the cache directory from env or default.
