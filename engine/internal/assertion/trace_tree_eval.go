@@ -48,6 +48,8 @@ func (e *TraceTreeEvaluator) Evaluate(t *types.Trace, assertion *types.Assertion
 		passed, explanation = checkAggregateCostCheck(t, assertion.Spec)
 	case "aggregate_tokens":
 		passed, explanation = checkAggregateTokensCheck(t, assertion.Spec)
+	case "follows_transitions":
+		passed, explanation = checkFollowsTransitions(t, assertion.Spec)
 	case "aggregate_latency":
 		passed, explanation = checkAggregateLatencyCheck(t, assertion.Spec)
 	default:
@@ -229,6 +231,52 @@ func checkAggregateLatencyCheck(t *types.Trace, spec json.RawMessage) (bool, str
 	}
 	_, _, totalLatencyMS, _ := trace.AggregateMetadata(t)
 	return applyNumericOperator("aggregate_latency", float64(totalLatencyMS), s.Operator, s.Value)
+}
+
+func checkFollowsTransitions(t *types.Trace, spec json.RawMessage) (bool, string) {
+	var s struct {
+		Transitions [][]string `json:"transitions"`
+	}
+	if err := json.Unmarshal(spec, &s); err != nil {
+		return false, fmt.Sprintf("follows_transitions: invalid spec: %v", err)
+	}
+	if len(s.Transitions) == 0 {
+		return false, "follows_transitions requires non-empty 'transitions'"
+	}
+
+	// Build allowed set from transitions spec.
+	type pair struct{ parent, child string }
+	allowed := make(map[pair]struct{}, len(s.Transitions))
+	for _, tr := range s.Transitions {
+		if len(tr) != 2 {
+			return false, fmt.Sprintf("follows_transitions: each transition must be [parent, child], got %v", tr)
+		}
+		allowed[pair{tr[0], tr[1]}] = struct{}{}
+	}
+
+	// Collect actual delegation pairs from the trace tree.
+	var violations []string
+	var collectDelegations func(t *types.Trace)
+	collectDelegations = func(t *types.Trace) {
+		parentID := t.AgentID
+		for i := range t.Steps {
+			step := &t.Steps[i]
+			if step.Type == types.StepTypeAgentCall && step.SubTrace != nil {
+				childID := step.SubTrace.AgentID
+				p := pair{parentID, childID}
+				if _, ok := allowed[p]; !ok {
+					violations = append(violations, fmt.Sprintf("%s -> %s", parentID, childID))
+				}
+				collectDelegations(step.SubTrace)
+			}
+		}
+	}
+	collectDelegations(t)
+
+	if len(violations) > 0 {
+		return false, fmt.Sprintf("follows_transitions: disallowed delegation(s): %s", strings.Join(violations, ", "))
+	}
+	return true, "follows_transitions: all delegations match allowed transitions."
 }
 
 // applyNumericOperator evaluates actual op threshold and returns pass/fail with explanation.
