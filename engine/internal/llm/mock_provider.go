@@ -2,16 +2,22 @@ package llm
 
 import (
 	"context"
+	"fmt"
 	"sync"
+	"time"
 )
 
 // MockProvider implements Provider with configurable responses for testing.
 type MockProvider struct {
-	mu          sync.Mutex
-	Responses   []*CompletionResponse
-	Errors      []error
-	CallCount   int
-	LastRequest *CompletionRequest
+	mu               sync.Mutex
+	Responses        []*CompletionResponse
+	Errors           []error
+	CallCount        int
+	LastRequest      *CompletionRequest
+	RequestHistory   []CompletionRequest
+	ReplayMode       bool
+	SimulatedLatency time.Duration
+	MatchFunc        func(*CompletionRequest) *CompletionResponse
 }
 
 // NewMockProvider creates a MockProvider cycling through the given responses.
@@ -20,22 +26,57 @@ func NewMockProvider(responses []*CompletionResponse, errors []error) *MockProvi
 	return &MockProvider{Responses: responses, Errors: errors}
 }
 
+// NewReplayProvider creates a MockProvider that uses responses exactly once in order.
+// Returns an error when all responses have been consumed.
+func NewReplayProvider(responses []*CompletionResponse) *MockProvider {
+	return &MockProvider{Responses: responses, ReplayMode: true}
+}
+
 func (m *MockProvider) Name() string        { return "mock" }
 func (m *MockProvider) DefaultModel() string { return "mock-model" }
 
-func (m *MockProvider) Complete(_ context.Context, req *CompletionRequest) (*CompletionResponse, error) {
+func (m *MockProvider) Complete(ctx context.Context, req *CompletionRequest) (*CompletionResponse, error) {
+	m.mu.Lock()
+	latency := m.SimulatedLatency
+	m.mu.Unlock()
+
+	if latency > 0 {
+		select {
+		case <-time.After(latency):
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
 	idx := m.CallCount
 	m.CallCount++
 	m.LastRequest = req
+	m.RequestHistory = append(m.RequestHistory, *req)
 
 	// Return error if configured for this call index
 	if idx < len(m.Errors) && m.Errors[idx] != nil {
 		return nil, m.Errors[idx]
 	}
 
-	// Return configured response (cycle if needed)
+	// MatchFunc takes priority over index-based selection
+	if m.MatchFunc != nil {
+		if resp := m.MatchFunc(req); resp != nil {
+			return resp, nil
+		}
+	}
+
+	// ReplayMode: consume responses exactly once
+	if m.ReplayMode {
+		if idx >= len(m.Responses) {
+			return nil, fmt.Errorf("mock provider: all %d responses exhausted at call %d", len(m.Responses), idx)
+		}
+		return m.Responses[idx], nil
+	}
+
+	// Default cycling behavior
 	if len(m.Responses) > 0 {
 		return m.Responses[idx%len(m.Responses)], nil
 	}
@@ -56,4 +97,11 @@ func (m *MockProvider) GetCallCount() int {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.CallCount
+}
+
+// GetRequestHistory returns a copy of all requests made to this provider.
+func (m *MockProvider) GetRequestHistory() []CompletionRequest {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return append([]CompletionRequest(nil), m.RequestHistory...)
 }
