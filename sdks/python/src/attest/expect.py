@@ -12,6 +12,7 @@ from attest._proto.types import (
     TYPE_LLM_JUDGE,
     TYPE_SCHEMA,
     TYPE_TRACE,
+    TYPE_TRACE_TREE,
     Assertion,
     Trace,
 )
@@ -381,6 +382,67 @@ class ExpectChain:
                 "model": model,
                 "soft": soft,
             },
+        )
+
+
+    # ── Layer 7: Trace Tree (Multi-Agent) ──
+
+    def agent_called(self, agent_id: str, *, soft: bool = False) -> ExpectChain:
+        """Assert a specific agent was called in the trace tree."""
+        return self._add(
+            TYPE_TRACE_TREE,
+            {"check": "agent_called", "agent_id": agent_id, "soft": soft},
+        )
+
+    def delegation_depth(self, max_depth: int, *, soft: bool = False) -> ExpectChain:
+        """Assert trace tree depth does not exceed max_depth."""
+        return self._add(
+            TYPE_TRACE_TREE,
+            {"check": "delegation_depth", "max_depth": max_depth, "soft": soft},
+        )
+
+    def agent_output_contains(
+        self, agent_id: str, value: str, *, case_sensitive: bool = False, soft: bool = False
+    ) -> ExpectChain:
+        """Assert a sub-agent's output contains a value."""
+        return self._add(
+            TYPE_TRACE_TREE,
+            {
+                "check": "agent_output_contains",
+                "agent_id": agent_id,
+                "value": value,
+                "case_sensitive": case_sensitive,
+                "soft": soft,
+            },
+        )
+
+    def cross_agent_data_flow(
+        self, from_agent: str, to_agent: str, field: str, *, soft: bool = False
+    ) -> ExpectChain:
+        """Assert data flows from one agent's output to another's input."""
+        return self._add(
+            TYPE_TRACE_TREE,
+            {
+                "check": "cross_agent_data_flow",
+                "from_agent": from_agent,
+                "to_agent": to_agent,
+                "field": field,
+                "soft": soft,
+            },
+        )
+
+    def aggregate_cost_under(self, max_cost: float, *, soft: bool = False) -> ExpectChain:
+        """Assert aggregate cost across trace tree is under threshold."""
+        return self._add(
+            TYPE_TRACE_TREE,
+            {"check": "aggregate_cost", "operator": "lte", "value": max_cost, "soft": soft},
+        )
+
+    def aggregate_tokens_under(self, max_tokens: int, *, soft: bool = False) -> ExpectChain:
+        """Assert aggregate tokens across trace tree is under threshold."""
+        return self._add(
+            TYPE_TRACE_TREE,
+            {"check": "aggregate_tokens", "operator": "lte", "value": max_tokens, "soft": soft},
         )
 
 
