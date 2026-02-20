@@ -8,6 +8,19 @@ importers:
 
   .: {}
 
+  examples/customer-service:
+    dependencies:
+      '@attest-ai/core':
+        specifier: workspace:*
+        version: link:../../packages/core
+    devDependencies:
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+      vitest:
+        specifier: ^3.0.0
+        version: 3.2.4(@types/node@25.3.0)
+
   examples/quickstart:
     dependencies:
       '@attest-ai/core':
