@@ -48,7 +48,7 @@ class LlamaIndexInstrumentationHandler:
 
         outer = self
 
-        class _AttestEventHandlerImpl(BaseEventHandler):
+        class _AttestEventHandlerImpl(BaseEventHandler):  # type: ignore[misc]
             """Internal event handler that accumulates LlamaIndex events."""
 
             @classmethod

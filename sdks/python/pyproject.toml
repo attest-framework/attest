@@ -76,11 +76,7 @@ module = ["langchain_core.*"]
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
-module = ["google.adk.*"]
-ignore_missing_imports = true
-
-[[tool.mypy.overrides]]
-module = ["google.genai.*"]
+module = ["google", "google.adk.*", "google.genai.*"]
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
