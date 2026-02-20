@@ -119,3 +119,85 @@ def test_expect_tool_schema() -> None:
     schema = {"type": "object", "required": ["order_id"]}
     chain = expect(_make_result()).tool_args_match_schema("lookup_order", schema)
     assert chain.assertions[0].spec["target"] == "steps[?name=='lookup_order'].args"
+
+
+def test_expect_agent_ordered_before() -> None:
+    chain = expect(_make_result()).agent_ordered_before("planner", "executor")
+    assert len(chain.assertions) == 1
+    a = chain.assertions[0]
+    assert a.type == "trace_tree"
+    assert a.spec["check"] == "agent_ordered_before"
+    assert a.spec["agent_a"] == "planner"
+    assert a.spec["agent_b"] == "executor"
+    assert a.spec["soft"] is False
+
+
+def test_expect_agent_ordered_before_soft() -> None:
+    chain = expect(_make_result()).agent_ordered_before("a", "b", soft=True)
+    assert chain.assertions[0].spec["soft"] is True
+
+
+def test_expect_agents_overlap() -> None:
+    chain = expect(_make_result()).agents_overlap("worker-1", "worker-2")
+    assert len(chain.assertions) == 1
+    a = chain.assertions[0]
+    assert a.type == "trace_tree"
+    assert a.spec["check"] == "agents_overlap"
+    assert a.spec["agent_a"] == "worker-1"
+    assert a.spec["agent_b"] == "worker-2"
+    assert a.spec["soft"] is False
+
+
+def test_expect_agents_overlap_soft() -> None:
+    chain = expect(_make_result()).agents_overlap("a", "b", soft=True)
+    assert chain.assertions[0].spec["soft"] is True
+
+
+def test_expect_agent_wall_time_under() -> None:
+    chain = expect(_make_result()).agent_wall_time_under("summarizer", 3000)
+    assert len(chain.assertions) == 1
+    a = chain.assertions[0]
+    assert a.type == "trace_tree"
+    assert a.spec["check"] == "agent_wall_time_under"
+    assert a.spec["agent_id"] == "summarizer"
+    assert a.spec["max_ms"] == 3000
+    assert a.spec["soft"] is False
+
+
+def test_expect_agent_wall_time_under_soft() -> None:
+    chain = expect(_make_result()).agent_wall_time_under("summarizer", 3000, soft=True)
+    assert chain.assertions[0].spec["soft"] is True
+
+
+def test_expect_ordered_agents() -> None:
+    groups = [["planner"], ["worker-1", "worker-2"], ["aggregator"]]
+    chain = expect(_make_result()).ordered_agents(groups)
+    assert len(chain.assertions) == 1
+    a = chain.assertions[0]
+    assert a.type == "trace_tree"
+    assert a.spec["check"] == "ordered_agents"
+    assert a.spec["groups"] == groups
+    assert a.spec["soft"] is False
+
+
+def test_expect_ordered_agents_soft() -> None:
+    chain = expect(_make_result()).ordered_agents([["a"], ["b"]], soft=True)
+    assert chain.assertions[0].spec["soft"] is True
+
+
+def test_expect_temporal_chaining() -> None:
+    chain = (
+        expect(_make_result())
+        .agent_ordered_before("planner", "executor")
+        .agents_overlap("worker-1", "worker-2")
+        .agent_wall_time_under("summarizer", 5000)
+        .ordered_agents([["a"], ["b", "c"]])
+    )
+    assert len(chain.assertions) == 4
+    checks = [a.spec["check"] for a in chain.assertions]
+    assert checks == [
+        "agent_ordered_before",
+        "agents_overlap",
+        "agent_wall_time_under",
+        "ordered_agents",
+    ]

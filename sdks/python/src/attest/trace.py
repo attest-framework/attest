@@ -38,9 +38,23 @@ class TraceBuilder:
         args: dict[str, Any] | None = None,
         result: dict[str, Any] | None = None,
         metadata: dict[str, Any] | None = None,
+        started_at_ms: int | None = None,
+        ended_at_ms: int | None = None,
+        agent_id: str | None = None,
+        agent_role: str | None = None,
     ) -> TraceBuilder:
         self._steps.append(
-            Step(type="llm_call", name=name, args=args, result=result, metadata=metadata)
+            Step(
+                type="llm_call",
+                name=name,
+                args=args,
+                result=result,
+                metadata=metadata,
+                started_at_ms=started_at_ms,
+                ended_at_ms=ended_at_ms,
+                agent_id=agent_id,
+                agent_role=agent_role,
+            )
         )
         return self
 
@@ -50,6 +64,10 @@ class TraceBuilder:
         args: dict[str, Any] | None = None,
         result: dict[str, Any] | None = None,
         metadata: dict[str, Any] | None = None,
+        started_at_ms: int | None = None,
+        ended_at_ms: int | None = None,
+        agent_id: str | None = None,
+        agent_role: str | None = None,
     ) -> TraceBuilder:
         from attest.simulation._context import _active_mock_registry
 
@@ -59,7 +77,17 @@ class TraceBuilder:
             if isinstance(mock_result, dict):
                 result = mock_result
         self._steps.append(
-            Step(type="tool_call", name=name, args=args, result=result, metadata=metadata)
+            Step(
+                type="tool_call",
+                name=name,
+                args=args,
+                result=result,
+                metadata=metadata,
+                started_at_ms=started_at_ms,
+                ended_at_ms=ended_at_ms,
+                agent_id=agent_id,
+                agent_role=agent_role,
+            )
         )
         return self
 
@@ -69,9 +97,23 @@ class TraceBuilder:
         args: dict[str, Any] | None = None,
         result: dict[str, Any] | None = None,
         metadata: dict[str, Any] | None = None,
+        started_at_ms: int | None = None,
+        ended_at_ms: int | None = None,
+        agent_id: str | None = None,
+        agent_role: str | None = None,
     ) -> TraceBuilder:
         self._steps.append(
-            Step(type="retrieval", name=name, args=args, result=result, metadata=metadata)
+            Step(
+                type="retrieval",
+                name=name,
+                args=args,
+                result=result,
+                metadata=metadata,
+                started_at_ms=started_at_ms,
+                ended_at_ms=ended_at_ms,
+                agent_id=agent_id,
+                agent_role=agent_role,
+            )
         )
         return self
 

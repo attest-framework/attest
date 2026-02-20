@@ -47,6 +47,10 @@ def _make_trace() -> Trace:
                 args={"model": "gpt-4.1", "prompt": "You are a customer service agent."},
                 result={"completion": "I need to look up the order."},
                 metadata={"duration_ms": 1200, "cost_usd": 0.003},
+                started_at_ms=1700000000000,
+                ended_at_ms=1700000001200,
+                agent_id="customer-service-agent",
+                agent_role="primary",
             ),
             Step(
                 type=STEP_TOOL_CALL,
@@ -54,6 +58,9 @@ def _make_trace() -> Trace:
                 args={"order_id": "ORD-123"},
                 result={"status": "delivered", "amount": 89.99},
                 metadata={"duration_ms": 45},
+                started_at_ms=1700000001200,
+                ended_at_ms=1700000001245,
+                agent_id="customer-service-agent",
             ),
         ],
         metadata=TraceMetadata(
@@ -86,6 +93,10 @@ def test_trace_round_trip() -> None:
         assert rest_step.args == orig_step.args
         assert rest_step.result == orig_step.result
         assert rest_step.metadata == orig_step.metadata
+        assert rest_step.started_at_ms == orig_step.started_at_ms
+        assert rest_step.ended_at_ms == orig_step.ended_at_ms
+        assert rest_step.agent_id == orig_step.agent_id
+        assert rest_step.agent_role == orig_step.agent_role
 
     assert restored.metadata is not None
     assert original.metadata is not None

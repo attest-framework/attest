@@ -15,6 +15,7 @@ from attest._proto.codec import (
 )
 from attest._proto.types import (
     Assertion,
+    AssertionResult,
     EvaluateBatchResult,
     Trace,
 )
@@ -165,7 +166,16 @@ class AttestClient:
         trace: Trace,
         assertions: list[Assertion],
     ) -> EvaluateBatchResult:
-        """Send evaluate_batch request and return parsed results."""
+        """Send evaluate_batch request and return parsed results.
+
+        In simulation mode, returns deterministic pass results without
+        spawning the engine or making API calls.
+        """
+        from attest.config import is_simulation_mode
+
+        if is_simulation_mode():
+            return _simulation_evaluate_batch(assertions)
+
         params: dict[str, Any] = {
             "trace": trace.to_dict(),
             "assertions": [a.to_dict() for a in assertions],
@@ -198,3 +208,24 @@ class AttestClient:
         }
         raw = await self.send_request("submit_plugin_result", params)
         return bool(raw.get("accepted", False))
+
+
+def _simulation_evaluate_batch(assertions: list[Assertion]) -> EvaluateBatchResult:
+    """Return deterministic pass results for all assertions without engine."""
+    results = [
+        AssertionResult(
+            assertion_id=a.assertion_id,
+            status="pass",
+            score=1.0,
+            explanation=f"[simulation] {a.type} assertion passed (deterministic)",
+            cost=0.0,
+            duration_ms=0,
+            request_id=a.request_id,
+        )
+        for a in assertions
+    ]
+    return EvaluateBatchResult(
+        results=results,
+        total_cost=0.0,
+        total_duration_ms=0,
+    )

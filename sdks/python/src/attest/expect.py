@@ -458,6 +458,40 @@ class ExpectChain:
             {"check": "aggregate_tokens", "operator": "lte", "value": max_tokens, "soft": soft},
         )
 
+    def agent_ordered_before(
+        self, agent_a: str, agent_b: str, *, soft: bool = False
+    ) -> ExpectChain:
+        """Assert agent_a started before agent_b in the trace tree."""
+        return self._add(
+            TYPE_TRACE_TREE,
+            {"check": "agent_ordered_before", "agent_a": agent_a, "agent_b": agent_b, "soft": soft},
+        )
+
+    def agents_overlap(self, agent_a: str, agent_b: str, *, soft: bool = False) -> ExpectChain:
+        """Assert agent_a and agent_b ran concurrently (overlapping wall-clock time)."""
+        return self._add(
+            TYPE_TRACE_TREE,
+            {"check": "agents_overlap", "agent_a": agent_a, "agent_b": agent_b, "soft": soft},
+        )
+
+    def agent_wall_time_under(
+        self, agent_id: str, max_ms: int, *, soft: bool = False
+    ) -> ExpectChain:
+        """Assert a specific agent's wall-clock duration is under max_ms."""
+        return self._add(
+            TYPE_TRACE_TREE,
+            {"check": "agent_wall_time_under", "agent_id": agent_id, "max_ms": max_ms, "soft": soft},
+        )
+
+    def ordered_agents(
+        self, groups: list[list[str]], *, soft: bool = False
+    ) -> ExpectChain:
+        """Assert agents ran in the specified ordered groups (parallel within, sequential across)."""
+        return self._add(
+            TYPE_TRACE_TREE,
+            {"check": "ordered_agents", "groups": groups, "soft": soft},
+        )
+
 
 def expect(result: AgentResult) -> ExpectChain:
     """Create an assertion chain for an agent result.

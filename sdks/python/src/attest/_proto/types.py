@@ -105,6 +105,10 @@ class Step:
     result: dict[str, Any] | None = None
     sub_trace: Trace | None = None
     metadata: dict[str, Any] | None = None
+    started_at_ms: int | None = None
+    ended_at_ms: int | None = None
+    agent_id: str | None = None
+    agent_role: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         d: dict[str, Any] = {"type": self.type, "name": self.name}
@@ -116,6 +120,14 @@ class Step:
             d["sub_trace"] = self.sub_trace.to_dict()
         if self.metadata is not None:
             d["metadata"] = _serialize(self.metadata)
+        if self.started_at_ms is not None:
+            d["started_at_ms"] = self.started_at_ms
+        if self.ended_at_ms is not None:
+            d["ended_at_ms"] = self.ended_at_ms
+        if self.agent_id is not None:
+            d["agent_id"] = self.agent_id
+        if self.agent_role is not None:
+            d["agent_role"] = self.agent_role
         return d
 
 
@@ -161,6 +173,10 @@ class Trace:
                     result=s.get("result"),
                     sub_trace=sub_trace,
                     metadata=s.get("metadata"),
+                    started_at_ms=s.get("started_at_ms"),
+                    ended_at_ms=s.get("ended_at_ms"),
+                    agent_id=s.get("agent_id"),
+                    agent_role=s.get("agent_role"),
                 )
             )
         raw_meta = data.get("metadata")
