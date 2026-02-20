@@ -344,7 +344,7 @@ class ExpectChain:
         self,
         reference: str,
         *,
-        threshold: float = 0.8,
+        threshold: float | str = 0.8,
         model: str | None = None,
         soft: bool = False,
     ) -> ExpectChain:
@@ -367,7 +367,7 @@ class ExpectChain:
         criteria: str,
         *,
         rubric: str = "default",
-        threshold: float = 0.8,
+        threshold: float | str = 0.8,
         model: str | None = None,
         soft: bool = False,
     ) -> ExpectChain:
