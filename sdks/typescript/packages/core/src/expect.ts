@@ -362,6 +362,41 @@ export class ExpectChain {
       soft: opts?.soft ?? false,
     });
   }
+
+  agentOrderedBefore(agentA: string, agentB: string, opts?: { soft?: boolean }): this {
+    return this.add(TYPE_TRACE_TREE, {
+      check: "agent_ordered_before",
+      agent_a: agentA,
+      agent_b: agentB,
+      soft: opts?.soft ?? false,
+    });
+  }
+
+  agentsOverlap(agentA: string, agentB: string, opts?: { soft?: boolean }): this {
+    return this.add(TYPE_TRACE_TREE, {
+      check: "agents_overlap",
+      agent_a: agentA,
+      agent_b: agentB,
+      soft: opts?.soft ?? false,
+    });
+  }
+
+  agentWallTimeUnder(agentId: string, maxMs: number, opts?: { soft?: boolean }): this {
+    return this.add(TYPE_TRACE_TREE, {
+      check: "agent_wall_time_under",
+      agent_id: agentId,
+      max_ms: maxMs,
+      soft: opts?.soft ?? false,
+    });
+  }
+
+  orderedAgents(groups: string[][], opts?: { soft?: boolean }): this {
+    return this.add(TYPE_TRACE_TREE, {
+      check: "ordered_agents",
+      groups,
+      soft: opts?.soft ?? false,
+    });
+  }
 }
 
 export function attestExpect(result: AgentResult): ExpectChain {

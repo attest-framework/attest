@@ -13,6 +13,10 @@ export interface Step {
   readonly result?: Record<string, unknown>;
   readonly sub_trace?: Trace;
   readonly metadata?: Record<string, unknown>;
+  readonly started_at_ms?: number;
+  readonly ended_at_ms?: number;
+  readonly agent_id?: string;
+  readonly agent_role?: string;
 }
 
 export interface Trace {

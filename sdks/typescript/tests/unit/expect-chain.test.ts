@@ -156,4 +156,82 @@ describe("ExpectChain", () => {
     expect(new Set(ids).size).toBe(2);
     expect(ids[0]).toMatch(/^assert_[a-f0-9]{8}$/);
   });
+
+  // Layer 7: Temporal DSL
+  it("agentOrderedBefore adds trace_tree assertion", () => {
+    const chain = attestExpect(makeResult()).agentOrderedBefore("planner", "executor");
+    expect(chain.assertions).toHaveLength(1);
+    expect(chain.assertions[0].type).toBe(TYPE_TRACE_TREE);
+    expect(chain.assertions[0].spec.check).toBe("agent_ordered_before");
+    expect(chain.assertions[0].spec.agent_a).toBe("planner");
+    expect(chain.assertions[0].spec.agent_b).toBe("executor");
+    expect(chain.assertions[0].spec.soft).toBe(false);
+  });
+
+  it("agentOrderedBefore supports soft option", () => {
+    const chain = attestExpect(makeResult()).agentOrderedBefore("a", "b", { soft: true });
+    expect(chain.assertions[0].spec.soft).toBe(true);
+  });
+
+  it("agentsOverlap adds trace_tree assertion", () => {
+    const chain = attestExpect(makeResult()).agentsOverlap("worker-1", "worker-2");
+    expect(chain.assertions).toHaveLength(1);
+    expect(chain.assertions[0].type).toBe(TYPE_TRACE_TREE);
+    expect(chain.assertions[0].spec.check).toBe("agents_overlap");
+    expect(chain.assertions[0].spec.agent_a).toBe("worker-1");
+    expect(chain.assertions[0].spec.agent_b).toBe("worker-2");
+    expect(chain.assertions[0].spec.soft).toBe(false);
+  });
+
+  it("agentsOverlap supports soft option", () => {
+    const chain = attestExpect(makeResult()).agentsOverlap("a", "b", { soft: true });
+    expect(chain.assertions[0].spec.soft).toBe(true);
+  });
+
+  it("agentWallTimeUnder adds trace_tree assertion", () => {
+    const chain = attestExpect(makeResult()).agentWallTimeUnder("summarizer", 3000);
+    expect(chain.assertions).toHaveLength(1);
+    expect(chain.assertions[0].type).toBe(TYPE_TRACE_TREE);
+    expect(chain.assertions[0].spec.check).toBe("agent_wall_time_under");
+    expect(chain.assertions[0].spec.agent_id).toBe("summarizer");
+    expect(chain.assertions[0].spec.max_ms).toBe(3000);
+    expect(chain.assertions[0].spec.soft).toBe(false);
+  });
+
+  it("agentWallTimeUnder supports soft option", () => {
+    const chain = attestExpect(makeResult()).agentWallTimeUnder("summarizer", 3000, { soft: true });
+    expect(chain.assertions[0].spec.soft).toBe(true);
+  });
+
+  it("orderedAgents adds trace_tree assertion", () => {
+    const groups = [["planner"], ["worker-1", "worker-2"], ["aggregator"]];
+    const chain = attestExpect(makeResult()).orderedAgents(groups);
+    expect(chain.assertions).toHaveLength(1);
+    expect(chain.assertions[0].type).toBe(TYPE_TRACE_TREE);
+    expect(chain.assertions[0].spec.check).toBe("ordered_agents");
+    expect(chain.assertions[0].spec.groups).toEqual(groups);
+    expect(chain.assertions[0].spec.soft).toBe(false);
+  });
+
+  it("orderedAgents supports soft option", () => {
+    const chain = attestExpect(makeResult()).orderedAgents([["a"], ["b"]], { soft: true });
+    expect(chain.assertions[0].spec.soft).toBe(true);
+  });
+
+  it("temporal methods support fluent chaining", () => {
+    const chain = attestExpect(makeResult())
+      .agentOrderedBefore("planner", "executor")
+      .agentsOverlap("worker-1", "worker-2")
+      .agentWallTimeUnder("summarizer", 5000)
+      .orderedAgents([["a"], ["b", "c"]]);
+
+    expect(chain.assertions).toHaveLength(4);
+    const checks = chain.assertions.map((a) => a.spec.check);
+    expect(checks).toEqual([
+      "agent_ordered_before",
+      "agents_overlap",
+      "agent_wall_time_under",
+      "ordered_agents",
+    ]);
+  });
 });
