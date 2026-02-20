@@ -480,13 +480,18 @@ class ExpectChain:
         """Assert a specific agent's wall-clock duration is under max_ms."""
         return self._add(
             TYPE_TRACE_TREE,
-            {"check": "agent_wall_time_under", "agent_id": agent_id, "max_ms": max_ms, "soft": soft},
+            {
+                "check": "agent_wall_time_under",
+                "agent_id": agent_id,
+                "max_ms": max_ms,
+                "soft": soft,
+            },
         )
 
     def ordered_agents(
         self, groups: list[list[str]], *, soft: bool = False
     ) -> ExpectChain:
-        """Assert agents ran in the specified ordered groups (parallel within, sequential across)."""
+        """Assert agents ran in ordered groups (parallel within, sequential across)."""
         return self._add(
             TYPE_TRACE_TREE,
             {"check": "ordered_agents", "groups": groups, "soft": soft},
