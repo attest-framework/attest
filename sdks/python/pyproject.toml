@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "attest-ai"
-version = "0.3.0"
+version = "0.4.0"
 description = "Test framework for AI agents"
 readme = "README.md"
 license = "Apache-2.0"
@@ -39,7 +39,8 @@ otel = ["opentelemetry-api>=1.20", "opentelemetry-sdk>=1.20"]
 langchain = ["langchain-core>=0.3"]
 google-adk = ["google-adk>=1.0"]
 llamaindex = ["llama-index-core>=0.10.20"]
-all = ["attest-ai[openai,anthropic,gemini,ollama,otel,langchain,google-adk,llamaindex]"]
+crewai = ["crewai>=0.60"]
+all = ["attest-ai[openai,anthropic,gemini,ollama,otel,langchain,google-adk,llamaindex,crewai]"]
 
 [project.urls]
 Homepage = "https://github.com/attest-frameowrk/attest"
@@ -49,6 +50,17 @@ Documentation = "https://github.com/attest-frameowrk/attest#readme"
 
 [project.entry-points.pytest11]
 attest = "attest.plugin"
+
+# Third-party plugins can register themselves under the "attest.plugins" entry
+# point group. Attest discovers and loads them at runtime via
+# load_entrypoint_plugins() in attest.plugins.
+#
+# Example in a plugin's pyproject.toml:
+#   [project.entry-points."attest.plugins"]
+#   my-plugin = "my_package:MyPlugin"
+#
+# The entry point value must be importable and satisfy the AttestPlugin Protocol
+# (has .name, .plugin_type, and .execute(trace, spec) -> PluginResult).
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/attest"]
@@ -81,4 +93,8 @@ ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
 module = ["llama_index.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["crewai.*"]
 ignore_missing_imports = true
