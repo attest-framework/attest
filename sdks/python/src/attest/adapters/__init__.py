@@ -61,4 +61,6 @@ __all__ = [
     "TraceAdapter",
     "ProviderAdapter",
     "FrameworkAdapter",
+    # Framework adapters
+    "CrewAIAdapter",
 ]

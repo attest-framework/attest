@@ -166,3 +166,27 @@ class TestPassesJudge:
         assert len(chain.assertions) == 2
         assert chain.assertions[0].type == TYPE_EMBEDDING
         assert chain.assertions[1].type == TYPE_LLM_JUDGE
+
+
+class TestDynamicThreshold:
+    """Tests for dynamic threshold support in output_similar_to and passes_judge."""
+
+    def test_dynamic_threshold_embedding(self, embedding_result: AgentResult) -> None:
+        chain = expect(embedding_result).output_similar_to("ref", threshold="dynamic")
+        assert chain.assertions[0].spec["threshold"] == "dynamic"
+
+    def test_dynamic_threshold_judge(self, judge_result: AgentResult) -> None:
+        chain = expect(judge_result).passes_judge("criteria", threshold="dynamic")
+        assert chain.assertions[0].spec["threshold"] == "dynamic"
+
+    def test_float_threshold_still_works_embedding(self, embedding_result: AgentResult) -> None:
+        chain = expect(embedding_result).output_similar_to("ref", threshold=0.75)
+        assert chain.assertions[0].spec["threshold"] == 0.75
+
+    def test_float_threshold_still_works_judge(self, judge_result: AgentResult) -> None:
+        chain = expect(judge_result).passes_judge("criteria", threshold=0.6)
+        assert chain.assertions[0].spec["threshold"] == 0.6
+
+    def test_default_threshold_unchanged(self, embedding_result: AgentResult) -> None:
+        chain = expect(embedding_result).output_similar_to("ref")
+        assert chain.assertions[0].spec["threshold"] == 0.8

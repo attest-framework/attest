@@ -145,3 +145,32 @@ type ValidateTraceTreeResult struct {
 	AggregateCostUSD   float64  `json:"aggregate_cost_usd"`
 	AggregateLatencyMS int      `json:"aggregate_latency_ms"`
 }
+
+// QueryDriftParams holds parameters for the query_drift RPC method.
+type QueryDriftParams struct {
+	AssertionID string `json:"assertion_id"`
+	WindowSize  int    `json:"window_size"`
+}
+
+// QueryDriftResult holds the result of the query_drift RPC method.
+type QueryDriftResult struct {
+	Report DriftReport `json:"report"`
+}
+
+// DriftReport contains drift analysis for a single assertion.
+type DriftReport struct {
+	AssertionID string  `json:"assertion_id"`
+	Mean        float64 `json:"mean"`
+	Stddev      float64 `json:"stddev"`
+	Count       int     `json:"count"`
+	LatestScore float64 `json:"latest_score"`
+	Deviation   float64 `json:"deviation"`
+	Status      string  `json:"status"`
+}
+
+// DriftAlertNotification is a JSON-RPC 2.0 notification emitted when drift is detected.
+type DriftAlertNotification struct {
+	JSONRPC string      `json:"jsonrpc"`
+	Method  string      `json:"method"`
+	Params  DriftReport `json:"params"`
+}

@@ -1,0 +1,41 @@
+name: TypeScript SDK CI
+
+on:
+  push:
+    paths: ["sdks/typescript/**"]
+    branches: [main]
+  pull_request:
+    paths: ["sdks/typescript/**"]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node-version: ["18", "20", "22"]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: pnpm
+          cache-dependency-path: sdks/typescript/pnpm-lock.yaml
+      - name: Install dependencies
+        run: |
+          cd sdks/typescript
+          pnpm install --frozen-lockfile
+      - name: Build
+        run: |
+          cd sdks/typescript
+          pnpm -r build
+      - name: Test
+        run: |
+          cd sdks/typescript
+          pnpm -r test
+      - name: Type check
+        run: |
+          cd sdks/typescript
+          pnpm -r exec tsc --noEmit

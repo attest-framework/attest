@@ -40,3 +40,14 @@ CONFUSED_USER = Persona(
     style="confused",
     temperature=0.8,
 )
+
+COOPERATIVE_USER = Persona(
+    name="cooperative_user",
+    system_prompt=(
+        "You are a cooperative user who follows instructions precisely, "
+        "provides all requested information promptly, and confirms understanding "
+        "before proceeding with complex tasks."
+    ),
+    style="cooperative",
+    temperature=0.6,
+)

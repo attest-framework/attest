@@ -15,7 +15,7 @@ def test_cli_version() -> None:
     )
     assert result.returncode == 0
     assert "attest" in result.stdout
-    assert "0.3.0" in result.stdout
+    assert "0.4.0" in result.stdout
 
 
 def test_cli_run_alias_passes_args_to_pytest() -> None:

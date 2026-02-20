@@ -67,6 +67,16 @@ def main() -> None:
             print("Available: cache stats, cache clear", file=sys.stderr)
             sys.exit(1)
 
+    if args and args[0] == "init":
+        from attest.scaffold import scaffold_project
+        scaffold_project(Path.cwd())
+        sys.exit(0)
+
+    if args and args[0] == "validate":
+        from attest.scaffold import validate_suite
+        validate_suite(Path.cwd())
+        sys.exit(0)
+
     # `attest run [args]` — explicit alias for pytest passthrough
     if args and args[0] == "run":
         args = args[1:]

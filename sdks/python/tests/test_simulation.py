@@ -10,6 +10,7 @@ from attest.simulation.mock_tools import MockToolRegistry, mock_tool
 from attest.simulation.personas import (
     ADVERSARIAL_USER,
     CONFUSED_USER,
+    COOPERATIVE_USER,
     FRIENDLY_USER,
     Persona,
 )
@@ -56,6 +57,10 @@ def test_builtin_personas() -> None:
 
     assert CONFUSED_USER.style == "confused"
     assert CONFUSED_USER.name == "confused_user"
+
+    assert COOPERATIVE_USER.style == "cooperative"
+    assert COOPERATIVE_USER.name == "cooperative_user"
+    assert COOPERATIVE_USER.temperature == 0.6
 
 
 def test_personas_are_frozen() -> None:
