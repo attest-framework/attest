@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -18,10 +19,11 @@ import (
 	"github.com/attest-ai/attest/engine/internal/simulation"
 	"github.com/attest-ai/attest/engine/internal/trace"
 	"github.com/attest-ai/attest/engine/pkg/types"
+	_ "modernc.org/sqlite"
 )
 
 const (
-	engineVersion      = "0.3.0"
+	engineVersion      = "0.4.0"
 	protocolVersion    = 1
 	minProtocolVersion = 1
 )
@@ -29,15 +31,22 @@ const (
 // RegisterBuiltinHandlers registers the built-in JSON-RPC handlers on s.
 // It reads ATTEST_* env vars to configure Layer 5/6 providers and caches.
 func RegisterBuiltinHandlers(s *Server) {
-	opts, caps, judgeProvider := buildRegistryOptions(s.logger)
+	opts, caps, judgeProvider, historyStore := buildRegistryOptions(s.logger)
 	registry := assertion.NewRegistry(opts...)
-	pipeline := assertion.NewPipeline(registry)
+
+	var pipeline *assertion.Pipeline
+	if historyStore != nil {
+		pipeline = assertion.NewPipelineWithHistory(registry, historyStore)
+	} else {
+		pipeline = assertion.NewPipeline(registry)
+	}
 
 	s.RegisterHandler("initialize", handleInitialize(caps))
 	s.RegisterHandler("shutdown", handleShutdown)
-	s.RegisterHandler("evaluate_batch", handleEvaluateBatch(pipeline))
+	s.RegisterHandler("evaluate_batch", handleEvaluateBatch(pipeline, historyStore))
 	s.RegisterHandler("submit_plugin_result", handleSubmitPluginResult())
 	s.RegisterHandler("validate_trace_tree", handleValidateTraceTree())
+	s.RegisterHandler("query_drift", handleQueryDrift(historyStore))
 	if judgeProvider != nil {
 		s.RegisterHandler("generate_user_message", handleGenerateUserMessage(judgeProvider))
 	}
@@ -45,9 +54,10 @@ func RegisterBuiltinHandlers(s *Server) {
 
 // buildRegistryOptions reads env vars and constructs RegistryOption values
 // for Layer 5 (embedding) and Layer 6 (judge) evaluators. Returns the
-// options, the list of supported capabilities, and the judge provider (may be nil).
-func buildRegistryOptions(logger *slog.Logger) ([]assertion.RegistryOption, []string, llm.Provider) {
-	caps := []string{"layers_1_4", "trace_tree"}
+// options, the list of supported capabilities, the judge provider (may be nil),
+// and the HistoryStore (may be nil on failure).
+func buildRegistryOptions(logger *slog.Logger) ([]assertion.RegistryOption, []string, llm.Provider, *cache.HistoryStore) {
+	caps := []string{"layers_1_4", "trace_tree", "continuous_eval", "plugins"}
 	var opts []assertion.RegistryOption
 
 	// ── Layer 5: Embedding ──
@@ -140,7 +150,40 @@ func buildRegistryOptions(logger *slog.Logger) ([]assertion.RegistryOption, []st
 		caps = append(caps, "layers_5_6")
 	}
 
-	return opts, caps, judgeProvider
+	// ── History Store ──
+	var historyStore *cache.HistoryStore
+	{
+		cacheDir := cacheDirectory()
+		dbPath := filepath.Join(cacheDir, "attest.db")
+		if err := os.MkdirAll(cacheDir, 0o755); err != nil {
+			logger.Warn("failed to create cache dir for history store", "dir", cacheDir, "err", err)
+		} else {
+			db, err := openHistoryDB(dbPath)
+			if err != nil {
+				logger.Warn("failed to open history db", "err", err)
+			} else {
+				hs, err := cache.NewHistoryStore(db)
+				if err != nil {
+					logger.Warn("failed to create history store", "err", err)
+					db.Close()
+				} else {
+					historyStore = hs
+					logger.Info("history store enabled", "db", dbPath)
+				}
+			}
+		}
+	}
+
+	return opts, caps, judgeProvider, historyStore
+}
+
+// openHistoryDB opens the SQLite database at dbPath for the history store.
+func openHistoryDB(dbPath string) (*sql.DB, error) {
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		return nil, fmt.Errorf("open sqlite: %w", err)
+	}
+	return db, nil
 }
 
 // buildJudgeProvider selects and constructs an LLM provider for judging.
@@ -328,7 +371,7 @@ func handleShutdown(session *Session, _ json.RawMessage) (any, *types.RPCError) 
 	}, nil
 }
 
-func handleEvaluateBatch(pipeline *assertion.Pipeline) Handler {
+func handleEvaluateBatch(pipeline *assertion.Pipeline, historyStore *cache.HistoryStore) Handler {
 	return func(session *Session, params json.RawMessage) (any, *types.RPCError) {
 		if session.State() != StateInitialized {
 			return nil, types.NewRPCError(
@@ -356,6 +399,24 @@ func handleEvaluateBatch(pipeline *assertion.Pipeline) Handler {
 			return nil, rpcErr
 		}
 
+		type assertionMeta struct {
+			assertionType string
+			dynamic       bool
+		}
+		assertionMap := make(map[string]assertionMeta, len(p.Assertions))
+		for _, a := range p.Assertions {
+			meta := assertionMeta{assertionType: a.Type}
+			var spec struct {
+				Threshold string `json:"threshold"`
+			}
+			if a.Spec != nil {
+				if err := json.Unmarshal(a.Spec, &spec); err == nil && spec.Threshold == "dynamic" {
+					meta.dynamic = true
+				}
+			}
+			assertionMap[a.AssertionID] = meta
+		}
+
 		result, err := pipeline.EvaluateBatch(&p.Trace, p.Assertions)
 		if err != nil {
 			return nil, types.NewRPCError(
@@ -367,6 +428,38 @@ func handleEvaluateBatch(pipeline *assertion.Pipeline) Handler {
 			)
 		}
 
+		if historyStore != nil {
+			for i := range result.Results {
+				ar := &result.Results[i]
+				meta := assertionMap[ar.AssertionID]
+				if recErr := historyStore.Record(p.Trace.TraceID, ar.AssertionID, meta.assertionType, ar.Score, ar.Status); recErr != nil {
+					// Non-fatal: log and continue.
+					_ = recErr
+				}
+
+				// Emit drift_alert notification when dynamic assertion hard-fails.
+				if meta.dynamic && ar.Status == types.StatusHardFail {
+					mean, stddev, count, statsErr := historyStore.Stats(ar.AssertionID)
+					if statsErr == nil {
+						notification := types.DriftAlertNotification{
+							JSONRPC: "2.0",
+							Method:  "drift_alert",
+							Params: types.DriftReport{
+								AssertionID: ar.AssertionID,
+								Mean:        mean,
+								Stddev:      stddev,
+								Count:       count,
+								LatestScore: ar.Score,
+								Deviation:   ar.Score - mean,
+								Status:      "drift_detected",
+							},
+						}
+						_ = json.NewEncoder(os.Stdout).Encode(notification)
+					}
+				}
+			}
+		}
+
 		session.IncrementAssertions(len(result.Results))
 
 		return &types.EvaluateBatchResult{
@@ -374,6 +467,90 @@ func handleEvaluateBatch(pipeline *assertion.Pipeline) Handler {
 			TotalCost:       result.TotalCost,
 			TotalDurationMS: result.TotalDurationMS,
 		}, nil
+	}
+}
+
+func handleQueryDrift(historyStore *cache.HistoryStore) Handler {
+	return func(session *Session, params json.RawMessage) (any, *types.RPCError) {
+		if session.State() != StateInitialized {
+			return nil, types.NewRPCError(
+				types.ErrSessionError,
+				"query_drift called before initialize",
+				types.ErrTypeSessionError,
+				false,
+				"call initialize first to establish a session",
+			)
+		}
+
+		var p types.QueryDriftParams
+		if err := json.Unmarshal(params, &p); err != nil {
+			return nil, types.NewRPCError(
+				types.ErrAssertionError,
+				"invalid query_drift params",
+				types.ErrTypeAssertionError,
+				false,
+				err.Error(),
+			)
+		}
+
+		if historyStore == nil {
+			return nil, types.NewRPCError(
+				types.ErrEngineError,
+				"history store not available",
+				types.ErrTypeEngineError,
+				false,
+				"history store failed to initialize at startup",
+			)
+		}
+
+		windowSize := p.WindowSize
+		if windowSize <= 0 {
+			windowSize = 50
+		}
+
+		scores, err := historyStore.QueryWindow(p.AssertionID, windowSize)
+		if err != nil {
+			return nil, types.NewRPCError(
+				types.ErrEngineError,
+				fmt.Sprintf("query_drift failed: %v", err),
+				types.ErrTypeEngineError,
+				false,
+				"error querying assertion history",
+			)
+		}
+
+		mean, stddev, count, err := historyStore.Stats(p.AssertionID)
+		if err != nil {
+			return nil, types.NewRPCError(
+				types.ErrEngineError,
+				fmt.Sprintf("query_drift stats failed: %v", err),
+				types.ErrTypeEngineError,
+				false,
+				"error computing assertion stats",
+			)
+		}
+
+		var latestScore float64
+		if len(scores) > 0 {
+			latestScore = scores[0]
+		}
+
+		deviation := latestScore - mean
+
+		report := types.DriftReport{
+			AssertionID: p.AssertionID,
+			Mean:        mean,
+			Stddev:      stddev,
+			Count:       count,
+			LatestScore: latestScore,
+			Deviation:   deviation,
+			Status:      "ok",
+		}
+		if count > 0 && stddev > 0 && latestScore < mean-stddev {
+			report.Status = "drift_detected"
+		}
+
+		return &types.QueryDriftResult{Report: report}, nil
 	}
 }
 

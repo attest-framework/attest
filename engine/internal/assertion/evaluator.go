@@ -22,11 +22,12 @@ type Registry struct {
 
 // registryConfig holds optional Layer 5/6 configuration.
 type registryConfig struct {
-	embedder      embedding.Embedder
+	embedder       embedding.Embedder
 	embeddingCache *cache.EmbeddingCache
 	judgeProvider  llm.Provider
 	rubrics        *judge.RubricRegistry
 	judgeCache     *cache.JudgeCache
+	historyStore   *cache.HistoryStore
 }
 
 // RegistryOption configures optional evaluators on a Registry.
@@ -46,6 +47,13 @@ func WithJudge(provider llm.Provider, rubrics *judge.RubricRegistry, c *cache.Ju
 		cfg.judgeProvider = provider
 		cfg.rubrics = rubrics
 		cfg.judgeCache = c
+	}
+}
+
+// WithHistory injects a HistoryStore into the registry for dynamic threshold evaluation.
+func WithHistory(store *cache.HistoryStore) RegistryOption {
+	return func(cfg *registryConfig) {
+		cfg.historyStore = store
 	}
 }
 

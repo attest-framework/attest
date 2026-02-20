@@ -1,20 +1,28 @@
 package assertion
 
 import (
+	"encoding/json"
 	"fmt"
 	"sync"
 
+	"github.com/attest-ai/attest/engine/internal/cache"
 	"github.com/attest-ai/attest/engine/pkg/types"
 )
 
 // Pipeline evaluates batches of assertions against a trace.
 type Pipeline struct {
-	registry *Registry
+	registry     *Registry
+	historyStore *cache.HistoryStore
 }
 
 // NewPipeline creates a new assertion evaluation pipeline.
 func NewPipeline(registry *Registry) *Pipeline {
 	return &Pipeline{registry: registry}
+}
+
+// NewPipelineWithHistory creates a pipeline that uses the history store for dynamic threshold evaluation.
+func NewPipelineWithHistory(registry *Registry, store *cache.HistoryStore) *Pipeline {
+	return &Pipeline{registry: registry, historyStore: store}
 }
 
 // layerOrder defines evaluation order by assertion type.
@@ -88,6 +96,7 @@ func (p *Pipeline) EvaluateBatchWithBudget(trace *types.Trace, assertions []type
 		}
 
 		ar := eval.Evaluate(trace, &l14[i])
+		p.applyDynamicThreshold(ar, &l14[i])
 		result.Results = append(result.Results, *ar)
 		result.TotalCost += ar.Cost
 		result.TotalDurationMS += ar.DurationMS
@@ -130,6 +139,7 @@ func (p *Pipeline) EvaluateBatchWithBudget(trace *types.Trace, assertions []type
 				return
 			}
 			ar := eval.Evaluate(trace, &l56[idx])
+			p.applyDynamicThreshold(ar, &l56[idx])
 			l56Results[idx] = *ar
 			l56Costs[idx] = ar.Cost
 			l56Durations[idx] = ar.DurationMS
@@ -152,4 +162,28 @@ func (p *Pipeline) EvaluateBatchWithBudget(trace *types.Trace, assertions []type
 	}
 
 	return result, nil
+}
+
+// applyDynamicThreshold checks if the assertion spec contains "threshold":"dynamic"
+// and if so, overrides the result status using ClassifyDynamic against stored history.
+// No-ops when the historyStore is nil or the spec does not request dynamic classification.
+func (p *Pipeline) applyDynamicThreshold(ar *types.AssertionResult, a *types.Assertion) {
+	if p.historyStore == nil {
+		return
+	}
+
+	var spec struct {
+		Threshold string `json:"threshold"`
+	}
+	if err := json.Unmarshal(a.Spec, &spec); err != nil || spec.Threshold != "dynamic" {
+		return
+	}
+
+	history, err := p.historyStore.QueryWindow(a.AssertionID, DefaultDynamicConfig.WindowSize)
+	if err != nil {
+		// Non-fatal: leave status unchanged.
+		return
+	}
+
+	ar.Status = ClassifyDynamic(ar.Score, history, DefaultDynamicConfig)
 }

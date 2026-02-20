@@ -61,3 +61,71 @@ func TestDefaultThresholds(t *testing.T) {
 		t.Errorf("DefaultThresholds.Soft = %f, want 0.5", assertion.DefaultThresholds.Soft)
 	}
 }
+
+func TestClassifyDynamic_FallbackWhenBelowMinRuns(t *testing.T) {
+	cfg := assertion.DynamicConfig{WindowSize: 50, SigmaScale: 2.0, MinRuns: 10}
+	// Only 3 history entries — below MinRuns=10, so falls back to ClassifyScore.
+	history := []float64{0.9, 0.85, 0.88}
+
+	cases := []struct {
+		score    float64
+		expected string
+	}{
+		{0.3, types.StatusHardFail},  // ClassifyScore: < 0.5
+		{0.6, types.StatusSoftFail},  // ClassifyScore: 0.5 <= x < 0.8
+		{0.85, types.StatusPass},     // ClassifyScore: >= 0.8
+	}
+
+	for _, tc := range cases {
+		got := assertion.ClassifyDynamic(tc.score, history, cfg)
+		if got != tc.expected {
+			t.Errorf("ClassifyDynamic(%f, history[3], fallback) = %q, want %q", tc.score, got, tc.expected)
+		}
+	}
+}
+
+func TestClassifyDynamic_PassAboveThreshold(t *testing.T) {
+	cfg := assertion.DynamicConfig{WindowSize: 50, SigmaScale: 2.0, MinRuns: 5}
+	// mean=0.8, stddev=0 → threshold=0.8; score 0.85 >= 0.8 → pass
+	history := []float64{0.8, 0.8, 0.8, 0.8, 0.8}
+
+	got := assertion.ClassifyDynamic(0.85, history, cfg)
+	if got != types.StatusPass {
+		t.Errorf("ClassifyDynamic(0.85, uniform-0.8 history) = %q, want %q", got, types.StatusPass)
+	}
+}
+
+func TestClassifyDynamic_FailBelowThreshold(t *testing.T) {
+	cfg := assertion.DynamicConfig{WindowSize: 50, SigmaScale: 1.0, MinRuns: 5}
+	// mean=0.8, stddev=0 → threshold=0.8; score 0.75 < 0.8 → hard_fail
+	history := []float64{0.8, 0.8, 0.8, 0.8, 0.8}
+
+	got := assertion.ClassifyDynamic(0.75, history, cfg)
+	if got != types.StatusHardFail {
+		t.Errorf("ClassifyDynamic(0.75, uniform-0.8 history) = %q, want %q", got, types.StatusHardFail)
+	}
+}
+
+func TestClassifyDynamic_ZeroStddevUniformHistory(t *testing.T) {
+	cfg := assertion.DynamicConfig{WindowSize: 50, SigmaScale: 2.0, MinRuns: 5}
+	// All same scores: mean=0.7, stddev=0, threshold=0.7-0=0.7
+	history := []float64{0.7, 0.7, 0.7, 0.7, 0.7}
+
+	// Score exactly at mean: pass
+	if got := assertion.ClassifyDynamic(0.7, history, cfg); got != types.StatusPass {
+		t.Errorf("ClassifyDynamic(0.7, uniform-0.7) = %q, want pass", got)
+	}
+	// Score below mean: hard_fail
+	if got := assertion.ClassifyDynamic(0.69, history, cfg); got != types.StatusHardFail {
+		t.Errorf("ClassifyDynamic(0.69, uniform-0.7) = %q, want hard_fail", got)
+	}
+}
+
+func TestClassifyDynamic_EmptyHistory(t *testing.T) {
+	cfg := assertion.DynamicConfig{WindowSize: 50, SigmaScale: 2.0, MinRuns: 5}
+	// Empty history — len(0) < MinRuns(5), falls back to ClassifyScore.
+	got := assertion.ClassifyDynamic(0.9, []float64{}, cfg)
+	if got != types.StatusPass {
+		t.Errorf("ClassifyDynamic(0.9, empty) = %q, want pass", got)
+	}
+}
