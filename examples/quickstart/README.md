@@ -71,3 +71,15 @@ The test showcases assertions across all evaluation layers:
 ## No API Keys Required
 
 This example uses manual trace construction via the `@agent` decorator and `TraceBuilder`. No LLM API keys are needed.
+
+## Testing Existing Agents
+
+The `@agent` decorator and `TraceBuilder` injection pattern shown here is designed for **synthetic agents** — agents built from scratch with Attest testability in mind. No actual LLM calls are made.
+
+To test **existing agents** from real orchestration frameworks without modifying agent code, use the framework-specific adapters:
+
+- [`examples/langchain-agent/`](../langchain-agent/) — Test LangChain/LangGraph agents via callback handler
+- [`examples/google-adk/`](../google-adk/) — Test Google ADK agents via async event stream capture
+- [`examples/llamaindex-agent/`](../llamaindex-agent/) — Test LlamaIndex RAG agents via instrumentation dispatcher
+
+Each adapter captures traces externally — the agent code remains untouched.
