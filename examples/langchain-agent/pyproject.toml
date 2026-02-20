@@ -1,0 +1,23 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "attest-langchain-agent"
+version = "0.1.0"
+description = "Attest LangChain agent example"
+requires-python = ">=3.10"
+
+dependencies = [
+    "attest-ai[langchain]>=0.3.0",
+    "langchain-openai>=0.2",
+    "langgraph>=0.2",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["."]
