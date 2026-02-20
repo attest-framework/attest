@@ -80,12 +80,13 @@ SDK (Python/TS/Go) ──stdin/stdout──▶ Engine Process (Go)
 - **Soft failure budgets** — scores between 0.5–0.8 warn without blocking CI
 - **Cost as a test metric** — assert on token usage, API cost, and latency
 - **Python & TypeScript SDKs** — `attest-ai` (PyPI) + `@attest-ai/core` / `@attest-ai/vitest` (npm)
-- **Framework-agnostic** — SDK adapters for OpenAI, Anthropic, Gemini, Ollama, OTel; engine judge: OpenAI (Anthropic, Gemini, Ollama planned v0.4)
+- **Framework-agnostic** — provider adapters (OpenAI, Anthropic, Gemini, Ollama) + framework adapters (LangChain, Google ADK, LlamaIndex, OTel) + extensible `BaseAdapter`/`BaseProviderAdapter` for custom adapters
 - **Local ONNX embeddings** — optional all-MiniLM-L6-v2 provider, zero API cost for Layer 5
 - **Judge meta-evaluation** — 3x judge runs with median scoring and variance detection
 - **CI-ready** — composite GitHub Action, tiered testing workflow, adversarial hardening
 - **Simulation runtime** — simulated users with personas, mock tools, fault injection, multi-turn orchestration
-- **Multi-agent testing** — hierarchical trace trees, cross-agent assertions, delegation tracking, aggregate metrics
+- **Multi-agent testing** — hierarchical trace trees, cross-agent assertions, delegation tracking, temporal assertions, aggregate metrics
+- **Simulation mode** — `attest.config(simulation=True)` for zero-cost test runs with mocked responses
 - **Single binary engine** — no runtime dependencies, cross-platform
 
 ## Repository Layout
@@ -155,8 +156,8 @@ pnpm add @attest-ai/core @attest-ai/vitest
 | 0     | —       | **Complete** | Repository scaffolding, toolchain, protocol spec                                  |
 | 1     | v0.1    | **Complete** | Go engine (Layers 1–4), Python SDK, pytest plugin, 4 LLM adapters                 |
 | 2     | v0.2    | **Complete** | Layers 5–6 (embeddings, LLM-as-judge), soft failures, CI integration              |
-| 3     | v0.3    | **Complete** | Simulation runtime, multi-agent testing, TypeScript SDK, cross-agent choreography |
-| 4     | v0.4    | Planned      | Continuous eval, plugin system, LangChain/LlamaIndex adapters                     |
+| 3     | v0.3    | **Complete** | Simulation runtime, multi-agent testing, TypeScript SDK, framework adapters, temporal assertions |
+| 4     | v0.4    | Planned      | Continuous eval, drift detection, plugin system, CrewAI adapter                   |
 | 5     | v0.5    | Planned      | Go SDK, Attest Cloud MVP, benchmark registry                                      |
 
 ## Contributing
