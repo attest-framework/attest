@@ -296,6 +296,12 @@ gemini = [
 google-adk = [
     { name = "google-adk" },
 ]
+integration-test = [
+    { name = "crewai" },
+    { name = "google-adk" },
+    { name = "google-genai" },
+    { name = "langchain-core" },
+]
 langchain = [
     { name = "langchain-core" },
 ]
@@ -319,9 +325,13 @@ requires-dist = [
     { name = "attest-ai", extras = ["openai", "anthropic", "gemini", "ollama", "otel", "langchain", "google-adk", "llamaindex", "crewai"], marker = "extra == 'all'" },
     { name = "build", marker = "extra == 'dev'", specifier = ">=1.0" },
     { name = "crewai", marker = "extra == 'crewai'", specifier = ">=0.60" },
+    { name = "crewai", marker = "extra == 'integration-test'", specifier = ">=0.60" },
     { name = "google-adk", marker = "extra == 'google-adk'", specifier = ">=1.0" },
+    { name = "google-adk", marker = "extra == 'integration-test'", specifier = ">=1.0" },
     { name = "google-genai", marker = "extra == 'gemini'", specifier = ">=1.0" },
+    { name = "google-genai", marker = "extra == 'integration-test'", specifier = ">=1.0" },
     { name = "jsonschema", specifier = ">=4.20" },
+    { name = "langchain-core", marker = "extra == 'integration-test'", specifier = ">=0.3" },
     { name = "langchain-core", marker = "extra == 'langchain'", specifier = ">=0.3" },
     { name = "llama-index-core", marker = "extra == 'llamaindex'", specifier = ">=0.10.20" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.10" },
@@ -334,7 +344,7 @@ requires-dist = [
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.4" },
     { name = "twine", marker = "extra == 'dev'", specifier = ">=6.0" },
 ]
-provides-extras = ["dev", "openai", "anthropic", "gemini", "ollama", "otel", "langchain", "google-adk", "llamaindex", "crewai", "all"]
+provides-extras = ["dev", "openai", "anthropic", "gemini", "ollama", "otel", "langchain", "google-adk", "llamaindex", "crewai", "integration-test", "all"]
 
 [[package]]
 name = "attrs"
