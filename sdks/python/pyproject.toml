@@ -36,7 +36,10 @@ anthropic = ["anthropic>=0.30"]
 gemini = ["google-genai>=1.0"]
 ollama = ["ollama>=0.4"]
 otel = ["opentelemetry-api>=1.20", "opentelemetry-sdk>=1.20"]
-all = ["attest-ai[openai,anthropic,gemini,ollama,otel]"]
+langchain = ["langchain-core>=0.3"]
+google-adk = ["google-adk>=1.0"]
+llamaindex = ["llama-index-core>=0.10.20"]
+all = ["attest-ai[openai,anthropic,gemini,ollama,otel,langchain,google-adk,llamaindex]"]
 
 [project.urls]
 Homepage = "https://github.com/attest-frameowrk/attest"
@@ -66,4 +69,20 @@ strict = true
 
 [[tool.mypy.overrides]]
 module = ["opentelemetry.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["langchain_core.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["google.adk.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["google.genai.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["llama_index.*"]
 ignore_missing_imports = true
