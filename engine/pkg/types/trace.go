@@ -23,12 +23,16 @@ type Trace struct {
 
 // Step represents a single step within a trace.
 type Step struct {
-	Type     string          `json:"type"`
-	Name     string          `json:"name"`
-	Args     json.RawMessage `json:"args"`
-	Result   json.RawMessage `json:"result"`
-	SubTrace *Trace          `json:"sub_trace,omitempty"`
-	Metadata json.RawMessage `json:"metadata,omitempty"`
+	Type        string          `json:"type"`
+	Name        string          `json:"name"`
+	Args        json.RawMessage `json:"args"`
+	Result      json.RawMessage `json:"result"`
+	SubTrace    *Trace          `json:"sub_trace,omitempty"`
+	Metadata    json.RawMessage `json:"metadata,omitempty"`
+	StartedAtMs *int64          `json:"started_at_ms,omitempty"`
+	EndedAtMs   *int64          `json:"ended_at_ms,omitempty"`
+	AgentID     string          `json:"agent_id,omitempty"`
+	AgentRole   string          `json:"agent_role,omitempty"`
 }
 
 // TraceMetadata holds optional metadata about a trace execution.

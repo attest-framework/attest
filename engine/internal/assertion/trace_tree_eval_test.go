@@ -253,6 +253,225 @@ func TestTraceTreeEval_MissingCheck(t *testing.T) {
 	}
 }
 
+// ptr helpers for temporal fields
+func int64Ptr(v int64) *int64 { return &v }
+
+// buildTimedStep creates a step with agent_id and temporal fields set.
+func buildTimedStep(agentID string, startedAtMs, endedAtMs int64) types.Step {
+	return types.Step{
+		Type:        types.StepTypeLLMCall,
+		Name:        "timed_step_" + agentID,
+		AgentID:     agentID,
+		StartedAtMs: int64Ptr(startedAtMs),
+		EndedAtMs:   int64Ptr(endedAtMs),
+	}
+}
+
+func TestTraceTreeEval_AgentOrderedBefore_Pass(t *testing.T) {
+	// agent_a: 100–200ms, agent_b: 300–400ms → a ends before b starts
+	root := buildAgentTrace("root_agent", nil, map[string]interface{}{"ok": true},
+		buildTimedStep("agent_a", 100, 200),
+		buildTimedStep("agent_b", 300, 400),
+	)
+
+	eval := &TraceTreeEvaluator{}
+	result := eval.Evaluate(root, makeTreeAssertion(`{"check":"agent_ordered_before","agent_a":"agent_a","agent_b":"agent_b"}`))
+	if result.Status != types.StatusPass {
+		t.Errorf("expected pass, got %q: %s", result.Status, result.Explanation)
+	}
+}
+
+func TestTraceTreeEval_AgentOrderedBefore_Fail(t *testing.T) {
+	// agent_a: 100–350ms, agent_b: 300–400ms → a does not end before b starts
+	root := buildAgentTrace("root_agent", nil, map[string]interface{}{"ok": true},
+		buildTimedStep("agent_a", 100, 350),
+		buildTimedStep("agent_b", 300, 400),
+	)
+
+	eval := &TraceTreeEvaluator{}
+	result := eval.Evaluate(root, makeTreeAssertion(`{"check":"agent_ordered_before","agent_a":"agent_a","agent_b":"agent_b"}`))
+	if result.Status != types.StatusHardFail {
+		t.Errorf("expected hard_fail, got %q: %s", result.Status, result.Explanation)
+	}
+}
+
+func TestTraceTreeEval_AgentOrderedBefore_MissingTemporalFields(t *testing.T) {
+	// Step for agent_a has no temporal fields
+	root := buildAgentTrace("root_agent", nil, map[string]interface{}{"ok": true},
+		types.Step{Type: types.StepTypeLLMCall, Name: "step_a", AgentID: "agent_a"},
+		buildTimedStep("agent_b", 300, 400),
+	)
+
+	eval := &TraceTreeEvaluator{}
+	result := eval.Evaluate(root, makeTreeAssertion(`{"check":"agent_ordered_before","agent_a":"agent_a","agent_b":"agent_b"}`))
+	if result.Status != types.StatusHardFail {
+		t.Errorf("expected hard_fail for missing temporal fields, got %q: %s", result.Status, result.Explanation)
+	}
+}
+
+func TestTraceTreeEval_AgentOrderedBefore_AcrossSubTraces(t *testing.T) {
+	// agent_a step is in a sub-trace, agent_b step is in root
+	child := buildAgentTrace("child_agent", nil, map[string]interface{}{"x": 1},
+		buildTimedStep("agent_a", 50, 150),
+	)
+	root := buildAgentTrace("root_agent", nil, map[string]interface{}{"ok": true},
+		buildAgentStep(child),
+		buildTimedStep("agent_b", 200, 300),
+	)
+
+	eval := &TraceTreeEvaluator{}
+	result := eval.Evaluate(root, makeTreeAssertion(`{"check":"agent_ordered_before","agent_a":"agent_a","agent_b":"agent_b"}`))
+	if result.Status != types.StatusPass {
+		t.Errorf("expected pass (cross-subtrace ordering), got %q: %s", result.Status, result.Explanation)
+	}
+}
+
+func TestTraceTreeEval_AgentsOverlap_Pass(t *testing.T) {
+	// agent_a: 100–300ms, agent_b: 200–400ms → overlap [200, 300]
+	root := buildAgentTrace("root_agent", nil, map[string]interface{}{"ok": true},
+		buildTimedStep("agent_a", 100, 300),
+		buildTimedStep("agent_b", 200, 400),
+	)
+
+	eval := &TraceTreeEvaluator{}
+	result := eval.Evaluate(root, makeTreeAssertion(`{"check":"agents_overlap","agent_a":"agent_a","agent_b":"agent_b"}`))
+	if result.Status != types.StatusPass {
+		t.Errorf("expected pass (overlapping), got %q: %s", result.Status, result.Explanation)
+	}
+}
+
+func TestTraceTreeEval_AgentsOverlap_Fail(t *testing.T) {
+	// agent_a: 100–200ms, agent_b: 300–400ms → no overlap
+	root := buildAgentTrace("root_agent", nil, map[string]interface{}{"ok": true},
+		buildTimedStep("agent_a", 100, 200),
+		buildTimedStep("agent_b", 300, 400),
+	)
+
+	eval := &TraceTreeEvaluator{}
+	result := eval.Evaluate(root, makeTreeAssertion(`{"check":"agents_overlap","agent_a":"agent_a","agent_b":"agent_b"}`))
+	if result.Status != types.StatusHardFail {
+		t.Errorf("expected hard_fail (no overlap), got %q: %s", result.Status, result.Explanation)
+	}
+}
+
+func TestTraceTreeEval_AgentsOverlap_MissingTemporalFields(t *testing.T) {
+	root := buildAgentTrace("root_agent", nil, map[string]interface{}{"ok": true},
+		types.Step{Type: types.StepTypeLLMCall, Name: "step_a", AgentID: "agent_a"},
+		buildTimedStep("agent_b", 100, 200),
+	)
+
+	eval := &TraceTreeEvaluator{}
+	result := eval.Evaluate(root, makeTreeAssertion(`{"check":"agents_overlap","agent_a":"agent_a","agent_b":"agent_b"}`))
+	if result.Status != types.StatusHardFail {
+		t.Errorf("expected hard_fail for missing temporal fields, got %q: %s", result.Status, result.Explanation)
+	}
+}
+
+func TestTraceTreeEval_AgentWallTimeUnder_Pass(t *testing.T) {
+	// Two steps for the same agent: (100–200) + (300–350) = 150ms total
+	root := buildAgentTrace("root_agent", nil, map[string]interface{}{"ok": true},
+		buildTimedStep("worker", 100, 200),
+		buildTimedStep("worker", 300, 350),
+	)
+
+	eval := &TraceTreeEvaluator{}
+	result := eval.Evaluate(root, makeTreeAssertion(`{"check":"agent_wall_time_under","agent_id":"worker","max_ms":200}`))
+	if result.Status != types.StatusPass {
+		t.Errorf("expected pass (150ms < 200ms), got %q: %s", result.Status, result.Explanation)
+	}
+}
+
+func TestTraceTreeEval_AgentWallTimeUnder_Fail(t *testing.T) {
+	// Two steps: (100–200) + (300–450) = 250ms total
+	root := buildAgentTrace("root_agent", nil, map[string]interface{}{"ok": true},
+		buildTimedStep("worker", 100, 200),
+		buildTimedStep("worker", 300, 450),
+	)
+
+	eval := &TraceTreeEvaluator{}
+	result := eval.Evaluate(root, makeTreeAssertion(`{"check":"agent_wall_time_under","agent_id":"worker","max_ms":200}`))
+	if result.Status != types.StatusHardFail {
+		t.Errorf("expected hard_fail (250ms >= 200ms), got %q: %s", result.Status, result.Explanation)
+	}
+}
+
+func TestTraceTreeEval_AgentWallTimeUnder_MissingTemporalFields(t *testing.T) {
+	root := buildAgentTrace("root_agent", nil, map[string]interface{}{"ok": true},
+		types.Step{Type: types.StepTypeLLMCall, Name: "step", AgentID: "worker"},
+	)
+
+	eval := &TraceTreeEvaluator{}
+	result := eval.Evaluate(root, makeTreeAssertion(`{"check":"agent_wall_time_under","agent_id":"worker","max_ms":1000}`))
+	if result.Status != types.StatusHardFail {
+		t.Errorf("expected hard_fail for missing temporal fields, got %q: %s", result.Status, result.Explanation)
+	}
+}
+
+func TestTraceTreeEval_AgentWallTimeUnder_AgentNotFound(t *testing.T) {
+	root := buildAgentTrace("root_agent", nil, map[string]interface{}{"ok": true})
+
+	eval := &TraceTreeEvaluator{}
+	result := eval.Evaluate(root, makeTreeAssertion(`{"check":"agent_wall_time_under","agent_id":"missing","max_ms":1000}`))
+	if result.Status != types.StatusHardFail {
+		t.Errorf("expected hard_fail for missing agent, got %q: %s", result.Status, result.Explanation)
+	}
+}
+
+func TestTraceTreeEval_OrderedAgents_Pass(t *testing.T) {
+	// group0: [agent_a] 100–200ms, group1: [agent_b, agent_c] 300–450ms, group2: [agent_d] 500–600ms
+	root := buildAgentTrace("root_agent", nil, map[string]interface{}{"ok": true},
+		buildTimedStep("agent_a", 100, 200),
+		buildTimedStep("agent_b", 300, 400),
+		buildTimedStep("agent_c", 350, 450),
+		buildTimedStep("agent_d", 500, 600),
+	)
+
+	eval := &TraceTreeEvaluator{}
+	result := eval.Evaluate(root, makeTreeAssertion(`{"check":"ordered_agents","groups":[["agent_a"],["agent_b","agent_c"],["agent_d"]]}`))
+	if result.Status != types.StatusPass {
+		t.Errorf("expected pass, got %q: %s", result.Status, result.Explanation)
+	}
+}
+
+func TestTraceTreeEval_OrderedAgents_Fail_GroupOverlap(t *testing.T) {
+	// group0: [agent_a] 100–350ms, group1: [agent_b] 300–500ms → group0 max ended (350) >= group1 min started (300)
+	root := buildAgentTrace("root_agent", nil, map[string]interface{}{"ok": true},
+		buildTimedStep("agent_a", 100, 350),
+		buildTimedStep("agent_b", 300, 500),
+	)
+
+	eval := &TraceTreeEvaluator{}
+	result := eval.Evaluate(root, makeTreeAssertion(`{"check":"ordered_agents","groups":[["agent_a"],["agent_b"]]}`))
+	if result.Status != types.StatusHardFail {
+		t.Errorf("expected hard_fail (group overlap), got %q: %s", result.Status, result.Explanation)
+	}
+}
+
+func TestTraceTreeEval_OrderedAgents_MissingTemporalFields(t *testing.T) {
+	root := buildAgentTrace("root_agent", nil, map[string]interface{}{"ok": true},
+		types.Step{Type: types.StepTypeLLMCall, Name: "step_a", AgentID: "agent_a"},
+		buildTimedStep("agent_b", 300, 500),
+	)
+
+	eval := &TraceTreeEvaluator{}
+	result := eval.Evaluate(root, makeTreeAssertion(`{"check":"ordered_agents","groups":[["agent_a"],["agent_b"]]}`))
+	if result.Status != types.StatusHardFail {
+		t.Errorf("expected hard_fail for missing temporal fields, got %q: %s", result.Status, result.Explanation)
+	}
+}
+
+func TestTraceTreeEval_OrderedAgents_TooFewGroups(t *testing.T) {
+	root := buildAgentTrace("root_agent", nil, map[string]interface{}{"ok": true},
+		buildTimedStep("agent_a", 100, 200),
+	)
+
+	eval := &TraceTreeEvaluator{}
+	result := eval.Evaluate(root, makeTreeAssertion(`{"check":"ordered_agents","groups":[["agent_a"]]}`))
+	if result.Status != types.StatusHardFail {
+		t.Errorf("expected hard_fail for < 2 groups, got %q: %s", result.Status, result.Explanation)
+	}
+}
+
 func TestTraceTreeEval_AggregateLatency(t *testing.T) {
 	latency1 := 200
 	latency2 := 150

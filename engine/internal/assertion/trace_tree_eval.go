@@ -52,6 +52,14 @@ func (e *TraceTreeEvaluator) Evaluate(t *types.Trace, assertion *types.Assertion
 		passed, explanation = checkFollowsTransitions(t, assertion.Spec)
 	case "aggregate_latency":
 		passed, explanation = checkAggregateLatencyCheck(t, assertion.Spec)
+	case "agent_ordered_before":
+		passed, explanation = checkAgentOrderedBefore(t, assertion.Spec)
+	case "agents_overlap":
+		passed, explanation = checkAgentsOverlap(t, assertion.Spec)
+	case "agent_wall_time_under":
+		passed, explanation = checkAgentWallTimeUnder(t, assertion.Spec)
+	case "ordered_agents":
+		passed, explanation = checkOrderedAgents(t, assertion.Spec)
 	default:
 		return failResult(assertion, start, fmt.Sprintf("unsupported trace_tree check: %s", base.Check))
 	}
@@ -277,6 +285,199 @@ func checkFollowsTransitions(t *types.Trace, spec json.RawMessage) (bool, string
 		return false, fmt.Sprintf("follows_transitions: disallowed delegation(s): %s", strings.Join(violations, ", "))
 	}
 	return true, "follows_transitions: all delegations match allowed transitions."
+}
+
+func checkAgentOrderedBefore(t *types.Trace, spec json.RawMessage) (bool, string) {
+	var s struct {
+		AgentA string `json:"agent_a"`
+		AgentB string `json:"agent_b"`
+	}
+	if err := json.Unmarshal(spec, &s); err != nil {
+		return false, fmt.Sprintf("agent_ordered_before: invalid spec: %v", err)
+	}
+	if s.AgentA == "" || s.AgentB == "" {
+		return false, "agent_ordered_before requires 'agent_a' and 'agent_b'"
+	}
+
+	stepsA := trace.CollectStepsByAgentID(t, s.AgentA)
+	stepsB := trace.CollectStepsByAgentID(t, s.AgentB)
+
+	if len(stepsA) == 0 {
+		return false, fmt.Sprintf("agent_ordered_before: no steps found for agent_a %q", s.AgentA)
+	}
+	if len(stepsB) == 0 {
+		return false, fmt.Sprintf("agent_ordered_before: no steps found for agent_b %q", s.AgentB)
+	}
+
+	// Find last ended_at_ms for agent_a.
+	var lastEndedA int64 = -1
+	for _, step := range stepsA {
+		if step.EndedAtMs == nil {
+			return false, fmt.Sprintf("agent_ordered_before: step for agent_a %q missing ended_at_ms", s.AgentA)
+		}
+		if *step.EndedAtMs > lastEndedA {
+			lastEndedA = *step.EndedAtMs
+		}
+	}
+
+	// Find first started_at_ms for agent_b.
+	var firstStartedB int64 = -1
+	for _, step := range stepsB {
+		if step.StartedAtMs == nil {
+			return false, fmt.Sprintf("agent_ordered_before: step for agent_b %q missing started_at_ms", s.AgentB)
+		}
+		if firstStartedB == -1 || *step.StartedAtMs < firstStartedB {
+			firstStartedB = *step.StartedAtMs
+		}
+	}
+
+	if lastEndedA >= firstStartedB {
+		return false, fmt.Sprintf("agent_ordered_before: agent_a %q last ended at %d ms, agent_b %q first started at %d ms — not strictly before", s.AgentA, lastEndedA, s.AgentB, firstStartedB)
+	}
+	return true, fmt.Sprintf("agent_ordered_before: agent_a %q (last ended %d ms) completed before agent_b %q (first started %d ms).", s.AgentA, lastEndedA, s.AgentB, firstStartedB)
+}
+
+func checkAgentsOverlap(t *types.Trace, spec json.RawMessage) (bool, string) {
+	var s struct {
+		AgentA string `json:"agent_a"`
+		AgentB string `json:"agent_b"`
+	}
+	if err := json.Unmarshal(spec, &s); err != nil {
+		return false, fmt.Sprintf("agents_overlap: invalid spec: %v", err)
+	}
+	if s.AgentA == "" || s.AgentB == "" {
+		return false, "agents_overlap requires 'agent_a' and 'agent_b'"
+	}
+
+	stepsA := trace.CollectStepsByAgentID(t, s.AgentA)
+	stepsB := trace.CollectStepsByAgentID(t, s.AgentB)
+
+	if len(stepsA) == 0 {
+		return false, fmt.Sprintf("agents_overlap: no steps found for agent_a %q", s.AgentA)
+	}
+	if len(stepsB) == 0 {
+		return false, fmt.Sprintf("agents_overlap: no steps found for agent_b %q", s.AgentB)
+	}
+
+	// Find the bounding interval for each agent across all its steps.
+	var minStartA, maxEndA int64 = -1, -1
+	for _, step := range stepsA {
+		if step.StartedAtMs == nil || step.EndedAtMs == nil {
+			return false, fmt.Sprintf("agents_overlap: step for agent_a %q missing temporal fields", s.AgentA)
+		}
+		if minStartA == -1 || *step.StartedAtMs < minStartA {
+			minStartA = *step.StartedAtMs
+		}
+		if *step.EndedAtMs > maxEndA {
+			maxEndA = *step.EndedAtMs
+		}
+	}
+
+	var minStartB, maxEndB int64 = -1, -1
+	for _, step := range stepsB {
+		if step.StartedAtMs == nil || step.EndedAtMs == nil {
+			return false, fmt.Sprintf("agents_overlap: step for agent_b %q missing temporal fields", s.AgentB)
+		}
+		if minStartB == -1 || *step.StartedAtMs < minStartB {
+			minStartB = *step.StartedAtMs
+		}
+		if *step.EndedAtMs > maxEndB {
+			maxEndB = *step.EndedAtMs
+		}
+	}
+
+	overlaps := minStartA < maxEndB && minStartB < maxEndA
+	if !overlaps {
+		return false, fmt.Sprintf("agents_overlap: agent_a %q [%d, %d] and agent_b %q [%d, %d] do not overlap", s.AgentA, minStartA, maxEndA, s.AgentB, minStartB, maxEndB)
+	}
+	return true, fmt.Sprintf("agents_overlap: agent_a %q [%d, %d] and agent_b %q [%d, %d] overlap.", s.AgentA, minStartA, maxEndA, s.AgentB, minStartB, maxEndB)
+}
+
+func checkAgentWallTimeUnder(t *types.Trace, spec json.RawMessage) (bool, string) {
+	var s struct {
+		AgentID string  `json:"agent_id"`
+		MaxMS   float64 `json:"max_ms"`
+	}
+	if err := json.Unmarshal(spec, &s); err != nil {
+		return false, fmt.Sprintf("agent_wall_time_under: invalid spec: %v", err)
+	}
+	if s.AgentID == "" {
+		return false, "agent_wall_time_under requires 'agent_id'"
+	}
+	if s.MaxMS <= 0 {
+		return false, "agent_wall_time_under requires 'max_ms' > 0"
+	}
+
+	steps := trace.CollectStepsByAgentID(t, s.AgentID)
+	if len(steps) == 0 {
+		return false, fmt.Sprintf("agent_wall_time_under: no steps found for agent_id %q", s.AgentID)
+	}
+
+	var totalMS int64
+	for _, step := range steps {
+		if step.StartedAtMs == nil || step.EndedAtMs == nil {
+			return false, fmt.Sprintf("agent_wall_time_under: step for agent_id %q missing temporal fields", s.AgentID)
+		}
+		totalMS += *step.EndedAtMs - *step.StartedAtMs
+	}
+
+	if float64(totalMS) >= s.MaxMS {
+		return false, fmt.Sprintf("agent_wall_time_under: agent %q total wall time %d ms >= max_ms %.4g", s.AgentID, totalMS, s.MaxMS)
+	}
+	return true, fmt.Sprintf("agent_wall_time_under: agent %q total wall time %d ms < max_ms %.4g.", s.AgentID, totalMS, s.MaxMS)
+}
+
+func checkOrderedAgents(t *types.Trace, spec json.RawMessage) (bool, string) {
+	var s struct {
+		Groups [][]string `json:"groups"`
+	}
+	if err := json.Unmarshal(spec, &s); err != nil {
+		return false, fmt.Sprintf("ordered_agents: invalid spec: %v", err)
+	}
+	if len(s.Groups) < 2 {
+		return false, "ordered_agents requires at least 2 groups"
+	}
+
+	// For each group, compute max ended_at_ms (all agents in group must complete).
+	// For each consecutive pair, max ended of group[i] < min started of group[i+1].
+	type groupBounds struct {
+		maxEnded   int64
+		minStarted int64
+	}
+
+	bounds := make([]groupBounds, len(s.Groups))
+	for gi, group := range s.Groups {
+		if len(group) == 0 {
+			return false, fmt.Sprintf("ordered_agents: group %d is empty", gi)
+		}
+		var maxEnded int64 = -1
+		var minStarted int64 = -1
+		for _, agentID := range group {
+			steps := trace.CollectStepsByAgentID(t, agentID)
+			if len(steps) == 0 {
+				return false, fmt.Sprintf("ordered_agents: no steps found for agent %q in group %d", agentID, gi)
+			}
+			for _, step := range steps {
+				if step.StartedAtMs == nil || step.EndedAtMs == nil {
+					return false, fmt.Sprintf("ordered_agents: step for agent %q missing temporal fields", agentID)
+				}
+				if minStarted == -1 || *step.StartedAtMs < minStarted {
+					minStarted = *step.StartedAtMs
+				}
+				if *step.EndedAtMs > maxEnded {
+					maxEnded = *step.EndedAtMs
+				}
+			}
+		}
+		bounds[gi] = groupBounds{maxEnded: maxEnded, minStarted: minStarted}
+	}
+
+	for i := 0; i < len(bounds)-1; i++ {
+		if bounds[i].maxEnded >= bounds[i+1].minStarted {
+			return false, fmt.Sprintf("ordered_agents: group %d max ended (%d ms) is not before group %d min started (%d ms)", i, bounds[i].maxEnded, i+1, bounds[i+1].minStarted)
+		}
+	}
+	return true, fmt.Sprintf("ordered_agents: all %d groups are sequentially ordered.", len(s.Groups))
 }
 
 // applyNumericOperator evaluates actual op threshold and returns pass/fail with explanation.

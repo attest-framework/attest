@@ -113,6 +113,21 @@ func validateTreeAtDepth(t *types.Trace, parent *types.Trace, depth int, seen ma
 	return nil
 }
 
+// CollectStepsByAgentID returns all steps across the entire trace tree where AgentID matches.
+// It walks all traces (including sub_traces) and collects steps with the given agent_id field.
+func CollectStepsByAgentID(root *types.Trace, agentID string) []types.Step {
+	var result []types.Step
+	WalkTree(root, func(t *types.Trace, _ int) bool {
+		for _, step := range t.Steps {
+			if step.AgentID == agentID {
+				result = append(result, step)
+			}
+		}
+		return true
+	})
+	return result
+}
+
 // AggregateMetadata computes aggregate metrics across the entire trace tree.
 // Returns total tokens, total cost in USD, total latency in ms, and agent count.
 func AggregateMetadata(root *types.Trace) (totalTokens int, totalCostUSD float64, totalLatencyMS int, agentCount int) {
