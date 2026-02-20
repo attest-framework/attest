@@ -79,7 +79,9 @@ class CrewAIAdapter(BaseAdapter):
         # Agent steps: each Agent in the Crew → agent_call step
         agents: list[Any] = getattr(crew, "agents", []) or []
         for agent_obj in agents:
-            agent_name: str = str(getattr(agent_obj, "role", "") or getattr(agent_obj, "name", "agent"))
+            agent_name: str = str(
+                getattr(agent_obj, "role", "") or getattr(agent_obj, "name", "agent")
+            )
             builder.add_step(
                 Step(
                     type=STEP_AGENT_CALL,
