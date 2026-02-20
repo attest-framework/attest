@@ -1,0 +1,24 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "attest-google-adk-example"
+version = "0.1.0"
+description = "Attest + Google ADK example: travel assistant"
+requires-python = ">=3.10"
+
+dependencies = [
+    "attest-ai>=0.3.0",
+    "google-adk>=1.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["."]
+asyncio_mode = "auto"
