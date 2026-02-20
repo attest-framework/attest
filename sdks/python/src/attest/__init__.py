@@ -11,10 +11,10 @@ from attest._proto.types import (
 )
 from attest.adapters.anthropic import AnthropicAdapter
 from attest.adapters.gemini import GeminiAdapter
+from attest.adapters.langchain import LangChainAdapter, LangChainCallbackHandler
 from attest.adapters.manual import ManualAdapter
 from attest.adapters.ollama import OllamaAdapter
 from attest.adapters.openai import OpenAIAdapter
-from attest.adapters.langchain import LangChainAdapter, LangChainCallbackHandler
 from attest.adapters.otel import OTelAdapter
 from attest.agent import Agent, agent
 from attest.delegate import delegate

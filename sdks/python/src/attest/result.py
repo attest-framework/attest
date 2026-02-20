@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 from attest._proto.types import (
     STATUS_HARD_FAIL,
@@ -11,6 +12,9 @@ from attest._proto.types import (
     AssertionResult,
     Trace,
 )
+
+if TYPE_CHECKING:
+    from attest.trace_tree import TraceTree
 
 
 @dataclass

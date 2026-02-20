@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from collections.abc import Generator
 from contextlib import contextmanager
-from typing import Any
 
 from attest._proto.types import STEP_AGENT_CALL, Step
 from attest.simulation._context import _active_builder

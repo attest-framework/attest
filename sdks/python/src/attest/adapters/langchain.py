@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import time
-from contextlib import contextmanager
 from collections.abc import Generator
+from contextlib import contextmanager
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
@@ -12,7 +12,6 @@ from attest._proto.types import Trace
 from attest.trace import TraceBuilder
 
 if TYPE_CHECKING:
-    from langchain_core.agents import AgentAction, AgentFinish
     from langchain_core.messages import BaseMessage
     from langchain_core.outputs import LLMResult
 
