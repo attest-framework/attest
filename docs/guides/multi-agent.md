@@ -375,6 +375,7 @@ expect(result).agent_ordered_before("researcher", "writer")
 ```
 
 Fails if:
+
 - Either agent is not present in the trace tree.
 - `researcher.ended_at > writer.started_at` (they overlapped or writer ran first).
 
@@ -388,6 +389,7 @@ expect(result).agents_overlap("data-fetcher", "context-loader")
 ```
 
 Fails if:
+
 - Either agent is not present in the trace tree.
 - The agents ran sequentially with no overlap.
 
@@ -419,6 +421,7 @@ expect(result).ordered_agents([
 ```
 
 This combines ordering and overlap assertions in a single call:
+
 - Agents within a group must all overlap each other (or be the only member).
 - The last agent in group `n` must finish before the first agent in group `n+1` starts.
 

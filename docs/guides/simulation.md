@@ -6,12 +6,12 @@ Attest's simulation runtime enables testing AI agents under controlled condition
 
 The simulation module (`attest.simulation`) provides four decorators:
 
-| Decorator | Purpose |
-|-----------|---------|
-| `@scenario` | Full simulation configuration: persona, mocks, faults, multi-turn |
-| `@repeat` | Run a test function N times and collect statistical results |
-| `@mock_tool` | Tag a function as a mock tool implementation |
-| `@fault_inject` | Add random errors and latency jitter to a function |
+| Decorator       | Purpose                                                           |
+| --------------- | ----------------------------------------------------------------- |
+| `@scenario`     | Full simulation configuration: persona, mocks, faults, multi-turn |
+| `@repeat`       | Run a test function N times and collect statistical results       |
+| `@mock_tool`    | Tag a function as a mock tool implementation                      |
+| `@fault_inject` | Add random errors and latency jitter to a function                |
 
 And three built-in personas for simulating different user behaviors.
 
@@ -37,14 +37,14 @@ def test_multi_turn_support(persona):
 
 ### ScenarioConfig Parameters
 
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `persona` | `Persona \| None` | `None` | Simulated user persona passed to the test function |
-| `mock_tools` | `dict[str, Callable]` | `{}` | Tool name to mock implementation mapping |
-| `fault_error_rate` | `float` | `0.0` | Probability (0.0-1.0) of injecting a `RuntimeError` per turn |
-| `fault_latency_jitter_ms` | `int` | `0` | Max random latency added per turn (milliseconds) |
-| `max_turns` | `int` | `1` | Number of turns to execute |
-| `seed` | `int \| None` | `None` | RNG seed for reproducible fault injection |
+| Parameter                 | Type                  | Default | Description                                                  |
+| ------------------------- | --------------------- | ------- | ------------------------------------------------------------ |
+| `persona`                 | `Persona \| None`     | `None`  | Simulated user persona passed to the test function           |
+| `mock_tools`              | `dict[str, Callable]` | `{}`    | Tool name to mock implementation mapping                     |
+| `fault_error_rate`        | `float`               | `0.0`   | Probability (0.0-1.0) of injecting a `RuntimeError` per turn |
+| `fault_latency_jitter_ms` | `int`                 | `0`     | Max random latency added per turn (milliseconds)             |
+| `max_turns`               | `int`                 | `1`     | Number of turns to execute                                   |
+| `seed`                    | `int \| None`         | `None`  | RNG seed for reproducible fault injection                    |
 
 ### ScenarioResult
 
@@ -111,12 +111,12 @@ repeat_result.results     # list[AgentResult]
 
 ### RepeatResult Properties
 
-| Property | Type | Description |
-|----------|------|-------------|
-| `count` | `int` | Number of runs executed |
-| `pass_rate` | `float` | Fraction of passing runs (0.0-1.0) |
-| `all_passed` | `bool` | True if every run passed |
-| `results` | `list[AgentResult]` | Individual results from each run |
+| Property     | Type                | Description                        |
+| ------------ | ------------------- | ---------------------------------- |
+| `count`      | `int`               | Number of runs executed            |
+| `pass_rate`  | `float`             | Fraction of passing runs (0.0-1.0) |
+| `all_passed` | `bool`              | True if every run passed           |
+| `results`    | `list[AgentResult]` | Individual results from each run   |
 
 ## `@mock_tool` Decorator
 
@@ -161,11 +161,11 @@ def flaky_api_call(query: str) -> dict:
 
 ### Parameters
 
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `error_rate` | `float` | `0.0` | Probability (0.0-1.0) of raising `RuntimeError` |
-| `latency_jitter_ms` | `int` | `0` | Max random sleep added (milliseconds) |
-| `seed` | `int \| None` | `None` | RNG seed for reproducible behavior |
+| Parameter           | Type          | Default | Description                                     |
+| ------------------- | ------------- | ------- | ----------------------------------------------- |
+| `error_rate`        | `float`       | `0.0`   | Probability (0.0-1.0) of raising `RuntimeError` |
+| `latency_jitter_ms` | `int`         | `0`     | Max random sleep added (milliseconds)           |
+| `seed`              | `int \| None` | `None`  | RNG seed for reproducible behavior              |
 
 When `error_rate > 0` and the RNG triggers, `RuntimeError(f"Injected fault in {fn.__name__}")` is raised before the function executes.
 
@@ -227,12 +227,12 @@ IMPATIENT_USER = Persona(
 
 `Persona` is a frozen dataclass with four fields:
 
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `name` | `str` | required | Identifier for the persona |
-| `system_prompt` | `str` | required | System prompt describing the user behavior |
-| `style` | `str` | required | Short label for the interaction style |
-| `temperature` | `float` | `0.7` | LLM sampling temperature for persona responses |
+| Field           | Type    | Default  | Description                                    |
+| --------------- | ------- | -------- | ---------------------------------------------- |
+| `name`          | `str`   | required | Identifier for the persona                     |
+| `system_prompt` | `str`   | required | System prompt describing the user behavior     |
+| `style`         | `str`   | required | Short label for the interaction style          |
+| `temperature`   | `float` | `0.7`    | LLM sampling temperature for persona responses |
 
 ## Composing Decorators
 
