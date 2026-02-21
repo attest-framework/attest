@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import threading
 from collections.abc import Generator
 from typing import Any
 
@@ -108,9 +109,17 @@ class AttestEngineFixture:
         self._manager: EngineManager | None = None
         self._client: AttestClient | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
+        self._thread: threading.Thread | None = None
 
     def start(self) -> None:
-        """Start the engine process."""
+        """Start the engine process and run its event loop in a background thread.
+
+        The engine subprocess binds its asyncio streams to the loop active at
+        creation time.  Running that loop in a dedicated daemon thread allows
+        both synchronous ``evaluate()`` and asynchronous ``evaluate_async()``
+        (which runs on a *different* loop, e.g. pytest-asyncio) to communicate
+        with the engine via ``asyncio.run_coroutine_threadsafe()``.
+        """
         self._loop = asyncio.new_event_loop()
         self._manager = EngineManager(
             engine_path=self._engine_path,
@@ -119,10 +128,25 @@ class AttestEngineFixture:
         self._loop.run_until_complete(self._manager.start())
         self._client = AttestClient(self._manager)
 
+        # Run the engine loop in a background thread so callers on any event
+        # loop (or no loop) can submit coroutines via run_coroutine_threadsafe.
+        self._thread = threading.Thread(
+            target=self._loop.run_forever,
+            daemon=True,
+            name="attest-engine-loop",
+        )
+        self._thread.start()
+
     def stop(self) -> None:
-        """Stop the engine process."""
+        """Stop the engine process and its background event loop."""
         if self._manager and self._loop:
-            self._loop.run_until_complete(self._manager.stop())
+            future = asyncio.run_coroutine_threadsafe(
+                self._manager.stop(), self._loop,
+            )
+            future.result(timeout=10)
+            self._loop.call_soon_threadsafe(self._loop.stop)
+            if self._thread is not None:
+                self._thread.join(timeout=5)
             self._loop.close()
 
     @property
@@ -130,27 +154,17 @@ class AttestEngineFixture:
         assert self._client is not None, "Engine not started"
         return self._client
 
-    def evaluate(
-        self,
-        chain: ExpectChain,
-        *,
-        budget: float | None = None,
-    ) -> AgentResult:
-        """Evaluate collected assertions synchronously.
-
-        Args:
-            chain: The ExpectChain with assertions to evaluate.
-            budget: Optional per-call cost ceiling in USD. If the session
-                    cumulative cost exceeds this, the session is aborted.
-        """
-        global _session_cost, _session_soft_failures
-
+    def _run_on_engine_loop(self, coro: Any) -> Any:
+        """Submit a coroutine to the engine's background loop and block for the result."""
         assert self._loop is not None
-        assert self._client is not None
+        future = asyncio.run_coroutine_threadsafe(coro, self._loop)
+        return future.result()
 
-        result = self._loop.run_until_complete(
-            self._client.evaluate_batch(chain.trace, chain.assertions)
-        )
+    def _process_result(
+        self, chain: ExpectChain, result: Any, budget: float | None,
+    ) -> AgentResult:
+        """Shared post-evaluation logic for both sync and async paths."""
+        global _session_cost, _session_soft_failures
 
         _session_cost += result.total_cost
 
@@ -161,13 +175,11 @@ class AttestEngineFixture:
             total_duration_ms=result.total_duration_ms,
         )
 
-        # Count soft failures
         from attest._proto.types import STATUS_SOFT_FAIL
         _session_soft_failures += sum(
             1 for r in result.results if r.status == STATUS_SOFT_FAIL
         )
 
-        # Enforce budget
         if budget is not None and _session_cost > budget:
             pytest.fail(
                 f"Attest budget exceeded: cost ${_session_cost:.6f}"
@@ -176,6 +188,44 @@ class AttestEngineFixture:
             )
 
         return agent_result
+
+    def evaluate(
+        self,
+        chain: ExpectChain,
+        *,
+        budget: float | None = None,
+    ) -> AgentResult:
+        """Evaluate collected assertions synchronously.
+
+        Submits the evaluation to the engine's background loop and blocks
+        the calling thread until the result is ready.
+        """
+        assert self._client is not None
+        result = self._run_on_engine_loop(
+            self._client.evaluate_batch(chain.trace, chain.assertions)
+        )
+        return self._process_result(chain, result, budget)
+
+    async def evaluate_async(
+        self,
+        chain: ExpectChain,
+        *,
+        budget: float | None = None,
+    ) -> AgentResult:
+        """Evaluate collected assertions asynchronously.
+
+        Submits the evaluation to the engine's background loop and awaits
+        the result without blocking the caller's event loop.  Safe to call
+        from pytest-asyncio or any other running loop.
+        """
+        assert self._loop is not None
+        assert self._client is not None
+        future = asyncio.run_coroutine_threadsafe(
+            self._client.evaluate_batch(chain.trace, chain.assertions),
+            self._loop,
+        )
+        result = await asyncio.wrap_future(future)
+        return self._process_result(chain, result, budget)
 
 
 @pytest.fixture(scope="session")
