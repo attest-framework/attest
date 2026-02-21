@@ -27,7 +27,12 @@ theme:
 
 nav:
   - Home: index.md
+  - Overview: overview.md
   - Getting Started: getting-started.md
+  - Guides:
+    - Multi-Agent Testing: guides/multi-agent.md
+    - Simulation: guides/simulation.md
+    - Framework Adapters: guides/framework-adapters.md
   - Reference:
     - Python SDK:
       - Overview: reference/python/index.md
@@ -39,6 +44,8 @@ nav:
     - From PromptFoo: migration/from-promptfoo.md
   - Tutorials:
     - Writing a Framework Adapter: tutorials/writing-a-framework-adapter.md
+  - Blog:
+    - v0.4.0 Launch: blog/v040-launch.md
 
 plugins:
   - search
