@@ -1,3 +1,7 @@
+[![Attest](assets/banner.png)](https://attest-framework.github.io/attest/)
+
+---
+
 # Attest
 
 **Test your AI agents like you test your code.**
@@ -157,14 +161,14 @@ pnpm add @attest-ai/core @attest-ai/vitest
 
 ## Roadmap
 
-| Phase | Version | Status       | Description                                                                                      |
-| ----- | ------- | ------------ | ------------------------------------------------------------------------------------------------ |
-| 0     | —       | **Complete** | Repository scaffolding, toolchain, protocol spec                                                 |
-| 1     | v0.1    | **Complete** | Go engine (Layers 1–4), Python SDK, pytest plugin, 4 LLM adapters                                |
-| 2     | v0.2    | **Complete** | Layers 5–6 (embeddings, LLM-as-judge), soft failures, CI integration                             |
-| 3     | v0.3    | **Complete** | Simulation runtime, multi-agent testing, TypeScript SDK, framework adapters, temporal assertions |
+| Phase | Version | Status       | Description                                                                                       |
+| ----- | ------- | ------------ | ------------------------------------------------------------------------------------------------- |
+| 0     | —       | **Complete** | Repository scaffolding, toolchain, protocol spec                                                  |
+| 1     | v0.1    | **Complete** | Go engine (Layers 1–4), Python SDK, pytest plugin, 4 LLM adapters                                 |
+| 2     | v0.2    | **Complete** | Layers 5–6 (embeddings, LLM-as-judge), soft failures, CI integration                              |
+| 3     | v0.3    | **Complete** | Simulation runtime, multi-agent testing, TypeScript SDK, framework adapters, temporal assertions  |
 | 4     | v0.4    | **Complete** | Continuous eval, drift detection, plugin system, CrewAI adapter, result history, CLI, MkDocs docs |
-| 5     | v0.5    | Planned      | Go SDK, Attest Cloud MVP, benchmark registry                                                     |
+| 5     | v0.5    | Planned      | Go SDK, Attest Cloud MVP, benchmark registry                                                      |
 
 ## Contributing
 
