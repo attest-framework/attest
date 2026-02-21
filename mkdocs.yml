@@ -44,6 +44,7 @@ nav:
     - From PromptFoo: migration/from-promptfoo.md
   - Tutorials:
     - Writing a Framework Adapter: tutorials/writing-a-framework-adapter.md
+  - Changelog: changelog.md
   - Blog:
     - v0.4.0 Launch: blog/v040-launch.md
 
