@@ -34,6 +34,17 @@ describe("ExpectChain", () => {
     expect(chain.trace).toBe(result.trace);
   });
 
+  it("accepts a Trace directly and wraps it in AgentResult", () => {
+    const trace = new TraceBuilder("test-agent")
+      .setInput({ query: "hello" })
+      .setOutput({ message: "hi" })
+      .build();
+    const chain = attestExpect(trace);
+    expect(chain).toBeInstanceOf(ExpectChain);
+    expect(chain.trace).toBe(trace);
+    expect(chain.assertions).toHaveLength(0);
+  });
+
   // Layer 1: Schema
   it("outputMatchesSchema adds schema assertion", () => {
     const chain = attestExpect(makeResult()).outputMatchesSchema({ type: "object" });

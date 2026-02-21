@@ -9,7 +9,7 @@ import {
   TYPE_TRACE,
   TYPE_TRACE_TREE,
 } from "./proto/constants.js";
-import type { AgentResult } from "./result.js";
+import { AgentResult } from "./result.js";
 
 export class ExpectChain {
   private readonly _result: AgentResult;
@@ -399,6 +399,16 @@ export class ExpectChain {
   }
 }
 
-export function attestExpect(result: AgentResult): ExpectChain {
-  return new ExpectChain(result);
+/**
+ * Create an assertion chain for an agent result.
+ *
+ * Accepts either an {@link AgentResult} or a raw {@link Trace}. When a
+ * `Trace` is passed it is automatically wrapped in an `AgentResult`.
+ */
+export function attestExpect(result: AgentResult | Trace): ExpectChain {
+  if (result instanceof AgentResult) {
+    return new ExpectChain(result);
+  }
+  // Treat as Trace — wrap in AgentResult
+  return new ExpectChain(new AgentResult(result));
 }
