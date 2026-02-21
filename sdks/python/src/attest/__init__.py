@@ -31,6 +31,7 @@ from attest.trace import TraceBuilder
 from attest.trace_tree import TraceTree
 
 __version__: str = "0.4.0"
+ENGINE_VERSION: str = "0.4.0"
 
 __all__ = [
     # Core types
@@ -80,4 +81,5 @@ __all__ = [
     "AlertDispatcher",
     # Version
     "__version__",
+    "ENGINE_VERSION",
 ]

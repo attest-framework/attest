@@ -1,5 +1,5 @@
 export * from "./proto/index.js";
-export { VERSION } from "./version.js";
+export { VERSION, ENGINE_VERSION } from "./version.js";
 export { EngineManager } from "./engine-manager.js";
 export { AttestClient } from "./client.js";
 export { TraceBuilder } from "./trace.js";

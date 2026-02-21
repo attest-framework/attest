@@ -6,22 +6,40 @@ import { fileURLToPath } from "node:url";
 import type { InitializeResult } from "./proto/types.js";
 import { decodeResponse, encodeRequest, extractResult } from "./proto/codec.js";
 import { VERSION } from "./version.js";
+import { cachedEnginePath, downloadEngine } from "./engine-downloader.js";
 
 const ENGINE_BINARY_NAME = "attest-engine";
 
-function findEngineBinary(): string {
-  // Check PATH via `which`
+async function findEngineBinary(): Promise<string> {
+  // 1. Explicit env var override
+  const envPath = process.env["ATTEST_ENGINE_PATH"];
+  if (envPath) {
+    if (!existsSync(envPath)) {
+      throw new Error(
+        `ATTEST_ENGINE_PATH is set to '${envPath}' but the file does not exist.`
+      );
+    }
+    return envPath;
+  }
+
+  // 2. Check PATH via which/where
   try {
-    const found = execSync(`which ${ENGINE_BINARY_NAME}`, { encoding: "utf-8" }).trim();
+    const cmd = process.platform === "win32" ? "where" : "which";
+    const found = execSync(`${cmd} ${ENGINE_BINARY_NAME}`, { encoding: "utf-8" }).trim();
     if (found) return found;
   } catch {
     // not on PATH
   }
 
-  // Check known locations
+  // 3. Cached download in ~/.attest/bin/
+  const cached = cachedEnginePath();
+  if (cached) return cached;
+
+  // 4. Monorepo dev layout (../../bin/ relative to this file)
+  // 5. CWD ./bin/
   const candidates = [
     join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "..", "..", "bin", ENGINE_BINARY_NAME),
-    join(process.cwd(), "bin", ENGINE_BINARY_NAME),
+    join(process.cwd(), "bin", ENGINE_BINARY_NAME)
   ];
 
   for (const candidate of candidates) {
@@ -34,14 +52,22 @@ function findEngineBinary(): string {
     }
   }
 
-  throw new Error(
-    `Cannot find '${ENGINE_BINARY_NAME}' binary. ` +
-    "Ensure it is built (make engine) and on your PATH or in ./bin/.",
-  );
+  // 6. Auto-download
+  const noDownload = process.env["ATTEST_ENGINE_NO_DOWNLOAD"];
+  if (noDownload === "1" || noDownload === "true" || noDownload === "yes") {
+    throw new Error(
+      `Cannot find '${ENGINE_BINARY_NAME}' binary and auto-download is disabled ` +
+      "(ATTEST_ENGINE_NO_DOWNLOAD is set). Install the engine manually:\n" +
+      "  1. Download from https://github.com/attest-framework/attest/releases\n" +
+      "  2. Place the binary on your PATH or set ATTEST_ENGINE_PATH"
+    );
+  }
+
+  return downloadEngine();
 }
 
 export class EngineManager {
-  private readonly enginePath: string;
+  private enginePath: string;
   private readonly logLevel: string;
   private process: ChildProcess | null = null;
   private reader: ReadlineInterface | null = null;
@@ -50,11 +76,15 @@ export class EngineManager {
   private initResult: InitializeResult | null = null;
 
   constructor(options?: { enginePath?: string; logLevel?: string }) {
-    this.enginePath = options?.enginePath ?? findEngineBinary();
+    this.enginePath = options?.enginePath ?? "";
     this.logLevel = options?.logLevel ?? "warn";
   }
 
   async start(): Promise<InitializeResult> {
+    if (!this.enginePath) {
+      this.enginePath = await findEngineBinary();
+    }
+
     this.process = spawn(this.enginePath, [`--log-level=${this.logLevel}`], {
       stdio: ["pipe", "pipe", "pipe"],
     });

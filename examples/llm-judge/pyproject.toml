@@ -1,8 +1,0 @@
-[project]
-name = "attest-example-llm-judge"
-version = "0.1.0"
-requires-python = ">=3.10"
-dependencies = ["attest-ai>=0.4.0"]
-
-[tool.pytest.ini_options]
-testpaths = ["."]

@@ -17,12 +17,47 @@ logger = logging.getLogger("attest.engine")
 ENGINE_BINARY_NAME = "attest-engine"
 
 
+def _is_download_disabled() -> bool:
+    """Check if auto-download is disabled via ATTEST_ENGINE_NO_DOWNLOAD."""
+    val = os.environ.get("ATTEST_ENGINE_NO_DOWNLOAD", "").lower()
+    return val in ("1", "true", "yes")
+
+
 def _find_engine_binary() -> str:
-    """Find the engine binary on PATH or in known locations."""
+    """Find the engine binary using the full discovery chain.
+
+    Discovery order:
+        1. ATTEST_ENGINE_PATH env var (absolute path override)
+        2. PATH lookup (shutil.which)
+        3. ~/.attest/bin/ shared cache (version-checked)
+        4. Monorepo dev layout (../../bin/)
+        5. Local ./bin/
+        6. Auto-download from GitHub Releases
+        7. FileNotFoundError with actionable message
+    """
+    # Step 1: Explicit env override
+    env_path = os.environ.get("ATTEST_ENGINE_PATH")
+    if env_path:
+        if not os.path.isfile(env_path):
+            raise FileNotFoundError(
+                f"ATTEST_ENGINE_PATH={env_path} does not exist or is not a file."
+            )
+        return env_path
+
+    # Step 2: PATH lookup
     found = shutil.which(ENGINE_BINARY_NAME)
     if found:
         return found
 
+    # Step 3: Shared cache (~/.attest/bin/) with version check
+    from attest.engine_downloader import cached_engine_path
+
+    cached = cached_engine_path()
+    if cached is not None:
+        return str(cached)
+
+    # Step 4: Monorepo dev layout
+    # Step 5: Local ./bin/
     candidates = [
         os.path.join(os.path.dirname(__file__), "..", "..", "..", "bin", ENGINE_BINARY_NAME),
         os.path.join(os.getcwd(), "bin", ENGINE_BINARY_NAME),
@@ -32,9 +67,21 @@ def _find_engine_binary() -> str:
         if os.path.isfile(resolved) and os.access(resolved, os.X_OK):
             return resolved
 
+    # Step 6: Auto-download
+    if not _is_download_disabled():
+        from attest.engine_downloader import download_engine
+
+        downloaded = download_engine()
+        return str(downloaded)
+
+    # Step 7: Actionable error
     raise FileNotFoundError(
-        f"Cannot find '{ENGINE_BINARY_NAME}' binary. "
-        "Ensure it is built (make engine) and on your PATH or in ./bin/."
+        f"Cannot find '{ENGINE_BINARY_NAME}' binary.\n"
+        "Install options:\n"
+        "  1. Build from source: make engine\n"
+        "  2. Download a release: https://github.com/attest-framework/attest/releases\n"
+        "  3. Allow auto-download by unsetting ATTEST_ENGINE_NO_DOWNLOAD\n"
+        "  4. Set ATTEST_ENGINE_PATH to point to the binary"
     )
 
 
