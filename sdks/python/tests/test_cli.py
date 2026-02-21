@@ -5,6 +5,8 @@ from __future__ import annotations
 import subprocess
 import sys
 
+from attest import __version__
+
 
 def test_cli_version() -> None:
     """python -m attest --version prints version."""
@@ -15,7 +17,7 @@ def test_cli_version() -> None:
     )
     assert result.returncode == 0
     assert "attest" in result.stdout
-    assert "0.4.1" in result.stdout
+    assert __version__ in result.stdout
 
 
 def test_cli_run_alias_passes_args_to_pytest() -> None:
