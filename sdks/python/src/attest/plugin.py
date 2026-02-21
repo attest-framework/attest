@@ -187,8 +187,12 @@ def attest_engine(request: pytest.FixtureRequest) -> Generator[AttestEngineFixtu
     fixture = AttestEngineFixture(engine_path=engine_path, log_level=log_level)
     try:
         fixture.start()
-    except FileNotFoundError:
-        pytest.skip("attest-engine binary not found; build with 'make engine'")
+    except FileNotFoundError as exc:
+        pytest.fail(
+            f"attest-engine binary not found: {exc}\n"
+            "Set ATTEST_ENGINE_PATH or allow auto-download.",
+            pytrace=False,
+        )
 
     yield fixture
     fixture.stop()
