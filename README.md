@@ -4,13 +4,13 @@
 
 Attest is an open-source testing framework purpose-built for AI agents and LLM-powered systems. It treats deterministic assertions as first-class citizens alongside probabilistic evaluation — because 70% of your agent's testable surface is deterministic.
 
-> **Status:** v0.3.0 — Layers 1–7, Python SDK, TypeScript SDK, simulation runtime, multi-agent trace trees. Engine, ONNX embeddings, LLM judge, simulated users, fault injection, cross-agent assertions, and choreography validation shipped.
+> **Status:** v0.4.0 — 8 assertion layers, 11 adapters, continuous eval, drift detection, plugin system, result history (SQLite), CLI init/validate, Python + TypeScript SDKs, pytest + vitest integrations, MkDocs documentation.
 
 ---
 
 ## Why Attest
 
-The current ecosystem defaults to LLM-as-judge for everything. This creates cost explosion, flaky tests, and slow suites. Attest provides a graduated 7-layer assertion model that reaches for the cheapest valid assertion first:
+The current ecosystem defaults to LLM-as-judge for everything. This creates cost explosion, flaky tests, and slow suites. Attest provides a graduated 8-layer assertion model that reaches for the cheapest valid assertion first:
 
 ```
 Layer 1: Schema Validation        — free, instant, deterministic
@@ -19,7 +19,8 @@ Layer 3: Trace/Behavioral Checks  — free, instant, deterministic
 Layer 4: Content Pattern Matching  — free, instant, near-deterministic
 Layer 5: Embedding Similarity      — ~$0.001, ~100ms, near-deterministic
 Layer 6: LLM-as-Judge             — ~$0.01+, ~1-3s, non-deterministic
-Layer 7: Trace Tree (Multi-Agent)  — free, instant, deterministic
+Layer 7: Simulation               — free (mocked), variable
+Layer 8: Multi-Agent              — free, instant, deterministic
 ```
 
 ## What It Looks Like
@@ -69,24 +70,29 @@ Attest follows a **protocol-first, engine-centric architecture** inspired by LSP
 ```text
 SDK (Python/TS/Go) ──stdin/stdout──▶ Engine Process (Go)
                                         ├── Trace Processor
-                                        ├── 6-Layer Assertion Pipeline
+                                        ├── 8-Layer Assertion Pipeline
+                                        ├── Result History (SQLite)
+                                        ├── Drift Detection (σ-based)
                                         ├── Simulation Runtime
                                         └── Report Generator
 ```
 
 ## Key Features
 
-- **7-layer assertion pipeline** — graduated from free/deterministic to paid/probabilistic
+- **8-layer assertion pipeline** — graduated from free/deterministic to paid/probabilistic
+- **11 adapters** — OpenAI, Anthropic, Gemini, Ollama, LangChain, Google ADK, LlamaIndex, CrewAI, OTel, Manual, Simulation
 - **Soft failure budgets** — scores between 0.5–0.8 warn without blocking CI
 - **Cost as a test metric** — assert on token usage, API cost, and latency
 - **Python & TypeScript SDKs** — `attest-ai` (PyPI) + `@attest-ai/core` / `@attest-ai/vitest` (npm)
-- **Framework-agnostic** — provider adapters (OpenAI, Anthropic, Gemini, Ollama) + framework adapters (LangChain, Google ADK, LlamaIndex, OTel) + extensible `BaseAdapter`/`BaseProviderAdapter` for custom adapters
 - **Local ONNX embeddings** — optional all-MiniLM-L6-v2 provider, zero API cost for Layer 5
 - **Judge meta-evaluation** — 3x judge runs with median scoring and variance detection
 - **CI-ready** — composite GitHub Action, tiered testing workflow, adversarial hardening
 - **Simulation runtime** — simulated users with personas, mock tools, fault injection, multi-turn orchestration
 - **Multi-agent testing** — hierarchical trace trees, cross-agent assertions, delegation tracking, temporal assertions, aggregate metrics
-- **Simulation mode** — `attest.config(simulation=True)` for zero-cost test runs with mocked responses
+- **Continuous eval & drift detection** — sample production traces, σ-based drift alerts to webhooks/Slack
+- **Plugin system** — extend with custom assertions via `attest.plugins` entry points
+- **Result history** — SQLite-backed storage for trend analysis and regression detection
+- **CLI** — `attest init` scaffolding and `attest validate` config checking
 - **Single binary engine** — no runtime dependencies, cross-platform
 
 ## Repository Layout
@@ -131,7 +137,7 @@ make test
 
 # Verify engine
 ./bin/attest-engine version
-# attest-engine 0.3.0
+# attest-engine 0.4.0
 ```
 
 ### TypeScript SDK
@@ -157,7 +163,7 @@ pnpm add @attest-ai/core @attest-ai/vitest
 | 1     | v0.1    | **Complete** | Go engine (Layers 1–4), Python SDK, pytest plugin, 4 LLM adapters                                |
 | 2     | v0.2    | **Complete** | Layers 5–6 (embeddings, LLM-as-judge), soft failures, CI integration                             |
 | 3     | v0.3    | **Complete** | Simulation runtime, multi-agent testing, TypeScript SDK, framework adapters, temporal assertions |
-| 4     | v0.4    | Planned      | Continuous eval, drift detection, plugin system, CrewAI adapter                                  |
+| 4     | v0.4    | **Complete** | Continuous eval, drift detection, plugin system, CrewAI adapter, result history, CLI, MkDocs docs |
 | 5     | v0.5    | Planned      | Go SDK, Attest Cloud MVP, benchmark registry                                                     |
 
 ## Contributing
