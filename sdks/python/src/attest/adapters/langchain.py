@@ -34,6 +34,16 @@ class LangChainCallbackHandler(BaseAdapter):
         trace = handler.build_trace()
     """
 
+    # Attributes expected by langchain_core.callbacks.manager.handle_event
+    ignore_chain: bool = False
+    ignore_llm: bool = False
+    ignore_agent: bool = False
+    ignore_retriever: bool = False
+    ignore_chat_model: bool = False
+    ignore_retry: bool = True
+    raise_error: bool = False
+    run_inline: bool = False
+
     def __init__(self, agent_id: str | None = None) -> None:
         super().__init__(agent_id=agent_id)
         _require_langchain()
@@ -82,11 +92,19 @@ class LangChainCallbackHandler(BaseAdapter):
     ) -> None:
         if parent_run_id is None:
             if isinstance(outputs, dict):
+                # LangGraph returns {"messages": [BaseMessage, ...]} — extract last AI message
+                messages = outputs.get("messages")
+                if isinstance(messages, list) and messages:
+                    last = messages[-1]
+                    if hasattr(last, "content"):
+                        self._output = str(last.content)
+                        return
+
                 out = outputs.get("output") or outputs.get("result") or outputs.get("text", "")
                 if isinstance(out, str):
                     self._output = out
                 elif hasattr(out, "content"):
-                    self._output = out.content
+                    self._output = str(out.content)
                 else:
                     self._output = str(out) if out else ""
 
@@ -218,11 +236,17 @@ class LangChainCallbackHandler(BaseAdapter):
         if start_time is not None:
             metadata["duration_ms"] = int((time.monotonic() - start_time) * 1000)
 
+        # LangGraph passes ToolMessage objects; extract .content or coerce to str
+        if hasattr(output, "content"):
+            output_str = str(output.content)
+        else:
+            output_str = str(output)
+
         self._steps.append({
             "type": "tool_call",
             "name": tool_name,
             "args": {"input": tool_input},
-            "result": {"output": output},
+            "result": {"output": output_str},
             "metadata": metadata,
             "started_at_ms": started_at_ms,
             "ended_at_ms": ended_at_ms,
