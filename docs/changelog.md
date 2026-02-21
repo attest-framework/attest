@@ -4,6 +4,28 @@ All notable changes to Attest are documented here. Versions follow [Semantic Ver
 
 ---
 
+## v0.4.2 — 2026-02-22
+
+**SDK patch release — adapter fixes and async compatibility**
+
+### Fixes
+
+- **LangChain adapter** — Add missing callback protocol attributes (`ignore_agent`, `ignore_retry`, `raise_error`) required by LangChain's `BaseCallbackHandler` interface. Handle LangGraph `AIMessage` and `ToolMessage` output formats so traces capture tool-call responses correctly.
+- **expect() DSL** — Accept `Trace` directly in addition to `AgentResult`. Auto-wraps into `AgentResult` for manual adapter workflows that build traces via `TraceBuilder` without going through a provider adapter.
+- **Plugin fixture** — Run the engine event loop in a background daemon thread with `run_coroutine_threadsafe()` bridge. Fixes `Future attached to a different loop` errors when pytest-asyncio tests (e.g., google-adk) call into the engine from a separate event loop.
+
+### Upgrade
+
+```bash
+uv add attest-ai@latest
+```
+
+### Notes
+
+- **No engine changes.** The Go engine binary remains at v0.4.0. `ENGINE_VERSION` is unchanged; auto-download continues to fetch v0.4.0 binaries.
+
+---
+
 ## v0.4.1 — 2026-02-21
 
 **SDK patch release — engine auto-download**
