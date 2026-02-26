@@ -62,7 +62,9 @@ jobs:
             echo "sdk_changed=false" >> "$GITHUB_OUTPUT"
           fi
       - name: Dispatch docs rebuild
-        if: steps.changes.outputs.sdk_changed == 'true'
+        if: steps.changes.outputs.sdk_changed == 'true' && env.HAS_TOKEN == 'true'
+        env:
+          HAS_TOKEN: ${{ secrets.DOCS_DEPLOY_TOKEN != '' }}
         uses: peter-evans/repository-dispatch@v3
         with:
           token: ${{ secrets.DOCS_DEPLOY_TOKEN }}

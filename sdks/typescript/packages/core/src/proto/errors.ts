@@ -13,3 +13,18 @@ export class ProtocolError extends Error {
     this.data = data;
   }
 }
+
+export class EngineTimeoutError extends Error {
+  readonly method: string;
+  readonly timeoutMs: number;
+
+  constructor(method: string, timeoutMs: number) {
+    super(
+      `Engine request '${method}' timed out after ${timeoutMs}ms. ` +
+        "Set ATTEST_ENGINE_TIMEOUT to increase the limit.",
+    );
+    this.name = "EngineTimeoutError";
+    this.method = method;
+    this.timeoutMs = timeoutMs;
+  }
+}
