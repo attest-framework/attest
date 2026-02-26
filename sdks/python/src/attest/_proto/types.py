@@ -31,6 +31,7 @@ TYPE_CONTENT: str = "content"
 TYPE_EMBEDDING: str = "embedding"
 TYPE_LLM_JUDGE: str = "llm_judge"
 TYPE_TRACE_TREE: str = "trace_tree"
+TYPE_PLUGIN: str = "plugin"
 
 # ---------------------------------------------------------------------------
 # Error code constants

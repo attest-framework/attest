@@ -11,10 +11,31 @@ from typing import Any
 from attest import __version__
 from attest._proto.codec import decode_response, encode_request, extract_result
 from attest._proto.types import InitializeParams, InitializeResult
+from attest.exceptions import EngineTimeoutError
 
 logger = logging.getLogger("attest.engine")
 
 ENGINE_BINARY_NAME = "attest-engine"
+
+_DEFAULT_ENGINE_TIMEOUT: float = 30.0
+
+
+def _engine_timeout() -> float:
+    """Read engine response timeout from ATTEST_ENGINE_TIMEOUT env var.
+
+    Returns the default (30 s) when the variable is unset or unparseable.
+    """
+    raw = os.environ.get("ATTEST_ENGINE_TIMEOUT", "")
+    if raw:
+        try:
+            return float(raw)
+        except ValueError:
+            logger.warning(
+                "ATTEST_ENGINE_TIMEOUT=%r is not a valid float; using default %.0fs",
+                raw,
+                _DEFAULT_ENGINE_TIMEOUT,
+            )
+    return _DEFAULT_ENGINE_TIMEOUT
 
 
 def _is_download_disabled() -> bool:
@@ -163,7 +184,14 @@ class EngineManager:
         self._process.stdin.write(request_bytes)
         await self._process.stdin.drain()
 
-        line = await self._process.stdout.readline()
+        timeout = _engine_timeout()
+        try:
+            line = await asyncio.wait_for(
+                self._process.stdout.readline(), timeout=timeout
+            )
+        except asyncio.TimeoutError:
+            raise EngineTimeoutError(method=method, timeout=timeout)
+
         if not line:
             raise ConnectionError("Engine process closed stdout unexpectedly")
 

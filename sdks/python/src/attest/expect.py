@@ -10,6 +10,7 @@ from attest._proto.types import (
     TYPE_CONTENT,
     TYPE_EMBEDDING,
     TYPE_LLM_JUDGE,
+    TYPE_PLUGIN,
     TYPE_SCHEMA,
     TYPE_TRACE,
     TYPE_TRACE_TREE,
@@ -496,6 +497,29 @@ class ExpectChain:
             TYPE_TRACE_TREE,
             {"check": "ordered_agents", "groups": groups, "soft": soft},
         )
+
+    # ── Layer 8: Plugin ──
+
+    def plugin(
+        self,
+        plugin_id: str,
+        config: dict[str, Any] | None = None,
+        *,
+        soft: bool = False,
+    ) -> ExpectChain:
+        """Assert via a registered plugin (Layer 8).
+
+        Args:
+            plugin_id: Identifier of the plugin registered with the engine.
+            config: Optional plugin-specific configuration dict passed to the
+                plugin at evaluation time.
+            soft: When True the assertion is a soft failure — it will not
+                block the test but will be recorded in the results.
+        """
+        spec: dict[str, Any] = {"plugin_id": plugin_id, "soft": soft}
+        if config is not None:
+            spec["config"] = config
+        return self._add(TYPE_PLUGIN, spec)
 
 
 def expect(result: AgentResult | Trace) -> ExpectChain:
