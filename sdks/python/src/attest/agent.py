@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import functools
+import inspect
 from collections.abc import Callable
 from typing import Any
 
@@ -108,6 +109,14 @@ def agent(
 
     def decorator(fn: Callable[..., Any]) -> Callable[..., AgentResult]:
         wrapped = Agent(name=name, fn=fn, adapter=adapter)
+
+        if inspect.iscoroutinefunction(fn):
+            @functools.wraps(fn)
+            async def async_wrapper(**kwargs: Any) -> AgentResult:
+                return await wrapped.arun(**kwargs)
+
+            async_wrapper.agent = wrapped  # type: ignore[attr-defined]
+            return async_wrapper  # type: ignore[return-value]
 
         @functools.wraps(fn)
         def wrapper(**kwargs: Any) -> AgentResult:

@@ -23,9 +23,10 @@ import (
 )
 
 const (
-	engineVersion      = "0.4.0"
-	protocolVersion    = 1
-	minProtocolVersion = 1
+	engineVersion        = "0.4.0"
+	protocolVersion      = 1
+	minProtocolVersion   = 1
+	MaxAssertionIDLength = 256
 )
 
 // RegisterBuiltinHandlers registers the built-in JSON-RPC handlers on s.
@@ -43,8 +44,8 @@ func RegisterBuiltinHandlers(s *Server) {
 
 	s.RegisterHandler("initialize", handleInitialize(caps))
 	s.RegisterHandler("shutdown", handleShutdown)
-	s.RegisterHandler("evaluate_batch", handleEvaluateBatch(pipeline, historyStore))
-	s.RegisterHandler("submit_plugin_result", handleSubmitPluginResult())
+	s.RegisterHandler("evaluate_batch", handleEvaluateBatch(pipeline, historyStore, s.writeNotification))
+	s.RegisterHandler("submit_plugin_result", handleSubmitPluginResult(historyStore))
 	s.RegisterHandler("validate_trace_tree", handleValidateTraceTree())
 	s.RegisterHandler("query_drift", handleQueryDrift(historyStore))
 	if judgeProvider != nil {
@@ -371,7 +372,7 @@ func handleShutdown(session *Session, _ json.RawMessage) (any, *types.RPCError) 
 	}, nil
 }
 
-func handleEvaluateBatch(pipeline *assertion.Pipeline, historyStore *cache.HistoryStore) Handler {
+func handleEvaluateBatch(pipeline *assertion.Pipeline, historyStore *cache.HistoryStore, writeNotification func(any)) Handler {
 	return func(session *Session, params json.RawMessage) (any, *types.RPCError) {
 		if session.State() != StateInitialized {
 			return nil, types.NewRPCError(
@@ -392,6 +393,19 @@ func handleEvaluateBatch(pipeline *assertion.Pipeline, historyStore *cache.Histo
 				false,
 				"Check the request format matches the protocol spec.",
 			)
+		}
+
+		// E6: Validate assertion ID lengths before processing.
+		for _, a := range p.Assertions {
+			if len(a.AssertionID) > MaxAssertionIDLength {
+				return nil, types.NewRPCError(
+					types.ErrAssertionError,
+					fmt.Sprintf("assertion_id exceeds maximum length: %d > %d", len(a.AssertionID), MaxAssertionIDLength),
+					types.ErrTypeAssertionError,
+					false,
+					fmt.Sprintf("assertion_id must be at most %d characters", MaxAssertionIDLength),
+				)
+			}
 		}
 
 		trace.Normalize(&p.Trace)
@@ -432,12 +446,13 @@ func handleEvaluateBatch(pipeline *assertion.Pipeline, historyStore *cache.Histo
 			for i := range result.Results {
 				ar := &result.Results[i]
 				meta := assertionMap[ar.AssertionID]
+				// E3: Log history store record errors instead of silently discarding.
 				if recErr := historyStore.Record(p.Trace.TraceID, ar.AssertionID, meta.assertionType, ar.Score, ar.Status); recErr != nil {
-					// Non-fatal: log and continue.
-					_ = recErr
+					slog.Error("history store record error", "assertion_id", ar.AssertionID, "err", recErr)
 				}
 
 				// Emit drift_alert notification when dynamic assertion hard-fails.
+				// E2: Use writeNotification (mutex-protected) instead of bare os.Stdout encoder.
 				if meta.dynamic && ar.Status == types.StatusHardFail {
 					mean, stddev, count, statsErr := historyStore.Stats(ar.AssertionID)
 					if statsErr == nil {
@@ -454,7 +469,7 @@ func handleEvaluateBatch(pipeline *assertion.Pipeline, historyStore *cache.Histo
 								Status:      "drift_detected",
 							},
 						}
-						_ = json.NewEncoder(os.Stdout).Encode(notification)
+						writeNotification(notification)
 					}
 				}
 			}
@@ -554,7 +569,7 @@ func handleQueryDrift(historyStore *cache.HistoryStore) Handler {
 	}
 }
 
-func handleSubmitPluginResult() Handler {
+func handleSubmitPluginResult(historyStore *cache.HistoryStore) Handler {
 	return func(session *Session, params json.RawMessage) (any, *types.RPCError) {
 		if session.State() != StateInitialized {
 			return nil, types.NewRPCError(
@@ -575,6 +590,13 @@ func handleSubmitPluginResult() Handler {
 				false,
 				err.Error(),
 			)
+		}
+
+		// E1: Record plugin result in history store.
+		if historyStore != nil {
+			if recErr := historyStore.Record(p.TraceID, p.AssertionID, "plugin", p.Result.Score, p.Result.Status); recErr != nil {
+				slog.Error("history store record error", "assertion_id", p.AssertionID, "err", recErr)
+			}
 		}
 
 		session.IncrementAssertions(1)

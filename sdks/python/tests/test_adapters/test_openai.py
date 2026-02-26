@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
 
 from attest.adapters.openai import OpenAIAdapter
 
@@ -68,6 +67,21 @@ def test_openai_with_tool_calls() -> None:
     tool_steps = [s for s in trace.steps if s.type == "tool_call"]
     assert len(tool_steps) == 1
     assert tool_steps[0].name == "search"
+    # args must be parsed dict, not raw JSON string
+    assert tool_steps[0].args == {"query": "test"}
+
+
+def test_openai_tool_call_invalid_json() -> None:
+    """Malformed JSON arguments fall back to raw_arguments dict."""
+    adapter = OpenAIAdapter()
+    bad_fn = MockFunctionCall(name="search", arguments="not-json{")
+    tc = MockToolCall(function=bad_fn)
+    msg = MockMessage(content="", tool_calls=[tc])
+    response = MockResponse(choices=[MockChoice(message=msg)])
+    trace = adapter.trace_from_response(response)
+    tool_steps = [s for s in trace.steps if s.type == "tool_call"]
+    assert len(tool_steps) == 1
+    assert tool_steps[0].args == {"raw_arguments": "not-json{"}
 
 
 def test_openai_metadata() -> None:

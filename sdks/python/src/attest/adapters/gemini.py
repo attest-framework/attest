@@ -81,6 +81,18 @@ class GeminiAdapter(BaseProviderAdapter):
         return metadata.get("model")
 
     def _extract_total_tokens(self, response: Any) -> int | None:
+        usage = getattr(response, "usage_metadata", None)
+        if usage is None:
+            return None
+        total = getattr(usage, "total_token_count", None)
+        if total is not None:
+            return int(total)
+        prompt = getattr(usage, "prompt_token_count", None)
+        candidates = getattr(usage, "candidates_token_count", None)
+        if prompt is not None and candidates is not None:
+            return int(prompt) + int(candidates)
+        if prompt is not None:
+            return int(prompt)
         return None
 
     def _extract_tool_calls(self, response: Any) -> list[dict[str, Any]]:

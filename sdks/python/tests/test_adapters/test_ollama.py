@@ -77,3 +77,33 @@ def test_ollama_no_input_messages() -> None:
     response = _make_response()
     trace = adapter.trace_from_response(response)
     assert trace.input is None
+
+
+def test_ollama_tool_calls_extracted() -> None:
+    adapter = OllamaAdapter()
+    response = {
+        "model": "llama3.2",
+        "message": {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {"function": {"name": "get_weather", "arguments": {"city": "Paris"}}},
+            ],
+        },
+        "eval_count": 50,
+        "prompt_eval_count": 20,
+        "done": True,
+    }
+    trace = adapter.trace_from_response(response)
+    tool_steps = [s for s in trace.steps if s.type == "tool_call"]
+    assert len(tool_steps) == 1
+    assert tool_steps[0].name == "get_weather"
+    assert tool_steps[0].args == {"city": "Paris"}
+
+
+def test_ollama_no_tool_calls_returns_empty() -> None:
+    adapter = OllamaAdapter()
+    response = _make_response()
+    trace = adapter.trace_from_response(response)
+    tool_steps = [s for s in trace.steps if s.type == "tool_call"]
+    assert tool_steps == []

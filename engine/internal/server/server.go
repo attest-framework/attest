@@ -158,3 +158,19 @@ func (s *Server) writeResponse(resp *types.Response) {
 	_ = s.writer.WriteByte('\n')
 	_ = s.writer.Flush()
 }
+
+// writeNotification serializes an arbitrary value as compact JSON followed by a newline,
+// using the same mutex as writeResponse to prevent races with concurrent response writes.
+func (s *Server) writeNotification(v any) {
+	data, err := json.Marshal(v)
+	if err != nil {
+		s.logger.Error("failed to marshal notification", "err", err)
+		return
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_, _ = s.writer.Write(data)
+	_ = s.writer.WriteByte('\n')
+	_ = s.writer.Flush()
+}

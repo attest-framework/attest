@@ -48,7 +48,7 @@ class AttestClient:
     def start_reader(self) -> None:
         """Start the background reader loop. Call after engine.start()."""
         if self._reader_task is None or self._reader_task.done():
-            self._reader_task = asyncio.get_event_loop().create_task(
+            self._reader_task = asyncio.get_running_loop().create_task(
                 self._reader_loop(), name="attest-client-reader"
             )
 
@@ -139,7 +139,7 @@ class AttestClient:
             # Reader not running — delegate to engine directly (sequential mode)
             return await self._engine.send_request(method, params)
 
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         fut: asyncio.Future[Any] = loop.create_future()
 
         async with self._write_lock:

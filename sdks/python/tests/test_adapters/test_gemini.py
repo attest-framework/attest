@@ -84,3 +84,47 @@ def test_gemini_no_input_text() -> None:
     response = MockResponse(text="answer")
     trace = adapter.trace_from_response(response)
     assert trace.input is None
+
+
+@dataclass
+class MockUsageMetadata:
+    prompt_token_count: int = 100
+    candidates_token_count: int = 50
+    total_token_count: int | None = None
+
+
+@dataclass
+class MockResponseWithUsage:
+    candidates: list[MockCandidate] = field(default_factory=lambda: [MockCandidate()])
+    text: str | None = "ok"
+    usage_metadata: MockUsageMetadata | None = None
+
+
+def test_gemini_token_count_via_total() -> None:
+    adapter = GeminiAdapter()
+    usage = MockUsageMetadata(
+        prompt_token_count=100, candidates_token_count=50, total_token_count=150
+    )
+    response = MockResponseWithUsage(text="ok", usage_metadata=usage)
+    trace = adapter.trace_from_response(response)
+    assert trace.metadata is not None
+    assert trace.metadata.total_tokens == 150
+
+
+def test_gemini_token_count_via_sum() -> None:
+    adapter = GeminiAdapter()
+    usage = MockUsageMetadata(
+        prompt_token_count=80, candidates_token_count=40, total_token_count=None
+    )
+    response = MockResponseWithUsage(text="ok", usage_metadata=usage)
+    trace = adapter.trace_from_response(response)
+    assert trace.metadata is not None
+    assert trace.metadata.total_tokens == 120
+
+
+def test_gemini_token_count_missing() -> None:
+    adapter = GeminiAdapter()
+    response = MockResponse(text="ok")
+    trace = adapter.trace_from_response(response)
+    assert trace.metadata is not None
+    assert trace.metadata.total_tokens is None

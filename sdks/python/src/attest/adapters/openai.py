@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from attest.adapters._base import BaseProviderAdapter
@@ -25,10 +26,14 @@ class OpenAIAdapter(BaseProviderAdapter):
         message = response.choices[0].message
         if not hasattr(message, "tool_calls") or not message.tool_calls:
             return []
-        return [
-            {"name": tc.function.name, "args": {"arguments": tc.function.arguments}}
-            for tc in message.tool_calls
-        ]
+        result = []
+        for tc in message.tool_calls:
+            try:
+                args = json.loads(tc.function.arguments)
+            except json.JSONDecodeError:
+                args = {"raw_arguments": tc.function.arguments}
+            result.append({"name": tc.function.name, "args": args})
+        return result
 
     def _build_output(
         self,

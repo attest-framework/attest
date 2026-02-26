@@ -49,7 +49,7 @@ class AlertDispatcher:
         but not raised so that alert failures never block evaluation.
         """
         coros: list[Any] = []
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
 
         if self._webhook_url:
             coros.append(

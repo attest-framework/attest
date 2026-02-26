@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
+
 from attest._proto.types import Trace
 from attest.agent import Agent, agent
 from attest.trace import TraceBuilder
@@ -54,3 +55,31 @@ def test_agent_decorator_has_agent_attr() -> None:
 
     assert hasattr(my_agent, "agent")
     assert isinstance(my_agent.agent, Agent)
+
+
+@pytest.mark.asyncio
+async def test_agent_decorator_async_fn() -> None:
+    """Decorator wraps async functions with an async wrapper."""
+    import asyncio
+
+    @agent("async-agent")
+    async def my_async_agent(builder: TraceBuilder, **kwargs: Any) -> dict[str, Any]:
+        await asyncio.sleep(0)
+        return {"response": "async-done"}
+
+    import inspect
+    assert inspect.iscoroutinefunction(my_async_agent)
+
+    result = await my_async_agent(user_input="hello")
+    assert result.trace.agent_id == "async-agent"
+    assert result.trace.output["response"] == "async-done"
+
+
+@pytest.mark.asyncio
+async def test_agent_decorator_async_has_agent_attr() -> None:
+    @agent("async-agent-2")
+    async def my_async_agent(builder: TraceBuilder, **kwargs: Any) -> dict[str, Any]:
+        return {"result": "ok"}
+
+    assert hasattr(my_async_agent, "agent")
+    assert isinstance(my_async_agent.agent, Agent)

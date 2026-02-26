@@ -23,4 +23,15 @@ class OllamaAdapter(BaseProviderAdapter):
         return None
 
     def _extract_tool_calls(self, response: Any) -> list[dict[str, Any]]:
-        return []
+        message = response.get("message", {})
+        tool_calls = message.get("tool_calls")
+        if not tool_calls:
+            return []
+        result = []
+        for tc in tool_calls:
+            fn = tc.get("function", {})
+            result.append({
+                "name": fn.get("name", ""),
+                "args": fn.get("arguments", {}),
+            })
+        return result

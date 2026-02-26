@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os"
 	"sort"
 	"strconv"
@@ -188,10 +189,12 @@ func (e *JudgeEvaluator) evaluateSinglePass(
 
 	if e.cache != nil {
 		contentHash := cache.JudgeContentHash(targetStr)
-		_ = e.cache.Put(contentHash, rubricName, model, &cache.JudgeCacheEntry{
+		if putErr := e.cache.Put(contentHash, rubricName, model, &cache.JudgeCacheEntry{
 			Score:       scoreResult.Score,
 			Explanation: scoreResult.Explanation,
-		})
+		}); putErr != nil {
+			slog.Error("judge cache write error", "err", putErr)
+		}
 	}
 
 	return e.buildResult(assertion, scoreResult.Score, scoreResult.Explanation, spec.Threshold, spec.Soft, durationMS, resp.Cost)
@@ -294,10 +297,12 @@ func (e *JudgeEvaluator) evaluateWithMetaEval(
 	// Cache the median result
 	if e.cache != nil {
 		contentHash := cache.JudgeContentHash(targetStr)
-		_ = e.cache.Put(contentHash, rubricName, model, &cache.JudgeCacheEntry{
+		if putErr := e.cache.Put(contentHash, rubricName, model, &cache.JudgeCacheEntry{
 			Score:       medianScore,
 			Explanation: combinedExplanation,
-		})
+		}); putErr != nil {
+			slog.Error("judge cache write error", "err", putErr)
+		}
 	}
 
 	return e.buildResult(assertion, medianScore, combinedExplanation, spec.Threshold, spec.Soft, durationMS, totalCost)

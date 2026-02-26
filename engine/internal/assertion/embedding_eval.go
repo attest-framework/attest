@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/attest-ai/attest/engine/internal/assertion/embedding"
@@ -115,7 +116,9 @@ func (e *EmbeddingEvaluator) getEmbedding(ctx context.Context, text string) ([]f
 			return nil, err
 		}
 		// Best-effort cache write — do not fail on cache errors
-		_ = e.cache.Put(h, e.embedder.Model(), vec)
+		if putErr := e.cache.Put(h, e.embedder.Model(), vec); putErr != nil {
+			slog.Error("embedding cache write error", "err", putErr)
+		}
 		return vec, nil
 	}
 

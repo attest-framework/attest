@@ -109,7 +109,7 @@ async def execute_plugin_assertion(
 
     Raises asyncio.TimeoutError if execution exceeds timeout seconds.
     """
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
 
     result: PluginResult = await asyncio.wait_for(
         loop.run_in_executor(None, plugin.execute, trace, spec),

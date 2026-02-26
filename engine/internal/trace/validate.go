@@ -127,6 +127,26 @@ func validateAtDepth(t *types.Trace, depth int) *types.RPCError {
 				fmt.Sprintf("Step type must be one of: llm_call, tool_call, retrieval, agent_call. Got '%s' for step '%s'.", step.Type, step.Name),
 			)
 		}
+		// E4: Enforce MaxStepPayload (1 MB) per step.
+		stepBytes, err := json.Marshal(step)
+		if err != nil {
+			return types.NewRPCError(
+				types.ErrInvalidTrace,
+				fmt.Sprintf("trace step '%s' could not be serialized for size check", step.Name),
+				types.ErrTypeInvalidTrace,
+				false,
+				"Ensure all step fields contain valid JSON-serializable values.",
+			)
+		}
+		if len(stepBytes) > MaxStepPayload {
+			return types.NewRPCError(
+				types.ErrInvalidTrace,
+				fmt.Sprintf("trace step '%s' exceeds max payload size: %d > %d bytes", step.Name, len(stepBytes), MaxStepPayload),
+				types.ErrTypeInvalidTrace,
+				false,
+				fmt.Sprintf("Reduce the step payload size to %d bytes (1 MB) or fewer by truncating tool results or outputs.", MaxStepPayload),
+			)
+		}
 	}
 
 	// 5. Sub-trace depth: recursively check agent_call sub_traces, max depth 5

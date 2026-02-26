@@ -10,6 +10,9 @@ import (
 	"github.com/attest-ai/attest/engine/pkg/types"
 )
 
+// MaxRegexPatternLength is the maximum allowed length for regex patterns to prevent ReDoS.
+const MaxRegexPatternLength = 10000
+
 // ContentEvaluator implements Layer 4 content matching assertions.
 type ContentEvaluator struct{}
 
@@ -79,6 +82,10 @@ func (e *ContentEvaluator) Evaluate(trace *types.Trace, assertion *types.Asserti
 		}
 
 	case "regex_match":
+		// E5: Reject patterns that exceed the length limit to prevent ReDoS.
+		if len(spec.Value) > MaxRegexPatternLength {
+			return failResult(assertion, start, fmt.Sprintf("regex pattern exceeds maximum length: %d > %d", len(spec.Value), MaxRegexPatternLength))
+		}
 		re, err := regexp.Compile(spec.Value)
 		if err != nil {
 			return failResult(assertion, start, fmt.Sprintf("invalid regex '%s': %v", spec.Value, err))

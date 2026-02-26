@@ -15,14 +15,7 @@ export async function delegate(
   }
 
   const child = new TraceBuilder(agentId);
-  // Access parent trace id via building and extracting — use internal workaround
-  // The child needs the parent's trace_id. We set it after building.
-  // TraceBuilder exposes setParentTraceId, but we need to read parent's id.
-  // Build a temporary trace to get the id, or use the builder directly.
-
-  // TraceBuilder stores _traceId privately. We need to read it.
-  // Build approach: create a minimal parent trace to get the id.
-  // Alternative: add a getter. For now, use the build-peek pattern.
+  child.setParentTraceId(parent.getTraceId());
 
   await activeBuilder.run(child, async () => {
     await fn(child);

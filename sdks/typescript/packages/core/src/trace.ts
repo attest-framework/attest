@@ -105,6 +105,10 @@ export class TraceBuilder {
     return this;
   }
 
+  getTraceId(): string {
+    return this.traceId;
+  }
+
   setParentTraceId(parentId: string): this {
     this.parentTraceId = parentId;
     return this;
