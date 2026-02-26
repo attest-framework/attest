@@ -14,29 +14,49 @@ import (
 // Handler is the function signature for JSON-RPC method handlers.
 type Handler func(session *Session, params json.RawMessage) (any, *types.RPCError)
 
+// defaultMaxConcurrent is the default value for maxConcurrent (sequential behavior).
+const defaultMaxConcurrent = 1
+
 // Server reads NDJSON requests from an io.Reader and writes NDJSON responses to an io.Writer.
 type Server struct {
-	reader   *bufio.Scanner
-	writer   *bufio.Writer
-	mu       sync.Mutex // protects writer
-	session  *Session
-	handlers map[string]Handler
-	logger   *slog.Logger
+	reader         *bufio.Scanner
+	writer         *bufio.Writer
+	mu             sync.Mutex // protects writer
+	session        *Session
+	handlers       map[string]Handler
+	logger         *slog.Logger
+	maxConcurrent  int
+	semaphore      chan struct{}
 }
 
 // New creates a new Server reading from in and writing to out.
+// maxConcurrent controls request parallelism (0 or 1 → sequential; >1 → concurrent).
+// Use NewDefault for the standard sequential server.
 func New(in io.Reader, out io.Writer, logger *slog.Logger) *Server {
+	return NewWithConcurrency(in, out, logger, defaultMaxConcurrent)
+}
+
+// NewWithConcurrency creates a Server with a configurable concurrency limit.
+// When maxConcurrent <= 1, requests are processed sequentially (default behavior).
+// When maxConcurrent > 1, up to maxConcurrent requests are dispatched concurrently,
+// each holding a semaphore slot for the duration of handler execution.
+func NewWithConcurrency(in io.Reader, out io.Writer, logger *slog.Logger, maxConcurrent int) *Server {
+	if maxConcurrent < 1 {
+		maxConcurrent = 1
+	}
 	scanner := bufio.NewScanner(in)
 	// 10 MB buffer for large traces.
 	const maxScanBuf = 10 * 1024 * 1024
 	scanner.Buffer(make([]byte, maxScanBuf), maxScanBuf)
 
 	return &Server{
-		reader:   scanner,
-		writer:   bufio.NewWriter(out),
-		session:  NewSession(),
-		handlers: make(map[string]Handler),
-		logger:   logger,
+		reader:        scanner,
+		writer:        bufio.NewWriter(out),
+		session:       NewSession(),
+		handlers:      make(map[string]Handler),
+		logger:        logger,
+		maxConcurrent: maxConcurrent,
+		semaphore:     make(chan struct{}, maxConcurrent),
 	}
 }
 
@@ -63,6 +83,23 @@ func (s *Server) Run(ctx context.Context) error {
 		close(lines)
 	}()
 
+	// dispatchOne acquires a semaphore slot, dispatches the request, writes the
+	// response, then releases the slot. When maxConcurrent == 1 it is called
+	// synchronously so behavior is identical to the previous sequential loop.
+	dispatchOne := func(line []byte) {
+		s.semaphore <- struct{}{}
+		handle := func() {
+			defer func() { <-s.semaphore }()
+			resp := s.dispatch(line)
+			s.writeResponse(resp)
+		}
+		if s.maxConcurrent > 1 {
+			go handle()
+		} else {
+			handle()
+		}
+	}
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -73,8 +110,7 @@ func (s *Server) Run(ctx context.Context) error {
 			if !ok {
 				return nil
 			}
-			resp := s.dispatch(line)
-			s.writeResponse(resp)
+			dispatchOne(line)
 			if s.session.State() == StateShuttingDown {
 				return nil
 			}
