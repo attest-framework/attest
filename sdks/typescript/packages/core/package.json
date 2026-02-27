@@ -3,18 +3,32 @@
   "version": "0.4.2",
   "description": "Attest SDK for testing AI agents — protocol types, codec, trace builder, assertion DSL",
   "type": "module",
-  "main": "./dist/index.js",
-  "types": "./dist/index.d.ts",
+  "main": "./dist/cjs/index.cjs",
+  "module": "./dist/esm/index.js",
+  "types": "./dist/esm/index.d.ts",
   "exports": {
     ".": {
-      "import": "./dist/index.js",
-      "types": "./dist/index.d.ts"
+      "import": {
+        "types": "./dist/esm/index.d.ts",
+        "default": "./dist/esm/index.js"
+      },
+      "require": {
+        "types": "./dist/cjs/index.d.cts",
+        "default": "./dist/cjs/index.cjs"
+      }
     },
     "./proto": {
-      "import": "./dist/proto/index.js",
-      "types": "./dist/proto/index.d.ts"
+      "import": {
+        "types": "./dist/esm/proto/index.d.ts",
+        "default": "./dist/esm/proto/index.js"
+      },
+      "require": {
+        "types": "./dist/cjs/proto/index.d.cts",
+        "default": "./dist/cjs/proto/index.cjs"
+      }
     }
   },
+  "sideEffects": false,
   "files": [
     "dist"
   ],
@@ -22,7 +36,7 @@
     "node": ">=18"
   },
   "scripts": {
-    "build": "tsc",
+    "build": "tsup",
     "test": "vitest run"
   },
   "publishConfig": {
@@ -42,8 +56,17 @@
     "assertions",
     "attest"
   ],
+  "peerDependencies": {
+    "@langchain/core": ">=0.2.0"
+  },
+  "peerDependenciesMeta": {
+    "@langchain/core": {
+      "optional": true
+    }
+  },
   "devDependencies": {
     "@types/node": "^25.3.0",
+    "tsup": "^8.0.0",
     "typescript": "^5.7.0",
     "vitest": "^4.0.18"
   }
