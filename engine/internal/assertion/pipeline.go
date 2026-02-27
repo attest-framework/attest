@@ -1,7 +1,7 @@
 package assertion
 
 import (
-	"encoding/json"
+	"github.com/segmentio/encoding/json"
 	"fmt"
 	"sync"
 

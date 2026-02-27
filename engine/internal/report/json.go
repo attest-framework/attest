@@ -1,7 +1,7 @@
 package report
 
 import (
-	"encoding/json"
+	"github.com/segmentio/encoding/json"
 	"fmt"
 	"time"
 

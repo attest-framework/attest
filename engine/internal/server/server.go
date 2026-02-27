@@ -3,7 +3,7 @@ package server
 import (
 	"bufio"
 	"context"
-	"encoding/json"
+	"github.com/segmentio/encoding/json"
 	"io"
 	"log/slog"
 	"sync"

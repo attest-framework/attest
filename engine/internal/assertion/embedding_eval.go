@@ -2,7 +2,7 @@ package assertion
 
 import (
 	"context"
-	"encoding/json"
+	"github.com/segmentio/encoding/json"
 	"fmt"
 	"log/slog"
 	"time"

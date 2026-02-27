@@ -1,6 +1,6 @@
 package types
 
-import "encoding/json"
+import "github.com/segmentio/encoding/json"
 
 const (
 	ErrInvalidTrace  = 1001
