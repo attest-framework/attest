@@ -1,10 +1,7 @@
-name: Deploy Docs
+name: Redirect to Docs Site
 
 on:
   workflow_dispatch:
-  push:
-    branches: [main]
-    paths: ["docs/**", "mkdocs.yml", "sdks/python/src/attest/**"]
 
 permissions:
   contents: read
@@ -19,25 +16,12 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v6
-
-      - uses: actions/setup-python@v6
         with:
-          python-version: "3.12"
-
-      - uses: astral-sh/setup-uv@v7
-
-      - name: Install docs dependencies
-        run: |
-          uv venv .venv
-          uv pip install mkdocs-material mkdocstrings[python]
-          cd sdks/python && uv pip install -e "."
-
-      - name: Build docs
-        run: uv run mkdocs build --strict
+          ref: gh-pages
 
       - uses: actions/upload-pages-artifact@v4
         with:
-          path: site
+          path: .
 
       - id: deployment
         uses: actions/deploy-pages@v4
