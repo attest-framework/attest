@@ -10,6 +10,7 @@ import {
   TYPE_EMBEDDING,
   TYPE_LLM_JUDGE,
   TYPE_TRACE_TREE,
+  TYPE_PLUGIN,
 } from "../../packages/core/src/proto/constants.js";
 
 function makeResult(): AgentResult {
@@ -244,5 +245,41 @@ describe("ExpectChain", () => {
       "agent_wall_time_under",
       "ordered_agents",
     ]);
+  });
+
+  // Layer 8: Plugin
+  it("plugin adds plugin assertion", () => {
+    const chain = attestExpect(makeResult()).plugin("safety-check");
+    expect(chain.assertions).toHaveLength(1);
+    expect(chain.assertions[0].type).toBe(TYPE_PLUGIN);
+    expect(chain.assertions[0].spec.plugin_id).toBe("safety-check");
+    expect(chain.assertions[0].spec.soft).toBe(false);
+  });
+
+  it("plugin accepts config and soft option", () => {
+    const chain = attestExpect(makeResult()).plugin(
+      "custom-check",
+      { threshold: 0.95 },
+      { soft: true },
+    );
+    expect(chain.assertions[0].spec.config).toEqual({ threshold: 0.95 });
+    expect(chain.assertions[0].spec.soft).toBe(true);
+  });
+
+  // TraceTree analytics DSL
+  it("aggregateLatencyUnder adds trace_tree assertion", () => {
+    const chain = attestExpect(makeResult()).aggregateLatencyUnder(5000);
+    expect(chain.assertions).toHaveLength(1);
+    expect(chain.assertions[0].type).toBe(TYPE_TRACE_TREE);
+    expect(chain.assertions[0].spec.check).toBe("aggregate_latency");
+    expect(chain.assertions[0].spec.value).toBe(5000);
+  });
+
+  it("allToolsCalled adds trace_tree assertion", () => {
+    const chain = attestExpect(makeResult()).allToolsCalled(["search", "summarize"]);
+    expect(chain.assertions).toHaveLength(1);
+    expect(chain.assertions[0].type).toBe(TYPE_TRACE_TREE);
+    expect(chain.assertions[0].spec.check).toBe("all_tools_called");
+    expect(chain.assertions[0].spec.tools).toEqual(["search", "summarize"]);
   });
 });
