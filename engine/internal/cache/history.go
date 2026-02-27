@@ -146,41 +146,25 @@ func (h *HistoryStore) QueryWindow(assertionID string, windowSize int) ([]float6
 
 // Stats computes the mean, population standard deviation, and count of all scores
 // for the given assertionID. Returns zero values when no rows exist.
+// Uses a single query with the statistical identity: stddev = sqrt(avg(x^2) - avg(x)^2).
 func (h *HistoryStore) Stats(assertionID string) (mean float64, stddev float64, count int, err error) {
 	row := h.db.QueryRow(
-		`SELECT COUNT(*), COALESCE(AVG(score), 0.0) FROM assertion_history WHERE assertion_id = ?`,
+		`SELECT COUNT(*), COALESCE(AVG(score), 0.0), COALESCE(AVG(score * score), 0.0) FROM assertion_history WHERE assertion_id = ?`,
 		assertionID,
 	)
-	if err = row.Scan(&count, &mean); err != nil {
+	var avgSq float64
+	if err = row.Scan(&count, &mean, &avgSq); err != nil {
 		return 0, 0, 0, fmt.Errorf("stats query: %w", err)
 	}
 	if count == 0 {
 		return 0, 0, 0, nil
 	}
 
-	// Compute population stddev manually: SQLite lacks STDDEV_POP.
-	rows, err := h.db.Query(
-		`SELECT score FROM assertion_history WHERE assertion_id = ?`,
-		assertionID,
-	)
-	if err != nil {
-		return 0, 0, 0, fmt.Errorf("stats stddev query: %w", err)
+	// Population stddev via statistical identity: Var(X) = E[X^2] - E[X]^2
+	variance := avgSq - mean*mean
+	if variance < 0 {
+		variance = 0 // guard against floating-point rounding
 	}
-	defer rows.Close()
-
-	var sumSqDiff float64
-	for rows.Next() {
-		var s float64
-		if scanErr := rows.Scan(&s); scanErr != nil {
-			return 0, 0, 0, fmt.Errorf("stats scan: %w", scanErr)
-		}
-		diff := s - mean
-		sumSqDiff += diff * diff
-	}
-	if rowErr := rows.Err(); rowErr != nil {
-		return 0, 0, 0, fmt.Errorf("stats rows: %w", rowErr)
-	}
-
-	stddev = math.Sqrt(sumSqDiff / float64(count))
+	stddev = math.Sqrt(variance)
 	return mean, stddev, count, nil
 }
