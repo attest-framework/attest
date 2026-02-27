@@ -23,7 +23,7 @@
   },
   "scripts": {
     "build": "tsc",
-    "test": "echo 'no unit tests — vitest plugin is tested via integration'"
+    "test": "vitest run"
   },
   "publishConfig": {
     "access": "public"

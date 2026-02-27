@@ -28,6 +28,9 @@
       }
     }
   },
+  "bin": {
+    "attest": "./dist/esm/cli.js"
+  },
   "sideEffects": false,
   "files": [
     "dist"
