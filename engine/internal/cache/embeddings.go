@@ -7,15 +7,36 @@ import (
 	"encoding/hex"
 	"fmt"
 	"math"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	_ "modernc.org/sqlite"
 )
 
+const (
+	// lruFlushInterval is how often deferred LRU writes are flushed to SQLite.
+	lruFlushInterval = 5 * time.Second
+	// lruFlushThreshold triggers a flush when the pending map reaches this size.
+	lruFlushThreshold = 64
+)
+
+// lruKey is the composite key for deferred LRU writes.
+type lruKey struct {
+	contentHash string
+	model       string
+}
+
 // EmbeddingCache is an LRU-evicting SQLite-backed cache for embedding vectors.
 type EmbeddingCache struct {
 	db    *sql.DB
 	maxMB int
+
+	// Deferred LRU writes: buffer accessed_at updates and flush periodically.
+	pendingLRU sync.Map    // map[lruKey]int64 (UnixNano)
+	pendingLen atomic.Int64
+	stopFlush  chan struct{}
+	flushDone  chan struct{}
 }
 
 // CacheStats reports current usage of the embedding cache.
@@ -56,7 +77,75 @@ func NewEmbeddingCache(dbPath string, maxMB int) (*EmbeddingCache, error) {
 		return nil, fmt.Errorf("create index: %w", err)
 	}
 
-	return &EmbeddingCache{db: db, maxMB: maxMB}, nil
+	c := &EmbeddingCache{
+		db:        db,
+		maxMB:     maxMB,
+		stopFlush: make(chan struct{}),
+		flushDone: make(chan struct{}),
+	}
+
+	go c.flushLoop()
+
+	return c, nil
+}
+
+// flushLoop periodically writes buffered accessed_at updates to SQLite.
+func (c *EmbeddingCache) flushLoop() {
+	defer close(c.flushDone)
+	ticker := time.NewTicker(lruFlushInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			c.FlushLRU()
+		case <-c.stopFlush:
+			c.FlushLRU()
+			return
+		}
+	}
+}
+
+// FlushLRU writes all pending accessed_at updates to SQLite in a single transaction.
+func (c *EmbeddingCache) FlushLRU() {
+	if c.pendingLen.Load() == 0 {
+		return
+	}
+
+	// Collect and clear pending entries.
+	type entry struct {
+		key lruKey
+		ts  int64
+	}
+	var entries []entry
+	c.pendingLRU.Range(func(k, v any) bool {
+		entries = append(entries, entry{key: k.(lruKey), ts: v.(int64)})
+		c.pendingLRU.Delete(k)
+		return true
+	})
+	c.pendingLen.Store(0)
+
+	if len(entries) == 0 {
+		return
+	}
+
+	tx, err := c.db.Begin()
+	if err != nil {
+		return
+	}
+
+	stmt, err := tx.Prepare(`UPDATE embeddings SET accessed_at = ? WHERE content_hash = ? AND model = ?`)
+	if err != nil {
+		tx.Rollback()
+		return
+	}
+	defer stmt.Close()
+
+	for _, e := range entries {
+		_, _ = stmt.Exec(e.ts, e.key.contentHash, e.key.model)
+	}
+
+	_ = tx.Commit()
 }
 
 // ContentHash returns the SHA-256 hex digest of the given text.
@@ -81,11 +170,13 @@ func (c *EmbeddingCache) Get(contentHash, model string) ([]float32, error) {
 		return nil, fmt.Errorf("get embedding: %w", err)
 	}
 
-	// Update accessed_at for LRU tracking
-	_, _ = c.db.Exec(
-		`UPDATE embeddings SET accessed_at = ? WHERE content_hash = ? AND model = ?`,
-		time.Now().UnixNano(), contentHash, model,
-	)
+	// Buffer accessed_at update instead of writing to SQLite on every Get.
+	key := lruKey{contentHash: contentHash, model: model}
+	c.pendingLRU.Store(key, time.Now().UnixNano())
+	n := c.pendingLen.Add(1)
+	if n >= lruFlushThreshold {
+		go c.FlushLRU()
+	}
 
 	return blobToVector(blob)
 }
@@ -131,17 +222,24 @@ func (c *EmbeddingCache) Clear() error {
 	return nil
 }
 
-// Close releases the database connection.
+// Close flushes pending LRU writes, stops the background flush loop,
+// and releases the database connection.
 func (c *EmbeddingCache) Close() error {
+	close(c.stopFlush)
+	<-c.flushDone
 	return c.db.Close()
 }
 
 func (c *EmbeddingCache) evictIfNeeded() error {
+	// Flush pending LRU writes before eviction so accessed_at values are current.
+	c.FlushLRU()
+
 	maxBytes := int64(c.maxMB) * 1024 * 1024
 
-	row := c.db.QueryRow(`SELECT COALESCE(SUM(LENGTH(vector)), 0) FROM embeddings`)
+	row := c.db.QueryRow(`SELECT COUNT(*), COALESCE(SUM(LENGTH(vector)), 0) FROM embeddings`)
+	var totalCount int64
 	var totalBytes int64
-	if err := row.Scan(&totalBytes); err != nil {
+	if err := row.Scan(&totalCount, &totalBytes); err != nil {
 		return fmt.Errorf("evict size check: %w", err)
 	}
 
@@ -149,39 +247,26 @@ func (c *EmbeddingCache) evictIfNeeded() error {
 		return nil
 	}
 
-	// Delete LRU rows until under limit
-	rows, err := c.db.Query(
-		`SELECT content_hash, LENGTH(vector) FROM embeddings ORDER BY accessed_at ASC`,
+	// Estimate how many rows to delete: assume uniform vector size.
+	avgSize := totalBytes / totalCount
+	excess := totalBytes - maxBytes
+	deleteCount := excess / avgSize
+	if deleteCount < 1 {
+		deleteCount = 1
+	}
+	// Add 10% headroom to avoid repeated small evictions.
+	deleteCount = deleteCount + deleteCount/10
+	if deleteCount > totalCount {
+		deleteCount = totalCount
+	}
+
+	// Pure SQL batch eviction: delete LRU rows without loading into Go.
+	_, err := c.db.Exec(
+		`DELETE FROM embeddings WHERE rowid IN (SELECT rowid FROM embeddings ORDER BY accessed_at ASC LIMIT ?)`,
+		deleteCount,
 	)
 	if err != nil {
-		return fmt.Errorf("evict query: %w", err)
-	}
-	defer rows.Close()
-
-	type entry struct {
-		hash string
-		size int64
-	}
-	var entries []entry
-	for rows.Next() {
-		var e entry
-		if err := rows.Scan(&e.hash, &e.size); err != nil {
-			return fmt.Errorf("evict scan: %w", err)
-		}
-		entries = append(entries, e)
-	}
-	if err := rows.Err(); err != nil {
-		return fmt.Errorf("evict rows: %w", err)
-	}
-
-	for _, e := range entries {
-		if totalBytes <= maxBytes {
-			break
-		}
-		if _, err := c.db.Exec(`DELETE FROM embeddings WHERE content_hash = ?`, e.hash); err != nil {
-			return fmt.Errorf("evict delete: %w", err)
-		}
-		totalBytes -= e.size
+		return fmt.Errorf("evict delete: %w", err)
 	}
 
 	return nil
