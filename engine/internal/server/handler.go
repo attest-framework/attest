@@ -42,9 +42,12 @@ func RegisterBuiltinHandlers(s *Server) {
 		pipeline = assertion.NewPipeline(registry)
 	}
 
+	// Wire BudgetTracker from ATTEST_BUDGET_MAX_COST env var (nil when unset).
+	budget := buildBudgetTracker(s.logger)
+
 	s.RegisterHandler("initialize", handleInitialize(caps))
 	s.RegisterHandler("shutdown", handleShutdown)
-	s.RegisterHandler("evaluate_batch", handleEvaluateBatch(pipeline, historyStore, s.writeNotification))
+	s.RegisterHandler("evaluate_batch", handleEvaluateBatch(pipeline, historyStore, budget, s.writeNotification))
 	s.RegisterHandler("submit_plugin_result", handleSubmitPluginResult(historyStore))
 	s.RegisterHandler("validate_trace_tree", handleValidateTraceTree())
 	s.RegisterHandler("query_drift", handleQueryDrift(historyStore))
@@ -135,7 +138,13 @@ func buildRegistryOptions(logger *slog.Logger) ([]assertion.RegistryOption, []st
 		if err := os.MkdirAll(cacheDir, 0o755); err != nil {
 			logger.Warn("failed to create cache dir", "dir", cacheDir, "err", err)
 		} else {
-			c, err := cache.NewJudgeCache(dbPath, 100)
+			judgeCacheMaxMB := envInt("ATTEST_JUDGE_CACHE_MAX_MB", 100)
+		if judgeCacheMaxMB < 10 {
+			judgeCacheMaxMB = 10
+		} else if judgeCacheMaxMB > 10000 {
+			judgeCacheMaxMB = 10000
+		}
+		c, err := cache.NewJudgeCache(dbPath, judgeCacheMaxMB)
 			if err != nil {
 				logger.Warn("failed to create judge cache", "err", err)
 			} else {
@@ -168,6 +177,18 @@ func buildRegistryOptions(logger *slog.Logger) ([]assertion.RegistryOption, []st
 					logger.Warn("failed to create history store", "err", err)
 					db.Close()
 				} else {
+					// Configure retention from env vars.
+					maxRows := envInt("ATTEST_HISTORY_MAX_ROWS", 0)
+					maxDays := envInt("ATTEST_HISTORY_MAX_AGE_DAYS", 0)
+					if maxRows > 0 || maxDays > 0 {
+						if maxRows <= 0 {
+							maxRows = 10000
+						}
+						if maxDays <= 0 {
+							maxDays = 30
+						}
+						hs.SetPruneConfig(maxRows, maxDays)
+					}
 					historyStore = hs
 					logger.Info("history store enabled", "db", dbPath)
 				}
@@ -268,6 +289,28 @@ func envInt(key string, fallback int) int {
 		return fallback
 	}
 	return n
+}
+
+// buildBudgetTracker constructs a BudgetTracker from ATTEST_BUDGET_MAX_COST.
+// Returns nil when the env var is unset, preserving backward-compatible behavior.
+// The env var is interpreted as a maximum number of soft failures allowed per batch
+// (integer). A value of 0 means no soft failures are permitted.
+func buildBudgetTracker(logger *slog.Logger) *assertion.BudgetTracker {
+	v := os.Getenv("ATTEST_BUDGET_MAX_COST")
+	if v == "" {
+		return nil
+	}
+	limit, err := strconv.Atoi(v)
+	if err != nil {
+		logger.Warn("ATTEST_BUDGET_MAX_COST is not a valid integer, budget tracking disabled", "value", v)
+		return nil
+	}
+	if limit < 0 {
+		logger.Warn("ATTEST_BUDGET_MAX_COST must be >= 0, budget tracking disabled", "value", limit)
+		return nil
+	}
+	logger.Info("budget tracker enabled", "max_soft_fails", limit)
+	return assertion.NewBudgetTracker(limit)
 }
 
 func handleInitialize(caps []string) Handler {
@@ -372,7 +415,7 @@ func handleShutdown(session *Session, _ json.RawMessage) (any, *types.RPCError) 
 	}, nil
 }
 
-func handleEvaluateBatch(pipeline *assertion.Pipeline, historyStore *cache.HistoryStore, writeNotification func(any)) Handler {
+func handleEvaluateBatch(pipeline *assertion.Pipeline, historyStore *cache.HistoryStore, budget *assertion.BudgetTracker, writeNotification func(any)) Handler {
 	return func(session *Session, params json.RawMessage) (any, *types.RPCError) {
 		if session.State() != StateInitialized {
 			return nil, types.NewRPCError(
@@ -431,7 +474,7 @@ func handleEvaluateBatch(pipeline *assertion.Pipeline, historyStore *cache.Histo
 			assertionMap[a.AssertionID] = meta
 		}
 
-		result, err := pipeline.EvaluateBatch(&p.Trace, p.Assertions)
+		result, err := pipeline.EvaluateBatchWithBudget(&p.Trace, p.Assertions, budget)
 		if err != nil {
 			return nil, types.NewRPCError(
 				types.ErrEngineError,

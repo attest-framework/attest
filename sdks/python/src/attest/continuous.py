@@ -4,12 +4,33 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import random
 import urllib.request
 from json import dumps as json_dumps
 from typing import TYPE_CHECKING, Any
 
 from attest._proto.types import Assertion, EvaluateBatchResult, Trace
+
+_DEFAULT_QUEUE_SIZE: int = 1000
+
+
+def _queue_maxsize() -> int:
+    """Read queue bound from ATTEST_CONTINUOUS_QUEUE_SIZE env var.
+
+    Returns the default (1000) when the variable is unset or unparseable.
+    """
+    raw = os.environ.get("ATTEST_CONTINUOUS_QUEUE_SIZE", "")
+    if raw:
+        try:
+            return int(raw)
+        except ValueError:
+            logger.warning(
+                "ATTEST_CONTINUOUS_QUEUE_SIZE=%r is not a valid int; using default %d",
+                raw,
+                _DEFAULT_QUEUE_SIZE,
+            )
+    return _DEFAULT_QUEUE_SIZE
 
 if TYPE_CHECKING:
     from attest.client import AttestClient
@@ -101,6 +122,7 @@ class ContinuousEvalRunner:
         sample_rate: float = 1.0,
         alert_webhook: str | None = None,
         alert_slack_url: str | None = None,
+        maxsize: int | None = None,
     ) -> None:
         self._client = client
         self._assertions = assertions
@@ -109,7 +131,8 @@ class ContinuousEvalRunner:
             webhook_url=alert_webhook,
             slack_url=alert_slack_url,
         )
-        self._queue: asyncio.Queue[Trace] = asyncio.Queue()
+        resolved_maxsize = maxsize if maxsize is not None else _queue_maxsize()
+        self._queue: asyncio.Queue[Trace] = asyncio.Queue(maxsize=resolved_maxsize)
         self._task: asyncio.Task[None] | None = None
         self._running = False
 
@@ -120,8 +143,21 @@ class ContinuousEvalRunner:
         return await self._client.evaluate_batch(trace, self._assertions)
 
     async def submit(self, trace: Trace) -> None:
-        """Enqueue a trace for background evaluation."""
-        await self._queue.put(trace)
+        """Enqueue a trace for background evaluation.
+
+        If the queue is at capacity the trace is dropped and a warning is
+        logged. This prevents unbounded memory growth under high submission
+        rates — increase ``ATTEST_CONTINUOUS_QUEUE_SIZE`` or the ``maxsize``
+        constructor argument to raise the limit.
+        """
+        try:
+            self._queue.put_nowait(trace)
+        except asyncio.QueueFull:
+            logger.warning(
+                "ContinuousEvalRunner queue full (maxsize=%d); dropping trace %s",
+                self._queue.maxsize,
+                trace.trace_id,
+            )
 
     async def start(self) -> None:
         """Start the background evaluation loop."""

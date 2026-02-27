@@ -210,3 +210,57 @@ class TestContinuousEvalRunner:
             assert runner._queue.qsize() == 1
 
         asyncio.run(_run())
+
+    # -----------------------------------------------------------------------
+    # P7 — Bounded queue
+    # -----------------------------------------------------------------------
+
+    def test_queue_default_maxsize_is_1000(self) -> None:
+        runner, _ = self._make_runner()
+        assert runner._queue.maxsize == 1000
+
+    def test_queue_custom_maxsize(self) -> None:
+        client = MagicMock()
+        client.evaluate_batch = AsyncMock(return_value=_make_batch_result())
+        runner = ContinuousEvalRunner(
+            client=client,
+            assertions=[_make_assertion()],
+            maxsize=50,
+        )
+        assert runner._queue.maxsize == 50
+
+    def test_queue_maxsize_from_env(self) -> None:
+        from unittest.mock import patch
+
+        client = MagicMock()
+        client.evaluate_batch = AsyncMock(return_value=_make_batch_result())
+
+        with patch.dict("os.environ", {"ATTEST_CONTINUOUS_QUEUE_SIZE": "200"}):
+            runner = ContinuousEvalRunner(
+                client=client,
+                assertions=[_make_assertion()],
+            )
+        assert runner._queue.maxsize == 200
+
+    def test_submit_drops_trace_when_queue_full(self) -> None:
+        """submit() drops excess traces and logs a warning instead of blocking."""
+        client = MagicMock()
+        client.evaluate_batch = AsyncMock(return_value=_make_batch_result())
+        runner = ContinuousEvalRunner(
+            client=client,
+            assertions=[_make_assertion()],
+            maxsize=2,
+        )
+
+        async def _run() -> None:
+            # Fill the queue exactly
+            await runner.submit(_make_trace("t-1"))
+            await runner.submit(_make_trace("t-2"))
+            assert runner._queue.qsize() == 2
+
+            # Third submit should drop silently (no exception)
+            await runner.submit(_make_trace("t-3"))
+            # Queue size stays at 2
+            assert runner._queue.qsize() == 2
+
+        asyncio.run(_run())

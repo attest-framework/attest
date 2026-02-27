@@ -24,6 +24,7 @@ from attest.agent import Agent, agent
 from attest.config import config
 from attest.continuous import AlertDispatcher, ContinuousEvalRunner, Sampler
 from attest.delegate import delegate
+from attest.exceptions import EngineTimeoutError
 from attest.expect import ExpectChain, expect
 from attest.result import AgentResult
 from attest.tier import TIER_1, TIER_2, TIER_3, tier
@@ -79,6 +80,8 @@ __all__ = [
     "ContinuousEvalRunner",
     "Sampler",
     "AlertDispatcher",
+    # Exceptions
+    "EngineTimeoutError",
     # Version
     "__version__",
     "ENGINE_VERSION",

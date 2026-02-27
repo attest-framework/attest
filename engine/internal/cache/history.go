@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"fmt"
 	"math"
+	"sync/atomic"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -11,7 +12,10 @@ import (
 
 // HistoryStore is a SQLite-backed store for assertion result history.
 type HistoryStore struct {
-	db *sql.DB
+	db           *sql.DB
+	insertCount  atomic.Int64
+	pruneMaxRows int
+	pruneMaxDays int
 }
 
 // NewHistoryStore creates the assertion_history table and index if they don't exist,
@@ -42,10 +46,27 @@ func NewHistoryStore(db *sql.DB) (*HistoryStore, error) {
 		return nil, fmt.Errorf("create assertion_history index: %w", err)
 	}
 
-	return &HistoryStore{db: db}, nil
+	return &HistoryStore{
+		db:           db,
+		pruneMaxRows: defaultHistoryMaxRows,
+		pruneMaxDays: defaultHistoryMaxAgeDays,
+	}, nil
+}
+
+const (
+	defaultHistoryMaxRows    = 10000
+	defaultHistoryMaxAgeDays = 30
+)
+
+// SetPruneConfig overrides the pruning parameters (maxRows and maxAgeDays).
+// Call before the first Record to take effect.
+func (h *HistoryStore) SetPruneConfig(maxRows, maxAgeDays int) {
+	h.pruneMaxRows = maxRows
+	h.pruneMaxDays = maxAgeDays
 }
 
 // Record inserts a single assertion result row into assertion_history.
+// Every 100th insert triggers a background prune using the configured limits.
 func (h *HistoryStore) Record(traceID, assertionID, assertionType string, score float64, status string) error {
 	_, err := h.db.Exec(
 		`INSERT INTO assertion_history (trace_id, assertion_id, assertion_type, score, status, created_at)
@@ -55,6 +76,42 @@ func (h *HistoryStore) Record(traceID, assertionID, assertionType string, score 
 	if err != nil {
 		return fmt.Errorf("record assertion history: %w", err)
 	}
+
+	n := h.insertCount.Add(1)
+	if n%100 == 0 {
+		// Non-fatal: prune errors are logged by callers if needed.
+		_ = h.Prune(h.pruneMaxRows, h.pruneMaxDays)
+	}
+
+	return nil
+}
+
+// Prune removes stale and excess rows from assertion_history.
+// It deletes rows older than maxAgeDays and, per assertion_id, keeps only the
+// maxRows most recent rows.
+func (h *HistoryStore) Prune(maxRows int, maxAgeDays int) error {
+	cutoff := time.Now().AddDate(0, 0, -maxAgeDays).UnixNano()
+	if _, err := h.db.Exec(
+		`DELETE FROM assertion_history WHERE created_at < ?`,
+		cutoff,
+	); err != nil {
+		return fmt.Errorf("prune by age: %w", err)
+	}
+
+	// Per assertion_id, delete rows not in the most-recent maxRows set.
+	if _, err := h.db.Exec(
+		`DELETE FROM assertion_history
+		 WHERE id NOT IN (
+		   SELECT id FROM assertion_history a2
+		   WHERE a2.assertion_id = assertion_history.assertion_id
+		   ORDER BY a2.created_at DESC
+		   LIMIT ?
+		 )`,
+		maxRows,
+	); err != nil {
+		return fmt.Errorf("prune by row count: %w", err)
+	}
+
 	return nil
 }
 

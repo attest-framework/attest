@@ -5,7 +5,7 @@ import type {
   Trace,
   AssertionResult,
 } from "./proto/types.js";
-import { ProtocolError } from "./proto/errors.js";
+import { ProtocolError, EngineTimeoutError } from "./proto/errors.js";
 import {
   decodeResponse,
   encodeRequest,
@@ -13,6 +13,33 @@ import {
   extractResult,
 } from "./proto/codec.js";
 import type { EngineManager } from "./engine-manager.js";
+import { isSimulationMode } from "./config.js";
+import { simulationEvaluateBatch } from "./simulation.js";
+
+const DEFAULT_TIMEOUT_MS = 30_000;
+
+function resolveTimeoutMs(override?: number): number {
+  if (override !== undefined) return override;
+  const env = process.env["ATTEST_ENGINE_TIMEOUT"];
+  if (env !== undefined && env !== "") {
+    const parsed = Number(env);
+    if (!Number.isFinite(parsed) || parsed <= 0) {
+      throw new Error(
+        `ATTEST_ENGINE_TIMEOUT must be a positive number of milliseconds, got: '${env}'`,
+      );
+    }
+    return parsed;
+  }
+  return DEFAULT_TIMEOUT_MS;
+}
+
+function makeTimeoutPromise(method: string, timeoutMs: number): Promise<never> {
+  return new Promise<never>((_, reject) => {
+    setTimeout(() => {
+      reject(new EngineTimeoutError(method, timeoutMs));
+    }, timeoutMs);
+  });
+}
 
 interface PendingRequest {
   resolve: (value: unknown) => void;
@@ -104,10 +131,19 @@ export class AttestClient {
     this.pending.clear();
   }
 
-  async sendRequest(method: string, params: Record<string, unknown>): Promise<unknown> {
+  async sendRequest(
+    method: string,
+    params: Record<string, unknown>,
+    timeoutMs?: number,
+  ): Promise<unknown> {
+    const resolvedTimeout = resolveTimeoutMs(timeoutMs);
+
     if (!this.readerActive) {
-      // Delegate to engine sequential mode
-      return this.engine.sendRequest(method, params);
+      // Delegate to engine sequential mode with timeout
+      return Promise.race([
+        this.engine.sendRequest(method, params),
+        makeTimeoutPromise(method, resolvedTimeout),
+      ]);
     }
 
     const cp = this.engine.childProcess;
@@ -115,11 +151,14 @@ export class AttestClient {
       throw new Error("Engine process not started.");
     }
 
-    return new Promise<unknown>((resolve, reject) => {
+    let capturedReqId: number | undefined;
+
+    const requestPromise = new Promise<unknown>((resolve, reject) => {
       // Serialize writes through promise chain
       this.writeChain = this.writeChain.then(() => {
         this.requestId += 1;
         const reqId = this.requestId;
+        capturedReqId = reqId;
         this.pending.set(reqId, { resolve, reject });
 
         const requestStr = encodeRequest(reqId, method, params);
@@ -131,17 +170,35 @@ export class AttestClient {
         });
       });
     });
+
+    const timeoutPromise = makeTimeoutPromise(method, resolvedTimeout);
+
+    return Promise.race([requestPromise, timeoutPromise]).catch((err: unknown) => {
+      if (err instanceof EngineTimeoutError && capturedReqId !== undefined) {
+        this.pending.delete(capturedReqId);
+      }
+      throw err;
+    });
   }
 
   async evaluateBatch(
     trace: Trace,
     assertions: readonly Assertion[],
+    options?: { timeout?: number },
   ): Promise<EvaluateBatchResult> {
+    if (isSimulationMode()) {
+      return simulationEvaluateBatch(assertions);
+    }
+
     const params = {
       trace,
       assertions: [...assertions],
     };
-    const raw = await this.sendRequest("evaluate_batch", params as Record<string, unknown>);
+    const raw = await this.sendRequest(
+      "evaluate_batch",
+      params as Record<string, unknown>,
+      options?.timeout,
+    );
     return raw as EvaluateBatchResult;
   }
 
@@ -152,6 +209,7 @@ export class AttestClient {
     status: string,
     score: number,
     explanation: string,
+    options?: { timeout?: number },
   ): Promise<boolean> {
     const result: AssertionResult = {
       assertion_id: assertionId,
@@ -167,7 +225,11 @@ export class AttestClient {
       assertion_id: assertionId,
       result,
     };
-    const raw = await this.sendRequest("submit_plugin_result", params as Record<string, unknown>);
+    const raw = await this.sendRequest(
+      "submit_plugin_result",
+      params as Record<string, unknown>,
+      options?.timeout,
+    );
     return Boolean((raw as Record<string, unknown>)?.accepted ?? false);
   }
 }

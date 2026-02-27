@@ -185,6 +185,41 @@ def test_expect_ordered_agents_soft() -> None:
     assert chain.assertions[0].spec["soft"] is True
 
 
+def test_expect_plugin_basic() -> None:
+    chain = expect(_make_result()).plugin("my-plugin")
+    assert len(chain.assertions) == 1
+    a = chain.assertions[0]
+    assert a.type == "plugin"
+    assert a.spec["plugin_id"] == "my-plugin"
+    assert a.spec["soft"] is False
+    assert "config" not in a.spec
+
+
+def test_expect_plugin_with_config() -> None:
+    cfg = {"threshold": 0.9, "mode": "strict"}
+    chain = expect(_make_result()).plugin("toxicity-check", config=cfg)
+    a = chain.assertions[0]
+    assert a.spec["plugin_id"] == "toxicity-check"
+    assert a.spec["config"] == cfg
+
+
+def test_expect_plugin_soft() -> None:
+    chain = expect(_make_result()).plugin("my-plugin", soft=True)
+    assert chain.assertions[0].spec["soft"] is True
+
+
+def test_expect_plugin_chaining() -> None:
+    chain = (
+        expect(_make_result())
+        .output_contains("refund")
+        .plugin("toxicity-check")
+        .cost_under(0.01)
+    )
+    assert len(chain.assertions) == 3
+    types = [a.type for a in chain.assertions]
+    assert types == ["content", "plugin", "constraint"]
+
+
 def test_expect_temporal_chaining() -> None:
     chain = (
         expect(_make_result())

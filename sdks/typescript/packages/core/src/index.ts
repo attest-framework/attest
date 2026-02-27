@@ -10,6 +10,7 @@ export { Agent, agent } from "./agent.js";
 export { delegate } from "./delegate.js";
 export { activeBuilder } from "./context.js";
 export { TIER_1, TIER_2, TIER_3, tier } from "./tier.js";
+export { config, isSimulationMode, resetConfig } from "./config.js";
 export type { TraceAdapter } from "./adapters/index.js";
 export {
   ManualAdapter,
