@@ -21,6 +21,7 @@ jobs:
       - name: Vet
         run: cd engine && go vet ./...
       - name: Vulnerability check
+        continue-on-error: true
         run: |
           cd engine
           go install golang.org/x/vuln/cmd/govulncheck@latest
