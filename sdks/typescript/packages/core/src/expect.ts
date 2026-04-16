@@ -578,7 +578,7 @@ export class ExpectChain {
    */
   outputSimilarTo(
     reference: string,
-    opts?: { threshold?: number; model?: string; soft?: boolean },
+    opts?: { threshold?: number | "dynamic"; model?: string; soft?: boolean },
   ): this {
     return this.add(TYPE_EMBEDDING, {
       target: "output.message",
@@ -608,7 +608,7 @@ export class ExpectChain {
    */
   passesJudge(
     criteria: string,
-    opts?: { rubric?: string; threshold?: number; model?: string; soft?: boolean },
+    opts?: { rubric?: string; threshold?: number | "dynamic"; model?: string; soft?: boolean },
   ): this {
     return this.add(TYPE_LLM_JUDGE, {
       target: "output.message",

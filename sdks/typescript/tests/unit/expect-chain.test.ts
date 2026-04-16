@@ -115,12 +115,26 @@ describe("ExpectChain", () => {
     expect(chain.assertions[0].spec.threshold).toBe(0.8);
   });
 
+  it("outputSimilarTo accepts dynamic threshold", () => {
+    const chain = attestExpect(makeResult()).outputSimilarTo("greeting", {
+      threshold: "dynamic",
+    });
+    expect(chain.assertions[0].spec.threshold).toBe("dynamic");
+  });
+
   // Layer 6: LLM Judge
   it("passesJudge adds llm_judge assertion", () => {
     const chain = attestExpect(makeResult()).passesJudge("is polite");
     expect(chain.assertions[0].type).toBe(TYPE_LLM_JUDGE);
     expect(chain.assertions[0].spec.criteria).toBe("is polite");
     expect(chain.assertions[0].spec.rubric).toBe("default");
+  });
+
+  it("passesJudge accepts dynamic threshold", () => {
+    const chain = attestExpect(makeResult()).passesJudge("is polite", {
+      threshold: "dynamic",
+    });
+    expect(chain.assertions[0].spec.threshold).toBe("dynamic");
   });
 
   // Layer 7: Trace Tree

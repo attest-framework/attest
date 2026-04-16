@@ -64,7 +64,7 @@ export interface EmbeddingSpec {
   readonly type: "embedding";
   readonly target: string;
   readonly reference: string;
-  readonly threshold: number;
+  readonly threshold: number | "dynamic";
   readonly model?: string;
   readonly soft: boolean;
 }
@@ -74,7 +74,7 @@ export interface LlmJudgeSpec {
   readonly target: string;
   readonly criteria: string;
   readonly rubric: string;
-  readonly threshold: number;
+  readonly threshold: number | "dynamic";
   readonly model?: string;
   readonly soft: boolean;
 }
