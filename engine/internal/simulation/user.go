@@ -47,6 +47,16 @@ You may misunderstand the assistant's responses. Keep responses concise (1-3 sen
 		Temperature: 0.8,
 		MaxTokens:   200,
 	}
+
+	CooperativeUser = Persona{
+		Name: "CooperativeUser",
+		SystemPrompt: `You are a cooperative user who actively helps the AI assistant succeed.
+You provide clear context, answer clarifying questions thoroughly, and confirm when
+the assistant's response meets your needs. Keep responses concise (1-3 sentences).`,
+		Style:       "cooperative",
+		Temperature: 0.6,
+		MaxTokens:   200,
+	}
 )
 
 // SimulatedUser uses an LLM provider to generate user messages in a conversation.
