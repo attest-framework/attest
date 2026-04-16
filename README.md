@@ -10,7 +10,7 @@
 
 Attest is an open-source testing framework purpose-built for AI agents and LLM-powered systems. It treats deterministic assertions as first-class citizens alongside probabilistic evaluation — because 70% of your agent's testable surface is deterministic.
 
-> **Status:** v0.5.0 — 8 assertion layers, 11 adapters (Python) + 7 adapters (TypeScript incl. LangChain.js), continuous eval, drift detection, plugin system, result history (SQLite), CLI (Python + TypeScript), budget tracking, engine timeouts, concurrent evaluation, schema caching, branded types, CJS/ESM dual output, pytest + vitest integrations, comprehensive test coverage.
+> **Status:** v0.6.0 — 8 assertion layers, 11 adapters (Python) + 7 adapters (TypeScript incl. LangChain.js), continuous eval with drift detection, dynamic thresholds, plugin system, result history (SQLite), CLI (Python + TypeScript), budget tracking, engine timeouts, concurrent evaluation, schema caching, branded types, CJS/ESM dual output, pytest + vitest integrations (incl. simulation mode), `queryDrift` + `generateUserMessage` SDK methods, 4 built-in simulation personas, comprehensive test coverage.
 
 ---
 
@@ -171,17 +171,16 @@ pnpm add @attest-ai/core @attest-ai/vitest
 
 ## Roadmap
 
-| Phase | Version     | Status       | Description                                                                                       |
-| ----- | ----------- | ------------ | ------------------------------------------------------------------------------------------------- |
-| 0     | —           | **Complete** | Repository scaffolding, toolchain, protocol spec                                                  |
-| 1     | v0.1        | **Complete** | Go engine (Layers 1–4), Python SDK, pytest plugin, 4 LLM adapters                                 |
-| 2     | v0.2        | **Complete** | Layers 5–6 (embeddings, LLM-as-judge), soft failures, CI integration                              |
-| 3     | v0.3        | **Complete** | Simulation runtime, multi-agent testing, TypeScript SDK, framework adapters, temporal assertions  |
-| 4     | v0.4        | **Complete** | Continuous eval, drift detection, plugin system, CrewAI adapter, result history, CLI, MkDocs docs |
-| 5     | v0.5.0–0.5.1 | **Complete** | Correctness fixes (adapters, event loops, plugin wiring), robustness (timeouts, budgets, retention) |
-| 6     | v0.6.0–0.6.1 | **Complete** | Engine performance (schema cache, segmentio/encoding), TypeScript parity (plugins, continuous eval, LangChain.js, branded types, CJS dual output) |
-| 7     | v0.7.0      | **Complete** | Production hardening (engine/SDK/vitest test coverage, TypeScript CLI, docs, TypeScript examples) |
-| 8     | v0.8        | Planned      | Go SDK, Attest Cloud MVP, benchmark registry                                                      |
+| Phase | Version | Status       | Description                                                                                                                      |
+| ----- | ------- | ------------ | -------------------------------------------------------------------------------------------------------------------------------- |
+| 0     | —       | **Complete** | Repository scaffolding, toolchain, protocol spec                                                                                 |
+| 1     | v0.1    | **Complete** | Go engine (Layers 1–4), Python SDK, pytest plugin, 4 LLM adapters                                                                |
+| 2     | v0.2    | **Complete** | Layers 5–6 (embeddings, LLM-as-judge), soft failures, CI integration                                                             |
+| 3     | v0.3    | **Complete** | Simulation runtime, multi-agent testing, TypeScript SDK, framework adapters, temporal assertions                                 |
+| 4     | v0.4    | **Complete** | Continuous eval, drift detection, plugin system, CrewAI adapter, result history, CLI                                             |
+| 5     | v0.5.0  | **Complete** | The Alignment Release — engine/SDK version unification, schema cache, segmentio/encoding, full TypeScript parity, test coverage  |
+| 6     | v0.6.0  | **Complete** | SDK parity with engine — `queryDrift`, `generateUserMessage`, dynamic thresholds, vitest simulation mode, 4 personas, sampleRate |
+| 7     | v0.7    | Planned      | Go SDK, Attest Cloud MVP, benchmark registry                                                                                     |
 
 ## Contributing
 
