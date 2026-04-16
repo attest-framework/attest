@@ -3,9 +3,12 @@ import {
   type Assertion,
   type Trace,
   type EvaluateBatchResult,
+  type AssertionResult,
   AgentResult,
   AttestClient,
   EngineManager,
+  isSimulationMode,
+  simulationEvaluateBatch,
   STATUS_SOFT_FAIL,
 } from "@attest-ai/core";
 
@@ -14,13 +17,16 @@ export class AttestEngineFixture {
   private _client: AttestClient | undefined;
 
   constructor(options?: { enginePath?: string; logLevel?: string }) {
-    this.manager = new EngineManager({
-      enginePath: options?.enginePath,
-      logLevel: options?.logLevel ?? "warn",
-    });
+    if (!isSimulationMode()) {
+      this.manager = new EngineManager({
+        enginePath: options?.enginePath,
+        logLevel: options?.logLevel ?? "warn",
+      });
+    }
   }
 
   async start(): Promise<void> {
+    if (isSimulationMode()) return;
     if (this.manager === undefined) {
       throw new Error("AttestEngineFixture already stopped.");
     }
@@ -37,17 +43,23 @@ export class AttestEngineFixture {
   }
 
   get client(): AttestClient {
-    if (this._client === undefined) {
+    if (this._client === undefined && !isSimulationMode()) {
       throw new Error("Engine not started. Call start() first.");
     }
-    return this._client;
+    return this._client!;
   }
 
   async evaluate(
     chain: ExpectChain,
     options?: { budget?: number },
   ): Promise<AgentResult> {
-    const result = await this.client.evaluateBatch(chain.trace, chain.assertions);
+    let result: EvaluateBatchResult;
+
+    if (isSimulationMode()) {
+      result = simulationEvaluateBatch(chain.assertions);
+    } else {
+      result = await this.client.evaluateBatch(chain.trace, chain.assertions);
+    }
 
     globalThis.__attest_session_cost__ =
       (globalThis.__attest_session_cost__ ?? 0) + (result.total_cost ?? 0);
@@ -80,6 +92,10 @@ export class AttestEngineFixture {
 }
 
 export function useAttest(): AttestEngineFixture {
+  if (isSimulationMode() || globalThis.__attest_simulation_mode__) {
+    return new AttestEngineFixture();
+  }
+
   const client = globalThis.__attest_client__;
   const engine = globalThis.__attest_engine__;
 
@@ -89,9 +105,7 @@ export function useAttest(): AttestEngineFixture {
     );
   }
 
-  // Return a fixture wrapper around the existing global engine
   const fixture = new AttestEngineFixture();
-  // Override the internal state to use the global instance
   Object.defineProperty(fixture, "client", { get: () => client });
   return fixture;
 }

@@ -26,6 +26,7 @@ export { delegate } from "./delegate.js";
 export { activeBuilder } from "./context.js";
 export { TIER_1, TIER_2, TIER_3, tier } from "./tier.js";
 export { config, isSimulationMode, resetConfig } from "./config.js";
+export { simulationEvaluateBatch } from "./simulation.js";
 export type { AttestPlugin, PluginResult } from "./plugins.js";
 export { PluginRegistry, executePluginAssertion } from "./plugins.js";
 export { ContinuousEvalRunner, Sampler, AlertDispatcher } from "./continuous.js";
