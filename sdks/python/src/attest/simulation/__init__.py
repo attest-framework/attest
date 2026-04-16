@@ -8,6 +8,7 @@ from attest.simulation.mock_tools import MockToolRegistry, mock_tool
 from attest.simulation.personas import (
     ADVERSARIAL_USER,
     CONFUSED_USER,
+    COOPERATIVE_USER,
     FRIENDLY_USER,
     Persona,
 )
@@ -21,6 +22,7 @@ __all__ = [
     "FRIENDLY_USER",
     "ADVERSARIAL_USER",
     "CONFUSED_USER",
+    "COOPERATIVE_USER",
     "MockToolRegistry",
     "mock_tool",
     "fault_inject",

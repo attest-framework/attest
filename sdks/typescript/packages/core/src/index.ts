@@ -12,6 +12,10 @@ export type {
   TraceId,
   AssertionId,
   AgentId,
+  DriftReport,
+  ConversationMessage,
+  SimulatePersona,
+  SimulateFaultConfig,
 } from "./proto/types.js";
 export { traceId, assertionId, agentId } from "./proto/types.js";
 export { VERSION, ENGINE_VERSION } from "./version.js";
@@ -30,6 +34,12 @@ export { simulationEvaluateBatch } from "./simulation.js";
 export type { AttestPlugin, PluginResult } from "./plugins.js";
 export { PluginRegistry, executePluginAssertion } from "./plugins.js";
 export { ContinuousEvalRunner, Sampler, AlertDispatcher } from "./continuous.js";
+export {
+  FRIENDLY_USER,
+  ADVERSARIAL_USER,
+  CONFUSED_USER,
+  COOPERATIVE_USER,
+} from "./personas.js";
 export type { AlertPayload } from "./continuous.js";
 export type { TraceAdapter } from "./adapters/index.js";
 export {

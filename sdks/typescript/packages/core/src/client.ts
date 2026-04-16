@@ -1,7 +1,11 @@
 import type { Interface as ReadlineInterface } from "node:readline";
 import type {
   Assertion,
+  ConversationMessage,
+  DriftReport,
   EvaluateBatchResult,
+  SimulateFaultConfig,
+  SimulatePersona,
   Trace,
   AssertionResult,
 } from "./proto/types.js";
@@ -231,5 +235,55 @@ export class AttestClient {
       options?.timeout,
     );
     return Boolean((raw as Record<string, unknown>)?.accepted ?? false);
+  }
+
+  async queryDrift(
+    assertionId: string,
+    windowSize = 50,
+    options?: { timeout?: number },
+  ): Promise<DriftReport> {
+    if (isSimulationMode()) {
+      return {
+        assertion_id: assertionId,
+        mean: 1.0,
+        stddev: 0,
+        count: 0,
+        latest_score: 1.0,
+        deviation: 0,
+        status: "no_data",
+      };
+    }
+
+    const raw = await this.sendRequest(
+      "query_drift",
+      { assertion_id: assertionId, window_size: windowSize },
+      options?.timeout,
+    );
+    return (raw as { report: DriftReport }).report;
+  }
+
+  async generateUserMessage(
+    persona: SimulatePersona,
+    conversationHistory: readonly ConversationMessage[],
+    faultConfig?: SimulateFaultConfig,
+    options?: { timeout?: number },
+  ): Promise<string> {
+    if (isSimulationMode()) {
+      return `[simulation] Hello from ${persona.name}`;
+    }
+
+    const params: Record<string, unknown> = {
+      persona,
+      conversation_history: conversationHistory,
+    };
+    if (faultConfig !== undefined) {
+      params.fault_config = faultConfig;
+    }
+    const raw = await this.sendRequest(
+      "generate_user_message",
+      params,
+      options?.timeout,
+    );
+    return String((raw as { message: string }).message);
   }
 }

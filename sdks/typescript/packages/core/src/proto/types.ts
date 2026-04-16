@@ -223,3 +223,60 @@ export interface SubmitPluginResultParams {
   readonly assertion_id: string;
   readonly result: AssertionResult;
 }
+
+// ---------------------------------------------------------------------------
+// Drift detection types
+// ---------------------------------------------------------------------------
+
+export interface DriftReport {
+  readonly assertion_id: string;
+  readonly mean: number;
+  readonly stddev: number;
+  readonly count: number;
+  readonly latest_score: number;
+  readonly deviation: number;
+  readonly status: string;
+}
+
+export interface QueryDriftParams {
+  readonly assertion_id: string;
+  readonly window_size: number;
+}
+
+export interface QueryDriftResult {
+  readonly report: DriftReport;
+}
+
+// ---------------------------------------------------------------------------
+// Simulation types
+// ---------------------------------------------------------------------------
+
+export interface SimulatePersona {
+  readonly name: string;
+  readonly system_prompt: string;
+  readonly style: string;
+  readonly temperature: number;
+  readonly max_tokens?: number;
+}
+
+export interface SimulateFaultConfig {
+  readonly error_rate: number;
+  readonly latency_jitter_ms: number;
+  readonly content_corruption: boolean;
+  readonly timeout_after_ms: number;
+}
+
+export interface ConversationMessage {
+  readonly role: string;
+  readonly content: string;
+}
+
+export interface GenerateUserMessageParams {
+  readonly persona: SimulatePersona;
+  readonly conversation_history: readonly ConversationMessage[];
+  readonly fault_config?: SimulateFaultConfig;
+}
+
+export interface GenerateUserMessageResult {
+  readonly message: string;
+}

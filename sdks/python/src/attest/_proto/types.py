@@ -49,6 +49,7 @@ ERR_SESSION_ERROR: int = 3003
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _serialize(value: Any) -> Any:
     """Recursively convert dataclass instances to dicts for JSON serialization."""
     if hasattr(value, "to_dict"):
@@ -389,6 +390,99 @@ class ErrorData:
             retryable=data["retryable"],
             detail=data["detail"],
         )
+
+
+# ---------------------------------------------------------------------------
+# Drift detection types
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class DriftReport:
+    assertion_id: str
+    mean: float
+    stddev: float
+    count: int
+    latest_score: float
+    deviation: float
+    status: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "assertion_id": self.assertion_id,
+            "mean": self.mean,
+            "stddev": self.stddev,
+            "count": self.count,
+            "latest_score": self.latest_score,
+            "deviation": self.deviation,
+            "status": self.status,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> DriftReport:
+        return cls(
+            assertion_id=data["assertion_id"],
+            mean=data["mean"],
+            stddev=data["stddev"],
+            count=data["count"],
+            latest_score=data["latest_score"],
+            deviation=data["deviation"],
+            status=data["status"],
+        )
+
+
+# ---------------------------------------------------------------------------
+# Simulation types
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class ConversationMessage:
+    role: str
+    content: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"role": self.role, "content": self.content}
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> ConversationMessage:
+        return cls(role=data["role"], content=data["content"])
+
+
+@dataclass
+class SimulatePersona:
+    name: str
+    system_prompt: str
+    style: str
+    temperature: float
+    max_tokens: int | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        d: dict[str, Any] = {
+            "name": self.name,
+            "system_prompt": self.system_prompt,
+            "style": self.style,
+            "temperature": self.temperature,
+        }
+        if self.max_tokens is not None:
+            d["max_tokens"] = self.max_tokens
+        return d
+
+
+@dataclass
+class SimulateFaultConfig:
+    error_rate: float = 0.0
+    latency_jitter_ms: int = 0
+    content_corruption: bool = False
+    timeout_after_ms: int = 0
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "error_rate": self.error_rate,
+            "latency_jitter_ms": self.latency_jitter_ms,
+            "content_corruption": self.content_corruption,
+            "timeout_after_ms": self.timeout_after_ms,
+        }
 
 
 @dataclass
