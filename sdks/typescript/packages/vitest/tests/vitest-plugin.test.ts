@@ -15,6 +15,8 @@ import { filterByTier } from "../src/tier-filter.js";
 // Mock @attest-ai/core — replace EngineManager and AttestClient
 // ---------------------------------------------------------------------------
 
+let _mockSimulationMode = false;
+
 vi.mock("@attest-ai/core", () => {
   const mockEvaluateBatch = vi.fn().mockResolvedValue({
     results: [
@@ -58,6 +60,19 @@ vi.mock("@attest-ai/core", () => {
     AttestClient: MockAttestClient,
     AgentResult: MockAgentResult,
     STATUS_SOFT_FAIL: "soft_fail",
+    isSimulationMode: () => _mockSimulationMode,
+    simulationEvaluateBatch: (assertions: unknown[]) => ({
+      results: (assertions as Array<{ assertion_id: string; type: string }>).map((a) => ({
+        assertion_id: a.assertion_id,
+        status: "pass",
+        score: 1.0,
+        explanation: `[simulation] ${a.assertion_id} passed`,
+        cost: 0,
+        duration_ms: 0,
+      })),
+      total_cost: 0,
+      total_duration_ms: 0,
+    }),
   };
 });
 
@@ -154,6 +169,8 @@ describe("attestGlobalSetup", () => {
   afterEach(() => {
     globalThis.__attest_engine__ = undefined;
     globalThis.__attest_client__ = undefined;
+    globalThis.__attest_simulation_mode__ = false;
+    _mockSimulationMode = false;
   });
 
   it("returns object with setup and teardown functions", () => {
@@ -196,6 +213,67 @@ describe("attestGlobalSetup", () => {
   it("teardown() is safe to call without setup()", async () => {
     const hooks = attestGlobalSetup();
     await hooks.teardown(); // should not throw
+  });
+
+  it("setup() skips engine in simulation mode", async () => {
+    _mockSimulationMode = true;
+    const hooks = attestGlobalSetup();
+    await hooks.setup();
+
+    expect(globalThis.__attest_engine__).toBeUndefined();
+    expect(globalThis.__attest_client__).toBeUndefined();
+    expect(globalThis.__attest_simulation_mode__).toBe(true);
+    expect(globalThis.__attest_session_cost__).toBe(0);
+
+    await hooks.teardown();
+    expect(globalThis.__attest_simulation_mode__).toBe(false);
+  });
+
+  it("teardown() is safe in simulation mode without engine", async () => {
+    _mockSimulationMode = true;
+    const hooks = attestGlobalSetup();
+    await hooks.setup();
+    await hooks.teardown(); // should not throw
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Simulation mode fixtures
+// ---------------------------------------------------------------------------
+
+describe("AttestEngineFixture (simulation mode)", () => {
+  beforeEach(() => {
+    _mockSimulationMode = true;
+    globalThis.__attest_session_cost__ = 0;
+    globalThis.__attest_session_soft_failures__ = 0;
+  });
+
+  afterEach(() => {
+    _mockSimulationMode = false;
+  });
+
+  it("skips engine creation in simulation mode", () => {
+    const fixture = new AttestEngineFixture();
+    expect(fixture).toBeDefined();
+  });
+
+  it("start() is a no-op in simulation mode", async () => {
+    const fixture = new AttestEngineFixture();
+    await fixture.start(); // should not throw
+  });
+
+  it("evaluate() returns simulation results", async () => {
+    const fixture = new AttestEngineFixture();
+    await fixture.start();
+
+    const chain = {
+      trace: { trace_id: "trc_sim", output: {}, steps: [] },
+      assertions: [{ assertion_id: "a1", type: "schema", spec: {} }],
+    };
+
+    const result = await fixture.evaluate(chain as never);
+    expect(result).toBeDefined();
+    expect(globalThis.__attest_session_cost__).toBe(0);
   });
 });
 

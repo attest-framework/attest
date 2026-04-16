@@ -1,4 +1,4 @@
-import { EngineManager, AttestClient } from "@attest-ai/core";
+import { EngineManager, AttestClient, isSimulationMode } from "@attest-ai/core";
 
 let engineManager: EngineManager | undefined;
 let attestClient: AttestClient | undefined;
@@ -17,11 +17,21 @@ declare global {
   var __attest_session_cost__: number;
   // eslint-disable-next-line no-var
   var __attest_session_soft_failures__: number;
+  // eslint-disable-next-line no-var
+  var __attest_simulation_mode__: boolean;
 }
 
 export function attestGlobalSetup(options?: AttestGlobalSetupOptions) {
   return {
     async setup() {
+      globalThis.__attest_session_cost__ = 0;
+      globalThis.__attest_session_soft_failures__ = 0;
+
+      if (isSimulationMode()) {
+        globalThis.__attest_simulation_mode__ = true;
+        return;
+      }
+
       engineManager = new EngineManager({
         enginePath: options?.enginePath,
         logLevel: options?.logLevel ?? "warn",
@@ -32,8 +42,6 @@ export function attestGlobalSetup(options?: AttestGlobalSetupOptions) {
 
       globalThis.__attest_engine__ = engineManager;
       globalThis.__attest_client__ = attestClient;
-      globalThis.__attest_session_cost__ = 0;
-      globalThis.__attest_session_soft_failures__ = 0;
     },
 
     async teardown() {
@@ -45,6 +53,7 @@ export function attestGlobalSetup(options?: AttestGlobalSetupOptions) {
 
       globalThis.__attest_engine__ = undefined;
       globalThis.__attest_client__ = undefined;
+      globalThis.__attest_simulation_mode__ = false;
     },
   };
 }

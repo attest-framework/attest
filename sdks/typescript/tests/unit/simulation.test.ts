@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { config, isSimulationMode, resetConfig } from "../../packages/core/src/config.js";
+import { config, isSimulationMode, getSampleRate, resetConfig } from "../../packages/core/src/config.js";
 import { simulationEvaluateBatch } from "../../packages/core/src/simulation.js";
 import type { Assertion, Trace } from "../../packages/core/src/proto/types.js";
 
@@ -96,6 +96,69 @@ describe("isSimulationMode — env var override", () => {
     process.env["ATTEST_SIMULATION"] = "1";
     resetConfig(); // resets _simulationMode flag only, not env
     expect(isSimulationMode()).toBe(true); // env still active
+  });
+});
+
+// ---------------------------------------------------------------------------
+// getSampleRate
+// ---------------------------------------------------------------------------
+
+describe("getSampleRate", () => {
+  afterEach(() => {
+    resetConfig();
+    delete process.env["ATTEST_SAMPLE_RATE"];
+  });
+
+  it("defaults to 0", () => {
+    expect(getSampleRate()).toBe(0);
+  });
+
+  it("config({ sampleRate: 0.1 }) sets rate", () => {
+    config({ sampleRate: 0.1 });
+    expect(getSampleRate()).toBe(0.1);
+  });
+
+  it("config({ sampleRate: 0 }) resets to 0", () => {
+    config({ sampleRate: 0.5 });
+    config({ sampleRate: 0 });
+    expect(getSampleRate()).toBe(0);
+  });
+
+  it("env var ATTEST_SAMPLE_RATE is used as fallback", () => {
+    process.env["ATTEST_SAMPLE_RATE"] = "0.05";
+    expect(getSampleRate()).toBe(0.05);
+  });
+
+  it("programmatic value takes priority over env var", () => {
+    process.env["ATTEST_SAMPLE_RATE"] = "0.05";
+    config({ sampleRate: 0.2 });
+    expect(getSampleRate()).toBe(0.2);
+  });
+
+  it("resetConfig() clears programmatic value", () => {
+    config({ sampleRate: 0.3 });
+    resetConfig();
+    expect(getSampleRate()).toBe(0);
+  });
+
+  it("throws RangeError for sampleRate > 1", () => {
+    expect(() => config({ sampleRate: 1.5 })).toThrow(RangeError);
+  });
+
+  it("throws RangeError for negative sampleRate", () => {
+    expect(() => config({ sampleRate: -0.1 })).toThrow(RangeError);
+  });
+
+  it("throws RangeError for invalid env var", () => {
+    process.env["ATTEST_SAMPLE_RATE"] = "abc";
+    expect(() => getSampleRate()).toThrow(RangeError);
+  });
+
+  it("accepts boundary values 0.0 and 1.0", () => {
+    config({ sampleRate: 0.0 });
+    expect(getSampleRate()).toBe(0);
+    config({ sampleRate: 1.0 });
+    expect(getSampleRate()).toBe(1.0);
   });
 });
 

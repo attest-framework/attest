@@ -349,7 +349,18 @@ class ExpectChain:
         model: str | None = None,
         soft: bool = False,
     ) -> ExpectChain:
-        """Assert output is semantically similar to reference via embeddings."""
+        """Assert output is semantically similar to reference via embeddings.
+
+        Args:
+            reference: Text to compare output against.
+            threshold: Minimum cosine similarity score (0.0–1.0) or ``"dynamic"``
+                for σ-based drift detection against historical baselines.
+            model: Override the embedding model.
+            soft: When True the failure is non-blocking.
+        """
+        if isinstance(threshold, str) and threshold != "dynamic":
+            msg = f'threshold must be a float or "dynamic", got {threshold!r}'
+            raise ValueError(msg)
         return self._add(
             TYPE_EMBEDDING,
             {
@@ -372,7 +383,19 @@ class ExpectChain:
         model: str | None = None,
         soft: bool = False,
     ) -> ExpectChain:
-        """Assert output message passes LLM judge evaluation against given criteria."""
+        """Assert output passes LLM judge evaluation against given criteria.
+
+        Args:
+            criteria: Natural language description of what makes a good response.
+            rubric: Rubric name (default ``"default"``).
+            threshold: Minimum passing score (0.0–1.0) or ``"dynamic"`` for
+                σ-based drift detection against historical baselines.
+            model: Override the judge model.
+            soft: When True the failure is non-blocking.
+        """
+        if isinstance(threshold, str) and threshold != "dynamic":
+            msg = f'threshold must be a float or "dynamic", got {threshold!r}'
+            raise ValueError(msg)
         return self._add(
             TYPE_LLM_JUDGE,
             {
@@ -384,7 +407,6 @@ class ExpectChain:
                 "soft": soft,
             },
         )
-
 
     # ── Layer 7: Trace Tree (Multi-Agent) ──
 
@@ -489,9 +511,7 @@ class ExpectChain:
             },
         )
 
-    def ordered_agents(
-        self, groups: list[list[str]], *, soft: bool = False
-    ) -> ExpectChain:
+    def ordered_agents(self, groups: list[list[str]], *, soft: bool = False) -> ExpectChain:
         """Assert agents ran in ordered groups (parallel within, sequential across)."""
         return self._add(
             TYPE_TRACE_TREE,
