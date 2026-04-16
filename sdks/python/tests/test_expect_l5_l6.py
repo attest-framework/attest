@@ -190,3 +190,11 @@ class TestDynamicThreshold:
     def test_default_threshold_unchanged(self, embedding_result: AgentResult) -> None:
         chain = expect(embedding_result).output_similar_to("ref")
         assert chain.assertions[0].spec["threshold"] == 0.8
+
+    def test_invalid_string_threshold_embedding(self, embedding_result: AgentResult) -> None:
+        with pytest.raises(ValueError, match='threshold must be a float or "dynamic"'):
+            expect(embedding_result).output_similar_to("ref", threshold="bad")
+
+    def test_invalid_string_threshold_judge(self, judge_result: AgentResult) -> None:
+        with pytest.raises(ValueError, match='threshold must be a float or "dynamic"'):
+            expect(judge_result).passes_judge("criteria", threshold="invalid")
