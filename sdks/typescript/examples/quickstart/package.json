@@ -10,8 +10,8 @@
     "@attest-ai/core": "workspace:*"
   },
   "devDependencies": {
-    "vitest": "^4.0.18",
-    "typescript": "^5.7.0",
-    "@types/node": "^25.6.0"
+    "@types/node": "^25.6.0",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.4"
   }
 }
