@@ -16,7 +16,11 @@ from attest._proto.codec import (
 from attest._proto.types import (
     Assertion,
     AssertionResult,
+    ConversationMessage,
+    DriftReport,
     EvaluateBatchResult,
+    SimulateFaultConfig,
+    SimulatePersona,
     Trace,
 )
 from attest.engine_manager import EngineManager
@@ -84,6 +88,7 @@ class AttestClient:
             except ProtocolError as exc:
                 # Route error to the specific request by extracting raw id
                 import json as _json
+
                 try:
                     raw: Any = _json.loads(line.strip())
                     req_id = int(raw.get("id", -1))
@@ -208,6 +213,70 @@ class AttestClient:
         }
         raw = await self.send_request("submit_plugin_result", params)
         return bool(raw.get("accepted", False))
+
+    async def query_drift(
+        self,
+        assertion_id: str,
+        window_size: int = 50,
+    ) -> DriftReport:
+        """Query drift status for an assertion against historical scores.
+
+        Args:
+            assertion_id: The assertion to check drift for.
+            window_size: Number of recent scores to include (default 50).
+
+        Returns:
+            DriftReport with mean, stddev, deviation, and status.
+        """
+        from attest.config import is_simulation_mode
+
+        if is_simulation_mode():
+            return DriftReport(
+                assertion_id=assertion_id,
+                mean=1.0,
+                stddev=0.0,
+                count=0,
+                latest_score=1.0,
+                deviation=0.0,
+                status="no_data",
+            )
+
+        params: dict[str, Any] = {
+            "assertion_id": assertion_id,
+            "window_size": window_size,
+        }
+        raw = await self.send_request("query_drift", params)
+        return DriftReport.from_dict(raw["report"])
+
+    async def generate_user_message(
+        self,
+        persona: SimulatePersona,
+        conversation_history: list[ConversationMessage],
+        fault_config: SimulateFaultConfig | None = None,
+    ) -> str:
+        """Generate a simulated user message using the engine's LLM provider.
+
+        Args:
+            persona: Persona configuration (name, style, temperature).
+            conversation_history: Prior conversation messages.
+            fault_config: Optional fault injection settings.
+
+        Returns:
+            Generated message text.
+        """
+        from attest.config import is_simulation_mode
+
+        if is_simulation_mode():
+            return f"[simulation] Hello from {persona.name}"
+
+        params: dict[str, Any] = {
+            "persona": persona.to_dict(),
+            "conversation_history": [m.to_dict() for m in conversation_history],
+        }
+        if fault_config is not None:
+            params["fault_config"] = fault_config.to_dict()
+        raw = await self.send_request("generate_user_message", params)
+        return str(raw["message"])
 
 
 def _simulation_evaluate_batch(assertions: list[Assertion]) -> EvaluateBatchResult:

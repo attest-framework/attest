@@ -5,6 +5,10 @@ from __future__ import annotations
 from attest._proto.types import (
     Assertion,
     AssertionResult,
+    ConversationMessage,
+    DriftReport,
+    SimulateFaultConfig,
+    SimulatePersona,
     Step,
     Trace,
     TraceMetadata,
@@ -80,6 +84,12 @@ __all__ = [
     "ContinuousEvalRunner",
     "Sampler",
     "AlertDispatcher",
+    # Drift detection
+    "DriftReport",
+    # Simulation types
+    "ConversationMessage",
+    "SimulatePersona",
+    "SimulateFaultConfig",
     # Exceptions
     "EngineTimeoutError",
     # Version

@@ -12,6 +12,10 @@ export type {
   TraceId,
   AssertionId,
   AgentId,
+  DriftReport,
+  ConversationMessage,
+  SimulatePersona,
+  SimulateFaultConfig,
 } from "./proto/types.js";
 export { traceId, assertionId, agentId } from "./proto/types.js";
 export { VERSION, ENGINE_VERSION } from "./version.js";
