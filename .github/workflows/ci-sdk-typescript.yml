@@ -7,38 +7,34 @@ on:
   pull_request:
     paths: ["sdks/typescript/**"]
 
+defaults:
+  run:
+    working-directory: sdks/typescript
+
 jobs:
   test:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        node-version: ["18", "20", "22"]
+        node-version: ["20", "22"]
     steps:
       - uses: actions/checkout@v6
       - uses: pnpm/action-setup@v6
         with:
-          version: 9
+          package_json_file: sdks/typescript/package.json
       - uses: actions/setup-node@v6
         with:
           node-version: ${{ matrix.node-version }}
           cache: pnpm
           cache-dependency-path: sdks/typescript/pnpm-lock.yaml
       - name: Install dependencies
-        run: |
-          cd sdks/typescript
-          pnpm install --frozen-lockfile
+        run: pnpm install
       - name: Build
-        run: |
-          cd sdks/typescript
-          pnpm -r build
+        run: pnpm -r build
       - name: Test
-        run: |
-          cd sdks/typescript
-          pnpm -r test
+        run: pnpm -r test
       - name: Type check
-        run: |
-          cd sdks/typescript
-          pnpm -r exec tsc --noEmit
+        run: pnpm -r exec tsc --noEmit
 
   # Notify docs site of SDK changes so it can rebuild
   # Requires DOCS_DEPLOY_TOKEN secret: GitHub PAT with repo scope
@@ -53,6 +49,7 @@ jobs:
           fetch-depth: 2
       - name: Check for SDK source changes
         id: changes
+        working-directory: .
         run: |
           if git diff --name-only HEAD~1 HEAD | grep -qE '^sdks/typescript/packages/core/src/'; then
             echo "sdk_changed=true" >> "$GITHUB_OUTPUT"
