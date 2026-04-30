@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json as _json
 import logging
+import os
 import time
 from collections.abc import Callable
 from typing import Any
@@ -43,8 +44,6 @@ logger = logging.getLogger("attest.client")
 
 
 def _env_debug_enabled() -> bool:
-    import os
-
     flag = os.environ.get("ATTEST_DEBUG_PROTOCOL", "")
     return flag in {"1", "true", "yes"}
 

@@ -14,6 +14,7 @@ import json
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -44,8 +45,6 @@ FIXTURES = _load_fixtures()
 
 @pytest.mark.parametrize("fixture", FIXTURES, ids=_ids(FIXTURES))
 def test_protocol_conformance_fixture(fixture: dict[str, Any]) -> None:
-    from unittest.mock import MagicMock
-
     engine = MagicMock()
     client = AttestClient(
         engine,
