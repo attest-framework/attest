@@ -77,7 +77,7 @@ def _require_numeric_attr(attrs: dict[str, Any], key: str) -> int:
     value = attrs.get(key)
     if value is None:
         return 0
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
+    if isinstance(value, bool) or not isinstance(value, int | float):
         raise TypeError(
             f"OTel attribute {key!r} must be numeric per gen_ai semantic "
             f"conventions; got {type(value).__name__}"
