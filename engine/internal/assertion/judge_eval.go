@@ -36,6 +36,12 @@ func NewJudgeEvaluator(provider llm.Provider, rubrics *judge.RubricRegistry, c *
 }
 
 // judgeSpec is the expected structure of the assertion spec JSON.
+//
+// Repeat controls calibrated-judge sampling: with Repeat=N>1 the engine runs
+// the judge N times, returns the median, and emits SampleScores plus mean and
+// stddev. Cost is N × per-run cost. MetaEval is a legacy alias for
+// Repeat=metaEvalRuns kept for backward compatibility — when both are set,
+// Repeat wins.
 type judgeSpec struct {
 	Target    string  `json:"target"`
 	Criteria  string  `json:"criteria"`
@@ -44,11 +50,15 @@ type judgeSpec struct {
 	Soft      bool    `json:"soft"`
 	Model     string  `json:"model"`
 	MetaEval  bool    `json:"meta_eval"`
+	Repeat    int     `json:"repeat"`
 }
 
-const metaEvalRuns = 3
-const metaEvalTemperature = 0.3
-const metaEvalVarianceThreshold = 0.2
+const (
+	metaEvalRuns              = 3
+	metaEvalTemperature       = 0.3
+	metaEvalVarianceThreshold = 0.2
+	maxRepeatRuns             = 16
+)
 
 // Evaluate runs the LLM judge assertion against the trace.
 func (e *JudgeEvaluator) Evaluate(trace *types.Trace, assertion *types.Assertion) *types.AssertionResult {
@@ -112,8 +122,12 @@ func (e *JudgeEvaluator) Evaluate(trace *types.Trace, assertion *types.Assertion
 		userContent = fmt.Sprintf("Evaluation criteria: %s\n\n%s", spec.Criteria, wrapped)
 	}
 
-	if metaEvalEnabled(spec) {
-		return e.evaluateWithMetaEval(ctx, assertion, rubric, model, userContent, spec, start, targetStr, rubricName)
+	runs, err := repeatRuns(spec)
+	if err != nil {
+		return failResult(assertion, start, err.Error())
+	}
+	if runs > 1 {
+		return e.evaluateRepeated(ctx, assertion, rubric, model, userContent, spec, start, targetStr, rubricName, runs)
 	}
 
 	return e.evaluateSinglePass(ctx, assertion, rubric, model, userContent, spec, start, targetStr, rubricName)
@@ -213,12 +227,22 @@ func judgeTimeoutSeconds() int {
 	return n
 }
 
-// metaEvalEnabled returns true if meta-evaluation is requested via spec or env var.
-func metaEvalEnabled(spec judgeSpec) bool {
-	if spec.MetaEval {
-		return true
+// repeatRuns resolves the requested number of judge samples from the spec
+// or env. Precedence: spec.Repeat > spec.MetaEval > ATTEST_JUDGE_META_EVAL.
+// Returns (1, nil) for single-pass. An explicit out-of-range Repeat (≤0 or
+// > maxRepeatRuns) is rejected so config errors fail fast rather than
+// silently degrading to single-pass.
+func repeatRuns(spec judgeSpec) (int, error) {
+	if spec.Repeat != 0 {
+		if spec.Repeat < 1 || spec.Repeat > maxRepeatRuns {
+			return 0, fmt.Errorf("judge spec: repeat=%d out of range [1, %d]", spec.Repeat, maxRepeatRuns)
+		}
+		return spec.Repeat, nil
 	}
-	return os.Getenv("ATTEST_JUDGE_META_EVAL") == "true"
+	if spec.MetaEval || os.Getenv("ATTEST_JUDGE_META_EVAL") == "true" {
+		return metaEvalRuns, nil
+	}
+	return 1, nil
 }
 
 // evaluateSinglePass runs the judge once (default behavior).
@@ -281,9 +305,11 @@ type metaEvalResult struct {
 	err         error
 }
 
-// evaluateWithMetaEval runs the judge 3x concurrently, takes the median score,
-// and flags high variance in the explanation.
-func (e *JudgeEvaluator) evaluateWithMetaEval(
+// evaluateRepeated runs the judge `runs` times concurrently, takes the median
+// score, and flags high variance in the explanation. Use to surface judge
+// stability — sample stddev and per-sample scores are returned in
+// JudgeMetadata so calibration tooling can compute agreement metrics.
+func (e *JudgeEvaluator) evaluateRepeated(
 	ctx context.Context,
 	assertion *types.Assertion,
 	rubric *judge.Rubric,
@@ -291,11 +317,12 @@ func (e *JudgeEvaluator) evaluateWithMetaEval(
 	spec judgeSpec,
 	start time.Time,
 	targetStr, rubricName string,
+	runs int,
 ) *types.AssertionResult {
-	results := make([]metaEvalResult, metaEvalRuns)
+	results := make([]metaEvalResult, runs)
 	var wg sync.WaitGroup
 
-	for i := 0; i < metaEvalRuns; i++ {
+	for i := 0; i < runs; i++ {
 		wg.Add(1)
 		go func(idx int) {
 			defer wg.Done()
@@ -349,7 +376,7 @@ func (e *JudgeEvaluator) evaluateWithMetaEval(
 
 	// Need at least 1 successful run
 	if len(scores) == 0 {
-		return failResult(assertion, start, fmt.Sprintf("all %d meta-eval runs failed: %v", metaEvalRuns, firstErr))
+		return failResult(assertion, start, fmt.Sprintf("all %d judge runs failed: %v", runs, firstErr))
 	}
 
 	// Sort and take median
