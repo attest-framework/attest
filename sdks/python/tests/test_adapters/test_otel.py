@@ -8,7 +8,12 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from attest._proto.types import STEP_LLM_CALL, STEP_TOOL_CALL
+from attest._proto.types import (
+    STEP_AGENT_CALL,
+    STEP_LLM_CALL,
+    STEP_RETRIEVAL,
+    STEP_TOOL_CALL,
+)
 from attest.adapters.otel import OTelAdapter, _require_numeric_attr
 
 
@@ -91,6 +96,7 @@ class TestOTelAdapterFromSpans:
         assert step.type == STEP_LLM_CALL
         assert step.args is not None
         assert step.args.get("model") == "gpt-4.1"
+        assert step.args.get("operation") == "chat"
         assert step.result is not None
         assert step.result.get("completion") == "Hello world"
 
@@ -258,6 +264,205 @@ class TestOTelAdapterFromSpans:
         with _otel_available():
             trace = OTelAdapter.from_spans([span], agent_id="inst-agent")
         assert trace.agent_id == "inst-agent"
+
+
+class TestOTelAdapterGenAiOperationCoverage:
+    """New OTel GenAI operation names: text_completion, embeddings, invoke_agent, execute_tool."""
+
+    def test_text_completion_classified_as_llm_call(self) -> None:
+        span = _make_span(
+            "text_completion gpt-4.1",
+            {
+                "gen_ai.operation.name": "text_completion",
+                "gen_ai.request.model": "gpt-4.1",
+                "gen_ai.prompt": "Once upon a time",
+                "gen_ai.completion": "there was a llama.",
+            },
+        )
+        with _otel_available():
+            trace = OTelAdapter.from_spans([span])
+        assert trace.steps[0].type == STEP_LLM_CALL
+        assert trace.steps[0].args is not None
+        assert trace.steps[0].args.get("operation") == "text_completion"
+
+    def test_embeddings_classified_as_llm_call(self) -> None:
+        span = _make_span(
+            "embeddings text-embedding-3-small",
+            {
+                "gen_ai.operation.name": "embeddings",
+                "gen_ai.request.model": "text-embedding-3-small",
+                "gen_ai.usage.input_tokens": 8,
+            },
+        )
+        with _otel_available():
+            trace = OTelAdapter.from_spans([span])
+        assert trace.steps[0].type == STEP_LLM_CALL
+        assert trace.steps[0].args is not None
+        assert trace.steps[0].args.get("operation") == "embeddings"
+
+    def test_execute_tool_classified_as_tool_call(self) -> None:
+        span = _make_span(
+            "execute_tool web_search",
+            {
+                "gen_ai.operation.name": "execute_tool",
+                "gen_ai.tool.name": "web_search",
+                "gen_ai.tool.call.id": "call_abc",
+            },
+        )
+        with _otel_available():
+            trace = OTelAdapter.from_spans([span])
+        assert trace.steps[0].type == STEP_TOOL_CALL
+        assert trace.steps[0].name == "web_search"
+        assert trace.steps[0].args is not None
+        assert trace.steps[0].args.get("call_id") == "call_abc"
+
+    def test_invoke_agent_classified_as_agent_call(self) -> None:
+        span = _make_span(
+            "invoke_agent researcher",
+            {
+                "gen_ai.operation.name": "invoke_agent",
+                "gen_ai.agent.id": "agent-001",
+                "gen_ai.agent.name": "researcher",
+                "gen_ai.agent.description": "Research assistant",
+            },
+        )
+        with _otel_available():
+            trace = OTelAdapter.from_spans([span])
+        assert trace.steps[0].type == STEP_AGENT_CALL
+        assert trace.steps[0].name == "researcher"
+        assert trace.steps[0].args is not None
+        assert trace.steps[0].args.get("agent_id") == "agent-001"
+        assert trace.steps[0].args.get("description") == "Research assistant"
+
+    def test_retrieval_classified_via_operation_name(self) -> None:
+        span = _make_span(
+            "retrieval",
+            {
+                "gen_ai.operation.name": "retrieval",
+                "gen_ai.retrieval.query": "Capital of France",
+                "gen_ai.retrieval.source": "vector_store",
+                "gen_ai.retrieval.documents.count": 3,
+            },
+        )
+        with _otel_available():
+            trace = OTelAdapter.from_spans([span])
+        assert trace.steps[0].type == STEP_RETRIEVAL
+        assert trace.steps[0].args is not None
+        assert trace.steps[0].args.get("query") == "Capital of France"
+        assert trace.steps[0].args.get("source") == "vector_store"
+        assert trace.steps[0].result is not None
+        assert trace.steps[0].result.get("documents_count") == 3
+
+    def test_retrieval_classified_via_attribute_family(self) -> None:
+        # Producer omits operation.name but emits gen_ai.retrieval.* attrs.
+        span = _make_span(
+            "vector-search",
+            {
+                "gen_ai.retrieval.query": "Paris",
+                "gen_ai.retrieval.documents.count": 5,
+            },
+        )
+        with _otel_available():
+            trace = OTelAdapter.from_spans([span])
+        assert trace.steps[0].type == STEP_RETRIEVAL
+
+
+class TestOTelAdapterAgentHierarchy:
+    """gen_ai.agent.* attributes propagate onto Step.agent_id / agent_role."""
+
+    def test_llm_call_inherits_agent_attributes(self) -> None:
+        span = _make_span(
+            "chat",
+            {
+                "gen_ai.operation.name": "chat",
+                "gen_ai.completion": "ok",
+                "gen_ai.agent.id": "agent-42",
+                "gen_ai.agent.name": "support_bot",
+            },
+        )
+        with _otel_available():
+            trace = OTelAdapter.from_spans([span])
+        step = trace.steps[0]
+        assert step.agent_id == "agent-42"
+        assert step.agent_role == "support_bot"
+
+    def test_tool_call_inherits_agent_attributes(self) -> None:
+        span = _make_span(
+            "execute_tool",
+            {
+                "gen_ai.operation.name": "execute_tool",
+                "gen_ai.tool.name": "calculator",
+                "gen_ai.agent.id": "agent-7",
+                "gen_ai.agent.name": "math_agent",
+            },
+        )
+        with _otel_available():
+            trace = OTelAdapter.from_spans([span])
+        step = trace.steps[0]
+        assert step.agent_id == "agent-7"
+        assert step.agent_role == "math_agent"
+
+    def test_invoke_agent_step_records_agent_identity(self) -> None:
+        span = _make_span(
+            "invoke_agent",
+            {
+                "gen_ai.operation.name": "invoke_agent",
+                "gen_ai.agent.id": "agent-99",
+                "gen_ai.agent.name": "delegator",
+            },
+        )
+        with _otel_available():
+            trace = OTelAdapter.from_spans([span])
+        step = trace.steps[0]
+        assert step.type == STEP_AGENT_CALL
+        assert step.agent_id == "agent-99"
+        assert step.agent_role == "delegator"
+
+    def test_missing_agent_attributes_yield_none(self) -> None:
+        span = _make_span(
+            "chat",
+            {"gen_ai.operation.name": "chat", "gen_ai.completion": "ok"},
+        )
+        with _otel_available():
+            trace = OTelAdapter.from_spans([span])
+        step = trace.steps[0]
+        assert step.agent_id is None
+        assert step.agent_role is None
+
+
+class TestOTelAdapterClassifierStrictness:
+    """Span name fallback is narrow: arbitrary substrings no longer match."""
+
+    def test_arbitrary_span_name_with_chat_substring_does_not_match(self) -> None:
+        # Old behavior: `"chat" in name.lower()` matched "rich-chat-history".
+        # New behavior: only first token equality matches.
+        span = _make_span("rich-chat-history", {"http.method": "GET"})
+        with _otel_available():
+            trace = OTelAdapter.from_spans([span])
+        assert trace.steps == []
+
+    def test_first_token_chat_classified_as_llm_call(self) -> None:
+        # OTel legacy span name format: `chat <model>`.
+        span = _make_span("chat gpt-4.1", {})
+        with _otel_available():
+            trace = OTelAdapter.from_spans([span])
+        assert len(trace.steps) == 1
+        assert trace.steps[0].type == STEP_LLM_CALL
+
+    def test_completion_attribute_alone_classifies_as_llm(self) -> None:
+        # Producer that emits gen_ai.completion but omits operation.name.
+        span = _make_span("anonymous-span", {"gen_ai.completion": "result"})
+        with _otel_available():
+            trace = OTelAdapter.from_spans([span])
+        assert len(trace.steps) == 1
+        assert trace.steps[0].type == STEP_LLM_CALL
+
+    def test_agent_attribute_without_operation_classifies_as_agent(self) -> None:
+        span = _make_span("anonymous-span", {"gen_ai.agent.name": "researcher"})
+        with _otel_available():
+            trace = OTelAdapter.from_spans([span])
+        assert len(trace.steps) == 1
+        assert trace.steps[0].type == STEP_AGENT_CALL
 
 
 class TestRequireNumericAttr:
