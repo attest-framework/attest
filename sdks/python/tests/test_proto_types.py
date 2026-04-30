@@ -187,9 +187,7 @@ def test_judge_metadata_bias_probes_roundtrip() -> None:
             BiasProbe(name="verbosity", score=0.7, delta=0.2),
             BiasProbe(name="position", score=0.55, delta=0.05),
         ],
-        calibration=JudgeAgreement(
-            label_count=10, agreement=0.8, cohen_kappa=0.6, roc_auc=0.9
-        ),
+        calibration=JudgeAgreement(label_count=10, agreement=0.8, cohen_kappa=0.6, roc_auc=0.9),
     )
     restored = JudgeMetadata.from_dict(original.to_dict())
     assert len(restored.bias_probes) == 2

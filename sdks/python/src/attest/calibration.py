@@ -155,9 +155,7 @@ def load_labels_csv(text: str) -> list[LabeledRecord]:
         if row[0].lstrip().startswith("#"):
             continue
         if len(row) < 2:
-            raise ValueError(
-                f"CSV line {line}: want at least 2 columns (input, human_label)"
-            )
+            raise ValueError(f"CSV line {line}: want at least 2 columns (input, human_label)")
         try:
             human = float(row[1].strip())
         except ValueError as exc:
@@ -167,9 +165,7 @@ def load_labels_csv(text: str) -> list[LabeledRecord]:
             try:
                 rec.judge_score = float(row[2].strip())
             except ValueError as exc:
-                raise ValueError(
-                    f"CSV line {line}: judge_score not a float: {exc}"
-                ) from exc
+                raise ValueError(f"CSV line {line}: judge_score not a float: {exc}") from exc
             rec.judge_known = True
         out.append(rec)
     if not out:

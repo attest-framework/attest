@@ -75,9 +75,7 @@ def _cmd_calibrate(argv: list[str]) -> None:
     args = parser.parse_args(argv)
 
     records = load_labels(Path(args.labels))
-    pairs = [
-        LabelPair(human=r.human_label, judge=r.judge_score) for r in records if r.judge_known
-    ]
+    pairs = [LabelPair(human=r.human_label, judge=r.judge_score) for r in records if r.judge_known]
     missing = sum(1 for r in records if not r.judge_known)
     if not pairs:
         print(

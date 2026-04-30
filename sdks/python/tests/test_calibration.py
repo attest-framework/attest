@@ -73,11 +73,7 @@ def test_compute_agreement_one_class_no_auc() -> None:
 
 def test_load_labels_csv_with_header() -> None:
     src = (
-        "input,human_label,judge_score\n"
-        "hello,0.9,0.85\n"
-        "world,0.1,0.2\n"
-        "# comment\n"
-        "just-input,0.5,\n"
+        "input,human_label,judge_score\nhello,0.9,0.85\nworld,0.1,0.2\n# comment\njust-input,0.5,\n"
     )
     got = load_labels_csv(src)
     assert len(got) == 3
