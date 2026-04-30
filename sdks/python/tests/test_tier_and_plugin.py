@@ -5,7 +5,6 @@ from __future__ import annotations
 import pytest
 
 from attest.tier import TIER_1, TIER_2, TIER_3, tier
-from attest.plugin import AttestEngineFixture
 
 
 class TestTierConstants:
@@ -84,7 +83,11 @@ class TestTierDecorator:
         assert not hasattr(test_fn, "_attest_tier")
 
     def test_tier_importable_from_attest_module(self) -> None:
-        from attest import tier as attest_tier, TIER_1 as T1, TIER_2 as T2, TIER_3 as T3
+        from attest import TIER_1 as T1
+        from attest import TIER_2 as T2
+        from attest import TIER_3 as T3
+        from attest import tier as attest_tier
+
         assert attest_tier is tier
         assert T1 == 1
         assert T2 == 2
@@ -131,7 +134,7 @@ class TestCollectionTierFilter:
 
     def test_tier_filter_keeps_untiered_tests(self) -> None:
         """Functions without _attest_tier are always included."""
-        from unittest.mock import MagicMock, patch
+        from unittest.mock import MagicMock
 
         item = MagicMock()
         item.function = MagicMock(spec=[])  # no _attest_tier attribute
@@ -148,6 +151,7 @@ class TestCollectionTierFilter:
         config.hook.pytest_deselected.side_effect = lambda items: deselected.extend(items)
 
         from attest.plugin import pytest_collection_modifyitems
+
         pytest_collection_modifyitems(config, items)
 
         assert item in items
@@ -170,6 +174,7 @@ class TestCollectionTierFilter:
         config.hook.pytest_deselected.side_effect = lambda items: None
 
         from attest.plugin import pytest_collection_modifyitems
+
         pytest_collection_modifyitems(config, items)
 
         assert item in items
@@ -192,6 +197,7 @@ class TestCollectionTierFilter:
         config.hook.pytest_deselected.side_effect = lambda items: deselected.extend(items)
 
         from attest.plugin import pytest_collection_modifyitems
+
         pytest_collection_modifyitems(config, items)
 
         assert item not in items
@@ -211,6 +217,7 @@ class TestCollectionTierFilter:
 
         items = [item]
         from attest.plugin import pytest_collection_modifyitems
+
         pytest_collection_modifyitems(config, items)
 
         assert item in items

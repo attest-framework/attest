@@ -14,6 +14,7 @@ import pytest
 def _run_main(*args: str) -> tuple[str, int]:
     """Run attest CLI main() with given args, return (stdout, exit_code)."""
     import io
+
     from attest.__main__ import main
 
     captured_output = io.StringIO()
@@ -151,6 +152,7 @@ class TestCacheUnknownSubcommand:
 
     def test_unknown_subcommand_exits_nonzero(self) -> None:
         import io
+
         from attest.__main__ import main
 
         stderr_out = io.StringIO()

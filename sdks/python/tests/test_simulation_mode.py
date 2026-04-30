@@ -21,7 +21,6 @@ from attest.client import AttestClient, _simulation_evaluate_batch
 from attest.config import config, is_simulation_mode, reset
 from attest.trace import TraceBuilder
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------

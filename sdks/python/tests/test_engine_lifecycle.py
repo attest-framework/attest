@@ -36,24 +36,34 @@ def _make_mock_process(
     import json
 
     if init_response is None:
-        init_response = json.dumps({
-            "jsonrpc": "2.0",
-            "id": 1,
-            "result": {
-                "compatible": True,
-                "engine_version": "0.4.0",
-                "protocol_version": 1,
-                "capabilities": ["layers_1_4"],
-                "missing": [],
-            },
-        }).encode() + b"\n"
+        init_response = (
+            json.dumps(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "result": {
+                        "compatible": True,
+                        "engine_version": "0.4.0",
+                        "protocol_version": 1,
+                        "capabilities": ["layers_1_4"],
+                        "missing": [],
+                    },
+                }
+            ).encode()
+            + b"\n"
+        )
 
     if shutdown_response is None:
-        shutdown_response = json.dumps({
-            "jsonrpc": "2.0",
-            "id": 2,
-            "result": {},
-        }).encode() + b"\n"
+        shutdown_response = (
+            json.dumps(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 2,
+                    "result": {},
+                }
+            ).encode()
+            + b"\n"
+        )
 
     responses = iter([init_response, shutdown_response])
 
@@ -183,10 +193,13 @@ def test_timeout_raises_engine_timeout_error() -> None:
         process.stdout = AsyncMock()
         manager._process = process
 
-        with patch(
-            "attest.engine_manager.asyncio.wait_for",
-            side_effect=asyncio.TimeoutError,
-        ), patch("attest.engine_manager._engine_timeout", return_value=2.0):
+        with (
+            patch(
+                "attest.engine_manager.asyncio.wait_for",
+                side_effect=asyncio.TimeoutError,
+            ),
+            patch("attest.engine_manager._engine_timeout", return_value=2.0),
+        ):
             with pytest.raises(EngineTimeoutError) as exc_info:
                 await manager._send_request("evaluate_batch", {})
 
@@ -315,11 +328,16 @@ def test_stop_kills_on_terminate_timeout() -> None:
         manager = _make_manager()
         manager._initialized = True
 
-        shutdown_resp = json.dumps({
-            "jsonrpc": "2.0",
-            "id": 1,
-            "result": {},
-        }).encode() + b"\n"
+        shutdown_resp = (
+            json.dumps(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "result": {},
+                }
+            ).encode()
+            + b"\n"
+        )
 
         process = MagicMock()
         process.returncode = None
@@ -383,11 +401,16 @@ def test_request_id_increments() -> None:
         manager = _make_manager()
         manager._initialized = True
 
-        response = json.dumps({
-            "jsonrpc": "2.0",
-            "id": 1,
-            "result": {"data": "ok"},
-        }).encode() + b"\n"
+        response = (
+            json.dumps(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "result": {"data": "ok"},
+                }
+            ).encode()
+            + b"\n"
+        )
 
         process = MagicMock()
         process.stdin = AsyncMock()

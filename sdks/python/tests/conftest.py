@@ -5,14 +5,14 @@ from __future__ import annotations
 import pytest
 
 from attest._proto.types import (
+    STATUS_PASS,
+    TYPE_CONSTRAINT,
+    TYPE_CONTENT,
+    TYPE_SCHEMA,
+    TYPE_TRACE,
     Assertion,
     AssertionResult,
     Trace,
-    STATUS_PASS,
-    TYPE_CONTENT,
-    TYPE_CONSTRAINT,
-    TYPE_SCHEMA,
-    TYPE_TRACE,
 )
 from attest.result import AgentResult
 from attest.trace import TraceBuilder
@@ -44,7 +44,10 @@ def sample_trace() -> Trace:
             metadata={"duration_ms": 120},
         )
         .set_output(
-            message="Your refund of $89.99 has been processed. You'll see it in 3 business days. Refund ID: RFD-001.",
+            message=(
+                "Your refund of $89.99 has been processed. "
+                "You'll see it in 3 business days. Refund ID: RFD-001."
+            ),
             structured={"refund_id": "RFD-001", "confidence": 0.95},
         )
         .set_metadata(
@@ -127,11 +130,18 @@ def judge_result() -> AgentResult:
         .add_llm_call(
             "reasoning",
             args={"model": "gpt-4.1"},
-            result={"completion": "A transformer uses attention mechanisms to process sequences in parallel."},
+            result={
+                "completion": (
+                    "A transformer uses attention mechanisms to process sequences in parallel."
+                )
+            },
             metadata={"duration_ms": 1500},
         )
         .set_output(
-            message="A transformer uses attention mechanisms to process sequences in parallel, enabling efficient training on large datasets.",
+            message=(
+                "A transformer uses attention mechanisms to process sequences "
+                "in parallel, enabling efficient training on large datasets."
+            ),
             structured={"topic": "transformers", "confidence": 0.92},
         )
         .set_metadata(

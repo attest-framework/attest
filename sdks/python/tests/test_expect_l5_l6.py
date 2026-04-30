@@ -67,11 +67,7 @@ class TestOutputSimilarTo:
         assert assertions[1].spec["threshold"] == 0.9
 
     def test_assertion_id_is_unique(self, embedding_result: AgentResult) -> None:
-        chain = (
-            expect(embedding_result)
-            .output_similar_to("ref A")
-            .output_similar_to("ref B")
-        )
+        chain = expect(embedding_result).output_similar_to("ref A").output_similar_to("ref B")
         ids = [a.assertion_id for a in chain.assertions]
         assert ids[0] != ids[1]
 
@@ -149,11 +145,7 @@ class TestPassesJudge:
         assert assertions[1].spec["threshold"] == 0.7
 
     def test_assertion_id_is_unique(self, judge_result: AgentResult) -> None:
-        chain = (
-            expect(judge_result)
-            .passes_judge("criteria A")
-            .passes_judge("criteria B")
-        )
+        chain = expect(judge_result).passes_judge("criteria A").passes_judge("criteria B")
         ids = [a.assertion_id for a in chain.assertions]
         assert ids[0] != ids[1]
 

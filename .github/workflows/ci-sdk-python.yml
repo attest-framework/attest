@@ -31,11 +31,15 @@ jobs:
       - name: Lint
         run: |
           cd sdks/python
-          uv run ruff check src/
+          uv run ruff check src tests
+      - name: Format check
+        run: |
+          cd sdks/python
+          uv run ruff format --check src tests
       - name: Type check
         run: |
           cd sdks/python
-          uv run mypy src/attest/
+          uv run mypy --strict src/attest
       - name: Security audit
         run: |
           cd sdks/python

@@ -12,7 +12,6 @@ from __future__ import annotations
 import pytest
 
 from attest._proto.types import (
-    Assertion,
     STATUS_HARD_FAIL,
     STATUS_PASS,
     STATUS_SOFT_FAIL,
@@ -20,6 +19,7 @@ from attest._proto.types import (
     TYPE_CONTENT,
     TYPE_SCHEMA,
     TYPE_TRACE,
+    Assertion,
 )
 from attest.expect import expect
 from attest.plugin import AttestEngineFixture
@@ -52,7 +52,10 @@ def _refund_trace() -> TraceBuilder:
             metadata={"duration_ms": 90},
         )
         .set_output(
-            message="Your refund of $49.99 for order ORD-456 has been processed. Refund ID: RFD-100. Expect it within 5 business days.",
+            message=(
+                "Your refund of $49.99 for order ORD-456 has been processed. "
+                "Refund ID: RFD-100. Expect it within 5 business days."
+            ),
             structured={"refund_id": "RFD-100", "amount": 49.99},
         )
         .set_metadata(
@@ -115,9 +118,7 @@ class TestFullRoundTrip:
             ),
         ]
 
-        result = engine.evaluate(
-            _chain_from_raw(trace, assertions)
-        )
+        result = engine.evaluate(_chain_from_raw(trace, assertions))
 
         assert result.passed
         assert result.pass_count == 4

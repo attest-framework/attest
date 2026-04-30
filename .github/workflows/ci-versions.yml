@@ -1,0 +1,37 @@
+name: Version Source-of-Truth
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "VERSION"
+      - "engine/internal/buildinfo/**"
+      - "sdks/python/pyproject.toml"
+      - "sdks/python/src/attest/__init__.py"
+      - "sdks/typescript/packages/core/package.json"
+      - "sdks/typescript/packages/core/src/version.ts"
+      - "sdks/typescript/packages/vitest/package.json"
+      - "scripts/verify-versions.sh"
+      - ".github/workflows/ci-versions.yml"
+  pull_request:
+    paths:
+      - "VERSION"
+      - "engine/internal/buildinfo/**"
+      - "sdks/python/pyproject.toml"
+      - "sdks/python/src/attest/__init__.py"
+      - "sdks/typescript/packages/core/package.json"
+      - "sdks/typescript/packages/core/src/version.ts"
+      - "sdks/typescript/packages/vitest/package.json"
+      - "scripts/verify-versions.sh"
+      - ".github/workflows/ci-versions.yml"
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "20"
+      - name: Verify version sources agree
+        run: bash scripts/verify-versions.sh

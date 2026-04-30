@@ -12,9 +12,7 @@ from attest.plugin import AttestEngineFixture
 
 def _engine_binary_path() -> str:
     """Resolve path to the engine binary built by `make engine`."""
-    repo_root = os.path.abspath(
-        os.path.join(os.path.dirname(__file__), "..", "..", "..", "..")
-    )
+    repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", ".."))
     return os.path.join(repo_root, "bin", "attest-engine")
 
 

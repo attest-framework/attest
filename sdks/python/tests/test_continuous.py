@@ -3,15 +3,12 @@
 from __future__ import annotations
 
 import asyncio
-import urllib.error
-from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from attest._proto.types import Assertion, EvaluateBatchResult, AssertionResult, Trace
+from attest._proto.types import Assertion, AssertionResult, EvaluateBatchResult, Trace
 from attest.continuous import AlertDispatcher, ContinuousEvalRunner, Sampler
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -129,9 +126,7 @@ class TestAlertDispatcher:
 
     def test_slack_message_format(self) -> None:
         dispatcher = AlertDispatcher()
-        msg = dispatcher._format_slack(
-            {"drift_type": "cosine", "score": 0.42, "trace_id": "t-99"}
-        )
+        msg = dispatcher._format_slack({"drift_type": "cosine", "score": 0.42, "trace_id": "t-99"})
         assert "drift" in msg
         assert "cosine" in msg
         assert "0.42" in msg

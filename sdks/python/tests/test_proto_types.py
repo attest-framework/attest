@@ -20,13 +20,9 @@ from attest._proto.types import (
     TYPE_LLM_JUDGE,
     TYPE_SCHEMA,
     TYPE_TRACE,
-    Assertion,
     AssertionResult,
-    ErrorData,
     EvaluateBatchResult,
     InitializeParams,
-    InitializeResult,
-    RPCError,
     Step,
     Trace,
     TraceMetadata,
@@ -36,7 +32,10 @@ from attest._proto.types import (
 def _make_trace() -> Trace:
     return Trace(
         trace_id="trc_abc123",
-        output={"message": "Your refund has been processed.", "structured": {"refund_id": "RFD-001"}},
+        output={
+            "message": "Your refund has been processed.",
+            "structured": {"refund_id": "RFD-001"},
+        },
         schema_version=1,
         agent_id="customer-service-agent",
         input={"user_message": "I want a refund"},

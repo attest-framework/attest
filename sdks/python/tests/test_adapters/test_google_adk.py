@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Generator
 from contextlib import contextmanager
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -173,9 +174,7 @@ class TestGoogleADKAdapterFromEvents:
 
     def test_input_message_set(self) -> None:
         with _adk_available():
-            trace = GoogleADKAdapter.from_events(
-                [], agent_id="agent", input_message="hello"
-            )
+            trace = GoogleADKAdapter.from_events([], agent_id="agent", input_message="hello")
         assert trace.input is not None
         assert trace.input["message"] == "hello"
 
@@ -183,7 +182,10 @@ class TestGoogleADKAdapterFromEvents:
         tc = _make_tool_call("search", {"q": "flights"})
         e1 = _make_event(tool_calls=[tc], usage=30)
         e2 = _make_event(
-            is_final=True, content_text="Found 3 flights.", usage=70, model_version="gemini-2.0-flash"
+            is_final=True,
+            content_text="Found 3 flights.",
+            usage=70,
+            model_version="gemini-2.0-flash",
         )
         with _adk_available():
             trace = GoogleADKAdapter.from_events([e1, e2], agent_id="travel")
@@ -240,13 +242,16 @@ class TestGoogleADKAdapterCaptureAsync:
 
         # Patch google.genai.types at the module level so the local import resolves
         mock_genai_types = MagicMock()
-        with _adk_available(), patch.dict(
-            "sys.modules",
-            {
-                "google": MagicMock(),
-                "google.genai": MagicMock(),
-                "google.genai.types": mock_genai_types,
-            },
+        with (
+            _adk_available(),
+            patch.dict(
+                "sys.modules",
+                {
+                    "google": MagicMock(),
+                    "google.genai": MagicMock(),
+                    "google.genai.types": mock_genai_types,
+                },
+            ),
         ):
             trace = await adapter.capture_async(
                 runner=runner,

@@ -14,6 +14,7 @@ import (
 	"github.com/attest-ai/attest/engine/internal/assertion"
 	"github.com/attest-ai/attest/engine/internal/assertion/embedding"
 	"github.com/attest-ai/attest/engine/internal/assertion/judge"
+	"github.com/attest-ai/attest/engine/internal/buildinfo"
 	"github.com/attest-ai/attest/engine/internal/cache"
 	"github.com/attest-ai/attest/engine/internal/llm"
 	"github.com/attest-ai/attest/engine/internal/simulation"
@@ -23,7 +24,6 @@ import (
 )
 
 const (
-	engineVersion        = "0.4.0"
 	protocolVersion      = 1
 	minProtocolVersion   = 1
 	MaxAssertionIDLength = 256
@@ -376,7 +376,7 @@ func handleInitialize(caps []string) Handler {
 		session.SetState(StateInitialized)
 
 		return &types.InitializeResult{
-			EngineVersion:         engineVersion,
+			EngineVersion:         buildinfo.Version,
 			ProtocolVersion:       protocolVersion,
 			Capabilities:          caps,
 			Missing:               missing,

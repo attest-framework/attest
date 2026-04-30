@@ -32,6 +32,7 @@ def _queue_maxsize() -> int:
             )
     return _DEFAULT_QUEUE_SIZE
 
+
 if TYPE_CHECKING:
     from attest.client import AttestClient
 
@@ -73,9 +74,7 @@ class AlertDispatcher:
         loop = asyncio.get_running_loop()
 
         if self._webhook_url:
-            coros.append(
-                loop.run_in_executor(None, self._post_json, self._webhook_url, alert)
-            )
+            coros.append(loop.run_in_executor(None, self._post_json, self._webhook_url, alert))
 
         if self._slack_url:
             slack_payload = {"text": self._format_slack(alert)}

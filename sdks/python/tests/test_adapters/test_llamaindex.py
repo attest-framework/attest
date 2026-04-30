@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import sys
-from contextlib import contextmanager
 from collections.abc import Generator
+from contextlib import contextmanager
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -109,7 +109,9 @@ class TestLlamaIndexHandler:
 
             handler = LlamaIndexInstrumentationHandler()
             start = _make_llm_start_event(model="gpt-4.1")
-            end = _make_llm_end_event(completion="Paris is the capital.", input_tokens=20, output_tokens=10)
+            end = _make_llm_end_event(
+                completion="Paris is the capital.", input_tokens=20, output_tokens=10
+            )
             handler._handle_event(start)
             handler._handle_event(end)
             trace = handler.build_trace()
@@ -198,16 +200,19 @@ class TestLlamaIndexHandler:
 
         with (
             _llamaindex_available(),
-            patch.dict(sys.modules, {
-                "llama_index": MagicMock(),
-                "llama_index.core": MagicMock(),
-                "llama_index.core.instrumentation": MagicMock(
-                    get_dispatcher=MagicMock(return_value=mock_dispatcher),
-                ),
-                "llama_index.core.instrumentation.event_handlers": MagicMock(
-                    BaseEventHandler=mock_base,
-                ),
-            }),
+            patch.dict(
+                sys.modules,
+                {
+                    "llama_index": MagicMock(),
+                    "llama_index.core": MagicMock(),
+                    "llama_index.core.instrumentation": MagicMock(
+                        get_dispatcher=MagicMock(return_value=mock_dispatcher),
+                    ),
+                    "llama_index.core.instrumentation.event_handlers": MagicMock(
+                        BaseEventHandler=mock_base,
+                    ),
+                },
+            ),
         ):
             from attest.adapters.llamaindex import LlamaIndexInstrumentationHandler
 

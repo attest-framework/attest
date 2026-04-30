@@ -109,9 +109,7 @@ def test_expect_follows_transitions() -> None:
 
 
 def test_expect_follows_transitions_soft() -> None:
-    chain = expect(_make_result()).follows_transitions(
-        [("a", "b")], soft=True
-    )
+    chain = expect(_make_result()).follows_transitions([("a", "b")], soft=True)
     assert chain.assertions[0].spec["soft"] is True
 
 
@@ -210,10 +208,7 @@ def test_expect_plugin_soft() -> None:
 
 def test_expect_plugin_chaining() -> None:
     chain = (
-        expect(_make_result())
-        .output_contains("refund")
-        .plugin("toxicity-check")
-        .cost_under(0.01)
+        expect(_make_result()).output_contains("refund").plugin("toxicity-check").cost_under(0.01)
     )
     assert len(chain.assertions) == 3
     types = [a.type for a in chain.assertions]

@@ -14,9 +14,7 @@ from pathlib import Path
 
 from attest import ENGINE_VERSION
 
-_GITHUB_RELEASE_BASE = (
-    "https://github.com/attest-framework/attest/releases/download"
-)
+_GITHUB_RELEASE_BASE = "https://github.com/attest-framework/attest/releases/download"
 
 _PLATFORM_MAP: dict[str, str] = {
     "Darwin-arm64": "darwin-arm64",
@@ -43,8 +41,7 @@ def _platform_key() -> str:
     mapped = _PLATFORM_MAP.get(key)
     if mapped is None:
         raise RuntimeError(
-            f"Unsupported platform: {key}. "
-            f"Supported: {', '.join(sorted(_PLATFORM_MAP.values()))}"
+            f"Unsupported platform: {key}. Supported: {', '.join(sorted(_PLATFORM_MAP.values()))}"
         )
     return mapped
 
@@ -141,9 +138,7 @@ def download_engine() -> Path:
     try:
         binary_data = _url_read(binary_url)
     except (urllib.error.URLError, OSError) as exc:
-        raise RuntimeError(
-            f"Failed to download engine from {binary_url}: {exc}"
-        ) from exc
+        raise RuntimeError(f"Failed to download engine from {binary_url}: {exc}") from exc
 
     # Verify SHA256
     actual_hash = hashlib.sha256(binary_data).hexdigest()

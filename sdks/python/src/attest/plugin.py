@@ -66,9 +66,7 @@ def pytest_addoption(parser: pytest.Parser) -> None:
     )
 
 
-def pytest_collection_modifyitems(
-    config: pytest.Config, items: list[pytest.Item]
-) -> None:
+def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
     """Filter test items by tier if --attest-tier is specified."""
     tier_filter: int | None = config.getoption("--attest-tier", default=None)
     if tier_filter is None:
@@ -88,9 +86,7 @@ def pytest_collection_modifyitems(
     items[:] = selected
 
 
-def pytest_terminal_summary(
-    terminalreporter: Any, exitstatus: int, config: pytest.Config
-) -> None:
+def pytest_terminal_summary(terminalreporter: Any, exitstatus: int, config: pytest.Config) -> None:
     """Print cost report if --attest-cost-report is set."""
     if not config.getoption("--attest-cost-report", default=False):
         return
@@ -141,7 +137,8 @@ class AttestEngineFixture:
         """Stop the engine process and its background event loop."""
         if self._manager and self._loop:
             future = asyncio.run_coroutine_threadsafe(
-                self._manager.stop(), self._loop,
+                self._manager.stop(),
+                self._loop,
             )
             future.result(timeout=10)
             self._loop.call_soon_threadsafe(self._loop.stop)
@@ -161,7 +158,10 @@ class AttestEngineFixture:
         return future.result()
 
     def _process_result(
-        self, chain: ExpectChain, result: Any, budget: float | None,
+        self,
+        chain: ExpectChain,
+        result: Any,
+        budget: float | None,
     ) -> AgentResult:
         """Shared post-evaluation logic for both sync and async paths."""
         global _session_cost, _session_soft_failures
@@ -176,14 +176,12 @@ class AttestEngineFixture:
         )
 
         from attest._proto.types import STATUS_SOFT_FAIL
-        _session_soft_failures += sum(
-            1 for r in result.results if r.status == STATUS_SOFT_FAIL
-        )
+
+        _session_soft_failures += sum(1 for r in result.results if r.status == STATUS_SOFT_FAIL)
 
         if budget is not None and _session_cost > budget:
             pytest.fail(
-                f"Attest budget exceeded: cost ${_session_cost:.6f}"
-                f" > budget ${budget:.6f}",
+                f"Attest budget exceeded: cost ${_session_cost:.6f} > budget ${budget:.6f}",
                 pytrace=False,
             )
 

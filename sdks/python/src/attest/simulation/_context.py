@@ -10,6 +10,4 @@ if TYPE_CHECKING:
 _active_mock_registry: ContextVar[dict[str, Callable[..., Any]] | None] = ContextVar(
     "_active_mock_registry", default=None
 )
-_active_builder: ContextVar[TraceBuilder | None] = ContextVar(
-    "_active_builder", default=None
-)
+_active_builder: ContextVar[TraceBuilder | None] = ContextVar("_active_builder", default=None)
