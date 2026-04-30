@@ -1,0 +1,15 @@
+{
+  "name": "mid-line-interrupt",
+  "description": "Two malformed lines back-to-back stay below the desync threshold, but a third within the window must trip the desync detector.",
+  "lines": [
+    "{partial",
+    "{\"jsonrpc\":\"2.0\",\"id\":",
+    "garbage line"
+  ],
+  "expectedDiagnostics": [
+    { "kind": "malformed_json" },
+    { "kind": "malformed_json" },
+    { "kind": "malformed_json" }
+  ],
+  "expectedDesync": true
+}

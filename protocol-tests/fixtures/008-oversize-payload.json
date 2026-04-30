@@ -1,0 +1,8 @@
+{
+  "name": "oversize-payload",
+  "description": "A response with a non-empty result payload still routes correctly when the id matches a pending request.",
+  "lines": ["{\"jsonrpc\":\"2.0\",\"id\":7,\"result\":{\"big\":\"x\"}}"],
+  "prePending": [7],
+  "expectedDiagnostics": [],
+  "expectedDesync": false
+}

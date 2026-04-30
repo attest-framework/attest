@@ -1,0 +1,9 @@
+{
+  "name": "missing-id",
+  "description": "A well-formed JSON-RPC envelope without an id cannot be routed; the SDK records a missing_id diagnostic.",
+  "lines": ["{\"jsonrpc\":\"2.0\",\"result\":{\"ok\":true}}"],
+  "expectedDiagnostics": [
+    { "kind": "missing_id", "messageContains": "missing 'id'" }
+  ],
+  "expectedDesync": false
+}

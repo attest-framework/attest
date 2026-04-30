@@ -1,0 +1,9 @@
+{
+  "name": "non-object-response",
+  "description": "A JSON array at the top level should be rejected as a non_object_response.",
+  "lines": ["[1, 2, 3]"],
+  "expectedDiagnostics": [
+    { "kind": "non_object_response", "messageContains": "expected JSON object" }
+  ],
+  "expectedDesync": false
+}

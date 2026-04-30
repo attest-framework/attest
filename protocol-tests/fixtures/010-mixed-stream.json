@@ -1,0 +1,14 @@
+{
+  "name": "mixed-stream",
+  "description": "A stream interleaving a routed success, an unknown id, and a routed error keeps the client in sync and only records the unknown_id diagnostic.",
+  "lines": [
+    "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{}}",
+    "{\"jsonrpc\":\"2.0\",\"id\":555,\"result\":{}}",
+    "{\"jsonrpc\":\"2.0\",\"id\":2,\"error\":{\"code\":3001,\"message\":\"engine\"}}"
+  ],
+  "prePending": [1, 2],
+  "expectedDiagnostics": [
+    { "kind": "unknown_id", "messageContains": "no pending request" }
+  ],
+  "expectedDesync": false
+}

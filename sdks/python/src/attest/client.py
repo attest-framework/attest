@@ -3,7 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+import json as _json
 import logging
+import os
+import time
+from collections.abc import Callable
 from typing import Any
 
 from attest._proto.codec import (
@@ -12,6 +16,16 @@ from attest._proto.codec import (
     encode_request,
     extract_id,
     extract_result,
+)
+from attest._proto.diagnostics import (
+    DEFAULT_BUFFER_SIZE,
+    DEFAULT_DESYNC_THRESHOLD,
+    DEFAULT_DESYNC_WINDOW_SECONDS,
+    ProtocolDiagnostic,
+    ProtocolDiagnosticBuffer,
+    ProtocolDiagnosticKind,
+    ProtocolLogger,
+    preview_line,
 )
 from attest._proto.types import (
     Assertion,
@@ -24,8 +38,37 @@ from attest._proto.types import (
     Trace,
 )
 from attest.engine_manager import EngineManager
+from attest.exceptions import ProtocolDesyncError
 
 logger = logging.getLogger("attest.client")
+
+
+def _env_debug_enabled() -> bool:
+    flag = os.environ.get("ATTEST_DEBUG_PROTOCOL", "")
+    return flag in {"1", "true", "yes"}
+
+
+_silent_logger = logging.getLogger("attest.client.protocol.silent")
+_silent_logger.addHandler(logging.NullHandler())
+_silent_logger.propagate = False
+
+
+def _default_logger() -> ProtocolLogger:
+    if _env_debug_enabled():
+        return logger
+    return _silent_logger
+
+
+def _classify_decode_error(message: str) -> ProtocolDiagnosticKind:
+    if message.startswith("malformed JSON"):
+        return "malformed_json"
+    if message.startswith("expected JSON object"):
+        return "non_object_response"
+    if message.startswith("invalid jsonrpc version"):
+        return "invalid_jsonrpc_version"
+    if message.startswith("empty response line"):
+        return "malformed_json"
+    return "malformed_json"
 
 
 class AttestClient:
@@ -38,14 +81,105 @@ class AttestClient:
     The underlying engine uses NDJSON over stdin/stdout (sequential protocol),
     so requests are serialized through a write lock while reads are dispatched
     by the shared reader loop.
+
+    Desync detection is a one-way latch: once the diagnostic rate breaches
+    ``desync_threshold`` within ``desync_window_seconds`` the client refuses
+    further sends for the lifetime of the instance. Recovery requires
+    constructing a new client over a fresh engine subprocess.
+
+    Args:
+        engine: The :class:`EngineManager` controlling the engine subprocess.
+        protocol_logger: Logger used for protocol diagnostics. Defaults to a
+            silent logger unless ``ATTEST_DEBUG_PROTOCOL=1``.
+        on_diagnostic: Callback invoked for every protocol diagnostic.
+        diagnostic_buffer_size: Capacity of the diagnostic ring buffer.
+        desync_threshold: Number of diagnostics in
+            ``desync_window_seconds`` that triggers a desync rejection.
+        desync_window_seconds: Sliding window length used by the desync
+            detector.
     """
 
-    def __init__(self, engine: EngineManager) -> None:
+    def __init__(
+        self,
+        engine: EngineManager,
+        *,
+        protocol_logger: ProtocolLogger | None = None,
+        on_diagnostic: Callable[[ProtocolDiagnostic], None] | None = None,
+        diagnostic_buffer_size: int = DEFAULT_BUFFER_SIZE,
+        desync_threshold: int = DEFAULT_DESYNC_THRESHOLD,
+        desync_window_seconds: float = DEFAULT_DESYNC_WINDOW_SECONDS,
+    ) -> None:
         self._engine = engine
         self._request_id: int = 0
         self._pending: dict[int, asyncio.Future[Any]] = {}
         self._write_lock = asyncio.Lock()
         self._reader_task: asyncio.Task[None] | None = None
+
+        self._logger: ProtocolLogger = protocol_logger or _default_logger()
+        self._diagnostic_buffer = ProtocolDiagnosticBuffer(diagnostic_buffer_size)
+        self._diagnostic_listeners: list[Callable[[ProtocolDiagnostic], None]] = []
+        if on_diagnostic is not None:
+            self._diagnostic_listeners.append(on_diagnostic)
+        self._desync_threshold = desync_threshold
+        self._desync_window_seconds = desync_window_seconds
+        self._desynced = False
+
+    # ── Diagnostics API ──
+
+    def on_protocol_diagnostic(
+        self,
+        listener: Callable[[ProtocolDiagnostic], None],
+    ) -> Callable[[], None]:
+        """Subscribe to protocol diagnostics. Returns an unsubscribe callable."""
+        self._diagnostic_listeners.append(listener)
+
+        def _unsubscribe() -> None:
+            try:
+                self._diagnostic_listeners.remove(listener)
+            except ValueError:
+                pass
+
+        return _unsubscribe
+
+    def protocol_diagnostics(self) -> tuple[ProtocolDiagnostic, ...]:
+        """Snapshot the diagnostic ring buffer (most recent last)."""
+        return self._diagnostic_buffer.snapshot()
+
+    def _record_diagnostic(
+        self,
+        kind: ProtocolDiagnosticKind,
+        message: str,
+        raw_line: str,
+    ) -> None:
+        diagnostic = ProtocolDiagnostic(
+            kind=kind,
+            message=message,
+            raw_line=preview_line(raw_line),
+            timestamp=time.monotonic(),
+        )
+        self._diagnostic_buffer.push(diagnostic)
+        self._logger.warning("[attest.protocol] %s: %s", kind, message)
+        for cb in list(self._diagnostic_listeners):
+            try:
+                cb(diagnostic)
+            except Exception as exc:  # noqa: BLE001 - listener bugs must not crash reader
+                self._logger.error("[attest.protocol] diagnostic listener threw: %s", exc)
+        self._maybe_trigger_desync(diagnostic.timestamp)
+
+    def _maybe_trigger_desync(self, now: float) -> None:
+        if self._desynced:
+            return
+        recent = self._diagnostic_buffer.count_within(self._desync_window_seconds, now)
+        if recent >= self._desync_threshold:
+            self._desynced = True
+            snapshot = self._diagnostic_buffer.snapshot()
+            err = ProtocolDesyncError(
+                f"Engine protocol desync: {recent} unroutable response lines "
+                f"within {self._desync_window_seconds}s.",
+                snapshot,
+            )
+            self._logger.error("[attest.protocol] %s", err)
+            self._fail_all(err)
 
     # ── Lifecycle ──
 
@@ -67,7 +201,7 @@ class AttestClient:
         self._reader_task = None
 
     async def _reader_loop(self) -> None:
-        """Read responses from the engine and resolve pending futures by ID."""
+        """Read responses from the engine and route them to pending callers."""
         process = self._engine._process
         if process is None or process.stdout is None:
             raise RuntimeError("Engine process not started.")
@@ -83,42 +217,63 @@ class AttestClient:
                 self._fail_all(ConnectionError("Engine closed stdout."))
                 return
 
-            try:
-                response = decode_response(line)
-            except ProtocolError as exc:
-                # Route error to the specific request by extracting raw id
-                import json as _json
+            self._handle_line(line)
 
-                try:
-                    raw: Any = _json.loads(line.strip())
-                    req_id = int(raw.get("id", -1))
-                except Exception:
-                    req_id = -1
-                fut = self._pending.pop(req_id, None)
-                if fut is not None and not fut.done():
-                    fut.set_exception(exc)
-                continue
-            except ValueError as exc:
-                logger.warning("Malformed response line: %s", exc)
-                continue
+    def _handle_line(self, line: bytes) -> None:
+        text = line.decode("utf-8", errors="replace")
 
-            try:
-                req_id = extract_id(response)
-            except ValueError:
-                logger.warning("Response missing id field, discarding")
-                continue
+        try:
+            response = decode_response(line)
+        except ProtocolError as exc:
+            self._handle_protocol_error(exc, text)
+            return
+        except ValueError as exc:
+            kind = _classify_decode_error(str(exc))
+            self._record_diagnostic(kind, str(exc), text)
+            return
 
-            fut = self._pending.pop(req_id, None)
-            if fut is None:
-                logger.warning("No pending request for id=%d, discarding", req_id)
-                continue
+        try:
+            req_id = extract_id(response)
+        except ValueError as exc:
+            self._record_diagnostic("missing_id", str(exc), text)
+            return
 
-            if not fut.done():
-                try:
-                    result = extract_result(response)
-                    fut.set_result(result)
-                except Exception as exc:
-                    fut.set_exception(exc)
+        fut = self._pending.pop(req_id, None)
+        if fut is None:
+            self._record_diagnostic("unknown_id", f"no pending request for id={req_id}", text)
+            return
+
+        if fut.done():
+            return
+
+        try:
+            result = extract_result(response)
+            fut.set_result(result)
+        except Exception as exc:
+            fut.set_exception(exc)
+
+    def _handle_protocol_error(self, exc: ProtocolError, text: str) -> None:
+        try:
+            raw: Any = _json.loads(text.strip())
+            id_value = raw.get("id")
+            req_id = (
+                int(id_value)
+                if isinstance(id_value, int) or (isinstance(id_value, str) and id_value.isdigit())
+                else -1
+            )
+        except (ValueError, TypeError, AttributeError):
+            req_id = -1
+
+        fut = self._pending.pop(req_id, None)
+        if fut is not None and not fut.done():
+            fut.set_exception(exc)
+            return
+
+        self._record_diagnostic(
+            "non_routable_error",
+            f"engine error code={exc.code} ({exc.error_message}) had no matching pending id",
+            text,
+        )
 
     def _fail_all(self, exc: BaseException) -> None:
         """Fail all pending futures with the given exception."""
@@ -140,6 +295,12 @@ class AttestClient:
         Falls back to EngineManager.send_request when the reader loop is not
         running (e.g. during engine initialization before start_reader()).
         """
+        if self._desynced:
+            raise ProtocolDesyncError(
+                "Engine protocol is desynced; AttestClient will not send further requests.",
+                self._diagnostic_buffer.snapshot(),
+            )
+
         if self._reader_task is None or self._reader_task.done():
             # Reader not running — delegate to engine directly (sequential mode)
             return await self._engine.send_request(method, params)

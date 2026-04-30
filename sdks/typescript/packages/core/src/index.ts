@@ -21,6 +21,7 @@ export { traceId, assertionId, agentId } from "./proto/types.js";
 export { VERSION, ENGINE_VERSION } from "./version.js";
 export { EngineManager } from "./engine-manager.js";
 export { AttestClient } from "./client.js";
+export type { AttestClientOptions } from "./client.js";
 export { TraceBuilder } from "./trace.js";
 export { AgentResult } from "./result.js";
 export { TraceTree } from "./trace-tree.js";

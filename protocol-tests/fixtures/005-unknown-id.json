@@ -1,0 +1,9 @@
+{
+  "name": "unknown-id",
+  "description": "A response carrying a request id that the SDK never sent should produce an unknown_id diagnostic.",
+  "lines": ["{\"jsonrpc\":\"2.0\",\"id\":4242,\"result\":{\"ok\":true}}"],
+  "expectedDiagnostics": [
+    { "kind": "unknown_id", "messageContains": "no pending request" }
+  ],
+  "expectedDesync": false
+}

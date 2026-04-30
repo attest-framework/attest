@@ -1,4 +1,3 @@
-import type { Interface as ReadlineInterface } from "node:readline";
 import type {
   Assertion,
   ConversationMessage,
@@ -9,18 +8,32 @@ import type {
   Trace,
   AssertionResult,
 } from "./proto/types.js";
-import { ProtocolError, EngineTimeoutError } from "./proto/errors.js";
+import {
+  ProtocolError,
+  EngineTimeoutError,
+  ProtocolDesyncError,
+} from "./proto/errors.js";
 import {
   decodeResponse,
   encodeRequest,
   extractId,
   extractResult,
 } from "./proto/codec.js";
+import {
+  ProtocolDiagnosticBuffer,
+  previewLine,
+  type ProtocolDiagnostic,
+  type ProtocolDiagnosticKind,
+  type ProtocolLogger,
+} from "./proto/diagnostics.js";
 import type { EngineManager } from "./engine-manager.js";
 import { isSimulationMode } from "./config.js";
 import { simulationEvaluateBatch } from "./simulation.js";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
+const DEFAULT_DIAGNOSTIC_BUFFER = 32;
+const DEFAULT_DESYNC_THRESHOLD = 3;
+const DEFAULT_DESYNC_WINDOW_MS = 1_000;
 
 function resolveTimeoutMs(override?: number): number {
   if (override !== undefined) return override;
@@ -50,6 +63,51 @@ interface PendingRequest {
   reject: (reason: unknown) => void;
 }
 
+export interface AttestClientOptions {
+  /** Logger override. When omitted, warnings only emit if ATTEST_DEBUG_PROTOCOL=1. */
+  logger?: ProtocolLogger;
+  /** Listener invoked for every protocol diagnostic. */
+  onDiagnostic?: (diagnostic: ProtocolDiagnostic) => void;
+  /** Diagnostic ring-buffer capacity. Default 32. */
+  diagnosticBufferSize?: number;
+  /** Number of diagnostics in `desyncWindowMs` that triggers desync rejection. Default 3. */
+  desyncThreshold?: number;
+  /** Window length for desync detection in milliseconds. Default 1000. */
+  desyncWindowMs?: number;
+}
+
+function debugProtocolEnabled(): boolean {
+  const flag = process.env["ATTEST_DEBUG_PROTOCOL"];
+  return flag === "1" || flag === "true" || flag === "yes";
+}
+
+function envLoggerDefault(): ProtocolLogger {
+  if (debugProtocolEnabled()) {
+    return {
+      warn: (msg: string, ...args: unknown[]) => console.warn(msg, ...args),
+      error: (msg: string, ...args: unknown[]) => console.error(msg, ...args),
+    };
+  }
+  return {
+    warn: () => {
+      /* silent unless ATTEST_DEBUG_PROTOCOL=1 */
+    },
+    error: () => {
+      /* silent unless ATTEST_DEBUG_PROTOCOL=1 */
+    },
+  };
+}
+
+/**
+ * AttestClient owns request/response correlation over the engine's
+ * NDJSON protocol.
+ *
+ * Desync detection is a one-way latch: once the diagnostic rate breaches
+ * `desyncThreshold` within `desyncWindowMs` the client refuses further
+ * sends for the lifetime of the instance. There is no reset hook by
+ * design — recovery requires constructing a new client over a fresh
+ * engine subprocess.
+ */
 export class AttestClient {
   private readonly engine: EngineManager;
   private requestId = 0;
@@ -58,8 +116,41 @@ export class AttestClient {
   private readerActive = false;
   private lineHandler: ((line: string) => void) | null = null;
 
-  constructor(engine: EngineManager) {
+  private readonly logger: ProtocolLogger;
+  private readonly diagnosticBuffer: ProtocolDiagnosticBuffer;
+  private readonly diagnosticListeners = new Set<
+    (diagnostic: ProtocolDiagnostic) => void
+  >();
+  private readonly desyncThreshold: number;
+  private readonly desyncWindowMs: number;
+  private desynced = false;
+
+  constructor(engine: EngineManager, options?: AttestClientOptions) {
     this.engine = engine;
+    this.logger = options?.logger ?? envLoggerDefault();
+    this.diagnosticBuffer = new ProtocolDiagnosticBuffer(
+      options?.diagnosticBufferSize ?? DEFAULT_DIAGNOSTIC_BUFFER,
+    );
+    this.desyncThreshold = options?.desyncThreshold ?? DEFAULT_DESYNC_THRESHOLD;
+    this.desyncWindowMs = options?.desyncWindowMs ?? DEFAULT_DESYNC_WINDOW_MS;
+    if (options?.onDiagnostic !== undefined) {
+      this.diagnosticListeners.add(options.onDiagnostic);
+    }
+  }
+
+  /** Subscribe to protocol diagnostics. Returns an unsubscribe function. */
+  onProtocolDiagnostic(
+    listener: (diagnostic: ProtocolDiagnostic) => void,
+  ): () => void {
+    this.diagnosticListeners.add(listener);
+    return () => {
+      this.diagnosticListeners.delete(listener);
+    };
+  }
+
+  /** Snapshot of the diagnostic ring buffer (most recent last). */
+  protocolDiagnostics(): readonly ProtocolDiagnostic[] {
+    return this.diagnosticBuffer.snapshot();
   }
 
   startReader(): void {
@@ -92,40 +183,114 @@ export class AttestClient {
     this.readerActive = false;
   }
 
+  private recordDiagnostic(
+    kind: ProtocolDiagnosticKind,
+    message: string,
+    rawLine: string,
+  ): void {
+    const diagnostic: ProtocolDiagnostic = {
+      kind,
+      message,
+      rawLine: previewLine(rawLine),
+      timestampMs: Date.now(),
+    };
+    this.diagnosticBuffer.push(diagnostic);
+    this.logger.warn(`[attest.protocol] ${kind}: ${message}`);
+    for (const listener of this.diagnosticListeners) {
+      try {
+        listener(diagnostic);
+      } catch (err) {
+        // Listener bugs must not break the reader or shadow other subscribers.
+        this.logger.error(
+          `[attest.protocol] diagnostic listener threw: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    }
+    this.maybeTriggerDesync(diagnostic.timestampMs);
+  }
+
+  private maybeTriggerDesync(nowMs: number): void {
+    if (this.desynced) return;
+    const recent = this.diagnosticBuffer.countWithin(this.desyncWindowMs, nowMs);
+    if (recent >= this.desyncThreshold) {
+      this.desynced = true;
+      const snapshot = this.diagnosticBuffer.snapshot();
+      const err = new ProtocolDesyncError(
+        `Engine protocol desync: ${recent} unroutable response lines within ${this.desyncWindowMs}ms.`,
+        snapshot,
+      );
+      this.logger.error(`[attest.protocol] ${err.message}`);
+      this.failAll(err);
+    }
+  }
+
   private handleLine(line: string): void {
+    let response;
+    try {
+      response = decodeResponse(line);
+    } catch (err) {
+      this.handleDecodeFailure(line, err);
+      return;
+    }
+
     let reqId: number;
+    try {
+      reqId = extractId(response);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      this.recordDiagnostic("missing_id", message, line);
+      return;
+    }
+
+    const pending = this.pending.get(reqId);
+    if (pending === undefined) {
+      this.recordDiagnostic(
+        "unknown_id",
+        `no pending request for id=${reqId}`,
+        line,
+      );
+      return;
+    }
+    this.pending.delete(reqId);
 
     try {
-      const response = decodeResponse(line);
-      reqId = extractId(response);
-
-      const pending = this.pending.get(reqId);
-      if (pending === undefined) return;
-      this.pending.delete(reqId);
-
-      try {
-        const result = extractResult(response);
-        pending.resolve(result);
-      } catch (err) {
-        pending.reject(err);
-      }
+      const result = extractResult(response);
+      pending.resolve(result);
     } catch (err) {
-      if (err instanceof ProtocolError) {
-        // Try to extract id from raw JSON for error routing
-        try {
-          const raw = JSON.parse(line.trim()) as Record<string, unknown>;
-          reqId = Number(raw.id ?? -1);
-        } catch {
-          reqId = -1;
-        }
-        const pending = this.pending.get(reqId);
-        if (pending !== undefined) {
-          this.pending.delete(reqId);
-          pending.reject(err);
-        }
-      }
-      // Malformed responses are silently discarded (logged in production)
+      pending.reject(err);
     }
+  }
+
+  private handleDecodeFailure(line: string, err: unknown): void {
+    if (err instanceof ProtocolError) {
+      // Try to route a JSON-RPC error response to its waiting request.
+      let reqId = -1;
+      try {
+        const raw = JSON.parse(line.trim()) as Record<string, unknown>;
+        const idCandidate = raw["id"];
+        if (typeof idCandidate === "number" && Number.isFinite(idCandidate)) {
+          reqId = idCandidate;
+        }
+      } catch {
+        reqId = -1;
+      }
+      const pending = this.pending.get(reqId);
+      if (pending !== undefined) {
+        this.pending.delete(reqId);
+        pending.reject(err);
+        return;
+      }
+      this.recordDiagnostic(
+        "non_routable_error",
+        `engine error code=${err.code} (${err.errorMessage}) had no matching pending id`,
+        line,
+      );
+      return;
+    }
+
+    const message = err instanceof Error ? err.message : String(err);
+    const kind = classifyDecodeError(message);
+    this.recordDiagnostic(kind, message, line);
   }
 
   private failAll(err: Error): void {
@@ -140,6 +305,13 @@ export class AttestClient {
     params: Record<string, unknown>,
     timeoutMs?: number,
   ): Promise<unknown> {
+    if (this.desynced) {
+      throw new ProtocolDesyncError(
+        "Engine protocol is desynced; AttestClient will not send further requests.",
+        this.diagnosticBuffer.snapshot(),
+      );
+    }
+
     const resolvedTimeout = resolveTimeoutMs(timeoutMs);
 
     if (!this.readerActive) {
@@ -286,4 +458,12 @@ export class AttestClient {
     );
     return String((raw as { message: string }).message);
   }
+}
+
+function classifyDecodeError(message: string): ProtocolDiagnosticKind {
+  if (message.startsWith("malformed JSON")) return "malformed_json";
+  if (message.startsWith("expected JSON object")) return "non_object_response";
+  if (message.startsWith("invalid jsonrpc version")) return "invalid_jsonrpc_version";
+  if (message.startsWith("empty response line")) return "malformed_json";
+  return "malformed_json";
 }
