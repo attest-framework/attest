@@ -14,6 +14,14 @@ const (
 	TypeEmbedding  = "embedding"
 	TypeLLMJudge   = "llm_judge"
 	TypeTraceTree  = "trace_tree"
+
+	// ThresholdSource* values describe how the engine classified an
+	// assertion's status. They surface dynamic-threshold degradation so
+	// callers can distinguish "evaluated against baseline" from "fell back
+	// because the baseline could not be loaded".
+	ThresholdSourceStatic             = "static"
+	ThresholdSourceDynamic            = "dynamic"
+	ThresholdSourceDynamicUnavailable = "dynamic_unavailable"
 )
 
 // Assertion defines an assertion to evaluate against a trace.
@@ -33,4 +41,10 @@ type AssertionResult struct {
 	Cost        float64 `json:"cost"`
 	DurationMS  int64   `json:"duration_ms"`
 	RequestID   string  `json:"request_id,omitempty"`
+	// ThresholdSource records how Status was decided: "static" (default
+	// fixed thresholds), "dynamic" (classified against historical
+	// baseline), or "dynamic_unavailable" (dynamic classification was
+	// requested but the baseline could not be loaded — Status reflects
+	// the static fallback). Empty in legacy results.
+	ThresholdSource string `json:"threshold_source,omitempty"`
 }

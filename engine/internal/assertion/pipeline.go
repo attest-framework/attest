@@ -3,6 +3,7 @@ package assertion
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"sync"
 
 	"github.com/segmentio/encoding/json"
@@ -234,24 +235,39 @@ func (p *Pipeline) EvaluateBatchWithBudget(ctx context.Context, trace *types.Tra
 
 // applyDynamicThreshold checks if the assertion spec contains "threshold":"dynamic"
 // and if so, overrides the result status using ClassifyDynamic against stored history.
-// No-ops when the historyStore is nil or the spec does not request dynamic classification.
+// Sets ThresholdSource to "static", "dynamic", or "dynamic_unavailable" so callers
+// can distinguish the three classification regimes. When the historyStore lookup
+// fails, the status keeps its static-fallback value, the source is marked
+// "dynamic_unavailable", a prefix is prepended to Explanation, and a warning is
+// logged.
 func (p *Pipeline) applyDynamicThreshold(ar *types.AssertionResult, a *types.Assertion) {
-	if p.historyStore == nil {
-		return
-	}
-
 	var spec struct {
 		Threshold string `json:"threshold"`
 	}
-	if err := json.Unmarshal(a.Spec, &spec); err != nil || spec.Threshold != "dynamic" {
+	specErr := json.Unmarshal(a.Spec, &spec)
+	wantDynamic := specErr == nil && spec.Threshold == "dynamic"
+
+	if !wantDynamic {
+		ar.ThresholdSource = types.ThresholdSourceStatic
+		return
+	}
+
+	if p.historyStore == nil {
+		ar.ThresholdSource = types.ThresholdSourceDynamicUnavailable
+		ar.Explanation = "[dynamic_unavailable: history store not configured] " + ar.Explanation
 		return
 	}
 
 	history, err := p.historyStore.QueryWindow(a.AssertionID, DefaultDynamicConfig.WindowSize)
 	if err != nil {
-		// Non-fatal: leave status unchanged.
+		slog.Warn("dynamic threshold unavailable",
+			"assertion_id", a.AssertionID,
+			"err", err)
+		ar.ThresholdSource = types.ThresholdSourceDynamicUnavailable
+		ar.Explanation = fmt.Sprintf("[dynamic_unavailable: %v] %s", err, ar.Explanation)
 		return
 	}
 
 	ar.Status = ClassifyDynamic(ar.Score, history, DefaultDynamicConfig)
+	ar.ThresholdSource = types.ThresholdSourceDynamic
 }

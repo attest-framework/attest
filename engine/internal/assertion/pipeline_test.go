@@ -2,14 +2,19 @@ package assertion
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/attest-ai/attest/engine/internal/cache"
 	"github.com/attest-ai/attest/engine/pkg/types"
+
+	_ "modernc.org/sqlite"
 )
 
 func TestPipeline_EvaluateBatch_MixedTypes(t *testing.T) {
@@ -293,6 +298,98 @@ func TestPipeline_EvaluateBatch_ContextCancellation(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("EvaluateBatch did not return after cancellation")
+	}
+}
+
+func TestPipeline_ApplyDynamicThreshold_StaticSpec(t *testing.T) {
+	pipeline := NewPipeline(NewRegistry())
+	trace := &types.Trace{TraceID: "trc_static", Output: json.RawMessage(`{"message":"ok"}`)}
+	assertions := []types.Assertion{
+		{
+			AssertionID: "static_assert",
+			Type:        types.TypeContent,
+			Spec:        json.RawMessage(`{"target":"output.message","check":"contains","value":"ok"}`),
+		},
+	}
+
+	result, err := pipeline.EvaluateBatch(context.Background(), trace, assertions)
+	if err != nil {
+		t.Fatalf("EvaluateBatch: %v", err)
+	}
+	if got := result.Results[0].ThresholdSource; got != types.ThresholdSourceStatic {
+		t.Errorf("ThresholdSource = %q, want %q", got, types.ThresholdSourceStatic)
+	}
+}
+
+func TestPipeline_ApplyDynamicThreshold_HistoryUnavailable(t *testing.T) {
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	store, err := cache.NewHistoryStore(db)
+	if err != nil {
+		t.Fatalf("NewHistoryStore: %v", err)
+	}
+
+	// Close the underlying db so QueryWindow returns an error.
+	if err := db.Close(); err != nil {
+		t.Fatalf("close db: %v", err)
+	}
+
+	pipeline := NewPipelineWithHistory(NewRegistry(), store)
+	trace := &types.Trace{TraceID: "trc_dyn_unavail", Output: json.RawMessage(`{"message":"ok"}`)}
+	assertions := []types.Assertion{
+		{
+			AssertionID: "dyn_assert",
+			Type:        types.TypeContent,
+			Spec: json.RawMessage(`{
+				"target":"output.message",
+				"check":"contains",
+				"value":"ok",
+				"threshold":"dynamic"
+			}`),
+		},
+	}
+
+	result, err := pipeline.EvaluateBatch(context.Background(), trace, assertions)
+	if err != nil {
+		t.Fatalf("EvaluateBatch: %v", err)
+	}
+	r := result.Results[0]
+	if r.ThresholdSource != types.ThresholdSourceDynamicUnavailable {
+		t.Errorf("ThresholdSource = %q, want %q", r.ThresholdSource, types.ThresholdSourceDynamicUnavailable)
+	}
+	if !strings.HasPrefix(r.Explanation, "[dynamic_unavailable:") {
+		t.Errorf("Explanation does not carry dynamic_unavailable prefix: %q", r.Explanation)
+	}
+}
+
+func TestPipeline_ApplyDynamicThreshold_NoHistoryStore(t *testing.T) {
+	pipeline := NewPipeline(NewRegistry())
+	trace := &types.Trace{TraceID: "trc_no_store", Output: json.RawMessage(`{"message":"ok"}`)}
+	assertions := []types.Assertion{
+		{
+			AssertionID: "dyn_assert",
+			Type:        types.TypeContent,
+			Spec: json.RawMessage(`{
+				"target":"output.message",
+				"check":"contains",
+				"value":"ok",
+				"threshold":"dynamic"
+			}`),
+		},
+	}
+
+	result, err := pipeline.EvaluateBatch(context.Background(), trace, assertions)
+	if err != nil {
+		t.Fatalf("EvaluateBatch: %v", err)
+	}
+	r := result.Results[0]
+	if r.ThresholdSource != types.ThresholdSourceDynamicUnavailable {
+		t.Errorf("ThresholdSource = %q, want %q", r.ThresholdSource, types.ThresholdSourceDynamicUnavailable)
+	}
+	if !strings.Contains(r.Explanation, "history store not configured") {
+		t.Errorf("Explanation missing history-store hint: %q", r.Explanation)
 	}
 }
 
