@@ -26,6 +26,12 @@ func main() {
 		case "calibrate":
 			handleCalibrateCommand(os.Args[2:])
 			return
+		case "baseline":
+			handleBaselineCommand(os.Args[2:])
+			return
+		case "policy":
+			handlePolicyCommand(os.Args[2:])
+			return
 		}
 	}
 

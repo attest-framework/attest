@@ -144,6 +144,16 @@ def main() -> None:
         _cmd_calibrate(args[1:])
         sys.exit(0)
 
+    if args and args[0] == "baseline":
+        from attest.cli.admin import cmd_baseline
+
+        sys.exit(cmd_baseline(args[1:]))
+
+    if args and args[0] == "policy":
+        from attest.cli.admin import cmd_policy
+
+        sys.exit(cmd_policy(args[1:]))
+
     # `attest run [args]` — explicit alias for pytest passthrough
     if args and args[0] == "run":
         args = args[1:]

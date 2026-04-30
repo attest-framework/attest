@@ -36,6 +36,9 @@ func annotateDiagnostics(r *types.AssertionResult, a *types.Assertion) {
 	if r.TraceNodePath == "" {
 		r.TraceNodePath = inferTraceNodePath(a)
 	}
+	if r.FailureClass == "" {
+		r.FailureClass = types.ClassifyFailure(r)
+	}
 }
 
 // inferTraceNodePath does a best-effort decode of the assertion spec to

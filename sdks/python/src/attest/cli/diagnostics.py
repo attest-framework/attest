@@ -124,6 +124,8 @@ def render_assertion_failure(
         buf.write(f"      detail:     {_truncate(result.explanation)}\n")
     if result.threshold_source and result.threshold_source != "static":
         buf.write(f"      threshold:  {result.threshold_source}\n")
+    if result.failure_class:
+        buf.write(f"      class:      {result.failure_class}\n")
     if result.judge_metadata is not None:
         _render_judge_meta(buf, result.judge_metadata)
     if result.suggested_action:
