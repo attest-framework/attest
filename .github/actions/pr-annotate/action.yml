@@ -1,0 +1,94 @@
+name: 'Attest PR Annotate'
+description: |
+  Post inline PR review comments for each failed Attest assertion in a
+  JSON v2 report. Uses the GitHub REST API via gh; needs `pull-requests:
+  write` and `contents: read`. Optionally evaluates a policy file and
+  fails the step (exit 1) when a blocking violation occurs.
+
+inputs:
+  report:
+    description: 'Path to JSON v2 report file (engine/internal/report/json.go output).'
+    required: true
+  policy:
+    description: 'Optional path to attest.policy.yaml; when set, the step exits with the policy exit code.'
+    required: false
+    default: ''
+  baseline-tag:
+    description: 'Optional baseline tag to evaluate the policy against (regression rules).'
+    required: false
+    default: ''
+  engine-binary:
+    description: 'Path to attest-engine binary; defaults to attest-engine on PATH.'
+    required: false
+    default: 'attest-engine'
+  github-token:
+    description: 'GitHub token with pull-requests:write. Defaults to the workflow token.'
+    required: false
+    default: ${{ github.token }}
+  fail-on-violation:
+    description: 'If true (default) and the policy blocks, exit non-zero so the workflow fails.'
+    required: false
+    default: 'true'
+
+outputs:
+  exit-code:
+    description: 'Exit code from the policy evaluator (0=pass, 1=block, 2=warn). 0 when no policy was given.'
+    value: ${{ steps.evaluate.outputs.exit_code }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Verify inputs
+      shell: bash
+      run: |
+        if [[ ! -f "${{ inputs.report }}" ]]; then
+          echo "::error::Attest report not found at ${{ inputs.report }}"
+          exit 1
+        fi
+
+    - name: Evaluate policy
+      id: evaluate
+      shell: bash
+      env:
+        ATTEST_POLICY: ${{ inputs.policy }}
+        ATTEST_BASELINE_TAG: ${{ inputs.baseline-tag }}
+        ATTEST_REPORT: ${{ inputs.report }}
+        ATTEST_ENGINE_BIN: ${{ inputs.engine-binary }}
+      run: |
+        set +e
+        if [[ -z "$ATTEST_POLICY" ]]; then
+          echo "exit_code=0" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+        args=(policy evaluate --policy "$ATTEST_POLICY" --report "$ATTEST_REPORT")
+        if [[ -n "$ATTEST_BASELINE_TAG" ]]; then
+          args+=(--baseline "$ATTEST_BASELINE_TAG")
+        fi
+        "$ATTEST_ENGINE_BIN" "${args[@]}" > policy-result.json
+        code=$?
+        echo "exit_code=$code" >> "$GITHUB_OUTPUT"
+        cat policy-result.json
+        exit 0
+
+    - name: Post inline review comments
+      if: github.event_name == 'pull_request'
+      shell: bash
+      env:
+        ATTEST_REPORT: ${{ inputs.report }}
+        GITHUB_TOKEN: ${{ inputs.github-token }}
+        GITHUB_REPOSITORY: ${{ github.repository }}
+        PR_NUMBER: ${{ github.event.pull_request.number }}
+        COMMIT_SHA: ${{ github.event.pull_request.head.sha }}
+      run: |
+        python3 "${{ github.action_path }}/post_annotations.py" \
+          --report "$ATTEST_REPORT" \
+          --repo "$GITHUB_REPOSITORY" \
+          --pr "$PR_NUMBER" \
+          --commit "$COMMIT_SHA"
+
+    - name: Fail on blocking policy violation
+      if: inputs.fail-on-violation == 'true' && steps.evaluate.outputs.exit_code == '1'
+      shell: bash
+      run: |
+        echo "::error::Attest policy reported a blocking violation"
+        exit 1
