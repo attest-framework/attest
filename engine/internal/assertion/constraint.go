@@ -1,8 +1,8 @@
 package assertion
 
 import (
-	"github.com/segmentio/encoding/json"
 	"fmt"
+	"github.com/segmentio/encoding/json"
 	"regexp"
 	"strconv"
 	"strings"

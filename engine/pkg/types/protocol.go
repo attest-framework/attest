@@ -119,7 +119,7 @@ type ConversationMessage struct {
 
 // GenerateUserMessageParams holds parameters for the generate_user_message RPC method.
 type GenerateUserMessageParams struct {
-	Persona             SimulatePersona      `json:"persona"`
+	Persona             SimulatePersona       `json:"persona"`
 	ConversationHistory []ConversationMessage `json:"conversation_history"`
 	FaultConfig         *SimulateFaultConfig  `json:"fault_config,omitempty"`
 }

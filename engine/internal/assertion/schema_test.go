@@ -27,10 +27,10 @@ func TestSchemaEvaluator(t *testing.T) {
 	}
 
 	tests := []struct {
-		name           string
-		trace          *types.Trace
-		assertionSpec  string
-		wantStatus     string
+		name          string
+		trace         *types.Trace
+		assertionSpec string
+		wantStatus    string
 	}{
 		{
 			name: "valid output.structured matches schema",

@@ -71,9 +71,9 @@ func TestClassifyDynamic_FallbackWhenBelowMinRuns(t *testing.T) {
 		score    float64
 		expected string
 	}{
-		{0.3, types.StatusHardFail},  // ClassifyScore: < 0.5
-		{0.6, types.StatusSoftFail},  // ClassifyScore: 0.5 <= x < 0.8
-		{0.85, types.StatusPass},     // ClassifyScore: >= 0.8
+		{0.3, types.StatusHardFail}, // ClassifyScore: < 0.5
+		{0.6, types.StatusSoftFail}, // ClassifyScore: 0.5 <= x < 0.8
+		{0.85, types.StatusPass},    // ClassifyScore: >= 0.8
 	}
 
 	for _, tc := range cases {

@@ -17,7 +17,7 @@ type stubProvider struct {
 	err     error
 }
 
-func (s *stubProvider) Name() string        { return s.name }
+func (s *stubProvider) Name() string         { return s.name }
 func (s *stubProvider) DefaultModel() string { return s.model }
 func (s *stubProvider) Complete(_ context.Context, _ *llm.CompletionRequest) (*llm.CompletionResponse, error) {
 	if s.err != nil {
