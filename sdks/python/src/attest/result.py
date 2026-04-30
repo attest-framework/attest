@@ -61,3 +61,18 @@ class AgentResult:
         from attest.trace_tree import TraceTree
 
         return TraceTree(root=self.trace)
+
+    def render_diagnostics(self, *, color: bool = False) -> str:
+        """Pytest-style diagnostic block listing every failing assertion.
+
+        Use as the message argument to a pytest ``assert`` so reviewers
+        see trace path, expected vs actual, and judge metadata for each
+        failure rather than just ``assert False``.
+
+        Example::
+
+            assert agent_result.passed, agent_result.render_diagnostics()
+        """
+        from attest.cli.diagnostics import render_diagnostics
+
+        return render_diagnostics(self, color=color)

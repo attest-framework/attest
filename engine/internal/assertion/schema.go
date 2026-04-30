@@ -68,24 +68,34 @@ func (e *SchemaEvaluator) Evaluate(trace *types.Trace, assertion *types.Assertio
 		return failResult(assertion, start, fmt.Sprintf("cannot parse target value: %v", err))
 	}
 
+	expected := fmt.Sprintf("matches JSON Schema (sha256:%s)", cacheKey[:8])
+	actual := truncate(string(targetValue))
+
 	if err := schema.Validate(value); err != nil {
 		return &types.AssertionResult{
-			AssertionID: assertion.AssertionID,
-			Status:      types.StatusHardFail,
-			Score:       0.0,
-			Explanation: fmt.Sprintf("%s failed schema validation: %v", spec.Target, err),
-			DurationMS:  time.Since(start).Milliseconds(),
-			RequestID:   assertion.RequestID,
+			AssertionID:     assertion.AssertionID,
+			Status:          types.StatusHardFail,
+			Score:           0.0,
+			Explanation:     fmt.Sprintf("%s failed schema validation: %v", spec.Target, err),
+			DurationMS:      time.Since(start).Milliseconds(),
+			RequestID:       assertion.RequestID,
+			TraceNodePath:   spec.Target,
+			Expected:        expected,
+			Actual:          actual,
+			SuggestedAction: "Inspect the target value and align it with the schema, or relax the schema if the field is optional.",
 		}
 	}
 
 	return &types.AssertionResult{
-		AssertionID: assertion.AssertionID,
-		Status:      types.StatusPass,
-		Score:       1.0,
-		Explanation: fmt.Sprintf("%s matches schema: all required fields present, types valid.", spec.Target),
-		DurationMS:  time.Since(start).Milliseconds(),
-		RequestID:   assertion.RequestID,
+		AssertionID:   assertion.AssertionID,
+		Status:        types.StatusPass,
+		Score:         1.0,
+		Explanation:   fmt.Sprintf("%s matches schema: all required fields present, types valid.", spec.Target),
+		DurationMS:    time.Since(start).Milliseconds(),
+		RequestID:     assertion.RequestID,
+		TraceNodePath: spec.Target,
+		Expected:      expected,
+		Actual:        actual,
 	}
 }
 

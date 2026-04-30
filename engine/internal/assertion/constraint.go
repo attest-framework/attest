@@ -92,25 +92,47 @@ func (e *ConstraintEvaluator) Evaluate(trace *types.Trace, assertion *types.Asse
 		return failResult(assertion, start, fmt.Sprintf("unsupported operator: %s", spec.Operator))
 	}
 
+	expectedExpr := buildConstraintExpected(spec.Field, spec.Operator, spec.Value, spec.Min, spec.Max)
+	actualExpr := fmt.Sprintf("%s = %s", spec.Field, formatFloat(actualVal))
+
 	if !passed {
 		return &types.AssertionResult{
-			AssertionID: assertion.AssertionID,
-			Status:      failStatus,
-			Score:       0.0,
-			Explanation: explanation + " — constraint not satisfied.",
-			DurationMS:  time.Since(start).Milliseconds(),
-			RequestID:   assertion.RequestID,
+			AssertionID:     assertion.AssertionID,
+			Status:          failStatus,
+			Score:           0.0,
+			Explanation:     explanation + " — constraint not satisfied.",
+			DurationMS:      time.Since(start).Milliseconds(),
+			RequestID:       assertion.RequestID,
+			TraceNodePath:   spec.Field,
+			Expected:        expectedExpr,
+			Actual:          actualExpr,
+			SuggestedAction: "Update the trace data, or widen the constraint if the new value is intentional.",
 		}
 	}
 
 	return &types.AssertionResult{
-		AssertionID: assertion.AssertionID,
-		Status:      types.StatusPass,
-		Score:       1.0,
-		Explanation: explanation + " — satisfied.",
-		DurationMS:  time.Since(start).Milliseconds(),
-		RequestID:   assertion.RequestID,
+		AssertionID:   assertion.AssertionID,
+		Status:        types.StatusPass,
+		Score:         1.0,
+		Explanation:   explanation + " — satisfied.",
+		DurationMS:    time.Since(start).Milliseconds(),
+		RequestID:     assertion.RequestID,
+		TraceNodePath: spec.Field,
+		Expected:      expectedExpr,
+		Actual:        actualExpr,
 	}
+}
+
+// buildConstraintExpected renders a constraint spec as "<field> <op> <rhs>"
+// for diagnostic reports. Returns "" if op is unknown.
+func buildConstraintExpected(field, op string, value, minV, maxV *float64) string {
+	if op == "between" && minV != nil && maxV != nil {
+		return fmt.Sprintf("%s in [%s, %s]", field, formatFloat(*minV), formatFloat(*maxV))
+	}
+	if value != nil {
+		return fmt.Sprintf("%s %s %s", field, op, formatFloat(*value))
+	}
+	return field + " " + op
 }
 
 // resolveConstraintField resolves a constraint field path to a float64 value.

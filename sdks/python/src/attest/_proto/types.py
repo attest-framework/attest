@@ -214,6 +214,59 @@ class Assertion:
 
 
 @dataclass
+class JudgeMetadata:
+    """Audit trail for a single LLM-judge evaluation.
+
+    Surfaces alongside an AssertionResult when the engine evaluates an
+    llm_judge assertion. Empty for non-judge results. Fields mirror
+    engine/pkg/types/assertion.go::JudgeMetadata so reports render the
+    same data on both sides of the protocol.
+    """
+
+    model: str | None = None
+    rubric_name: str | None = None
+    rubric_version: str | None = None
+    prompt_hash: str | None = None
+    sample_scores: list[float] = field(default_factory=list)
+    score_mean: float = 0.0
+    score_stddev: float = 0.0
+    high_variance: bool = False
+
+    def to_dict(self) -> dict[str, Any]:
+        d: dict[str, Any] = {}
+        if self.model is not None:
+            d["model"] = self.model
+        if self.rubric_name is not None:
+            d["rubric_name"] = self.rubric_name
+        if self.rubric_version is not None:
+            d["rubric_version"] = self.rubric_version
+        if self.prompt_hash is not None:
+            d["prompt_hash"] = self.prompt_hash
+        if self.sample_scores:
+            d["sample_scores"] = list(self.sample_scores)
+        if self.score_mean:
+            d["score_mean"] = self.score_mean
+        if self.score_stddev:
+            d["score_stddev"] = self.score_stddev
+        if self.high_variance:
+            d["high_variance"] = self.high_variance
+        return d
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> JudgeMetadata:
+        return cls(
+            model=data.get("model"),
+            rubric_name=data.get("rubric_name"),
+            rubric_version=data.get("rubric_version"),
+            prompt_hash=data.get("prompt_hash"),
+            sample_scores=list(data.get("sample_scores", [])),
+            score_mean=data.get("score_mean", 0.0),
+            score_stddev=data.get("score_stddev", 0.0),
+            high_variance=data.get("high_variance", False),
+        )
+
+
+@dataclass
 class AssertionResult:
     assertion_id: str
     status: str
@@ -222,6 +275,14 @@ class AssertionResult:
     cost: float = 0.0
     duration_ms: int = 0
     request_id: str | None = None
+    threshold_source: str | None = None
+    layer: int = 0
+    type: str | None = None
+    trace_node_path: str | None = None
+    expected: str | None = None
+    actual: str | None = None
+    suggested_action: str | None = None
+    judge_metadata: JudgeMetadata | None = None
 
     def to_dict(self) -> dict[str, Any]:
         d: dict[str, Any] = {
@@ -234,10 +295,28 @@ class AssertionResult:
         }
         if self.request_id is not None:
             d["request_id"] = self.request_id
+        if self.threshold_source is not None:
+            d["threshold_source"] = self.threshold_source
+        if self.layer:
+            d["layer"] = self.layer
+        if self.type is not None:
+            d["type"] = self.type
+        if self.trace_node_path is not None:
+            d["trace_node_path"] = self.trace_node_path
+        if self.expected is not None:
+            d["expected"] = self.expected
+        if self.actual is not None:
+            d["actual"] = self.actual
+        if self.suggested_action is not None:
+            d["suggested_action"] = self.suggested_action
+        if self.judge_metadata is not None:
+            d["judge_metadata"] = self.judge_metadata.to_dict()
         return d
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> AssertionResult:
+        raw_judge = data.get("judge_metadata")
+        judge = JudgeMetadata.from_dict(raw_judge) if raw_judge else None
         return cls(
             assertion_id=data["assertion_id"],
             status=data["status"],
@@ -246,6 +325,14 @@ class AssertionResult:
             cost=data.get("cost", 0.0),
             duration_ms=data.get("duration_ms", 0),
             request_id=data.get("request_id"),
+            threshold_source=data.get("threshold_source"),
+            layer=data.get("layer", 0),
+            type=data.get("type"),
+            trace_node_path=data.get("trace_node_path"),
+            expected=data.get("expected"),
+            actual=data.get("actual"),
+            suggested_action=data.get("suggested_action"),
+            judge_metadata=judge,
         )
 
 

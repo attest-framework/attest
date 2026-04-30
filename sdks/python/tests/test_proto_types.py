@@ -23,6 +23,7 @@ from attest._proto.types import (
     AssertionResult,
     EvaluateBatchResult,
     InitializeParams,
+    JudgeMetadata,
     Step,
     Trace,
     TraceMetadata,
@@ -126,6 +127,65 @@ def test_assertion_result_round_trip() -> None:
     assert restored.cost == original.cost
     assert restored.duration_ms == original.duration_ms
     assert restored.request_id == original.request_id
+
+
+def test_assertion_result_diagnostic_fields_round_trip() -> None:
+    original = AssertionResult(
+        assertion_id="judge_001",
+        status=STATUS_HARD_FAIL,
+        score=0.4,
+        explanation="weak",
+        cost=0.012,
+        duration_ms=1820,
+        request_id="req_001",
+        threshold_source="dynamic",
+        layer=6,
+        type=TYPE_LLM_JUDGE,
+        trace_node_path="output.answer",
+        expected="judge_score >= 0.80",
+        actual="judge_score=0.40",
+        suggested_action="Calibrate the judge.",
+        judge_metadata=JudgeMetadata(
+            model="gpt-4.1",
+            rubric_name="correctness",
+            rubric_version="v3",
+            prompt_hash="abcd1234",
+            sample_scores=[0.4, 0.4, 0.6],
+            score_mean=0.466,
+            score_stddev=0.115,
+            high_variance=False,
+        ),
+    )
+    d = original.to_dict()
+    restored = AssertionResult.from_dict(d)
+
+    assert restored.layer == 6
+    assert restored.type == TYPE_LLM_JUDGE
+    assert restored.trace_node_path == "output.answer"
+    assert restored.expected == "judge_score >= 0.80"
+    assert restored.actual == "judge_score=0.40"
+    assert restored.suggested_action == "Calibrate the judge."
+    assert restored.threshold_source == "dynamic"
+    assert restored.judge_metadata is not None
+    assert restored.judge_metadata.model == "gpt-4.1"
+    assert restored.judge_metadata.rubric_name == "correctness"
+    assert restored.judge_metadata.sample_scores == [0.4, 0.4, 0.6]
+
+
+def test_assertion_result_legacy_payload_loads() -> None:
+    """Engine v1 payloads (no diagnostic fields) must still parse."""
+    legacy: dict = {
+        "assertion_id": "old",
+        "status": STATUS_PASS,
+        "score": 1.0,
+        "explanation": "ok",
+        "cost": 0.0,
+        "duration_ms": 1,
+    }
+    result = AssertionResult.from_dict(legacy)
+    assert result.layer == 0
+    assert result.type is None
+    assert result.judge_metadata is None
 
 
 def test_initialize_params_to_dict() -> None:

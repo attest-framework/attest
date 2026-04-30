@@ -24,6 +24,12 @@ export { AttestClient } from "./client.js";
 export type { AttestClientOptions } from "./client.js";
 export { TraceBuilder } from "./trace.js";
 export { AgentResult } from "./result.js";
+export {
+  renderAssertionFailure,
+  renderDiagnostics,
+  renderSummary,
+} from "./diagnostics.js";
+export type { RenderOptions } from "./diagnostics.js";
 export { TraceTree } from "./trace-tree.js";
 export { ExpectChain, attestExpect } from "./expect.js";
 export { Agent, agent } from "./agent.js";

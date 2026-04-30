@@ -2,15 +2,19 @@ package assertion
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
-	"github.com/segmentio/encoding/json"
 	"log/slog"
+	"math"
 	"os"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/segmentio/encoding/json"
 
 	"github.com/attest-ai/attest/engine/internal/assertion/judge"
 	"github.com/attest-ai/attest/engine/internal/cache"
@@ -85,7 +89,15 @@ func (e *JudgeEvaluator) Evaluate(trace *types.Trace, assertion *types.Assertion
 		contentHash := cache.JudgeContentHash(targetStr)
 		if cached, cErr := e.cache.Get(contentHash, rubricName, model); cErr == nil && cached != nil {
 			durationMS := time.Since(start).Milliseconds()
-			return e.buildResult(assertion, cached.Score, cached.Explanation, spec.Threshold, spec.Soft, durationMS, 0)
+			meta := &types.JudgeMetadata{
+				Model:        model,
+				RubricName:   rubricName,
+				PromptHash:   promptHash(targetStr),
+				SampleScores: []float64{cached.Score},
+				ScoreMean:    cached.Score,
+			}
+			return e.buildResult(assertion, cached.Score, cached.Explanation, spec.Threshold, spec.Soft, durationMS, 0,
+				judgeBuildArgs{target: spec.Target, model: model, rubric: rubricName, meta: meta})
 		}
 	}
 
@@ -106,6 +118,15 @@ func (e *JudgeEvaluator) Evaluate(trace *types.Trace, assertion *types.Assertion
 	return e.evaluateSinglePass(ctx, assertion, rubric, model, userContent, spec, start, targetStr, rubricName)
 }
 
+// judgeBuildArgs bundles the optional diagnostic inputs to buildResult so
+// the function signature does not balloon past four positional parameters.
+type judgeBuildArgs struct {
+	target string
+	model  string
+	rubric string
+	meta   *types.JudgeMetadata
+}
+
 func (e *JudgeEvaluator) buildResult(
 	assertion *types.Assertion,
 	score float64,
@@ -114,6 +135,7 @@ func (e *JudgeEvaluator) buildResult(
 	soft bool,
 	durationMS int64,
 	cost float64,
+	diag judgeBuildArgs,
 ) *types.AssertionResult {
 	status := types.StatusPass
 	if score < threshold {
@@ -124,15 +146,56 @@ func (e *JudgeEvaluator) buildResult(
 		}
 	}
 
-	return &types.AssertionResult{
-		AssertionID: assertion.AssertionID,
-		Status:      status,
-		Score:       score,
-		Explanation: explanation,
-		Cost:        cost,
-		DurationMS:  durationMS,
-		RequestID:   assertion.RequestID,
+	expected := fmt.Sprintf("judge_score >= %.2f against rubric %q", threshold, diag.rubric)
+	actual := fmt.Sprintf("judge_score=%.2f, model=%s, rationale=%s", score, diag.model, truncate(explanation))
+
+	suggestion := ""
+	if status != types.StatusPass {
+		suggestion = "Calibrate the judge: check rubric clarity, sample human labels, or raise the threshold only if false-positives matter more than false-negatives."
 	}
+
+	return &types.AssertionResult{
+		AssertionID:     assertion.AssertionID,
+		Status:          status,
+		Score:           score,
+		Explanation:     explanation,
+		Cost:            cost,
+		DurationMS:      durationMS,
+		RequestID:       assertion.RequestID,
+		TraceNodePath:   diag.target,
+		Expected:        expected,
+		Actual:          actual,
+		SuggestedAction: suggestion,
+		Judge:           diag.meta,
+	}
+}
+
+// promptHash hashes the user content the judge model received so report
+// readers and calibration tools can correlate results across runs without
+// storing the prompt itself.
+func promptHash(prompt string) string {
+	sum := sha256.Sum256([]byte(prompt))
+	return hex.EncodeToString(sum[:8])
+}
+
+// scoreVarianceStats computes mean/stddev for a slice of scores. Returns
+// zeros when scores is empty.
+func scoreVarianceStats(scores []float64) (mean, stddev float64) {
+	if len(scores) == 0 {
+		return 0, 0
+	}
+	for _, s := range scores {
+		mean += s
+	}
+	mean /= float64(len(scores))
+	if len(scores) == 1 {
+		return mean, 0
+	}
+	for _, s := range scores {
+		stddev += (s - mean) * (s - mean)
+	}
+	stddev = math.Sqrt(stddev / float64(len(scores)-1))
+	return mean, stddev
 }
 
 // judgeTimeoutSeconds reads the judge evaluation timeout from ATTEST_JUDGE_TIMEOUT_S.
@@ -197,7 +260,15 @@ func (e *JudgeEvaluator) evaluateSinglePass(
 		}
 	}
 
-	return e.buildResult(assertion, scoreResult.Score, scoreResult.Explanation, spec.Threshold, spec.Soft, durationMS, resp.Cost)
+	meta := &types.JudgeMetadata{
+		Model:        model,
+		RubricName:   rubricName,
+		PromptHash:   promptHash(userContent),
+		SampleScores: []float64{scoreResult.Score},
+		ScoreMean:    scoreResult.Score,
+	}
+	return e.buildResult(assertion, scoreResult.Score, scoreResult.Explanation, spec.Threshold, spec.Soft, durationMS, resp.Cost,
+		judgeBuildArgs{target: spec.Target, model: model, rubric: rubricName, meta: meta})
 }
 
 // metaEvalResult holds one judge run's output.
@@ -305,5 +376,16 @@ func (e *JudgeEvaluator) evaluateWithMetaEval(
 		}
 	}
 
-	return e.buildResult(assertion, medianScore, combinedExplanation, spec.Threshold, spec.Soft, durationMS, totalCost)
+	mean, stddev := scoreVarianceStats(scores)
+	meta := &types.JudgeMetadata{
+		Model:            model,
+		RubricName:       rubricName,
+		PromptHash:       promptHash(userContent),
+		SampleScores:     scores,
+		ScoreMean:        mean,
+		ScoreStddev:      stddev,
+		HighVarianceFlag: spread > metaEvalVarianceThreshold,
+	}
+	return e.buildResult(assertion, medianScore, combinedExplanation, spec.Threshold, spec.Soft, durationMS, totalCost,
+		judgeBuildArgs{target: spec.Target, model: model, rubric: rubricName, meta: meta})
 }

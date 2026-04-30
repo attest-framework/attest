@@ -78,14 +78,20 @@ func (e *EmbeddingEvaluator) Evaluate(trace *types.Trace, assertion *types.Asser
 		score = 0
 	}
 
+	expected := fmt.Sprintf("cosine_similarity(target, reference) >= %.4f", spec.Threshold)
+	actual := fmt.Sprintf("cosine_similarity = %.4f against %q", sim, truncate(spec.Reference))
+
 	if sim >= spec.Threshold {
 		return &types.AssertionResult{
-			AssertionID: assertion.AssertionID,
-			Status:      types.StatusPass,
-			Score:       score,
-			Explanation: fmt.Sprintf("cosine similarity %.4f >= threshold %.4f", sim, spec.Threshold),
-			DurationMS:  durationMS,
-			RequestID:   assertion.RequestID,
+			AssertionID:   assertion.AssertionID,
+			Status:        types.StatusPass,
+			Score:         score,
+			Explanation:   fmt.Sprintf("cosine similarity %.4f >= threshold %.4f", sim, spec.Threshold),
+			DurationMS:    durationMS,
+			RequestID:     assertion.RequestID,
+			TraceNodePath: spec.Target,
+			Expected:      expected,
+			Actual:        actual,
 		}
 	}
 
@@ -93,13 +99,21 @@ func (e *EmbeddingEvaluator) Evaluate(trace *types.Trace, assertion *types.Asser
 	if spec.Soft {
 		failStatus = types.StatusSoftFail
 	}
+	suggestion := "Inspect the agent response — semantic drift from reference. Lower threshold only if the reference is too narrow."
+	if spec.Threshold > 0.9 {
+		suggestion = "Threshold is high (>0.9). Consider whether paraphrasing should pass."
+	}
 	return &types.AssertionResult{
-		AssertionID: assertion.AssertionID,
-		Status:      failStatus,
-		Score:       score,
-		Explanation: fmt.Sprintf("cosine similarity %.4f < threshold %.4f", sim, spec.Threshold),
-		DurationMS:  durationMS,
-		RequestID:   assertion.RequestID,
+		AssertionID:     assertion.AssertionID,
+		Status:          failStatus,
+		Score:           score,
+		Explanation:     fmt.Sprintf("cosine similarity %.4f < threshold %.4f", sim, spec.Threshold),
+		DurationMS:      durationMS,
+		RequestID:       assertion.RequestID,
+		TraceNodePath:   spec.Target,
+		Expected:        expected,
+		Actual:          actual,
+		SuggestedAction: suggestion,
 	}
 }
 
