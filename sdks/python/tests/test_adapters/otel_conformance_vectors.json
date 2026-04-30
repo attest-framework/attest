@@ -1,0 +1,146 @@
+{
+  "spec_reference": "https://github.com/open-telemetry/semantic-conventions/tree/main/docs/gen-ai",
+  "purpose": "Locks the OTel GenAI semantic-convention mapping that OTelAdapter implements. Each vector is a span fixture plus the Attest step it must produce. Add a vector here when a new gen_ai operation or attribute is supported; this file is the authoritative drift guard.",
+  "vectors": [
+    {
+      "id": "chat-basic",
+      "operation": "chat",
+      "span": {
+        "name": "chat gpt-4.1",
+        "attributes": {
+          "gen_ai.operation.name": "chat",
+          "gen_ai.system": "openai",
+          "gen_ai.request.model": "gpt-4.1",
+          "gen_ai.response.model": "gpt-4.1",
+          "gen_ai.completion": "Hello, world.",
+          "gen_ai.usage.input_tokens": 12,
+          "gen_ai.usage.output_tokens": 4
+        }
+      },
+      "expected": {
+        "step_type": "llm_call",
+        "args_includes": {"operation": "chat", "model": "gpt-4.1"},
+        "result_includes": {
+          "completion": "Hello, world.",
+          "input_tokens": 12,
+          "output_tokens": 4,
+          "model": "gpt-4.1"
+        }
+      }
+    },
+    {
+      "id": "text-completion",
+      "operation": "text_completion",
+      "span": {
+        "name": "text_completion gpt-4.1",
+        "attributes": {
+          "gen_ai.operation.name": "text_completion",
+          "gen_ai.request.model": "gpt-4.1",
+          "gen_ai.prompt": "Once upon a time",
+          "gen_ai.completion": "there was a llama."
+        }
+      },
+      "expected": {
+        "step_type": "llm_call",
+        "args_includes": {"operation": "text_completion", "model": "gpt-4.1"},
+        "result_includes": {"completion": "there was a llama."}
+      }
+    },
+    {
+      "id": "embeddings",
+      "operation": "embeddings",
+      "span": {
+        "name": "embeddings text-embedding-3-small",
+        "attributes": {
+          "gen_ai.operation.name": "embeddings",
+          "gen_ai.request.model": "text-embedding-3-small",
+          "gen_ai.usage.input_tokens": 8
+        }
+      },
+      "expected": {
+        "step_type": "llm_call",
+        "args_includes": {"operation": "embeddings", "model": "text-embedding-3-small"}
+      }
+    },
+    {
+      "id": "execute-tool",
+      "operation": "execute_tool",
+      "span": {
+        "name": "execute_tool web_search",
+        "attributes": {
+          "gen_ai.operation.name": "execute_tool",
+          "gen_ai.tool.name": "web_search",
+          "gen_ai.tool.call.id": "call_001",
+          "gen_ai.tool.parameters": "{\"query\":\"Paris\"}",
+          "gen_ai.tool.output": "[\"https://example.com\"]"
+        }
+      },
+      "expected": {
+        "step_type": "tool_call",
+        "step_name": "web_search",
+        "args_includes": {"call_id": "call_001"},
+        "result_includes": {"output": "[\"https://example.com\"]"}
+      }
+    },
+    {
+      "id": "invoke-agent",
+      "operation": "invoke_agent",
+      "span": {
+        "name": "invoke_agent researcher",
+        "attributes": {
+          "gen_ai.operation.name": "invoke_agent",
+          "gen_ai.agent.id": "agent-001",
+          "gen_ai.agent.name": "researcher",
+          "gen_ai.agent.description": "Background research assistant"
+        }
+      },
+      "expected": {
+        "step_type": "agent_call",
+        "step_name": "researcher",
+        "step_agent_id": "agent-001",
+        "step_agent_role": "researcher",
+        "args_includes": {
+          "agent_id": "agent-001",
+          "agent_name": "researcher",
+          "description": "Background research assistant"
+        }
+      }
+    },
+    {
+      "id": "retrieval",
+      "operation": "retrieval",
+      "span": {
+        "name": "retrieval vector_store",
+        "attributes": {
+          "gen_ai.operation.name": "retrieval",
+          "gen_ai.retrieval.query": "Capital of France",
+          "gen_ai.retrieval.source": "vector_store",
+          "gen_ai.retrieval.documents.count": 3
+        }
+      },
+      "expected": {
+        "step_type": "retrieval",
+        "args_includes": {"query": "Capital of France", "source": "vector_store"},
+        "result_includes": {"documents_count": 3}
+      }
+    },
+    {
+      "id": "agent-hierarchy-on-llm-call",
+      "operation": "chat",
+      "span": {
+        "name": "chat gpt-4.1",
+        "attributes": {
+          "gen_ai.operation.name": "chat",
+          "gen_ai.completion": "ok",
+          "gen_ai.agent.id": "agent-42",
+          "gen_ai.agent.name": "support_bot"
+        }
+      },
+      "expected": {
+        "step_type": "llm_call",
+        "step_agent_id": "agent-42",
+        "step_agent_role": "support_bot"
+      }
+    }
+  ]
+}
