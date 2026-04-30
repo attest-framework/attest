@@ -1,9 +1,7 @@
 package main
 
 import (
-	"crypto/sha256"
 	"database/sql"
-	"encoding/hex"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -148,7 +146,7 @@ func persistLabels(records []judge.LabeledRecord, rubricName, rubricVersion stri
 		if err := store.Record(cache.CalibrationLabel{
 			RubricName:    rubricName,
 			RubricVersion: rubricVersion,
-			PromptHash:    promptHashOf(r.Input),
+			PromptHash:    judge.PromptHash(r.Input),
 			Input:         r.Input,
 			HumanLabel:    r.HumanLabel,
 			JudgeScore:    r.JudgeScore,
@@ -158,14 +156,6 @@ func persistLabels(records []judge.LabeledRecord, rubricName, rubricVersion stri
 		}
 	}
 	return nil
-}
-
-// promptHashOf mirrors the engine's judge_eval.go promptHash so calibration
-// rows align with the prompt_hash field on JudgeMetadata. Truncated to the
-// same 16 hex chars for storage compactness.
-func promptHashOf(input string) string {
-	sum := sha256.Sum256([]byte(input))
-	return hex.EncodeToString(sum[:8])
 }
 
 func round3(x float64) float64 {

@@ -2,8 +2,6 @@ package assertion
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
 	"log/slog"
 	"math"
@@ -104,7 +102,7 @@ func (e *JudgeEvaluator) Evaluate(trace *types.Trace, assertion *types.Assertion
 				Model:         model,
 				RubricName:    rubricName,
 				RubricVersion: rubric.Version,
-				PromptHash:    promptHash(targetStr),
+				PromptHash:    judge.PromptHash(targetStr),
 				SampleScores:  []float64{cached.Score},
 				ScoreMean:     cached.Score,
 			}
@@ -188,14 +186,6 @@ func (e *JudgeEvaluator) buildResult(
 		SuggestedAction: suggestion,
 		Judge:           diag.meta,
 	}
-}
-
-// promptHash hashes the user content the judge model received so report
-// readers and calibration tools can correlate results across runs without
-// storing the prompt itself.
-func promptHash(prompt string) string {
-	sum := sha256.Sum256([]byte(prompt))
-	return hex.EncodeToString(sum[:8])
 }
 
 // scoreVarianceStats computes mean/stddev for a slice of scores. Returns
@@ -300,7 +290,7 @@ func (e *JudgeEvaluator) evaluateSinglePass(
 		Model:         model,
 		RubricName:    rubricName,
 		RubricVersion: rubric.Version,
-		PromptHash:    promptHash(userContent),
+		PromptHash:    judge.PromptHash(userContent),
 		SampleScores:  []float64{scoreResult.Score},
 		ScoreMean:     scoreResult.Score,
 		BiasProbes:    probeResults,
@@ -427,7 +417,7 @@ func (e *JudgeEvaluator) evaluateRepeated(
 		Model:            model,
 		RubricName:       rubricName,
 		RubricVersion:    rubric.Version,
-		PromptHash:       promptHash(userContent),
+		PromptHash:       judge.PromptHash(userContent),
 		SampleScores:     scores,
 		ScoreMean:        mean,
 		ScoreStddev:      stddev,

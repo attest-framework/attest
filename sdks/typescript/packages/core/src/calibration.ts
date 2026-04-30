@@ -116,8 +116,9 @@ export function loadLabelsCSV(text: string): LabeledRecord[] {
     throw new Error("empty CSV");
   }
   let start = 0;
-  if (rows[0]!.length >= 2 && Number.isNaN(Number(rows[0]![1]!.trim()))) {
-    start = 1;
+  if (rows[0]!.length >= 2) {
+    const firstHuman = parseFloatStrict(rows[0]![1]!);
+    if (firstHuman === null) start = 1;
   }
   const out: LabeledRecord[] = [];
   for (let idx = start; idx < rows.length; idx++) {
@@ -130,8 +131,8 @@ export function loadLabelsCSV(text: string): LabeledRecord[] {
         `CSV line ${lineNum}: want at least 2 columns (input, human_label)`,
       );
     }
-    const human = Number(row[1]!.trim());
-    if (Number.isNaN(human)) {
+    const human = parseFloatStrict(row[1]!);
+    if (human === null) {
       throw new Error(`CSV line ${lineNum}: human_label not a float: ${row[1]}`);
     }
     const rec: LabeledRecord = {
@@ -141,8 +142,8 @@ export function loadLabelsCSV(text: string): LabeledRecord[] {
       judgeKnown: false,
     };
     if (row.length >= 3 && row[2]!.trim() !== "") {
-      const judge = Number(row[2]!.trim());
-      if (Number.isNaN(judge)) {
+      const judge = parseFloatStrict(row[2]!);
+      if (judge === null) {
         throw new Error(
           `CSV line ${lineNum}: judge_score not a float: ${row[2]}`,
         );
@@ -179,14 +180,22 @@ export function loadLabelsJSONL(text: string): LabeledRecord[] {
     if (obj["human_label"] === undefined) {
       throw new Error(`JSONL line ${i + 1}: missing human_label`);
     }
+    const human = parseJSONNumber(obj["human_label"]);
+    if (human === null) {
+      throw new Error(`JSONL line ${i + 1}: human_label is not a number`);
+    }
     const rec: LabeledRecord = {
       input: typeof obj["input"] === "string" ? obj["input"] : "",
-      humanLabel: Number(obj["human_label"]),
+      humanLabel: human,
       judgeScore: 0,
       judgeKnown: false,
     };
     if (obj["judge_score"] !== undefined && obj["judge_score"] !== null) {
-      rec.judgeScore = Number(obj["judge_score"]);
+      const judge = parseJSONNumber(obj["judge_score"]);
+      if (judge === null) {
+        throw new Error(`JSONL line ${i + 1}: judge_score is not a number`);
+      }
+      rec.judgeScore = judge;
       rec.judgeKnown = true;
     }
     out.push(rec);
@@ -204,6 +213,36 @@ export function loadLabelsJSONL(text: string): LabeledRecord[] {
  */
 export function promptHash(text: string): string {
   return createHash("sha256").update(text).digest("hex").slice(0, 16);
+}
+
+/**
+ * Parse a string as a number, rejecting empty input and values that
+ * JavaScript's `Number()` would silently coerce to 0. Returns null on
+ * rejection so callers can throw a useful error. Matches Go's
+ * strconv.ParseFloat and Python's float() — both error on the empty
+ * string, while bare `Number("")` returns 0.
+ *
+ * Permits "Infinity" so the loader stays consistent with strconv.ParseFloat;
+ * downstream consumers (CalibrationStore.Record, computeAgreement) handle
+ * the [0, 1] range check separately.
+ */
+function parseFloatStrict(raw: string): number | null {
+  const trimmed = raw.trim();
+  if (trimmed === "") return null;
+  const n = Number(trimmed);
+  if (Number.isNaN(n)) return null;
+  return n;
+}
+
+/**
+ * Coerce a JSON value to a finite number. Accepts only `number` (rejects
+ * stringly-typed numbers and booleans) so calibration files cannot
+ * accidentally smuggle non-numeric labels past type-loose JSON parsing.
+ */
+function parseJSONNumber(value: unknown): number | null {
+  if (typeof value !== "number") return null;
+  if (Number.isNaN(value)) return null;
+  return value;
 }
 
 /**

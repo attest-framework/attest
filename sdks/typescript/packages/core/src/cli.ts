@@ -206,7 +206,11 @@ function parseCalibrateArgs(args: string[]): CalibrateOptions {
       i++;
     } else if (arg === "--threshold") {
       if (next === undefined) throw new Error("--threshold requires a number");
-      opts.threshold = Number(next);
+      const parsed = Number(next);
+      if (next.trim() === "" || Number.isNaN(parsed)) {
+        throw new Error(`--threshold value ${JSON.stringify(next)} is not a number`);
+      }
+      opts.threshold = parsed;
       i++;
     } else {
       throw new Error(`unknown calibrate flag: ${arg}`);

@@ -82,6 +82,14 @@ just-input,0.5,
       /human_label not a float/,
     );
   });
+
+  it("rejects empty human_label in a data row", () => {
+    // First row treated as header (parity with Python float() and Go ParseFloat
+    // which both error on empty), so a blank cell in any subsequent row must
+    // surface as an error rather than silently parsing to 0.
+    const src = "input,human_label\nhello,0.9\nworld,\n";
+    expect(() => loadLabelsCSV(src)).toThrow(/human_label not a float/);
+  });
 });
 
 describe("loadLabelsJSONL", () => {
@@ -99,6 +107,12 @@ describe("loadLabelsJSONL", () => {
     expect(() => loadLabelsJSONL('{"input": "a"}\n')).toThrow(
       /missing human_label/,
     );
+  });
+
+  it("rejects stringly-typed human_label", () => {
+    expect(() =>
+      loadLabelsJSONL('{"input": "a", "human_label": "0.5"}\n'),
+    ).toThrow(/human_label is not a number/);
   });
 });
 

@@ -1,7 +1,9 @@
 package judge
 
 import (
+	"crypto/sha256"
 	"encoding/csv"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -11,6 +13,14 @@ import (
 	"strconv"
 	"strings"
 )
+
+// PromptHash returns the 16-character SHA-256 prefix the engine uses to
+// correlate calibration history with JudgeMetadata.PromptHash. Shared so
+// the engine evaluator and CLI cannot drift apart on the prefix length.
+func PromptHash(text string) string {
+	sum := sha256.Sum256([]byte(text))
+	return hex.EncodeToString(sum[:8])
+}
 
 // AgreementResult holds the calibration metrics computed over a set of
 // (human_label, judge_score) pairs. Threshold is the cut-off used to

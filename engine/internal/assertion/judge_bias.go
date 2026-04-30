@@ -3,6 +3,7 @@ package assertion
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"strings"
 
 	"github.com/attest-ai/attest/engine/internal/assertion/judge"
@@ -118,9 +119,13 @@ func injectInsideDelimiters(userContent string, edit func(string) string) string
 // runBiasProbes calls the judge once per probe (sequentially to keep the
 // wall-clock cost predictable for calibration runs) and returns one
 // BiasProbe entry per probe with its score and delta. Returns the total
-// added cost so the caller can fold it into AssertionResult.Cost. When the
-// judge fails on a given probe the returned delta is 0 and the explanation
-// is logged at debug level by the caller.
+// added cost so the caller can fold it into AssertionResult.Cost.
+//
+// A probe that fails to call the judge or produces an unparseable response
+// is omitted from the result and logged at warn level so report readers
+// can tell "no bias detected" apart from "probe never ran". The remaining
+// probes still execute — one transient model failure does not invalidate
+// the others.
 func runBiasProbes(
 	ctx context.Context,
 	provider llm.Provider,
@@ -146,10 +151,12 @@ func runBiasProbes(
 		}
 		resp, err := provider.Complete(ctx, req)
 		if err != nil {
+			slog.Warn("bias probe LLM call failed", "probe", name, "model", model, "err", err)
 			continue
 		}
 		sr, err := judge.ParseScoreResult(resp.Content)
 		if err != nil {
+			slog.Warn("bias probe response unparseable", "probe", name, "model", model, "err", err)
 			continue
 		}
 		addedCost += resp.Cost
