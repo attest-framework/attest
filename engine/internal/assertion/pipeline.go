@@ -211,14 +211,11 @@ func (p *Pipeline) EvaluateBatchWithBudget(ctx context.Context, trace *types.Tra
 		return result, err
 	}
 
-	// Merge L5-6 results in deterministic index order.
+	// Merge L5-6 results in deterministic index order. Reaching this point
+	// means dispatch finished without cancellation and every goroutine
+	// populated its slot (cancelled goroutines still write a HardFail
+	// result with AssertionID set).
 	for i := range l56Results {
-		// Skip slots that were never populated because dispatch broke on
-		// cancellation before reaching this index. ctx.Err is non-nil only
-		// when we returned above, so reaching here means every l56 task ran.
-		if l56Results[i].AssertionID == "" {
-			continue
-		}
 		result.Results = append(result.Results, l56Results[i])
 		result.TotalCost += l56Costs[i]
 		result.TotalDurationMS += l56Durations[i]

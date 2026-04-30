@@ -113,13 +113,10 @@ func TestRateLimiter_ReturnsTypedErrorOnExhaustion(t *testing.T) {
 	if callErr == nil {
 		t.Fatal("expected error after exhausted retries")
 	}
-	if !IsRateLimited(callErr) {
-		t.Fatalf("expected typed RateLimitedError, got %T: %v", callErr, callErr)
-	}
 
 	var rle *RateLimitedError
 	if !errors.As(callErr, &rle) {
-		t.Fatal("errors.As to *RateLimitedError failed")
+		t.Fatalf("errors.As to *RateLimitedError failed; got %T: %v", callErr, callErr)
 	}
 	if rle.Provider != mock.Name() {
 		t.Errorf("Provider = %q, want %q", rle.Provider, mock.Name())

@@ -2,7 +2,6 @@ package llm
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"math"
 	"time"
@@ -24,12 +23,6 @@ func (e *RateLimitedError) Error() string {
 }
 
 func (e *RateLimitedError) Unwrap() error { return e.Cause }
-
-// IsRateLimited reports whether err is or wraps a *RateLimitedError.
-func IsRateLimited(err error) bool {
-	var rle *RateLimitedError
-	return errors.As(err, &rle)
-}
 
 // RateLimiterConfig configures the token-bucket rate limiter.
 type RateLimiterConfig struct {
