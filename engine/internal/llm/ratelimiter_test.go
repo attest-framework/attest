@@ -2,6 +2,7 @@ package llm
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"testing"
@@ -76,6 +77,52 @@ func TestRateLimiter_Concurrency(t *testing.T) {
 	callCount := mock.GetCallCount()
 	if callCount != numRequests {
 		t.Errorf("expected %d calls to mock, got %d", numRequests, callCount)
+	}
+}
+
+func TestRateLimiter_ReturnsTypedErrorOnExhaustion(t *testing.T) {
+	mock := NewMockProvider(
+		nil,
+		[]error{
+			fmt.Errorf("transient 1"),
+			fmt.Errorf("transient 2"),
+			fmt.Errorf("transient 3"),
+			fmt.Errorf("transient 4"),
+		},
+	)
+
+	cfg := RateLimiterConfig{
+		RequestsPerMinute: 6000,
+		Burst:             10,
+		MaxRetries:        2,
+		InitialBackoff:    1 * time.Millisecond,
+		MaxBackoff:        10 * time.Millisecond,
+	}
+
+	rl, err := NewRateLimitedProvider(mock, cfg)
+	if err != nil {
+		t.Fatalf("NewRateLimitedProvider: %v", err)
+	}
+
+	req := &CompletionRequest{
+		Model:    "mock-model",
+		Messages: []Message{{Role: "user", Content: "test"}},
+	}
+
+	_, callErr := rl.Complete(context.Background(), req)
+	if callErr == nil {
+		t.Fatal("expected error after exhausted retries")
+	}
+
+	var rle *RateLimitedError
+	if !errors.As(callErr, &rle) {
+		t.Fatalf("errors.As to *RateLimitedError failed; got %T: %v", callErr, callErr)
+	}
+	if rle.Provider != mock.Name() {
+		t.Errorf("Provider = %q, want %q", rle.Provider, mock.Name())
+	}
+	if rle.Attempts != cfg.MaxRetries+1 {
+		t.Errorf("Attempts = %d, want %d", rle.Attempts, cfg.MaxRetries+1)
 	}
 }
 

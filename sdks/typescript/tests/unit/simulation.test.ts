@@ -208,6 +208,16 @@ describe("simulationEvaluateBatch", () => {
     expect(result.results).toHaveLength(0);
     expect(result.total_cost).toBe(0);
   });
+
+  it("marks the result as simulated", () => {
+    const result = simulationEvaluateBatch([makeAssertion("a1")]);
+    expect(result.simulated).toBe(true);
+  });
+
+  it("marks the empty-batch result as simulated", () => {
+    const result = simulationEvaluateBatch([]);
+    expect(result.simulated).toBe(true);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -249,6 +259,7 @@ describe("AttestClient.evaluateBatch — simulation delegation", () => {
     expect(result.results[1].assertion_id).toBe("sim-002");
     expect(result.results[0].status).toBe("pass");
     expect(result.results[1].status).toBe("pass");
+    expect(result.simulated).toBe(true);
   });
 
   it("also delegates when ATTEST_SIMULATION env var is set", async () => {

@@ -1,28 +1,46 @@
 package assertion
 
 import (
-	"github.com/segmentio/encoding/json"
+	"context"
 	"fmt"
+	"log/slog"
 	"sync"
+
+	"github.com/segmentio/encoding/json"
 
 	"github.com/attest-ai/attest/engine/internal/cache"
 	"github.com/attest-ai/attest/engine/pkg/types"
 )
 
+// DefaultEvalConcurrency is the maximum number of L5/L6 assertions evaluated
+// in parallel when the pipeline is constructed without an explicit limit.
+const DefaultEvalConcurrency = 8
+
 // Pipeline evaluates batches of assertions against a trace.
 type Pipeline struct {
-	registry     *Registry
-	historyStore *cache.HistoryStore
+	registry        *Registry
+	historyStore    *cache.HistoryStore
+	evalConcurrency int
 }
 
 // NewPipeline creates a new assertion evaluation pipeline.
 func NewPipeline(registry *Registry) *Pipeline {
-	return &Pipeline{registry: registry}
+	return &Pipeline{registry: registry, evalConcurrency: DefaultEvalConcurrency}
 }
 
 // NewPipelineWithHistory creates a pipeline that uses the history store for dynamic threshold evaluation.
 func NewPipelineWithHistory(registry *Registry, store *cache.HistoryStore) *Pipeline {
-	return &Pipeline{registry: registry, historyStore: store}
+	return &Pipeline{registry: registry, historyStore: store, evalConcurrency: DefaultEvalConcurrency}
+}
+
+// SetEvalConcurrency overrides the L5/L6 worker pool size. Values <= 0 are clamped
+// to DefaultEvalConcurrency. Call before EvaluateBatch — concurrent reconfiguration
+// is not supported.
+func (p *Pipeline) SetEvalConcurrency(n int) {
+	if n <= 0 {
+		n = DefaultEvalConcurrency
+	}
+	p.evalConcurrency = n
 }
 
 // layerOrder defines evaluation order by assertion type.
@@ -38,17 +56,20 @@ var layerOrder = map[string]int{
 
 // EvaluateBatch evaluates all assertions against the trace in layer order.
 // L1-4 (schema, constraint, trace, content) run sequentially. L5-6 (embedding, llm_judge)
-// run concurrently after L1-4 completes. If any L1-4 assertion produces a hard_fail, L5-6 are skipped.
-// Unknown assertion types produce a hard_fail result rather than aborting the batch.
+// run concurrently up to evalConcurrency goroutines after L1-4 completes. If any L1-4
+// assertion produces a hard_fail, L5-6 are skipped. Unknown assertion types produce a
+// hard_fail result rather than aborting the batch. If ctx is cancelled, in-flight L5-6
+// goroutines short-circuit and the batch returns ctx.Err().
 // If a BudgetTracker is set on the pipeline, soft-fail budget enforcement is applied.
-func (p *Pipeline) EvaluateBatch(trace *types.Trace, assertions []types.Assertion) (*BatchResult, error) {
-	return p.EvaluateBatchWithBudget(trace, assertions, nil)
+func (p *Pipeline) EvaluateBatch(ctx context.Context, trace *types.Trace, assertions []types.Assertion) (*BatchResult, error) {
+	return p.EvaluateBatchWithBudget(ctx, trace, assertions, nil)
 }
 
 // EvaluateBatchWithBudget evaluates all assertions, applying budget tracking when budget is non-nil.
 // If the soft-fail budget is exceeded, the batch stops and returns a BudgetExceededError.
-// L1-4 assertions run sequentially; L5-6 fan out concurrently. Any L1-4 hard_fail gates L5-6.
-func (p *Pipeline) EvaluateBatchWithBudget(trace *types.Trace, assertions []types.Assertion, budget *BudgetTracker) (*BatchResult, error) {
+// L1-4 assertions run sequentially; L5-6 fan out concurrently bounded by evalConcurrency.
+// Any L1-4 hard_fail gates L5-6. ctx cancellation is propagated to L5-6 workers.
+func (p *Pipeline) EvaluateBatchWithBudget(ctx context.Context, trace *types.Trace, assertions []types.Assertion, budget *BudgetTracker) (*BatchResult, error) {
 	sorted := make([]types.Assertion, len(assertions))
 	copy(sorted, assertions)
 
@@ -117,16 +138,54 @@ func (p *Pipeline) EvaluateBatchWithBudget(trace *types.Trace, assertions []type
 		return result, nil
 	}
 
-	// Phase 2: Evaluate L5-6 concurrently.
+	// Phase 2: Evaluate L5-6 concurrently with a bounded worker pool.
 	l56Results := make([]types.AssertionResult, len(l56))
 	l56Costs := make([]float64, len(l56))
 	l56Durations := make([]int64, len(l56))
+
+	concurrency := p.evalConcurrency
+	if concurrency <= 0 {
+		concurrency = DefaultEvalConcurrency
+	}
+	if concurrency > len(l56) {
+		concurrency = len(l56)
+	}
+
+	sem := make(chan struct{}, concurrency)
 	var wg sync.WaitGroup
 
 	for i := range l56 {
+		// Honor cancellation between dispatches; skip remaining assertions.
+		if err := ctx.Err(); err != nil {
+			break
+		}
+
+		select {
+		case sem <- struct{}{}:
+		case <-ctx.Done():
+		}
+		if err := ctx.Err(); err != nil {
+			break
+		}
+
 		wg.Add(1)
 		go func(idx int) {
 			defer wg.Done()
+			defer func() { <-sem }()
+
+			// Re-check cancellation inside the goroutine in case ctx fired
+			// between dispatch and execution.
+			if err := ctx.Err(); err != nil {
+				l56Results[idx] = types.AssertionResult{
+					AssertionID: l56[idx].AssertionID,
+					Status:      types.StatusHardFail,
+					Score:       0.0,
+					Explanation: fmt.Sprintf("evaluation cancelled: %v", err),
+					RequestID:   l56[idx].RequestID,
+				}
+				return
+			}
+
 			eval, err := p.registry.Get(l56[idx].Type)
 			if err != nil {
 				l56Results[idx] = types.AssertionResult{
@@ -148,7 +207,14 @@ func (p *Pipeline) EvaluateBatchWithBudget(trace *types.Trace, assertions []type
 
 	wg.Wait()
 
-	// Merge L5-6 results in deterministic index order.
+	if err := ctx.Err(); err != nil {
+		return result, err
+	}
+
+	// Merge L5-6 results in deterministic index order. Reaching this point
+	// means dispatch finished without cancellation and every goroutine
+	// populated its slot (cancelled goroutines still write a HardFail
+	// result with AssertionID set).
 	for i := range l56Results {
 		result.Results = append(result.Results, l56Results[i])
 		result.TotalCost += l56Costs[i]
@@ -166,24 +232,39 @@ func (p *Pipeline) EvaluateBatchWithBudget(trace *types.Trace, assertions []type
 
 // applyDynamicThreshold checks if the assertion spec contains "threshold":"dynamic"
 // and if so, overrides the result status using ClassifyDynamic against stored history.
-// No-ops when the historyStore is nil or the spec does not request dynamic classification.
+// Sets ThresholdSource to "static", "dynamic", or "dynamic_unavailable" so callers
+// can distinguish the three classification regimes. When the historyStore lookup
+// fails, the status keeps its static-fallback value, the source is marked
+// "dynamic_unavailable", a prefix is prepended to Explanation, and a warning is
+// logged.
 func (p *Pipeline) applyDynamicThreshold(ar *types.AssertionResult, a *types.Assertion) {
-	if p.historyStore == nil {
-		return
-	}
-
 	var spec struct {
 		Threshold string `json:"threshold"`
 	}
-	if err := json.Unmarshal(a.Spec, &spec); err != nil || spec.Threshold != "dynamic" {
+	specErr := json.Unmarshal(a.Spec, &spec)
+	wantDynamic := specErr == nil && spec.Threshold == "dynamic"
+
+	if !wantDynamic {
+		ar.ThresholdSource = types.ThresholdSourceStatic
+		return
+	}
+
+	if p.historyStore == nil {
+		ar.ThresholdSource = types.ThresholdSourceDynamicUnavailable
+		ar.Explanation = "[dynamic_unavailable: history store not configured] " + ar.Explanation
 		return
 	}
 
 	history, err := p.historyStore.QueryWindow(a.AssertionID, DefaultDynamicConfig.WindowSize)
 	if err != nil {
-		// Non-fatal: leave status unchanged.
+		slog.Warn("dynamic threshold unavailable",
+			"assertion_id", a.AssertionID,
+			"err", err)
+		ar.ThresholdSource = types.ThresholdSourceDynamicUnavailable
+		ar.Explanation = fmt.Sprintf("[dynamic_unavailable: %v] %s", err, ar.Explanation)
 		return
 	}
 
 	ar.Status = ClassifyDynamic(ar.Score, history, DefaultDynamicConfig)
+	ar.ThresholdSource = types.ThresholdSourceDynamic
 }

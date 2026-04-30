@@ -21,5 +21,6 @@ export function simulationEvaluateBatch(
     results,
     total_cost: 0,
     total_duration_ms: 0,
+    simulated: true,
   };
 }

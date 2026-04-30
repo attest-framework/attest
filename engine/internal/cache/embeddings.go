@@ -33,7 +33,7 @@ type EmbeddingCache struct {
 	maxMB int
 
 	// Deferred LRU writes: buffer accessed_at updates and flush periodically.
-	pendingLRU sync.Map    // map[lruKey]int64 (UnixNano)
+	pendingLRU sync.Map // map[lruKey]int64 (UnixNano)
 	pendingLen atomic.Int64
 	stopFlush  chan struct{}
 	flushDone  chan struct{}

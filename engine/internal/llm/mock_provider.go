@@ -32,7 +32,7 @@ func NewReplayProvider(responses []*CompletionResponse) *MockProvider {
 	return &MockProvider{Responses: responses, ReplayMode: true}
 }
 
-func (m *MockProvider) Name() string        { return "mock" }
+func (m *MockProvider) Name() string         { return "mock" }
 func (m *MockProvider) DefaultModel() string { return "mock-model" }
 
 func (m *MockProvider) Complete(ctx context.Context, req *CompletionRequest) (*CompletionResponse, error) {

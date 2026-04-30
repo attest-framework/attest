@@ -2,8 +2,8 @@ package assertion
 
 import (
 	"context"
-	"github.com/segmentio/encoding/json"
 	"fmt"
+	"github.com/segmentio/encoding/json"
 	"log/slog"
 	"time"
 
@@ -26,10 +26,10 @@ func NewEmbeddingEvaluator(embedder embedding.Embedder, c *cache.EmbeddingCache)
 
 // embeddingSpec is the expected structure of the assertion spec JSON.
 type embeddingSpec struct {
-	Target     string  `json:"target"`
-	Reference  string  `json:"reference"`
-	Threshold  float64 `json:"threshold"`
-	Soft       bool    `json:"soft"`
+	Target    string  `json:"target"`
+	Reference string  `json:"reference"`
+	Threshold float64 `json:"threshold"`
+	Soft      bool    `json:"soft"`
 }
 
 // Evaluate runs the embedding similarity assertion against the trace.

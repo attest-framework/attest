@@ -19,14 +19,14 @@ const defaultMaxConcurrent = 1
 
 // Server reads NDJSON requests from an io.Reader and writes NDJSON responses to an io.Writer.
 type Server struct {
-	reader         *bufio.Scanner
-	writer         *bufio.Writer
-	mu             sync.Mutex // protects writer
-	session        *Session
-	handlers       map[string]Handler
-	logger         *slog.Logger
-	maxConcurrent  int
-	semaphore      chan struct{}
+	reader        *bufio.Scanner
+	writer        *bufio.Writer
+	mu            sync.Mutex // protects writer
+	session       *Session
+	handlers      map[string]Handler
+	logger        *slog.Logger
+	maxConcurrent int
+	semaphore     chan struct{}
 }
 
 // New creates a new Server reading from in and writing to out.

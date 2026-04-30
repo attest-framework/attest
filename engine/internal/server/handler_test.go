@@ -2,6 +2,9 @@ package server
 
 import (
 	"encoding/json"
+	"log/slog"
+	"os"
+	"strings"
 	"testing"
 
 	"github.com/attest-ai/attest/engine/pkg/types"
@@ -432,5 +435,110 @@ func TestHandler_Shutdown_TracksAssertionCount(t *testing.T) {
 	}
 	if result.AssertionsEvaluated < 1 {
 		t.Errorf("AssertionsEvaluated = %d, want >= 1 after submit_plugin_result", result.AssertionsEvaluated)
+	}
+}
+
+func TestBuildRateLimiterConfig_PerProviderEnv(t *testing.T) {
+	t.Setenv("ATTEST_RATE_LIMIT_OPENAI", "240")
+	t.Setenv("ATTEST_RATE_LIMIT_OPENAI_BURST", "20")
+	t.Setenv("ATTEST_JUDGE_RPM", "999")
+	t.Setenv("ATTEST_JUDGE_BURST", "999")
+
+	cfg, err := buildRateLimiterConfig("openai")
+	if err != nil {
+		t.Fatalf("buildRateLimiterConfig: %v", err)
+	}
+	if cfg.RequestsPerMinute != 240 {
+		t.Errorf("RequestsPerMinute = %v, want 240 (provider-specific takes precedence)", cfg.RequestsPerMinute)
+	}
+	if cfg.Burst != 20 {
+		t.Errorf("Burst = %d, want 20", cfg.Burst)
+	}
+}
+
+func TestBuildRateLimiterConfig_LegacyFallback(t *testing.T) {
+	t.Setenv("ATTEST_RATE_LIMIT_OPENAI", "")
+	t.Setenv("ATTEST_RATE_LIMIT_OPENAI_BURST", "")
+	t.Setenv("ATTEST_JUDGE_RPM", "180")
+	t.Setenv("ATTEST_JUDGE_BURST", "15")
+
+	cfg, err := buildRateLimiterConfig("openai")
+	if err != nil {
+		t.Fatalf("buildRateLimiterConfig: %v", err)
+	}
+	if cfg.RequestsPerMinute != 180 {
+		t.Errorf("RequestsPerMinute = %v, want 180 (legacy)", cfg.RequestsPerMinute)
+	}
+	if cfg.Burst != 15 {
+		t.Errorf("Burst = %d, want 15", cfg.Burst)
+	}
+}
+
+func TestBuildRateLimiterConfig_ProviderIsolation(t *testing.T) {
+	t.Setenv("ATTEST_RATE_LIMIT_OPENAI", "300")
+	t.Setenv("ATTEST_RATE_LIMIT_ANTHROPIC", "60")
+
+	openai, err := buildRateLimiterConfig("openai")
+	if err != nil {
+		t.Fatalf("buildRateLimiterConfig openai: %v", err)
+	}
+	anthropic, err := buildRateLimiterConfig("anthropic")
+	if err != nil {
+		t.Fatalf("buildRateLimiterConfig anthropic: %v", err)
+	}
+
+	if openai.RequestsPerMinute != 300 {
+		t.Errorf("openai RequestsPerMinute = %v, want 300", openai.RequestsPerMinute)
+	}
+	if anthropic.RequestsPerMinute != 60 {
+		t.Errorf("anthropic RequestsPerMinute = %v, want 60", anthropic.RequestsPerMinute)
+	}
+}
+
+func TestEnvInt_StrictOnInvalid(t *testing.T) {
+	t.Setenv("ATTEST_TEST_PARSE", "not-a-number")
+	if _, err := envInt("ATTEST_TEST_PARSE", 7); err == nil {
+		t.Fatal("expected error on invalid integer, got nil")
+	}
+}
+
+func TestEnvInt_FallbackOnUnset(t *testing.T) {
+	t.Setenv("ATTEST_TEST_UNSET", "")
+	got, err := envInt("ATTEST_TEST_UNSET", 42)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != 42 {
+		t.Errorf("got %d, want 42 (fallback)", got)
+	}
+}
+
+func TestRegisterBuiltinHandlers_RejectsInvalidEnv(t *testing.T) {
+	t.Setenv("ATTEST_EVAL_CONCURRENCY", "not-a-number")
+
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+	srv := New(nil, nil, logger)
+	err := RegisterBuiltinHandlers(srv)
+	if err == nil {
+		t.Fatal("expected error for invalid ATTEST_EVAL_CONCURRENCY, got nil")
+	}
+	if !strings.Contains(err.Error(), "ATTEST_EVAL_CONCURRENCY") {
+		t.Errorf("error does not name the bad env var: %v", err)
+	}
+}
+
+func TestBuildBudgetTracker_RejectsInvalid(t *testing.T) {
+	t.Setenv("ATTEST_BUDGET_MAX_COST", "abc")
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+	if _, err := buildBudgetTracker(logger); err == nil {
+		t.Fatal("expected error for non-integer budget value")
+	}
+}
+
+func TestBuildBudgetTracker_RejectsNegative(t *testing.T) {
+	t.Setenv("ATTEST_BUDGET_MAX_COST", "-3")
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+	if _, err := buildBudgetTracker(logger); err == nil {
+		t.Fatal("expected error for negative budget value")
 	}
 }

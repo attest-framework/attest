@@ -3,12 +3,13 @@ package server
 import (
 	"context"
 	"database/sql"
-	"github.com/segmentio/encoding/json"
 	"fmt"
+	"github.com/segmentio/encoding/json"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/attest-ai/attest/engine/internal/assertion"
@@ -31,8 +32,14 @@ const (
 
 // RegisterBuiltinHandlers registers the built-in JSON-RPC handlers on s.
 // It reads ATTEST_* env vars to configure Layer 5/6 providers and caches.
-func RegisterBuiltinHandlers(s *Server) {
-	opts, caps, judgeProvider, historyStore := buildRegistryOptions(s.logger)
+// Returns an error when any explicitly-set env var has an invalid value, so the
+// operator sees broken config at startup rather than after an evaluation runs
+// with silently-defaulted values.
+func RegisterBuiltinHandlers(s *Server) error {
+	opts, caps, judgeProvider, historyStore, err := buildRegistryOptions(s.logger)
+	if err != nil {
+		return err
+	}
 	registry := assertion.NewRegistry(opts...)
 
 	var pipeline *assertion.Pipeline
@@ -42,8 +49,20 @@ func RegisterBuiltinHandlers(s *Server) {
 		pipeline = assertion.NewPipeline(registry)
 	}
 
+	concurrency, err := envInt("ATTEST_EVAL_CONCURRENCY", 0)
+	if err != nil {
+		return err
+	}
+	if concurrency > 0 {
+		pipeline.SetEvalConcurrency(concurrency)
+		s.logger.Info("eval concurrency set", "limit", concurrency)
+	}
+
 	// Wire BudgetTracker from ATTEST_BUDGET_MAX_COST env var (nil when unset).
-	budget := buildBudgetTracker(s.logger)
+	budget, err := buildBudgetTracker(s.logger)
+	if err != nil {
+		return err
+	}
 
 	s.RegisterHandler("initialize", handleInitialize(caps))
 	s.RegisterHandler("shutdown", handleShutdown)
@@ -54,13 +73,15 @@ func RegisterBuiltinHandlers(s *Server) {
 	if judgeProvider != nil {
 		s.RegisterHandler("generate_user_message", handleGenerateUserMessage(judgeProvider))
 	}
+	return nil
 }
 
 // buildRegistryOptions reads env vars and constructs RegistryOption values
 // for Layer 5 (embedding) and Layer 6 (judge) evaluators. Returns the
 // options, the list of supported capabilities, the judge provider (may be nil),
-// and the HistoryStore (may be nil on failure).
-func buildRegistryOptions(logger *slog.Logger) ([]assertion.RegistryOption, []string, llm.Provider, *cache.HistoryStore) {
+// and the HistoryStore (may be nil on failure). Returns an error when any
+// explicitly-set env var has an invalid value.
+func buildRegistryOptions(logger *slog.Logger) ([]assertion.RegistryOption, []string, llm.Provider, *cache.HistoryStore, error) {
 	caps := []string{"layers_1_4", "trace_tree", "continuous_eval", "plugins"}
 	var opts []assertion.RegistryOption
 
@@ -105,7 +126,10 @@ func buildRegistryOptions(logger *slog.Logger) ([]assertion.RegistryOption, []st
 	if embedder != nil {
 		var embCache *cache.EmbeddingCache
 		cacheDir := cacheDirectory()
-		maxMB := envInt("ATTEST_EMBEDDING_CACHE_MAX_MB", 500)
+		maxMB, err := envInt("ATTEST_EMBEDDING_CACHE_MAX_MB", 500)
+		if err != nil {
+			return nil, nil, nil, nil, err
+		}
 		dbPath := filepath.Join(cacheDir, "attest.db")
 		if err := os.MkdirAll(cacheDir, 0o755); err != nil {
 			logger.Warn("failed to create cache dir", "dir", cacheDir, "err", err)
@@ -125,9 +149,7 @@ func buildRegistryOptions(logger *slog.Logger) ([]assertion.RegistryOption, []st
 	// ── Layer 6: LLM Judge ──
 	judgeProvider, providerName, judgeErr := buildJudgeProvider(logger)
 	if judgeErr != nil {
-		logger.Error("judge provider configuration error", "err", judgeErr)
-		fmt.Fprintf(os.Stderr, "fatal: %v\n", judgeErr)
-		os.Exit(1)
+		return nil, nil, nil, nil, judgeErr
 	}
 	if judgeProvider != nil {
 		rubrics := judge.NewRubricRegistry()
@@ -138,13 +160,16 @@ func buildRegistryOptions(logger *slog.Logger) ([]assertion.RegistryOption, []st
 		if err := os.MkdirAll(cacheDir, 0o755); err != nil {
 			logger.Warn("failed to create cache dir", "dir", cacheDir, "err", err)
 		} else {
-			judgeCacheMaxMB := envInt("ATTEST_JUDGE_CACHE_MAX_MB", 100)
-		if judgeCacheMaxMB < 10 {
-			judgeCacheMaxMB = 10
-		} else if judgeCacheMaxMB > 10000 {
-			judgeCacheMaxMB = 10000
-		}
-		c, err := cache.NewJudgeCache(dbPath, judgeCacheMaxMB)
+			judgeCacheMaxMB, envErr := envInt("ATTEST_JUDGE_CACHE_MAX_MB", 100)
+			if envErr != nil {
+				return nil, nil, nil, nil, envErr
+			}
+			if judgeCacheMaxMB < 10 {
+				judgeCacheMaxMB = 10
+			} else if judgeCacheMaxMB > 10000 {
+				judgeCacheMaxMB = 10000
+			}
+			c, err := cache.NewJudgeCache(dbPath, judgeCacheMaxMB)
 			if err != nil {
 				logger.Warn("failed to create judge cache", "err", err)
 			} else {
@@ -178,8 +203,16 @@ func buildRegistryOptions(logger *slog.Logger) ([]assertion.RegistryOption, []st
 					db.Close()
 				} else {
 					// Configure retention from env vars.
-					maxRows := envInt("ATTEST_HISTORY_MAX_ROWS", 0)
-					maxDays := envInt("ATTEST_HISTORY_MAX_AGE_DAYS", 0)
+					maxRows, envErr := envInt("ATTEST_HISTORY_MAX_ROWS", 0)
+					if envErr != nil {
+						db.Close()
+						return nil, nil, nil, nil, envErr
+					}
+					maxDays, envErr := envInt("ATTEST_HISTORY_MAX_AGE_DAYS", 0)
+					if envErr != nil {
+						db.Close()
+						return nil, nil, nil, nil, envErr
+					}
 					if maxRows > 0 || maxDays > 0 {
 						if maxRows <= 0 {
 							maxRows = 10000
@@ -196,7 +229,7 @@ func buildRegistryOptions(logger *slog.Logger) ([]assertion.RegistryOption, []st
 		}
 	}
 
-	return opts, caps, judgeProvider, historyStore
+	return opts, caps, judgeProvider, historyStore, nil
 }
 
 // openHistoryDB opens the SQLite database at dbPath for the history store.
@@ -246,27 +279,65 @@ func buildJudgeProvider(logger *slog.Logger) (llm.Provider, string, error) {
 	}
 
 	// Wrap with rate limiter.
-	rlCfg := buildRateLimiterConfig()
+	rlCfg, rlCfgErr := buildRateLimiterConfig("openai")
+	if rlCfgErr != nil {
+		return nil, "", rlCfgErr
+	}
 	rlp, rlErr := llm.NewRateLimitedProvider(p, rlCfg)
 	if rlErr != nil {
 		logger.Warn("rate limiter init failed, using bare provider", "err", rlErr)
 		return p, "openai", nil
 	}
-	logger.Info("judge provider rate limiter configured", "rpm", rlCfg.RequestsPerMinute, "burst", rlCfg.Burst)
+	logger.Info("judge provider rate limiter configured",
+		"provider", "openai", "rpm", rlCfg.RequestsPerMinute, "burst", rlCfg.Burst)
 	return rlp, "openai", nil
 }
 
-// buildRateLimiterConfig reads ATTEST_JUDGE_RPM and ATTEST_JUDGE_BURST env vars,
-// falling back to DefaultRateLimiterConfig values.
-func buildRateLimiterConfig() llm.RateLimiterConfig {
+// buildRateLimiterConfig resolves the rate-limiter config for a named provider.
+// Lookup order for requests-per-minute:
+//  1. ATTEST_RATE_LIMIT_<PROVIDER> (e.g. ATTEST_RATE_LIMIT_OPENAI)
+//  2. ATTEST_JUDGE_RPM (legacy global)
+//  3. DefaultRateLimiterConfig.RequestsPerMinute
+//
+// Burst follows the same precedence using ATTEST_RATE_LIMIT_<PROVIDER>_BURST
+// then ATTEST_JUDGE_BURST. Returns an error when any consulted env var is set
+// to an invalid value.
+func buildRateLimiterConfig(provider string) (llm.RateLimiterConfig, error) {
 	cfg := llm.DefaultRateLimiterConfig
-	if rpm := envInt("ATTEST_JUDGE_RPM", 0); rpm > 0 {
+
+	upper := strings.ToUpper(provider)
+	rpmKey := "ATTEST_RATE_LIMIT_" + upper
+	burstKey := "ATTEST_RATE_LIMIT_" + upper + "_BURST"
+
+	rpm, err := envInt(rpmKey, 0)
+	if err != nil {
+		return cfg, err
+	}
+	if rpm == 0 {
+		rpm, err = envInt("ATTEST_JUDGE_RPM", 0)
+		if err != nil {
+			return cfg, err
+		}
+	}
+	if rpm > 0 {
 		cfg.RequestsPerMinute = float64(rpm)
 	}
-	if burst := envInt("ATTEST_JUDGE_BURST", 0); burst > 0 {
+
+	burst, err := envInt(burstKey, 0)
+	if err != nil {
+		return cfg, err
+	}
+	if burst == 0 {
+		burst, err = envInt("ATTEST_JUDGE_BURST", 0)
+		if err != nil {
+			return cfg, err
+		}
+	}
+	if burst > 0 {
 		cfg.Burst = burst
 	}
-	return cfg
+
+	return cfg, nil
 }
 
 // cacheDirectory returns the cache directory from env or default.
@@ -278,39 +349,42 @@ func cacheDirectory() string {
 	return filepath.Join(home, ".attest", "cache")
 }
 
-// envInt reads an int from an env var with a fallback default.
-func envInt(key string, fallback int) int {
+// envInt reads an int from an env var. Returns fallback when the var is unset
+// or empty. Returns an error when the var is set but cannot be parsed as an
+// integer — callers must surface this to the operator instead of silently
+// substituting a default for broken config.
+func envInt(key string, fallback int) (int, error) {
 	v := os.Getenv(key)
 	if v == "" {
-		return fallback
+		return fallback, nil
 	}
 	n, err := strconv.Atoi(v)
 	if err != nil {
-		return fallback
+		return 0, fmt.Errorf("env var %s=%q is not a valid integer: %w", key, v, err)
 	}
-	return n
+	return n, nil
 }
 
 // buildBudgetTracker constructs a BudgetTracker from ATTEST_BUDGET_MAX_COST.
 // Returns nil when the env var is unset, preserving backward-compatible behavior.
 // The env var is interpreted as a maximum number of soft failures allowed per batch
-// (integer). A value of 0 means no soft failures are permitted.
-func buildBudgetTracker(logger *slog.Logger) *assertion.BudgetTracker {
+// (integer). A value of 0 means no soft failures are permitted. Returns an error
+// when the env var is set but invalid so the operator sees broken config at
+// startup.
+func buildBudgetTracker(logger *slog.Logger) (*assertion.BudgetTracker, error) {
 	v := os.Getenv("ATTEST_BUDGET_MAX_COST")
 	if v == "" {
-		return nil
+		return nil, nil
 	}
 	limit, err := strconv.Atoi(v)
 	if err != nil {
-		logger.Warn("ATTEST_BUDGET_MAX_COST is not a valid integer, budget tracking disabled", "value", v)
-		return nil
+		return nil, fmt.Errorf("env var ATTEST_BUDGET_MAX_COST=%q is not a valid integer: %w", v, err)
 	}
 	if limit < 0 {
-		logger.Warn("ATTEST_BUDGET_MAX_COST must be >= 0, budget tracking disabled", "value", limit)
-		return nil
+		return nil, fmt.Errorf("env var ATTEST_BUDGET_MAX_COST=%d must be >= 0", limit)
 	}
 	logger.Info("budget tracker enabled", "max_soft_fails", limit)
-	return assertion.NewBudgetTracker(limit)
+	return assertion.NewBudgetTracker(limit), nil
 }
 
 func handleInitialize(caps []string) Handler {
@@ -485,7 +559,7 @@ func handleEvaluateBatch(pipeline *assertion.Pipeline, historyStore *cache.Histo
 			assertionMap[a.AssertionID] = meta
 		}
 
-		result, err := pipeline.EvaluateBatchWithBudget(&p.Trace, p.Assertions, budget)
+		result, err := pipeline.EvaluateBatchWithBudget(context.Background(), &p.Trace, p.Assertions, budget)
 		if err != nil {
 			return nil, types.NewRPCError(
 				types.ErrEngineError,
@@ -535,6 +609,7 @@ func handleEvaluateBatch(pipeline *assertion.Pipeline, historyStore *cache.Histo
 			Results:         result.Results,
 			TotalCost:       result.TotalCost,
 			TotalDurationMS: result.TotalDurationMS,
+			Simulated:       false,
 		}, nil
 	}
 }

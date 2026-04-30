@@ -25,7 +25,9 @@ func newTestServer(t *testing.T) (io.WriteCloser, io.ReadCloser, *Server) {
 
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 	srv := New(stdinR, stdoutW, logger)
-	RegisterBuiltinHandlers(srv)
+	if err := RegisterBuiltinHandlers(srv); err != nil {
+		t.Fatalf("RegisterBuiltinHandlers: %v", err)
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	t.Cleanup(func() {

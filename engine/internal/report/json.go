@@ -1,20 +1,20 @@
 package report
 
 import (
-	"github.com/segmentio/encoding/json"
 	"fmt"
+	"github.com/segmentio/encoding/json"
 	"time"
 
 	"github.com/attest-ai/attest/engine/pkg/types"
 )
 
 type JSONReport struct {
-	Version       string                `json:"version"`
-	Timestamp     string                `json:"timestamp"`
+	Version       string                  `json:"version"`
+	Timestamp     string                  `json:"timestamp"`
 	Results       []types.AssertionResult `json:"results"`
-	Summary       JSONSummary           `json:"summary"`
-	TotalCost     float64               `json:"total_cost"`
-	TotalDuration int64                 `json:"total_duration_ms"`
+	Summary       JSONSummary             `json:"summary"`
+	TotalCost     float64                 `json:"total_cost"`
+	TotalDuration int64                   `json:"total_duration_ms"`
 }
 
 type JSONSummary struct {

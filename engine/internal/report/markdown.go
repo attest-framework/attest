@@ -16,6 +16,10 @@ type MarkdownReport struct {
 	Results    []types.AssertionResult
 	TotalCost  float64
 	DurationMS int64
+	// Simulated marks the report as produced from an SDK simulation shim
+	// rather than from real engine evaluation. Renders a "[SIMULATED]"
+	// banner so reviewers do not mistake the run for a real evaluation.
+	Simulated bool
 }
 
 // GenerateMarkdown writes a Markdown-formatted report to w.
@@ -27,6 +31,15 @@ func GenerateMarkdown(w io.Writer, r *MarkdownReport) error {
 
 	if _, err := fmt.Fprintf(w, "## %s\n\n", title); err != nil {
 		return err
+	}
+
+	if r.Simulated {
+		if _, err := fmt.Fprintln(w, "> **[SIMULATED]** Results produced without contacting the engine. Do not gate releases on this run."); err != nil {
+			return err
+		}
+		if _, err := fmt.Fprintln(w); err != nil {
+			return err
+		}
 	}
 
 	// Summary metadata

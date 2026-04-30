@@ -8,11 +8,11 @@ import (
 )
 
 const (
-	clsTokenID  int64 = 101
-	sepTokenID  int64 = 102
-	unkTokenID  int64 = 100
-	padTokenID  int64 = 0
-	defaultMaxLen     = 128
+	clsTokenID    int64 = 101
+	sepTokenID    int64 = 102
+	unkTokenID    int64 = 100
+	padTokenID    int64 = 0
+	defaultMaxLen       = 128
 )
 
 // tokenize performs basic WordPiece-style tokenization for MiniLM models.

@@ -55,7 +55,11 @@ func main() {
 
 	// Create server
 	srv := server.New(os.Stdin, os.Stdout, logger)
-	server.RegisterBuiltinHandlers(srv)
+	if err := server.RegisterBuiltinHandlers(srv); err != nil {
+		logger.Error("engine startup configuration error", "err", err)
+		fmt.Fprintf(os.Stderr, "fatal: %v\n", err)
+		os.Exit(1)
+	}
 
 	// Handle signals
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)

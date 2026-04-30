@@ -22,7 +22,9 @@ func newE2EServer(t *testing.T) (io.WriteCloser, io.ReadCloser) {
 
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 	srv := server.New(stdinR, stdoutW, logger)
-	server.RegisterBuiltinHandlers(srv)
+	if err := server.RegisterBuiltinHandlers(srv); err != nil {
+		t.Fatalf("RegisterBuiltinHandlers: %v", err)
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	t.Cleanup(func() {
@@ -196,6 +198,11 @@ func TestE2E_RefundAgentFullFlow(t *testing.T) {
 
 	if len(batchResult.Results) != len(assertions) {
 		t.Fatalf("result count = %d, want %d", len(batchResult.Results), len(assertions))
+	}
+
+	// The engine must never mark its own results as simulated.
+	if batchResult.Simulated {
+		t.Errorf("Simulated = true on engine-produced result; want false")
 	}
 
 	// Verify all 5 assertions pass

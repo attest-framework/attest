@@ -2,8 +2,8 @@ package assertion
 
 import (
 	"context"
-	"github.com/segmentio/encoding/json"
 	"fmt"
+	"github.com/segmentio/encoding/json"
 	"log/slog"
 	"os"
 	"sort"

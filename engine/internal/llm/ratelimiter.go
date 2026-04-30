@@ -9,6 +9,21 @@ import (
 	"golang.org/x/time/rate"
 )
 
+// RateLimitedError is returned when a provider's rate-limit budget has been
+// exhausted after MaxRetries attempts. Callers can use errors.As to detect
+// rate limiting separately from other failures.
+type RateLimitedError struct {
+	Provider string
+	Attempts int
+	Cause    error
+}
+
+func (e *RateLimitedError) Error() string {
+	return fmt.Sprintf("rate limited (%s): exhausted %d retries: %v", e.Provider, e.Attempts, e.Cause)
+}
+
+func (e *RateLimitedError) Unwrap() error { return e.Cause }
+
 // RateLimiterConfig configures the token-bucket rate limiter.
 type RateLimiterConfig struct {
 	// RequestsPerMinute is the sustained request rate.
@@ -88,7 +103,11 @@ func (r *RateLimitedProvider) Complete(ctx context.Context, req *CompletionReque
 		}
 		lastErr = err
 	}
-	return nil, fmt.Errorf("rate limited provider: all %d retries exhausted: %w", r.cfg.MaxRetries, lastErr)
+	return nil, &RateLimitedError{
+		Provider: r.inner.Name(),
+		Attempts: r.cfg.MaxRetries + 1,
+		Cause:    lastErr,
+	}
 }
 
 // backoff returns the exponential backoff duration for the given attempt (1-based).

@@ -3,14 +3,14 @@ package types
 import "github.com/segmentio/encoding/json"
 
 const (
-	ErrInvalidTrace  = 1001
+	ErrInvalidTrace   = 1001
 	ErrAssertionError = 1002
 	ErrProviderError  = 2001
 	ErrEngineError    = 3001
 	ErrTimeout        = 3002
 	ErrSessionError   = 3003
 
-	ErrTypeInvalidTrace  = "INVALID_TRACE"
+	ErrTypeInvalidTrace   = "INVALID_TRACE"
 	ErrTypeAssertionError = "ASSERTION_ERROR"
 	ErrTypeProviderError  = "PROVIDER_ERROR"
 	ErrTypeEngineError    = "ENGINE_ERROR"
