@@ -59,6 +59,8 @@ type JSONReportV2 struct {
 	TotalDurationMS int64                   `json:"total_duration_ms"`
 	P50DurationMS   int64                   `json:"p50_duration_ms"`
 	P95DurationMS   int64                   `json:"p95_duration_ms"`
+	FailureClasses  map[string]int          `json:"failure_classes,omitempty"`
+	Baseline        *BaselineDelta          `json:"baseline,omitempty"`
 }
 
 // LayerSummary is the per-layer index emitted in v2.
@@ -76,6 +78,9 @@ type LayerSummary struct {
 type ReportOptions struct {
 	Version   ReportVersion
 	Simulated bool
+	// Baseline, when non-nil, embeds a baseline-delta block in the v2
+	// envelope. Ignored for v1.
+	Baseline *BaselineDelta
 }
 
 // GenerateJSONReport emits a JSON report. By default it returns v2. Pass
@@ -131,6 +136,8 @@ func generateJSONV2(results []types.AssertionResult, totalCost float64, totalDur
 		TotalDurationMS: totalDurationMS,
 		P50DurationMS:   p50,
 		P95DurationMS:   p95,
+		FailureClasses:  failureClassCounts(results),
+		Baseline:        opt.Baseline,
 	}
 	output, err := json.MarshalIndent(report, "", "  ")
 	if err != nil {
@@ -195,6 +202,21 @@ func buildLayerSummaries(results []types.AssertionResult) []LayerSummary {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Layer < out[j].Layer })
 	return out
+}
+
+// failureClassCounts returns nil when no assertion has a non-empty
+// FailureClass so the JSON envelope drops the key entirely (omitempty).
+func failureClassCounts(results []types.AssertionResult) map[string]int {
+	counts := make(map[string]int)
+	for _, r := range results {
+		if r.FailureClass != "" {
+			counts[r.FailureClass]++
+		}
+	}
+	if len(counts) == 0 {
+		return nil
+	}
+	return counts
 }
 
 func durationPercentiles(results []types.AssertionResult) (p50, p95 int64) {

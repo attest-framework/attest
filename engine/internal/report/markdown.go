@@ -25,6 +25,10 @@ type MarkdownReport struct {
 	// section. Defaults to false (failures only) so PR comments stay
 	// scannable.
 	Verbose bool
+	// Baseline, when non-nil, adds a "vs <tag>" delta section showing
+	// pass-rate / cost / duration deltas, and per-assertion regressions
+	// and improvements. Computed via ComputeBaselineDelta.
+	Baseline *BaselineDelta
 }
 
 // stickyWriter wraps an io.Writer and remembers the first error
@@ -78,6 +82,10 @@ func GenerateMarkdown(w io.Writer, r *MarkdownReport) error {
 
 	writeSummaryBlock(sw, computeReportStats(r.Results, r.TotalCost, r.DurationMS))
 
+	if r.Baseline != nil {
+		writeBaselineSection(sw, r.Baseline)
+	}
+
 	if len(r.Results) == 0 {
 		sw.println("_No assertions evaluated._")
 		return sw.err
@@ -94,21 +102,23 @@ func GenerateMarkdown(w io.Writer, r *MarkdownReport) error {
 // reportStats aggregates pass/fail/cost/latency over a result set so the
 // summary block can render in one pass.
 type reportStats struct {
-	total      int
-	passed     int
-	softFailed int
-	hardFailed int
-	totalCost  float64
-	durationMS int64
-	p50        int64
-	p95        int64
+	total          int
+	passed         int
+	softFailed     int
+	hardFailed     int
+	totalCost      float64
+	durationMS     int64
+	p50            int64
+	p95            int64
+	failureClasses map[string]int
 }
 
 func computeReportStats(results []types.AssertionResult, providedCost float64, providedDur int64) reportStats {
 	stats := reportStats{
-		total:      len(results),
-		totalCost:  providedCost,
-		durationMS: providedDur,
+		total:          len(results),
+		totalCost:      providedCost,
+		durationMS:     providedDur,
+		failureClasses: make(map[string]int),
 	}
 	durations := make([]int64, 0, len(results))
 	var costSum float64
@@ -120,6 +130,9 @@ func computeReportStats(results []types.AssertionResult, providedCost float64, p
 			stats.softFailed++
 		case types.StatusHardFail:
 			stats.hardFailed++
+		}
+		if res.FailureClass != "" {
+			stats.failureClasses[res.FailureClass]++
 		}
 		costSum += res.Cost
 		if res.DurationMS > 0 {
@@ -171,6 +184,28 @@ func writeSummaryBlock(sw *stickyWriter, s reportStats) {
 		sw.printf("| Latency P95 | %dms |\n", s.p95)
 	}
 	sw.println()
+	if len(s.failureClasses) > 0 {
+		writeFailureClassBreakdown(sw, s.failureClasses)
+	}
+}
+
+// writeFailureClassBreakdown emits a small table showing how many failures
+// fall into each FailureClass bucket. Skipped when no failures are
+// classified (all passed, or every class is empty).
+func writeFailureClassBreakdown(sw *stickyWriter, classes map[string]int) {
+	keys := make([]string, 0, len(classes))
+	for k := range classes {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	sw.println("**Failure classes:**")
+	sw.println()
+	sw.println("| Class | Count |")
+	sw.println("|-------|-------|")
+	for _, k := range keys {
+		sw.printf("| %s | %d |\n", k, classes[k])
+	}
+	sw.println()
 }
 
 func filterFailures(results []types.AssertionResult) []types.AssertionResult {
@@ -212,6 +247,9 @@ func writeFailureBlock(sw *stickyWriter, r *types.AssertionResult) {
 	}
 	if r.ThresholdSource != "" && r.ThresholdSource != types.ThresholdSourceStatic {
 		sw.printf("- **Threshold source:** %s\n", r.ThresholdSource)
+	}
+	if r.FailureClass != "" {
+		sw.printf("- **Failure class:** %s\n", r.FailureClass)
 	}
 	if r.Judge != nil {
 		writeJudgeMetadata(sw, r.Judge)
