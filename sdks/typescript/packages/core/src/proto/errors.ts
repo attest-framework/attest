@@ -1,4 +1,5 @@
 import type { ErrorData } from "./types.js";
+import type { ProtocolDiagnostic } from "./diagnostics.js";
 
 export class ProtocolError extends Error {
   readonly code: number;
@@ -26,5 +27,21 @@ export class EngineTimeoutError extends Error {
     this.name = "EngineTimeoutError";
     this.method = method;
     this.timeoutMs = timeoutMs;
+  }
+}
+
+/**
+ * Raised when the reader loop detects that engine output has lost
+ * framing or contains repeated unparseable lines. All in-flight requests
+ * are rejected with this error so callers see a visible failure rather
+ * than a hung promise.
+ */
+export class ProtocolDesyncError extends Error {
+  readonly diagnostics: readonly ProtocolDiagnostic[];
+
+  constructor(message: string, diagnostics: readonly ProtocolDiagnostic[]) {
+    super(message);
+    this.name = "ProtocolDesyncError";
+    this.diagnostics = diagnostics;
   }
 }
