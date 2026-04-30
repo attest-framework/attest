@@ -320,13 +320,9 @@ class TestAdapterHierarchy:
 
     def test_exports_accessible(self) -> None:
         """BaseAdapter and BaseProviderAdapter are accessible from top-level."""
-        from attest import BaseAdapter as BA
-        from attest import BaseProviderAdapter as BPA
-        from attest import LlamaIndexInstrumentationHandler as LI
-        from attest.adapters.llamaindex import (
-            LlamaIndexInstrumentationHandler as LIDirect,
-        )
+        import attest as attest_pkg
+        from attest.adapters.llamaindex import LlamaIndexInstrumentationHandler
 
-        assert BA is BaseAdapter
-        assert BPA is BaseProviderAdapter
-        assert LI is LIDirect
+        assert attest_pkg.BaseAdapter is BaseAdapter
+        assert attest_pkg.BaseProviderAdapter is BaseProviderAdapter
+        assert attest_pkg.LlamaIndexInstrumentationHandler is LlamaIndexInstrumentationHandler

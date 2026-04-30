@@ -52,7 +52,10 @@ def _refund_trace() -> TraceBuilder:
             metadata={"duration_ms": 90},
         )
         .set_output(
-            message="Your refund of $49.99 for order ORD-456 has been processed. Refund ID: RFD-100. Expect it within 5 business days.",
+            message=(
+                "Your refund of $49.99 for order ORD-456 has been processed. "
+                "Refund ID: RFD-100. Expect it within 5 business days."
+            ),
             structured={"refund_id": "RFD-100", "amount": 49.99},
         )
         .set_metadata(
