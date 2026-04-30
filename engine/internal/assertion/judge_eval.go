@@ -90,11 +90,12 @@ func (e *JudgeEvaluator) Evaluate(trace *types.Trace, assertion *types.Assertion
 		if cached, cErr := e.cache.Get(contentHash, rubricName, model); cErr == nil && cached != nil {
 			durationMS := time.Since(start).Milliseconds()
 			meta := &types.JudgeMetadata{
-				Model:        model,
-				RubricName:   rubricName,
-				PromptHash:   promptHash(targetStr),
-				SampleScores: []float64{cached.Score},
-				ScoreMean:    cached.Score,
+				Model:         model,
+				RubricName:    rubricName,
+				RubricVersion: rubric.Version,
+				PromptHash:    promptHash(targetStr),
+				SampleScores:  []float64{cached.Score},
+				ScoreMean:     cached.Score,
 			}
 			return e.buildResult(assertion, cached.Score, cached.Explanation, spec.Threshold, spec.Soft, durationMS, 0,
 				judgeBuildArgs{target: spec.Target, model: model, rubric: rubricName, meta: meta})
@@ -261,11 +262,12 @@ func (e *JudgeEvaluator) evaluateSinglePass(
 	}
 
 	meta := &types.JudgeMetadata{
-		Model:        model,
-		RubricName:   rubricName,
-		PromptHash:   promptHash(userContent),
-		SampleScores: []float64{scoreResult.Score},
-		ScoreMean:    scoreResult.Score,
+		Model:         model,
+		RubricName:    rubricName,
+		RubricVersion: rubric.Version,
+		PromptHash:    promptHash(userContent),
+		SampleScores:  []float64{scoreResult.Score},
+		ScoreMean:     scoreResult.Score,
 	}
 	return e.buildResult(assertion, scoreResult.Score, scoreResult.Explanation, spec.Threshold, spec.Soft, durationMS, resp.Cost,
 		judgeBuildArgs{target: spec.Target, model: model, rubric: rubricName, meta: meta})
@@ -380,6 +382,7 @@ func (e *JudgeEvaluator) evaluateWithMetaEval(
 	meta := &types.JudgeMetadata{
 		Model:            model,
 		RubricName:       rubricName,
+		RubricVersion:    rubric.Version,
 		PromptHash:       promptHash(userContent),
 		SampleScores:     scores,
 		ScoreMean:        mean,

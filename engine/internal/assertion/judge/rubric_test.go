@@ -37,6 +37,7 @@ func TestRubricRegistry_Register(t *testing.T) {
 	reg := judge.NewRubricRegistry()
 	custom := &judge.Rubric{
 		Name:         "custom",
+		Version:      "v1",
 		SystemPrompt: "Evaluate custom criteria. Respond ONLY with JSON: {\"score\": 0.5, \"explanation\": \"test\"}",
 	}
 	if err := reg.Register(custom); err != nil {
@@ -49,13 +50,37 @@ func TestRubricRegistry_Register(t *testing.T) {
 	if got.Name != custom.Name {
 		t.Errorf("name mismatch: got %q, want %q", got.Name, custom.Name)
 	}
+	if got.Version != "v1" {
+		t.Errorf("version mismatch: got %q, want %q", got.Version, "v1")
+	}
 }
 
 func TestRubricRegistry_RegisterEmptyName(t *testing.T) {
 	reg := judge.NewRubricRegistry()
-	err := reg.Register(&judge.Rubric{Name: "", SystemPrompt: "x"})
+	err := reg.Register(&judge.Rubric{Name: "", Version: "v1", SystemPrompt: "x"})
 	if err == nil {
 		t.Fatal("expected error for empty name, got nil")
+	}
+}
+
+func TestRubricRegistry_RegisterEmptyVersion(t *testing.T) {
+	reg := judge.NewRubricRegistry()
+	err := reg.Register(&judge.Rubric{Name: "x", Version: "", SystemPrompt: "x"})
+	if err == nil {
+		t.Fatal("expected error for empty version, got nil")
+	}
+}
+
+func TestRubricRegistry_BuiltinsHaveVersion(t *testing.T) {
+	reg := judge.NewRubricRegistry()
+	for _, name := range []string{"default", "helpfulness", "accuracy", "safety"} {
+		rb, err := reg.Get(name)
+		if err != nil {
+			t.Fatalf("get %q: %v", name, err)
+		}
+		if rb.Version == "" {
+			t.Errorf("builtin rubric %q has empty version", name)
+		}
 	}
 }
 
