@@ -145,6 +145,23 @@ export interface Assertion {
   readonly request_id?: string;
 }
 
+/**
+ * Audit trail for an LLM-judge evaluation. Mirrors
+ * engine/pkg/types/assertion.go::JudgeMetadata so report v2 payloads
+ * round-trip without losing the model / rubric / variance evidence
+ * reviewers need to triage a judge failure.
+ */
+export interface JudgeMetadata {
+  readonly model?: string;
+  readonly rubric_name?: string;
+  readonly rubric_version?: string;
+  readonly prompt_hash?: string;
+  readonly sample_scores?: readonly number[];
+  readonly score_mean?: number;
+  readonly score_stddev?: number;
+  readonly high_variance?: boolean;
+}
+
 export interface AssertionResult {
   readonly assertion_id: string;
   readonly status: string;
@@ -153,6 +170,41 @@ export interface AssertionResult {
   readonly cost?: number;
   readonly duration_ms?: number;
   readonly request_id?: string;
+  readonly threshold_source?: string;
+  readonly layer?: number;
+  readonly type?: string;
+  readonly trace_node_path?: string;
+  readonly expected?: string;
+  readonly actual?: string;
+  readonly suggested_action?: string;
+  readonly judge_metadata?: JudgeMetadata;
+}
+
+/**
+ * Map an assertion-type string to its pipeline layer (1–8). Returns 0
+ * when the type is unknown so callers can route uncategorised results
+ * into their own bucket.
+ */
+export function layerForType(assertionType: string | undefined): number {
+  switch (assertionType) {
+    case "schema":
+      return 1;
+    case "constraint":
+      return 2;
+    case "trace":
+    case "trace_tree":
+      return 3;
+    case "content":
+      return 4;
+    case "embedding":
+      return 5;
+    case "llm_judge":
+      return 6;
+    case "plugin":
+      return 8;
+    default:
+      return 0;
+  }
 }
 
 export interface ErrorData {
