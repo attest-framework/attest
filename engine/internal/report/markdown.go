@@ -251,6 +251,18 @@ func writeJudgeMetadata(sw *stickyWriter, m *types.JudgeMetadata) {
 		sw.printf("- **Sample scores:** [%s] (mean=%.2f, stddev=%.2f)%s\n",
 			strings.Join(samples, ", "), m.ScoreMean, m.ScoreStddev, varianceTag)
 	}
+	if len(m.BiasProbes) > 0 {
+		entries := make([]string, len(m.BiasProbes))
+		for i, p := range m.BiasProbes {
+			entries[i] = fmt.Sprintf("%s Δ%+.2f", p.Name, p.Delta)
+		}
+		sw.printf("- **Bias probes:** %s\n", strings.Join(entries, ", "))
+	}
+	if m.Calibration != nil {
+		c := m.Calibration
+		sw.printf("- **Calibration:** %d labels, agreement=%.2f, κ=%.2f\n",
+			c.LabelCount, c.Agreement, c.CohenKappa)
+	}
 }
 
 // writeLayerBreakdown groups the entire result set by Layer and emits a

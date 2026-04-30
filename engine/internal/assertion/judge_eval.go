@@ -43,14 +43,15 @@ func NewJudgeEvaluator(provider llm.Provider, rubrics *judge.RubricRegistry, c *
 // Repeat=metaEvalRuns kept for backward compatibility — when both are set,
 // Repeat wins.
 type judgeSpec struct {
-	Target    string  `json:"target"`
-	Criteria  string  `json:"criteria"`
-	Rubric    string  `json:"rubric"`
-	Threshold float64 `json:"threshold"`
-	Soft      bool    `json:"soft"`
-	Model     string  `json:"model"`
-	MetaEval  bool    `json:"meta_eval"`
-	Repeat    int     `json:"repeat"`
+	Target     string   `json:"target"`
+	Criteria   string   `json:"criteria"`
+	Rubric     string   `json:"rubric"`
+	Threshold  float64  `json:"threshold"`
+	Soft       bool     `json:"soft"`
+	Model      string   `json:"model"`
+	MetaEval   bool     `json:"meta_eval"`
+	Repeat     int      `json:"repeat"`
+	BiasProbes []string `json:"bias_probes"`
 }
 
 const (
@@ -126,11 +127,15 @@ func (e *JudgeEvaluator) Evaluate(trace *types.Trace, assertion *types.Assertion
 	if err != nil {
 		return failResult(assertion, start, err.Error())
 	}
+	probes, err := resolveBiasProbes(spec.BiasProbes)
+	if err != nil {
+		return failResult(assertion, start, err.Error())
+	}
 	if runs > 1 {
-		return e.evaluateRepeated(ctx, assertion, rubric, model, userContent, spec, start, targetStr, rubricName, runs)
+		return e.evaluateRepeated(ctx, assertion, rubric, model, userContent, spec, start, targetStr, rubricName, runs, probes)
 	}
 
-	return e.evaluateSinglePass(ctx, assertion, rubric, model, userContent, spec, start, targetStr, rubricName)
+	return e.evaluateSinglePass(ctx, assertion, rubric, model, userContent, spec, start, targetStr, rubricName, probes)
 }
 
 // judgeBuildArgs bundles the optional diagnostic inputs to buildResult so
@@ -245,7 +250,10 @@ func repeatRuns(spec judgeSpec) (int, error) {
 	return 1, nil
 }
 
-// evaluateSinglePass runs the judge once (default behavior).
+// evaluateSinglePass runs the judge once (default behavior). When probes are
+// non-empty, the engine runs an additional judge call per probe and folds the
+// resulting deltas into JudgeMetadata.BiasProbes; cost is summed across all
+// calls.
 func (e *JudgeEvaluator) evaluateSinglePass(
 	ctx context.Context,
 	assertion *types.Assertion,
@@ -254,6 +262,7 @@ func (e *JudgeEvaluator) evaluateSinglePass(
 	spec judgeSpec,
 	start time.Time,
 	targetStr, rubricName string,
+	probes []string,
 ) *types.AssertionResult {
 	req := &llm.CompletionRequest{
 		Model:        model,
@@ -285,6 +294,8 @@ func (e *JudgeEvaluator) evaluateSinglePass(
 		}
 	}
 
+	probeResults, probeCost := runBiasProbes(ctx, e.provider, rubric, model, userContent, scoreResult.Score, probes)
+	totalCost := resp.Cost + probeCost
 	meta := &types.JudgeMetadata{
 		Model:         model,
 		RubricName:    rubricName,
@@ -292,8 +303,10 @@ func (e *JudgeEvaluator) evaluateSinglePass(
 		PromptHash:    promptHash(userContent),
 		SampleScores:  []float64{scoreResult.Score},
 		ScoreMean:     scoreResult.Score,
+		BiasProbes:    probeResults,
 	}
-	return e.buildResult(assertion, scoreResult.Score, scoreResult.Explanation, spec.Threshold, spec.Soft, durationMS, resp.Cost,
+	durationMS = time.Since(start).Milliseconds()
+	return e.buildResult(assertion, scoreResult.Score, scoreResult.Explanation, spec.Threshold, spec.Soft, durationMS, totalCost,
 		judgeBuildArgs{target: spec.Target, model: model, rubric: rubricName, meta: meta})
 }
 
@@ -318,6 +331,7 @@ func (e *JudgeEvaluator) evaluateRepeated(
 	start time.Time,
 	targetStr, rubricName string,
 	runs int,
+	probes []string,
 ) *types.AssertionResult {
 	results := make([]metaEvalResult, runs)
 	var wg sync.WaitGroup
@@ -405,6 +419,9 @@ func (e *JudgeEvaluator) evaluateRepeated(
 		}
 	}
 
+	probeResults, probeCost := runBiasProbes(ctx, e.provider, rubric, model, userContent, medianScore, probes)
+	totalCost += probeCost
+
 	mean, stddev := scoreVarianceStats(scores)
 	meta := &types.JudgeMetadata{
 		Model:            model,
@@ -415,7 +432,9 @@ func (e *JudgeEvaluator) evaluateRepeated(
 		ScoreMean:        mean,
 		ScoreStddev:      stddev,
 		HighVarianceFlag: spread > metaEvalVarianceThreshold,
+		BiasProbes:       probeResults,
 	}
+	durationMS = time.Since(start).Milliseconds()
 	return e.buildResult(assertion, medianScore, combinedExplanation, spec.Threshold, spec.Soft, durationMS, totalCost,
 		judgeBuildArgs{target: spec.Target, model: model, rubric: rubricName, meta: meta})
 }
