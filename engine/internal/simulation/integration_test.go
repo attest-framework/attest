@@ -246,7 +246,7 @@ func TestIntegration_TraceTreeEvaluation(t *testing.T) {
 		},
 	}
 
-	result, err := pipeline.EvaluateBatch(root, assertions)
+	result, err := pipeline.EvaluateBatch(context.Background(), root, assertions)
 	if err != nil {
 		t.Fatalf("EvaluateBatch error: %v", err)
 	}

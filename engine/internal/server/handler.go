@@ -3,8 +3,8 @@ package server
 import (
 	"context"
 	"database/sql"
-	"github.com/segmentio/encoding/json"
 	"fmt"
+	"github.com/segmentio/encoding/json"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -40,6 +40,11 @@ func RegisterBuiltinHandlers(s *Server) {
 		pipeline = assertion.NewPipelineWithHistory(registry, historyStore)
 	} else {
 		pipeline = assertion.NewPipeline(registry)
+	}
+
+	if n := envInt("ATTEST_EVAL_CONCURRENCY", 0); n > 0 {
+		pipeline.SetEvalConcurrency(n)
+		s.logger.Info("eval concurrency set", "limit", n)
 	}
 
 	// Wire BudgetTracker from ATTEST_BUDGET_MAX_COST env var (nil when unset).
@@ -139,12 +144,12 @@ func buildRegistryOptions(logger *slog.Logger) ([]assertion.RegistryOption, []st
 			logger.Warn("failed to create cache dir", "dir", cacheDir, "err", err)
 		} else {
 			judgeCacheMaxMB := envInt("ATTEST_JUDGE_CACHE_MAX_MB", 100)
-		if judgeCacheMaxMB < 10 {
-			judgeCacheMaxMB = 10
-		} else if judgeCacheMaxMB > 10000 {
-			judgeCacheMaxMB = 10000
-		}
-		c, err := cache.NewJudgeCache(dbPath, judgeCacheMaxMB)
+			if judgeCacheMaxMB < 10 {
+				judgeCacheMaxMB = 10
+			} else if judgeCacheMaxMB > 10000 {
+				judgeCacheMaxMB = 10000
+			}
+			c, err := cache.NewJudgeCache(dbPath, judgeCacheMaxMB)
 			if err != nil {
 				logger.Warn("failed to create judge cache", "err", err)
 			} else {
@@ -485,7 +490,7 @@ func handleEvaluateBatch(pipeline *assertion.Pipeline, historyStore *cache.Histo
 			assertionMap[a.AssertionID] = meta
 		}
 
-		result, err := pipeline.EvaluateBatchWithBudget(&p.Trace, p.Assertions, budget)
+		result, err := pipeline.EvaluateBatchWithBudget(context.Background(), &p.Trace, p.Assertions, budget)
 		if err != nil {
 			return nil, types.NewRPCError(
 				types.ErrEngineError,

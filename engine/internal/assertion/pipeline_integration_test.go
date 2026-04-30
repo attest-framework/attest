@@ -75,7 +75,7 @@ func TestPipeline_Integration_L5Embedding_Pass(t *testing.T) {
 		},
 	}
 
-	result, err := pipeline.EvaluateBatch(testTrace(), assertions)
+	result, err := pipeline.EvaluateBatch(context.Background(), testTrace(), assertions)
 	if err != nil {
 		t.Fatalf("EvaluateBatch: %v", err)
 	}
@@ -119,7 +119,7 @@ func TestPipeline_Integration_L6Judge_Pass(t *testing.T) {
 		},
 	}
 
-	result, err := pipeline.EvaluateBatch(testTrace(), assertions)
+	result, err := pipeline.EvaluateBatch(context.Background(), testTrace(), assertions)
 	if err != nil {
 		t.Fatalf("EvaluateBatch: %v", err)
 	}
@@ -164,7 +164,7 @@ func TestPipeline_Integration_L6Judge_HardFail(t *testing.T) {
 		},
 	}
 
-	result, err := pipeline.EvaluateBatch(testTrace(), assertions)
+	result, err := pipeline.EvaluateBatch(context.Background(), testTrace(), assertions)
 	if err != nil {
 		t.Fatalf("EvaluateBatch: %v", err)
 	}
@@ -230,7 +230,7 @@ func TestPipeline_Integration_ConcurrentL5L6(t *testing.T) {
 		},
 	}
 
-	result, err := pipeline.EvaluateBatch(testTrace(), assertions)
+	result, err := pipeline.EvaluateBatch(context.Background(), testTrace(), assertions)
 	if err != nil {
 		t.Fatalf("EvaluateBatch: %v", err)
 	}
@@ -294,7 +294,7 @@ func TestPipeline_Integration_L14HardFail_GatesL56(t *testing.T) {
 		},
 	}
 
-	result, err := pipeline.EvaluateBatch(testTrace(), assertions)
+	result, err := pipeline.EvaluateBatch(context.Background(), testTrace(), assertions)
 	if err != nil {
 		t.Fatalf("EvaluateBatch: %v", err)
 	}
@@ -349,7 +349,7 @@ func TestPipeline_Integration_BudgetEnforcement(t *testing.T) {
 		},
 	}
 
-	_, err := pipeline.EvaluateBatchWithBudget(testTrace(), assertions, budget)
+	_, err := pipeline.EvaluateBatchWithBudget(context.Background(), testTrace(), assertions, budget)
 	if err == nil {
 		t.Fatal("expected BudgetExceededError, got nil")
 	}
@@ -374,16 +374,16 @@ func TestPipeline_Integration_MultipleConcurrentL56(t *testing.T) {
 		model: "mock-embed",
 		vectors: map[string][]float32{
 			"The agent produced a helpful, accurate response about climate change.": {0.9, 0.1, 0.0},
-			"topic A":  {0.85, 0.15, 0.0},
-			"topic B":  {0.8, 0.2, 0.0},
+			"topic A": {0.85, 0.15, 0.0},
+			"topic B": {0.8, 0.2, 0.0},
 		},
 	}
 
 	mockProvider := llm.NewMockProvider([]*llm.CompletionResponse{
 		{
-			Content:      `{"score": 0.85, "explanation": "Good."}`,
-			Model:        "mock-model",
-			Cost:         0.001,
+			Content: `{"score": 0.85, "explanation": "Good."}`,
+			Model:   "mock-model",
+			Cost:    0.001,
 		},
 	}, nil)
 
@@ -417,7 +417,7 @@ func TestPipeline_Integration_MultipleConcurrentL56(t *testing.T) {
 		},
 	}
 
-	result, err := pipeline.EvaluateBatch(testTrace(), assertions)
+	result, err := pipeline.EvaluateBatch(context.Background(), testTrace(), assertions)
 	if err != nil {
 		t.Fatalf("EvaluateBatch: %v", err)
 	}
