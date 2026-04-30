@@ -513,6 +513,29 @@ class TestRequireNumericAttr:
         assert "list" in str(exc.value)
 
 
+def _valid_span_dict(**overrides: object) -> dict[str, object]:
+    """Build a well-formed OTLP span dict with optional field overrides.
+
+    Use ``overrides`` to vary a single field per test (e.g. ``trace_id="bad"``)
+    while keeping the rest of the shape valid. Pass ``trace_id=None`` to drop
+    the field entirely.
+    """
+    base: dict[str, object] = {
+        "name": "chat",
+        "trace_id": "deadbeefdeadbeefdeadbeefdeadbeef",
+        "span_id": "0000000000000001",
+        "attributes": {"gen_ai.operation.name": "chat", "gen_ai.completion": "ok"},
+        "start_time_unix_nano": 0,
+        "end_time_unix_nano": 1_000_000,
+    }
+    for key, value in overrides.items():
+        if value is None:
+            base.pop(key, None)
+        else:
+            base[key] = value
+    return base
+
+
 class TestFromOtelSpanDictsValidation:
     """Strict validation of span dict shape: malformed input fails loud."""
 
@@ -522,67 +545,26 @@ class TestFromOtelSpanDictsValidation:
         assert trace.steps == []
 
     def test_invalid_trace_id_hex_raises(self) -> None:
-        bad_dict = {
-            "name": "chat",
-            "trace_id": "not-hex-zzz",
-            "span_id": "0000000000000001",
-            "attributes": {"gen_ai.operation.name": "chat", "gen_ai.completion": "ok"},
-            "start_time_unix_nano": 0,
-            "end_time_unix_nano": 1_000_000,
-        }
         with _otel_available(), pytest.raises(ValueError, match="trace_id"):
-            OTelAdapter.from_otel_span_dicts([bad_dict])
+            OTelAdapter.from_otel_span_dicts([_valid_span_dict(trace_id="not-hex-zzz")])
 
     def test_non_string_trace_id_raises(self) -> None:
-        bad_dict = {
-            "name": "chat",
-            "trace_id": 12345,
-            "span_id": "0000000000000001",
-            "attributes": {"gen_ai.operation.name": "chat", "gen_ai.completion": "ok"},
-            "start_time_unix_nano": 0,
-            "end_time_unix_nano": 1_000_000,
-        }
         with _otel_available(), pytest.raises(ValueError, match="trace_id"):
-            OTelAdapter.from_otel_span_dicts([bad_dict])
+            OTelAdapter.from_otel_span_dicts([_valid_span_dict(trace_id=12345)])
 
     def test_invalid_parent_span_id_raises(self) -> None:
-        bad_dict = {
-            "name": "chat",
-            "trace_id": "deadbeefdeadbeefdeadbeefdeadbeef",
-            "span_id": "0000000000000002",
-            "parent_span_id": "not-hex",
-            "attributes": {"gen_ai.operation.name": "chat", "gen_ai.completion": "ok"},
-            "start_time_unix_nano": 0,
-            "end_time_unix_nano": 1_000_000,
-        }
         with _otel_available(), pytest.raises(ValueError, match="parent_span_id"):
-            OTelAdapter.from_otel_span_dicts([bad_dict])
+            OTelAdapter.from_otel_span_dicts([_valid_span_dict(parent_span_id="not-hex")])
 
     def test_non_mapping_attributes_raises(self) -> None:
-        bad_dict = {
-            "name": "chat",
-            "trace_id": "deadbeefdeadbeefdeadbeefdeadbeef",
-            "span_id": "0000000000000001",
-            "attributes": ["not", "a", "dict"],
-            "start_time_unix_nano": 0,
-            "end_time_unix_nano": 1_000_000,
-        }
         with _otel_available(), pytest.raises(ValueError, match="attributes"):
-            OTelAdapter.from_otel_span_dicts([bad_dict])
+            OTelAdapter.from_otel_span_dicts([_valid_span_dict(attributes=["not", "a", "dict"])])
 
     def test_missing_trace_id_treated_as_empty(self) -> None:
-        # Missing/empty trace_id is allowed (some producers omit it on
-        # in-process spans). The resulting Trace just won't carry an
-        # otel_-prefixed trace id.
-        dict_span = {
-            "name": "chat",
-            "span_id": "0000000000000001",
-            "attributes": {"gen_ai.operation.name": "chat", "gen_ai.completion": "ok"},
-            "start_time_unix_nano": 0,
-            "end_time_unix_nano": 1_000_000,
-        }
+        # Missing trace_id is allowed (some producers omit it on in-process
+        # spans). The resulting Trace just won't carry an otel_-prefixed id.
         with _otel_available():
-            trace = OTelAdapter.from_otel_span_dicts([dict_span])
+            trace = OTelAdapter.from_otel_span_dicts([_valid_span_dict(trace_id=None)])
         assert len(trace.steps) == 1
 
 
