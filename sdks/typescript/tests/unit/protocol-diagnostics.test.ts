@@ -119,6 +119,38 @@ describe("AttestClient protocol diagnostics", () => {
     expect(diags[0]!.kind).toBe("non_routable_error");
   });
 
+  it("supports onProtocolDiagnostic subscribe/unsubscribe", () => {
+    const engine = makeFakeEngine();
+    const client = new AttestClient(engine as never, { logger: silentLogger() });
+    const received: ProtocolDiagnostic[] = [];
+    const unsubscribe = client.onProtocolDiagnostic((d) => received.push(d));
+    client.startReader();
+
+    engine.readlineInterface.emit("line", "{not json");
+    expect(received.length).toBe(1);
+
+    unsubscribe();
+    engine.readlineInterface.emit("line", "{not json");
+    expect(received.length).toBe(1);
+  });
+
+  it("isolates throwing listeners so others still observe", () => {
+    const engine = makeFakeEngine();
+    const logger = silentLogger();
+    const client = new AttestClient(engine as never, { logger });
+    const observed: ProtocolDiagnostic[] = [];
+    client.onProtocolDiagnostic(() => {
+      throw new Error("boom");
+    });
+    client.onProtocolDiagnostic((d) => observed.push(d));
+    client.startReader();
+
+    engine.readlineInterface.emit("line", "{not json");
+
+    expect(observed.length).toBe(1);
+    expect(logger.error).toHaveBeenCalled();
+  });
+
   it("invokes diagnostic listeners", () => {
     const engine = makeFakeEngine();
     const listener = vi.fn();

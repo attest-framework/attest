@@ -84,8 +84,7 @@ def test_protocol_conformance_fixture(fixture: dict[str, Any]) -> None:
         _assert_diagnostic_matches(fixture["name"], actual, want)
 
     assert client._desynced is fixture["expectedDesync"], (
-        f"{fixture['name']}: expected desynced={fixture['expectedDesync']}, "
-        f"got {client._desynced}"
+        f"{fixture['name']}: expected desynced={fixture['expectedDesync']}, got {client._desynced}"
     )
 
 
@@ -109,6 +108,5 @@ def _assert_diagnostic_matches(
     needle = want.get("messageContains")
     if needle is not None:
         assert needle in actual.message, (
-            f"{fixture_name}: expected message to contain '{needle}', "
-            f"got '{actual.message}'"
+            f"{fixture_name}: expected message to contain '{needle}', got '{actual.message}'"
         )

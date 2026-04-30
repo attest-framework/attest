@@ -83,6 +83,11 @@ class AttestClient:
     so requests are serialized through a write lock while reads are dispatched
     by the shared reader loop.
 
+    Desync detection is a one-way latch: once the diagnostic rate breaches
+    ``desync_threshold`` within ``desync_window_seconds`` the client refuses
+    further sends for the lifetime of the instance. Recovery requires
+    constructing a new client over a fresh engine subprocess.
+
     Args:
         engine: The :class:`EngineManager` controlling the engine subprocess.
         protocol_logger: Logger used for protocol diagnostics. Defaults to a
@@ -156,7 +161,10 @@ class AttestClient:
         self._diagnostic_buffer.push(diagnostic)
         self._logger.warning("[attest.protocol] %s: %s", kind, message)
         for cb in list(self._diagnostic_listeners):
-            cb(diagnostic)
+            try:
+                cb(diagnostic)
+            except Exception as exc:  # noqa: BLE001 - listener bugs must not crash reader
+                self._logger.error("[attest.protocol] diagnostic listener threw: %s", exc)
         self._maybe_trigger_desync(diagnostic.timestamp)
 
     def _maybe_trigger_desync(self, now: float) -> None:

@@ -119,6 +119,24 @@ def test_diagnostic_listener_invoked() -> None:
     assert received[0].kind == "malformed_json"
 
 
+def test_listener_exceptions_are_isolated() -> None:
+    engine = MagicMock()
+    logger = MagicMock()
+    client = AttestClient(engine, protocol_logger=logger)
+
+    def boom(_d: ProtocolDiagnostic) -> None:
+        raise RuntimeError("boom")
+
+    observed: list[ProtocolDiagnostic] = []
+    client.on_protocol_diagnostic(boom)
+    client.on_protocol_diagnostic(observed.append)
+
+    client._handle_line(b"{not json\n")
+
+    assert len(observed) == 1
+    logger.error.assert_called()
+
+
 def test_unsubscribe_listener() -> None:
     received: list[ProtocolDiagnostic] = []
     engine = MagicMock()

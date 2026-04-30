@@ -98,6 +98,16 @@ function envLoggerDefault(): ProtocolLogger {
   };
 }
 
+/**
+ * AttestClient owns request/response correlation over the engine's
+ * NDJSON protocol.
+ *
+ * Desync detection is a one-way latch: once the diagnostic rate breaches
+ * `desyncThreshold` within `desyncWindowMs` the client refuses further
+ * sends for the lifetime of the instance. There is no reset hook by
+ * design — recovery requires constructing a new client over a fresh
+ * engine subprocess.
+ */
 export class AttestClient {
   private readonly engine: EngineManager;
   private requestId = 0;
@@ -187,7 +197,14 @@ export class AttestClient {
     this.diagnosticBuffer.push(diagnostic);
     this.logger.warn(`[attest.protocol] ${kind}: ${message}`);
     for (const listener of this.diagnosticListeners) {
-      listener(diagnostic);
+      try {
+        listener(diagnostic);
+      } catch (err) {
+        // Listener bugs must not break the reader or shadow other subscribers.
+        this.logger.error(
+          `[attest.protocol] diagnostic listener threw: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
     }
     this.maybeTriggerDesync(diagnostic.timestampMs);
   }
