@@ -9,7 +9,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from attest._proto.types import STEP_LLM_CALL, STEP_TOOL_CALL
-from attest.adapters.otel import OTelAdapter
+from attest.adapters.otel import OTelAdapter, _require_numeric_attr
 
 
 def _make_span(
@@ -258,3 +258,50 @@ class TestOTelAdapterFromSpans:
         with _otel_available():
             trace = OTelAdapter.from_spans([span], agent_id="inst-agent")
         assert trace.agent_id == "inst-agent"
+
+
+class TestRequireNumericAttr:
+    """Tests for _require_numeric_attr helper used to read OTel usage counters."""
+
+    def test_missing_key_returns_zero(self) -> None:
+        assert _require_numeric_attr({}, "gen_ai.usage.input_tokens") == 0
+
+    def test_none_value_returns_zero(self) -> None:
+        assert (
+            _require_numeric_attr({"gen_ai.usage.input_tokens": None}, "gen_ai.usage.input_tokens")
+            == 0
+        )
+
+    def test_int_value_returned_unchanged(self) -> None:
+        assert (
+            _require_numeric_attr({"gen_ai.usage.input_tokens": 42}, "gen_ai.usage.input_tokens")
+            == 42
+        )
+
+    def test_float_value_truncated_to_int(self) -> None:
+        assert (
+            _require_numeric_attr({"gen_ai.usage.input_tokens": 3.7}, "gen_ai.usage.input_tokens")
+            == 3
+        )
+
+    def test_bool_value_rejected(self) -> None:
+        with pytest.raises(TypeError, match="must be numeric"):
+            _require_numeric_attr({"gen_ai.usage.input_tokens": True}, "gen_ai.usage.input_tokens")
+
+    def test_sequence_value_rejected(self) -> None:
+        with pytest.raises(TypeError, match="must be numeric"):
+            _require_numeric_attr(
+                {"gen_ai.usage.input_tokens": [1, 2]}, "gen_ai.usage.input_tokens"
+            )
+
+    def test_string_value_rejected(self) -> None:
+        with pytest.raises(TypeError, match="must be numeric"):
+            _require_numeric_attr({"gen_ai.usage.input_tokens": "5"}, "gen_ai.usage.input_tokens")
+
+    def test_error_message_names_offending_key_and_type(self) -> None:
+        with pytest.raises(TypeError) as exc:
+            _require_numeric_attr(
+                {"gen_ai.usage.output_tokens": [1.0]}, "gen_ai.usage.output_tokens"
+            )
+        assert "gen_ai.usage.output_tokens" in str(exc.value)
+        assert "list" in str(exc.value)
