@@ -10,6 +10,7 @@ from typing import Any
 
 import pytest
 
+from attest.cli.diagnostics import render_diagnostics
 from attest.client import AttestClient
 from attest.engine_manager import EngineManager
 from attest.expect import ExpectChain
@@ -20,6 +21,31 @@ logger = logging.getLogger("attest.plugin")
 # Session-level cost accumulator — updated by evaluate() calls
 _session_cost: float = 0.0
 _session_soft_failures: int = 0
+# Maps nodeid → AgentResult for tests that produced one. Used by the
+# terminal summary hook to render diagnostic blocks for failed runs.
+_session_results: dict[str, AgentResult] = {}
+# Thread-local-ish slot for the most-recent AgentResult produced inside
+# a test. pytest serialises test execution, so a single slot is safe;
+# the makereport hook below pops it into _session_results keyed on
+# nodeid as soon as the call phase completes.
+_last_result: AgentResult | None = None
+_last_result_lock = threading.Lock()
+
+
+def _set_last_result(agent_result: AgentResult) -> None:
+    """Stash the most-recent AgentResult so the makereport hook can index
+    it by nodeid when the call phase ends."""
+    global _last_result
+    with _last_result_lock:
+        _last_result = agent_result
+
+
+def _take_last_result() -> AgentResult | None:
+    """Atomically pop and return the most-recent stashed AgentResult."""
+    global _last_result
+    with _last_result_lock:
+        result, _last_result = _last_result, None
+        return result
 
 
 def pytest_configure(config: pytest.Config) -> None:
@@ -64,6 +90,12 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         default=False,
         help="Print a cost report at the end of the test session",
     )
+    group.addoption(
+        "--attest-diagnostics",
+        action="store_true",
+        default=False,
+        help="Render the diagnostic block for every Attest failure in the terminal summary",
+    )
 
 
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
@@ -87,13 +119,46 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
 
 
 def pytest_terminal_summary(terminalreporter: Any, exitstatus: int, config: pytest.Config) -> None:
-    """Print cost report if --attest-cost-report is set."""
-    if not config.getoption("--attest-cost-report", default=False):
-        return
+    """Print cost report and per-test diagnostic blocks when requested.
 
-    terminalreporter.write_sep("=", "Attest Cost Report")
-    terminalreporter.write_line(f"Total LLM cost this session: ${_session_cost:.6f} USD")
-    terminalreporter.write_line(f"Soft failures recorded:       {_session_soft_failures}")
+    --attest-cost-report enables the session-cost summary; the
+    diagnostic-block renderer always fires for failed runs but only
+    enumerates passing assertions when --attest-diagnostics is set.
+    """
+    diagnostics_opt = config.getoption("--attest-diagnostics", default=False)
+    cost_report_opt = config.getoption("--attest-cost-report", default=False)
+
+    if _session_results:
+        failed = [(nid, r) for nid, r in _session_results.items() if not r.passed]
+        if failed or diagnostics_opt:
+            terminalreporter.write_sep("=", "Attest Diagnostics")
+            for nodeid, agent_result in failed:
+                terminalreporter.write_line(f"FAILED {nodeid}")
+                terminalreporter.write_line(render_diagnostics(agent_result, test_file=nodeid))
+
+    if cost_report_opt:
+        terminalreporter.write_sep("=", "Attest Cost Report")
+        terminalreporter.write_line(f"Total LLM cost this session: ${_session_cost:.6f} USD")
+        terminalreporter.write_line(f"Soft failures recorded:       {_session_soft_failures}")
+
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_makereport(
+    item: pytest.Item,
+    call: pytest.CallInfo[Any],
+) -> Generator[None, None, None]:
+    """Pop the most-recent AgentResult into the per-nodeid registry.
+
+    Pytest serialises tests within a worker, so the latest stashed
+    AgentResult always corresponds to the call phase that just ran.
+    """
+    outcome = yield
+    _ = outcome
+    if call.when != "call":
+        return
+    agent_result = _take_last_result()
+    if agent_result is not None:
+        _session_results[item.nodeid] = agent_result
 
 
 class AttestEngineFixture:
@@ -178,6 +243,7 @@ class AttestEngineFixture:
         from attest._proto.types import STATUS_SOFT_FAIL
 
         _session_soft_failures += sum(1 for r in result.results if r.status == STATUS_SOFT_FAIL)
+        _set_last_result(agent_result)
 
         if budget is not None and _session_cost > budget:
             pytest.fail(
