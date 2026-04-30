@@ -510,3 +510,36 @@ func compareWithGoldenJSON(t *testing.T, actual []byte, goldenPath string) {
 			goldenPath, string(goldenNorm), string(actualNorm))
 	}
 }
+
+func TestGenerateMarkdown_SimulatedBanner(t *testing.T) {
+	results := []types.AssertionResult{
+		{AssertionID: "a", Status: types.StatusPass, Score: 1.0, Explanation: "ok"},
+	}
+	var buf bytes.Buffer
+	if err := GenerateMarkdown(&buf, &MarkdownReport{
+		Title:     "Sim Run",
+		Results:   results,
+		Simulated: true,
+	}); err != nil {
+		t.Fatalf("GenerateMarkdown: %v", err)
+	}
+	if !bytes.Contains(buf.Bytes(), []byte("[SIMULATED]")) {
+		t.Errorf("expected [SIMULATED] banner in output:\n%s", buf.String())
+	}
+}
+
+func TestGenerateMarkdown_NoBannerWhenNotSimulated(t *testing.T) {
+	results := []types.AssertionResult{
+		{AssertionID: "a", Status: types.StatusPass, Score: 1.0, Explanation: "ok"},
+	}
+	var buf bytes.Buffer
+	if err := GenerateMarkdown(&buf, &MarkdownReport{
+		Title:   "Real Run",
+		Results: results,
+	}); err != nil {
+		t.Fatalf("GenerateMarkdown: %v", err)
+	}
+	if bytes.Contains(buf.Bytes(), []byte("[SIMULATED]")) {
+		t.Errorf("unexpected [SIMULATED] banner:\n%s", buf.String())
+	}
+}

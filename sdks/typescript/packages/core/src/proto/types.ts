@@ -210,6 +210,13 @@ export interface EvaluateBatchResult {
   readonly results: readonly AssertionResult[];
   readonly total_cost?: number;
   readonly total_duration_ms?: number;
+  /**
+   * True when this result was produced by an SDK simulation shim rather
+   * than a real engine evaluation. Engine-produced results always carry
+   * simulated=false. CI gates can fail builds that accidentally evaluate
+   * against the simulator by checking this flag.
+   */
+  readonly simulated?: boolean;
 }
 
 export interface ShutdownResult {

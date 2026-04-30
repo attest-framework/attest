@@ -297,4 +297,5 @@ def _simulation_evaluate_batch(assertions: list[Assertion]) -> EvaluateBatchResu
         results=results,
         total_cost=0.0,
         total_duration_ms=0,
+        simulated=True,
     )

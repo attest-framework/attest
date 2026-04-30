@@ -609,6 +609,7 @@ func handleEvaluateBatch(pipeline *assertion.Pipeline, historyStore *cache.Histo
 			Results:         result.Results,
 			TotalCost:       result.TotalCost,
 			TotalDurationMS: result.TotalDurationMS,
+			Simulated:       false,
 		}, nil
 	}
 }

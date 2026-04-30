@@ -148,6 +148,29 @@ class TestSimulationEvaluateBatch:
         assert result.results == []
         assert result.total_cost == 0.0
 
+    def test_simulated_marker_set(self) -> None:
+        assertions = _make_assertions()
+        result = _simulation_evaluate_batch(assertions)
+        assert result.simulated is True
+
+    def test_simulated_marker_serializes(self) -> None:
+        assertions = _make_assertions()
+        result = _simulation_evaluate_batch(assertions)
+        round_tripped = EvaluateBatchResult.from_dict(result.to_dict())
+        assert round_tripped.simulated is True
+
+    def test_default_marker_false_on_engine_payload(self) -> None:
+        # Engine payloads carry "simulated": false explicitly. Older engines
+        # that omit the field must default to False so SDK callers cannot
+        # mistake a real run for a simulated one.
+        engine_payload = {
+            "results": [],
+            "total_cost": 0.0,
+            "total_duration_ms": 0,
+        }
+        result = EvaluateBatchResult.from_dict(engine_payload)
+        assert result.simulated is False
+
 
 # ---------------------------------------------------------------------------
 # AttestClient.evaluate_batch simulation mode integration

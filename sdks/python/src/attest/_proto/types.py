@@ -324,12 +324,14 @@ class EvaluateBatchResult:
     results: list[AssertionResult]
     total_cost: float = 0.0
     total_duration_ms: int = 0
+    simulated: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "results": [r.to_dict() for r in self.results],
             "total_cost": self.total_cost,
             "total_duration_ms": self.total_duration_ms,
+            "simulated": self.simulated,
         }
 
     @classmethod
@@ -339,6 +341,7 @@ class EvaluateBatchResult:
             results=results,
             total_cost=data.get("total_cost", 0.0),
             total_duration_ms=data.get("total_duration_ms", 0),
+            simulated=data.get("simulated", False),
         )
 
 

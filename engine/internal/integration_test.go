@@ -200,6 +200,11 @@ func TestE2E_RefundAgentFullFlow(t *testing.T) {
 		t.Fatalf("result count = %d, want %d", len(batchResult.Results), len(assertions))
 	}
 
+	// The engine must never mark its own results as simulated.
+	if batchResult.Simulated {
+		t.Errorf("Simulated = true on engine-produced result; want false")
+	}
+
 	// Verify all 5 assertions pass
 	assertionIDs := map[string]bool{
 		"assert_001": false,

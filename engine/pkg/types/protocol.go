@@ -61,10 +61,16 @@ type EvaluateBatchParams struct {
 }
 
 // EvaluateBatchResult holds the result of the evaluate_batch method.
+//
+// Simulated is true when the result was produced without contacting the
+// engine — i.e. by an SDK simulation shim that returns deterministic
+// pass results. Engine-produced results always carry Simulated=false so
+// CI can fail builds that accidentally evaluate against the simulator.
 type EvaluateBatchResult struct {
 	Results         []AssertionResult `json:"results"`
 	TotalCost       float64           `json:"total_cost"`
 	TotalDurationMS int64             `json:"total_duration_ms"`
+	Simulated       bool              `json:"simulated"`
 }
 
 // ShutdownResult holds the result of the shutdown method.
