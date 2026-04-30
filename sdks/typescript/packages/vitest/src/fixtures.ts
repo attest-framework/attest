@@ -77,13 +77,23 @@ export class AttestEngineFixture {
       result.total_duration_ms ?? 0,
     );
 
+    // Track failing AgentResults so AttestCostReporter can render the
+    // hierarchical diagnostic block at the end of the run. Bound size
+    // because long suites with many failures should not balloon RAM.
+    if (!agentResult.passed) {
+      const list = (globalThis.__attest_session_failures__ ??= []);
+      if (list.length < 200) {
+        list.push(agentResult);
+      }
+    }
+
     if (
       options?.budget !== undefined &&
       globalThis.__attest_session_cost__ > options.budget
     ) {
       throw new Error(
         `Attest budget exceeded: cost $${globalThis.__attest_session_cost__.toFixed(6)}` +
-        ` > budget $${options.budget.toFixed(6)}`,
+          ` > budget $${options.budget.toFixed(6)}`,
       );
     }
 

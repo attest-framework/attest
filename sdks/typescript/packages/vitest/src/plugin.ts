@@ -1,4 +1,9 @@
-import { EngineManager, AttestClient, isSimulationMode } from "@attest-ai/core";
+import {
+  EngineManager,
+  AttestClient,
+  isSimulationMode,
+  type AgentResult,
+} from "@attest-ai/core";
 
 let engineManager: EngineManager | undefined;
 let attestClient: AttestClient | undefined;
@@ -19,6 +24,8 @@ declare global {
   var __attest_session_soft_failures__: number;
   // eslint-disable-next-line no-var
   var __attest_simulation_mode__: boolean;
+  // eslint-disable-next-line no-var
+  var __attest_session_failures__: AgentResult[] | undefined;
 }
 
 export function attestGlobalSetup(options?: AttestGlobalSetupOptions) {
@@ -26,6 +33,7 @@ export function attestGlobalSetup(options?: AttestGlobalSetupOptions) {
     async setup() {
       globalThis.__attest_session_cost__ = 0;
       globalThis.__attest_session_soft_failures__ = 0;
+      globalThis.__attest_session_failures__ = [];
 
       if (isSimulationMode()) {
         globalThis.__attest_simulation_mode__ = true;
@@ -54,6 +62,7 @@ export function attestGlobalSetup(options?: AttestGlobalSetupOptions) {
       globalThis.__attest_engine__ = undefined;
       globalThis.__attest_client__ = undefined;
       globalThis.__attest_simulation_mode__ = false;
+      globalThis.__attest_session_failures__ = undefined;
     },
   };
 }

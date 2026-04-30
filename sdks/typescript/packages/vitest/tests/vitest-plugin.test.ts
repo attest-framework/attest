@@ -73,6 +73,8 @@ vi.mock("@attest-ai/core", () => {
       total_cost: 0,
       total_duration_ms: 0,
     }),
+    renderDiagnostics: (_result: unknown) => "  Attest diagnostic — mock\n",
+    renderSummary: (_result: unknown) => "PASS 0 | SOFT 0 | FAIL 0",
   };
 });
 
