@@ -20,6 +20,25 @@ def _require_otel() -> None:
         raise ImportError("Install otel extras: uv add 'attest-ai[otel]'")
 
 
+def _require_numeric_attr(attrs: dict[str, Any], key: str) -> int:
+    """Return ``int(attrs[key])`` when present, ``0`` when missing.
+
+    Raises ``TypeError`` if the attribute is set to a non-numeric value such
+    as a sequence — the OTel GenAI semantic conventions type usage counters
+    as scalar ints, so anything else is a producer bug that should surface
+    rather than be silently coerced.
+    """
+    value = attrs.get(key)
+    if value is None:
+        return 0
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise TypeError(
+            f"OTel attribute {key!r} must be numeric per gen_ai semantic "
+            f"conventions; got {type(value).__name__}"
+        )
+    return int(value)
+
+
 class OTelAdapter(BaseAdapter):
     """Maps OpenTelemetry spans to Attest traces using gen_ai.* semantic conventions.
 
@@ -90,10 +109,12 @@ class OTelAdapter(BaseAdapter):
                 if completion:
                     output_message = str(completion)
 
-                # Accumulate tokens
-                input_tokens = attrs.get("gen_ai.usage.input_tokens", 0)
-                output_tokens = attrs.get("gen_ai.usage.output_tokens", 0)
-                span_tokens = int(input_tokens) + int(output_tokens)
+                # Accumulate tokens. The OTel GenAI spec types both usage
+                # attributes as scalar int; a sequence value here means the
+                # producer is malformed, so fail loud rather than coerce.
+                input_tokens = _require_numeric_attr(attrs, "gen_ai.usage.input_tokens")
+                output_tokens = _require_numeric_attr(attrs, "gen_ai.usage.output_tokens")
+                span_tokens = input_tokens + output_tokens
                 if span_tokens > 0:
                     total_tokens = (total_tokens or 0) + span_tokens
 
