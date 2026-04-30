@@ -38,44 +38,47 @@ check() {
     fi
 }
 
+# Extract the first double-quoted value from the first line in `file`
+# matching the regex `pattern`. Used to read version literals out of
+# Python and TypeScript source where there's exactly one quoted token
+# per matching line (e.g. `version = "0.6.1"` or `export const VERSION = "0.6.1";`).
+extract_quoted() {
+    local file="$1"
+    local pattern="$2"
+    grep -E "$pattern" "$file" | head -1 | sed -E 's/^.*"([^"]+)".*/\1/'
+}
+
+# Read the `.version` field of a JSON package manifest using Node, which
+# is already required by the TypeScript SDK toolchain.
+read_pkg_version() {
+    node -e "process.stdout.write(require('./$1').version)"
+}
+
 # Engine //go:embed mirror.
 embed_version="$(tr -d '[:space:]' < engine/internal/buildinfo/VERSION)"
 check "engine/internal/buildinfo/VERSION" "$embed_version"
 
-# Python pyproject.toml — project.version is required and unique per file.
-py_pyproject="$(grep -E '^version[[:space:]]*=' sdks/python/pyproject.toml \
-    | head -1 | sed -E 's/^version[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/')"
-check "sdks/python/pyproject.toml::project.version" "$py_pyproject"
+# Python pyproject.toml — project.version is the first `version = "…"` line.
+check "sdks/python/pyproject.toml::project.version" \
+    "$(extract_quoted sdks/python/pyproject.toml '^version[[:space:]]*=')"
 
 # Python __init__.py — both __version__ and ENGINE_VERSION.
-py_init_version="$(grep -E '^__version__:' sdks/python/src/attest/__init__.py \
-    | sed -E 's/^.*"([^"]+)".*/\1/')"
-check "sdks/python/src/attest/__init__.py::__version__" "$py_init_version"
+check "sdks/python/src/attest/__init__.py::__version__" \
+    "$(extract_quoted sdks/python/src/attest/__init__.py '^__version__:')"
+check "sdks/python/src/attest/__init__.py::ENGINE_VERSION" \
+    "$(extract_quoted sdks/python/src/attest/__init__.py '^ENGINE_VERSION:')"
 
-py_init_engine="$(grep -E '^ENGINE_VERSION:' sdks/python/src/attest/__init__.py \
-    | sed -E 's/^.*"([^"]+)".*/\1/')"
-check "sdks/python/src/attest/__init__.py::ENGINE_VERSION" "$py_init_engine"
-
-# TypeScript core package.json — top-level "version" field (jq if available).
-ts_core_pkg="$(node -e \
-    'process.stdout.write(require("./sdks/typescript/packages/core/package.json").version)')"
-check "sdks/typescript/packages/core/package.json::version" "$ts_core_pkg"
-
-# TypeScript version.ts — both VERSION and ENGINE_VERSION constants.
-ts_core_version="$(grep -E '^export const VERSION' \
-    sdks/typescript/packages/core/src/version.ts \
-    | sed -E 's/^.*"([^"]+)".*/\1/')"
-check "sdks/typescript/packages/core/src/version.ts::VERSION" "$ts_core_version"
-
-ts_core_engine="$(grep -E '^export const ENGINE_VERSION' \
-    sdks/typescript/packages/core/src/version.ts \
-    | sed -E 's/^.*"([^"]+)".*/\1/')"
-check "sdks/typescript/packages/core/src/version.ts::ENGINE_VERSION" "$ts_core_engine"
+# TypeScript core package.json + version.ts (VERSION and ENGINE_VERSION).
+check "sdks/typescript/packages/core/package.json::version" \
+    "$(read_pkg_version sdks/typescript/packages/core/package.json)"
+check "sdks/typescript/packages/core/src/version.ts::VERSION" \
+    "$(extract_quoted sdks/typescript/packages/core/src/version.ts '^export const VERSION')"
+check "sdks/typescript/packages/core/src/version.ts::ENGINE_VERSION" \
+    "$(extract_quoted sdks/typescript/packages/core/src/version.ts '^export const ENGINE_VERSION')"
 
 # TypeScript vitest package.json.
-ts_vitest_pkg="$(node -e \
-    'process.stdout.write(require("./sdks/typescript/packages/vitest/package.json").version)')"
-check "sdks/typescript/packages/vitest/package.json::version" "$ts_vitest_pkg"
+check "sdks/typescript/packages/vitest/package.json::version" \
+    "$(read_pkg_version sdks/typescript/packages/vitest/package.json)"
 
 if (( ${#mismatches[@]} > 0 )); then
     echo "verify-versions: ${#mismatches[@]} source(s) drifted from VERSION=$canonical:" >&2
