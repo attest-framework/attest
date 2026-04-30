@@ -14,7 +14,8 @@ from attest._proto.types import (
     STEP_RETRIEVAL,
     STEP_TOOL_CALL,
 )
-from attest.adapters.otel import OTelAdapter, _require_numeric_attr
+from attest.adapters.otel import OTelAdapter, _require_numeric_attr, to_otel_spans
+from attest.trace import TraceBuilder
 
 
 def _make_span(
@@ -510,3 +511,202 @@ class TestRequireNumericAttr:
             )
         assert "gen_ai.usage.output_tokens" in str(exc.value)
         assert "list" in str(exc.value)
+
+
+class TestToOtelSpansExport:
+    """to_otel_spans produces OTLP-compatible dicts with gen_ai.* attributes."""
+
+    def test_empty_trace_yields_empty_spans(self) -> None:
+        trace = TraceBuilder().set_input(prompt="hi").set_output(message="ok").build()
+        assert to_otel_spans(trace) == []
+
+    def test_llm_step_emits_chat_span_with_model(self) -> None:
+        trace = (
+            TraceBuilder()
+            .add_llm_call(
+                name="chat gpt-4.1",
+                args={"model": "gpt-4.1"},
+                result={
+                    "completion": "hello",
+                    "input_tokens": 12,
+                    "output_tokens": 4,
+                    "model": "gpt-4.1",
+                },
+                metadata={"duration_ms": 150},
+            )
+            .set_output(message="hello")
+            .build()
+        )
+        spans = to_otel_spans(trace)
+        assert len(spans) == 1
+        attrs = spans[0]["attributes"]
+        assert attrs["gen_ai.operation.name"] == "chat"
+        assert attrs["gen_ai.request.model"] == "gpt-4.1"
+        assert attrs["gen_ai.response.model"] == "gpt-4.1"
+        assert attrs["gen_ai.completion"] == "hello"
+        assert attrs["gen_ai.usage.input_tokens"] == 12
+        assert attrs["gen_ai.usage.output_tokens"] == 4
+        # Duration encoded in nanoseconds
+        assert spans[0]["end_time_unix_nano"] - spans[0]["start_time_unix_nano"] == 150_000_000
+
+    def test_tool_step_emits_execute_tool_span(self) -> None:
+        trace = (
+            TraceBuilder()
+            .add_tool_call(
+                name="web_search",
+                args={"call_id": "c1", "parameters": {"q": "Paris"}},
+                result={"output": "results"},
+            )
+            .set_output(message="done")
+            .build()
+        )
+        spans = to_otel_spans(trace)
+        assert spans[0]["attributes"]["gen_ai.operation.name"] == "execute_tool"
+        assert spans[0]["attributes"]["gen_ai.tool.name"] == "web_search"
+        assert spans[0]["attributes"]["gen_ai.tool.call.id"] == "c1"
+
+    def test_agent_attributes_round_trip_via_step_fields(self) -> None:
+        trace = (
+            TraceBuilder()
+            .add_llm_call(
+                name="chat",
+                args={"model": "gpt-4.1"},
+                result={"completion": "ok"},
+                agent_id="agent-42",
+                agent_role="support",
+            )
+            .set_output(message="ok")
+            .build()
+        )
+        attrs = to_otel_spans(trace)[0]["attributes"]
+        assert attrs["gen_ai.agent.id"] == "agent-42"
+        assert attrs["gen_ai.agent.name"] == "support"
+
+    def test_operation_override_preserved(self) -> None:
+        # Producer ingested an embeddings span; export should preserve op name.
+        trace = (
+            TraceBuilder()
+            .add_llm_call(
+                name="embeddings text-embedding-3-small",
+                args={"operation": "embeddings", "model": "text-embedding-3-small"},
+                result={},
+            )
+            .set_output(message="")
+            .build()
+        )
+        attrs = to_otel_spans(trace)[0]["attributes"]
+        assert attrs["gen_ai.operation.name"] == "embeddings"
+
+    def test_parent_span_id_chain(self) -> None:
+        # First span is root (no parent); subsequent spans share root as parent.
+        trace = (
+            TraceBuilder()
+            .add_llm_call(
+                name="chat", args={"model": "gpt-4.1"}, result={"completion": "calling tool"}
+            )
+            .add_tool_call(name="search", args={}, result={"output": "x"})
+            .set_output(message="x")
+            .build()
+        )
+        spans = to_otel_spans(trace)
+        assert spans[0]["parent_span_id"] is None
+        assert spans[1]["parent_span_id"] == spans[0]["span_id"]
+
+
+class TestOtelRoundTrip:
+    """to_otel_spans → OTelAdapter.from_otel_span_dicts preserves step structure."""
+
+    def test_round_trip_preserves_step_types(self) -> None:
+        original = (
+            TraceBuilder()
+            .add_llm_call(
+                name="chat gpt-4.1",
+                args={"model": "gpt-4.1"},
+                result={"completion": "hi", "input_tokens": 5, "output_tokens": 2},
+                metadata={"duration_ms": 100},
+            )
+            .add_tool_call(
+                name="search",
+                args={"call_id": "c1", "parameters": {"q": "Paris"}},
+                result={"output": "results"},
+                metadata={"duration_ms": 50},
+            )
+            .set_output(message="hi")
+            .build()
+        )
+        spans = to_otel_spans(original)
+        with _otel_available():
+            roundtripped = OTelAdapter.from_otel_span_dicts(spans)
+
+        assert [s.type for s in roundtripped.steps] == [STEP_LLM_CALL, STEP_TOOL_CALL]
+        assert roundtripped.steps[1].name == "search"
+        assert roundtripped.steps[0].result is not None
+        assert roundtripped.steps[0].result.get("completion") == "hi"
+        assert roundtripped.steps[0].result.get("input_tokens") == 5
+
+    def test_round_trip_preserves_agent_hierarchy(self) -> None:
+        original = (
+            TraceBuilder()
+            .add_llm_call(
+                name="chat",
+                args={"model": "gpt-4.1"},
+                result={"completion": "ok"},
+                agent_id="agent-42",
+                agent_role="support",
+            )
+            .set_output(message="ok")
+            .build()
+        )
+        spans = to_otel_spans(original)
+        with _otel_available():
+            roundtripped = OTelAdapter.from_otel_span_dicts(spans)
+        assert roundtripped.steps[0].agent_id == "agent-42"
+        assert roundtripped.steps[0].agent_role == "support"
+
+    def test_round_trip_preserves_invoke_agent_step(self) -> None:
+        from attest._proto.types import Step
+
+        original = (
+            TraceBuilder()
+            .add_step(
+                Step(
+                    type=STEP_AGENT_CALL,
+                    name="researcher",
+                    args={
+                        "agent_id": "agent-99",
+                        "agent_name": "researcher",
+                        "description": "Research bot",
+                    },
+                    result={"completion": "found it"},
+                    agent_id="agent-99",
+                    agent_role="researcher",
+                )
+            )
+            .set_output(message="found it")
+            .build()
+        )
+        spans = to_otel_spans(original)
+        with _otel_available():
+            roundtripped = OTelAdapter.from_otel_span_dicts(spans)
+        assert roundtripped.steps[0].type == STEP_AGENT_CALL
+        assert roundtripped.steps[0].agent_id == "agent-99"
+
+    def test_round_trip_preserves_retrieval_step(self) -> None:
+        original = (
+            TraceBuilder()
+            .add_retrieval(
+                name="vector_search",
+                args={"query": "Paris", "source": "vector_store"},
+                result={"documents_count": 3},
+            )
+            .set_output(message="ok")
+            .build()
+        )
+        spans = to_otel_spans(original)
+        with _otel_available():
+            roundtripped = OTelAdapter.from_otel_span_dicts(spans)
+        assert roundtripped.steps[0].type == STEP_RETRIEVAL
+        assert roundtripped.steps[0].args is not None
+        assert roundtripped.steps[0].args.get("query") == "Paris"
+        assert roundtripped.steps[0].result is not None
+        assert roundtripped.steps[0].result.get("documents_count") == 3
