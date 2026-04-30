@@ -204,7 +204,29 @@ export interface AssertionResult {
   readonly actual?: string;
   readonly suggested_action?: string;
   readonly judge_metadata?: JudgeMetadata;
+  /**
+   * Heuristic root-cause label set by the engine
+   * (broken_code / flaky_judge / bad_rubric / missing_trace_data /
+   * stochastic_variance). Empty/undefined for passes and any result the
+   * engine declined to label. Mirrors
+   * engine/pkg/types/failure_class.go.
+   */
+  readonly failure_class?: string;
 }
+
+/**
+ * FailureClass values mirror engine/pkg/types/failure_class.go. Use
+ * these constants when matching on AssertionResult.failure_class so a
+ * typo in either codebase fails fast.
+ */
+export const FailureClass = {
+  BrokenCode: "broken_code",
+  FlakyJudge: "flaky_judge",
+  BadRubric: "bad_rubric",
+  MissingTraceData: "missing_trace_data",
+  StochasticVariance: "stochastic_variance",
+} as const;
+export type FailureClass = (typeof FailureClass)[keyof typeof FailureClass];
 
 /**
  * Map an assertion-type string to its pipeline layer (1–8). Returns 0

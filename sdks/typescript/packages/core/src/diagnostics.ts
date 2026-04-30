@@ -113,6 +113,9 @@ export function renderAssertionFailure(
   if (result.threshold_source && result.threshold_source !== "static") {
     lines.push(`      threshold:  ${result.threshold_source}`);
   }
+  if (result.failure_class) {
+    lines.push(`      class:      ${result.failure_class}`);
+  }
   if (result.judge_metadata) {
     appendJudgeMetadata(lines, result.judge_metadata);
   }
