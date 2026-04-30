@@ -106,6 +106,7 @@ func (p *Pipeline) EvaluateBatchWithBudget(ctx context.Context, trace *types.Tra
 				Explanation: fmt.Sprintf("unknown assertion type: %s", l14[i].Type),
 				RequestID:   l14[i].RequestID,
 			}
+			annotateDiagnostics(&ar, &l14[i])
 			result.Results = append(result.Results, ar)
 			hardFail = true
 			if budget != nil {
@@ -118,6 +119,7 @@ func (p *Pipeline) EvaluateBatchWithBudget(ctx context.Context, trace *types.Tra
 
 		ar := eval.Evaluate(trace, &l14[i])
 		p.applyDynamicThreshold(ar, &l14[i])
+		annotateDiagnostics(ar, &l14[i])
 		result.Results = append(result.Results, *ar)
 		result.TotalCost += ar.Cost
 		result.TotalDurationMS += ar.DurationMS
@@ -176,29 +178,34 @@ func (p *Pipeline) EvaluateBatchWithBudget(ctx context.Context, trace *types.Tra
 			// Re-check cancellation inside the goroutine in case ctx fired
 			// between dispatch and execution.
 			if err := ctx.Err(); err != nil {
-				l56Results[idx] = types.AssertionResult{
+				ar := types.AssertionResult{
 					AssertionID: l56[idx].AssertionID,
 					Status:      types.StatusHardFail,
 					Score:       0.0,
 					Explanation: fmt.Sprintf("evaluation cancelled: %v", err),
 					RequestID:   l56[idx].RequestID,
 				}
+				annotateDiagnostics(&ar, &l56[idx])
+				l56Results[idx] = ar
 				return
 			}
 
 			eval, err := p.registry.Get(l56[idx].Type)
 			if err != nil {
-				l56Results[idx] = types.AssertionResult{
+				ar := types.AssertionResult{
 					AssertionID: l56[idx].AssertionID,
 					Status:      types.StatusHardFail,
 					Score:       0.0,
 					Explanation: fmt.Sprintf("unknown assertion type: %s", l56[idx].Type),
 					RequestID:   l56[idx].RequestID,
 				}
+				annotateDiagnostics(&ar, &l56[idx])
+				l56Results[idx] = ar
 				return
 			}
 			ar := eval.Evaluate(trace, &l56[idx])
 			p.applyDynamicThreshold(ar, &l56[idx])
+			annotateDiagnostics(ar, &l56[idx])
 			l56Results[idx] = *ar
 			l56Costs[idx] = ar.Cost
 			l56Durations[idx] = ar.DurationMS
