@@ -64,17 +64,22 @@ type Policy struct {
 	Severity          string                `yaml:"severity" json:"severity,omitempty"`
 }
 
-// LayerLimit is a per-layer ceiling on hard or soft fails.
+// LayerLimit is a per-layer ceiling on hard or soft fails. Both caps
+// are pointers so an unset field (no rule) is distinguishable from an
+// explicit zero (block on any failure of that severity). Mirrors the
+// MaxCostUSD pattern.
 type LayerLimit struct {
-	MaxHardFails int    `yaml:"max_hard_fails" json:"max_hard_fails"`
-	MaxSoftFails int    `yaml:"max_soft_fails" json:"max_soft_fails,omitempty"`
+	MaxHardFails *int   `yaml:"max_hard_fails" json:"max_hard_fails,omitempty"`
+	MaxSoftFails *int   `yaml:"max_soft_fails" json:"max_soft_fails,omitempty"`
 	Severity     string `yaml:"severity" json:"severity,omitempty"`
 }
 
 // ClassLimit caps the number of assertions tagged with a given
-// FailureClass (broken_code, flaky_judge, ...).
+// FailureClass (broken_code, flaky_judge, ...). Max is a pointer so
+// `failure_classes: { broken_code: {} }` (no rule) is distinguishable
+// from `failure_classes: { broken_code: {max: 0} }` (block on any).
 type ClassLimit struct {
-	Max      int    `yaml:"max" json:"max"`
+	Max      *int   `yaml:"max" json:"max,omitempty"`
 	Severity string `yaml:"severity" json:"severity,omitempty"`
 }
 
@@ -154,8 +159,11 @@ func (p *Policy) Validate() error {
 		if layer < 0 || layer > 8 {
 			return fmt.Errorf("layer key %d out of range (must be 0–8)", layer)
 		}
-		if lim.MaxHardFails < 0 || lim.MaxSoftFails < 0 {
-			return fmt.Errorf("layer %d: limits must be non-negative", layer)
+		if lim.MaxHardFails != nil && *lim.MaxHardFails < 0 {
+			return fmt.Errorf("layer %d: max_hard_fails must be non-negative", layer)
+		}
+		if lim.MaxSoftFails != nil && *lim.MaxSoftFails < 0 {
+			return fmt.Errorf("layer %d: max_soft_fails must be non-negative", layer)
 		}
 		if err := validateSeverity(fmt.Sprintf("layer %d", layer), lim.Severity); err != nil {
 			return err
@@ -165,7 +173,7 @@ func (p *Policy) Validate() error {
 		return fmt.Errorf("max_cost_usd must be non-negative; got %f", *p.MaxCostUSD)
 	}
 	for class, lim := range p.FailureClasses {
-		if lim.Max < 0 {
+		if lim.Max != nil && *lim.Max < 0 {
 			return fmt.Errorf("failure class %q: max must be non-negative", class)
 		}
 		if err := validateSeverity(fmt.Sprintf("failure_class %s", class), lim.Severity); err != nil {
@@ -225,18 +233,20 @@ func Evaluate(p *Policy, results []types.AssertionResult, totalCost float64, bas
 		}
 		for layer, lim := range p.Layers {
 			sev := resolvedSeverity(lim.Severity, p.Severity)
-			if got := hardByLayer[layer]; got > lim.MaxHardFails {
-				out.Violations = append(out.Violations, Violation{
-					Rule:     fmt.Sprintf("layer.%d.max_hard_fails", layer),
-					Detail:   fmt.Sprintf("got %d hard failures on layer %d (limit %d)", got, layer, lim.MaxHardFails),
-					Severity: sev,
-				})
+			if lim.MaxHardFails != nil {
+				if got := hardByLayer[layer]; got > *lim.MaxHardFails {
+					out.Violations = append(out.Violations, Violation{
+						Rule:     fmt.Sprintf("layer.%d.max_hard_fails", layer),
+						Detail:   fmt.Sprintf("got %d hard failures on layer %d (limit %d)", got, layer, *lim.MaxHardFails),
+						Severity: sev,
+					})
+				}
 			}
-			if lim.MaxSoftFails > 0 {
-				if got := softByLayer[layer]; got > lim.MaxSoftFails {
+			if lim.MaxSoftFails != nil {
+				if got := softByLayer[layer]; got > *lim.MaxSoftFails {
 					out.Violations = append(out.Violations, Violation{
 						Rule:     fmt.Sprintf("layer.%d.max_soft_fails", layer),
-						Detail:   fmt.Sprintf("got %d soft failures on layer %d (limit %d)", got, layer, lim.MaxSoftFails),
+						Detail:   fmt.Sprintf("got %d soft failures on layer %d (limit %d)", got, layer, *lim.MaxSoftFails),
 						Severity: sev,
 					})
 				}
@@ -262,10 +272,13 @@ func Evaluate(p *Policy, results []types.AssertionResult, totalCost float64, bas
 			}
 		}
 		for class, lim := range p.FailureClasses {
-			if got := counts[class]; got > lim.Max {
+			if lim.Max == nil {
+				continue
+			}
+			if got := counts[class]; got > *lim.Max {
 				out.Violations = append(out.Violations, Violation{
 					Rule:     fmt.Sprintf("failure_class.%s", class),
-					Detail:   fmt.Sprintf("got %d %s failures (limit %d)", got, class, lim.Max),
+					Detail:   fmt.Sprintf("got %d %s failures (limit %d)", got, class, *lim.Max),
 					Severity: resolvedSeverity(lim.Severity, p.Severity),
 				})
 			}

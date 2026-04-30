@@ -68,12 +68,12 @@ const stochasticBoundaryEps = 0.05
 //  6. type ∈ {schema, constraint, trace, trace_tree, content, plugin}
 //     hard_fail → broken_code
 //  7. Any soft_fail not classified above → stochastic_variance
+//     (this includes soft-fails on deterministic layers — a constraint
+//     that soft-fails is "value just outside the threshold", which the
+//     heuristic treats as borderline noise rather than broken code)
 //  8. Anything else → broken_code (most conservative non-empty label)
 func ClassifyFailure(r *AssertionResult) string {
-	if r == nil {
-		return ""
-	}
-	if r.Status == StatusPass {
+	if r == nil || r.Status == StatusPass {
 		return ""
 	}
 
@@ -85,10 +85,9 @@ func ClassifyFailure(r *AssertionResult) string {
 		if r.Judge.HighVarianceFlag {
 			return FailureClassFlakyJudge
 		}
-		if r.Judge.Calibration != nil && r.Judge.Calibration.LabelCount > 0 {
-			if r.Judge.Calibration.CohenKappa < kappaPoorThreshold {
-				return FailureClassBadRubric
-			}
+		cal := r.Judge.Calibration
+		if cal != nil && cal.LabelCount > 0 && cal.CohenKappa < kappaPoorThreshold {
+			return FailureClassBadRubric
 		}
 	}
 

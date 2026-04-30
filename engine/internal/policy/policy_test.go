@@ -15,7 +15,7 @@ func ptr[T any](v T) *T { return &v }
 func TestEvaluate_PassesWhenNoRulesViolated(t *testing.T) {
 	p := &policy.Policy{
 		Layers: map[int]policy.LayerLimit{
-			1: {MaxHardFails: 0},
+			1: {MaxHardFails: ptr(0)},
 		},
 		MaxCostUSD: ptr(1.0),
 	}
@@ -34,7 +34,7 @@ func TestEvaluate_PassesWhenNoRulesViolated(t *testing.T) {
 func TestEvaluate_LayerHardFailLimitTriggersBlock(t *testing.T) {
 	p := &policy.Policy{
 		Layers: map[int]policy.LayerLimit{
-			1: {MaxHardFails: 0},
+			1: {MaxHardFails: ptr(0)},
 		},
 	}
 	results := []types.AssertionResult{
@@ -55,7 +55,7 @@ func TestEvaluate_LayerHardFailLimitTriggersBlock(t *testing.T) {
 func TestEvaluate_LayerSeverityCanDowngradeToWarn(t *testing.T) {
 	p := &policy.Policy{
 		Layers: map[int]policy.LayerLimit{
-			1: {MaxHardFails: 0, Severity: policy.SeverityWarn},
+			1: {MaxHardFails: ptr(0), Severity: policy.SeverityWarn},
 		},
 	}
 	results := []types.AssertionResult{
@@ -64,6 +64,40 @@ func TestEvaluate_LayerSeverityCanDowngradeToWarn(t *testing.T) {
 	r := policy.Evaluate(p, results, 0, nil)
 	if r.ExitCode() != policy.ExitWarn {
 		t.Errorf("ExitCode = %d, want ExitWarn (%d)", r.ExitCode(), policy.ExitWarn)
+	}
+}
+
+func TestEvaluate_ExplicitZeroSoftFailsBlocksOnAnySoftFail(t *testing.T) {
+	// max_soft_fails: 0 must block on any soft fail — pointer semantics
+	// distinguish this from the unset case, which is silent.
+	p := &policy.Policy{
+		Layers: map[int]policy.LayerLimit{
+			6: {MaxSoftFails: ptr(0)},
+		},
+	}
+	results := []types.AssertionResult{
+		{AssertionID: "a1", Type: types.TypeLLMJudge, Status: types.StatusSoftFail, Layer: 6},
+	}
+	r := policy.Evaluate(p, results, 0, nil)
+	if r.ExitCode() != policy.ExitBlock {
+		t.Errorf("explicit max_soft_fails=0 should block; got exit %d", r.ExitCode())
+	}
+}
+
+func TestEvaluate_UnsetSoftFailsLimitIsSilent(t *testing.T) {
+	// MaxSoftFails == nil = no rule. A LayerLimit with only MaxHardFails
+	// must NOT block on soft fails.
+	p := &policy.Policy{
+		Layers: map[int]policy.LayerLimit{
+			6: {MaxHardFails: ptr(0)},
+		},
+	}
+	results := []types.AssertionResult{
+		{AssertionID: "a1", Type: types.TypeLLMJudge, Status: types.StatusSoftFail, Layer: 6},
+	}
+	r := policy.Evaluate(p, results, 0, nil)
+	if !r.Passed() {
+		t.Errorf("unset max_soft_fails must be silent on soft fails; got %+v", r.Violations)
 	}
 }
 
@@ -83,7 +117,7 @@ func TestEvaluate_CostCeilingTriggersBlock(t *testing.T) {
 func TestEvaluate_FailureClassLimitTriggersBlock(t *testing.T) {
 	p := &policy.Policy{
 		FailureClasses: map[string]policy.ClassLimit{
-			types.FailureClassBrokenCode: {Max: 0},
+			types.FailureClassBrokenCode: {Max: ptr(0)},
 		},
 	}
 	results := []types.AssertionResult{
@@ -92,6 +126,23 @@ func TestEvaluate_FailureClassLimitTriggersBlock(t *testing.T) {
 	r := policy.Evaluate(p, results, 0, nil)
 	if r.ExitCode() != policy.ExitBlock {
 		t.Errorf("ExitCode = %d, want %d", r.ExitCode(), policy.ExitBlock)
+	}
+}
+
+func TestEvaluate_FailureClassUnsetMaxIsSilent(t *testing.T) {
+	// `failure_classes: { broken_code: {} }` decodes to ClassLimit{Max:nil}
+	// which is "no rule" — must not block.
+	p := &policy.Policy{
+		FailureClasses: map[string]policy.ClassLimit{
+			types.FailureClassBrokenCode: {},
+		},
+	}
+	results := []types.AssertionResult{
+		{AssertionID: "a1", Type: types.TypeSchema, Status: types.StatusHardFail, Layer: 1, FailureClass: types.FailureClassBrokenCode},
+	}
+	r := policy.Evaluate(p, results, 0, nil)
+	if !r.Passed() {
+		t.Errorf("class limit with nil Max must be silent; got %+v", r.Violations)
 	}
 }
 
@@ -180,14 +231,17 @@ failure_classes:
 		if p.BlockOnRegression == nil || !*p.BlockOnRegression {
 			t.Errorf("block_on_regression not loaded")
 		}
-		if p.Layers[1].MaxHardFails != 0 {
-			t.Errorf("layer 1 limit not loaded")
+		if l1 := p.Layers[1]; l1.MaxHardFails == nil || *l1.MaxHardFails != 0 {
+			t.Errorf("layer 1 max_hard_fails not loaded: %v", l1.MaxHardFails)
 		}
-		if p.Layers[6].Severity != "warn" {
+		if l6 := p.Layers[6]; l6.Severity != "warn" {
 			t.Errorf("layer 6 severity not loaded")
 		}
-		if p.FailureClasses[types.FailureClassFlakyJudge].Max != 3 {
-			t.Errorf("flaky_judge max not loaded")
+		if l6 := p.Layers[6]; l6.MaxSoftFails == nil || *l6.MaxSoftFails != 5 {
+			t.Errorf("layer 6 max_soft_fails not loaded: %v", l6.MaxSoftFails)
+		}
+		if cl := p.FailureClasses[types.FailureClassFlakyJudge]; cl.Max == nil || *cl.Max != 3 {
+			t.Errorf("flaky_judge max not loaded: %v", cl.Max)
 		}
 	}
 }
@@ -235,7 +289,7 @@ func TestEvaluate_AggregateLayerCap(t *testing.T) {
 	// every real layer. Useful for "no more than 2 hard fails total".
 	p := &policy.Policy{
 		Layers: map[int]policy.LayerLimit{
-			0: {MaxHardFails: 1},
+			0: {MaxHardFails: ptr(1)},
 		},
 	}
 	results := []types.AssertionResult{
