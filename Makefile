@@ -1,7 +1,11 @@
-.PHONY: all engine engine-test engine-lint engine-benchmark sdk-python sdk-python-test sdk-python-lint security protocol-benchmark test clean dev-setup
+.PHONY: all engine engine-test engine-lint engine-benchmark sdk-python sdk-python-test sdk-python-lint security protocol-benchmark test clean dev-setup verify-versions
+
+# ── Version source-of-truth ──
+verify-versions:
+	bash scripts/verify-versions.sh
 
 # ── Engine ──
-engine:
+engine: verify-versions
 	cd engine && go build -o ../bin/attest-engine ./cmd/attest-engine/
 
 engine-test:
@@ -34,7 +38,7 @@ protocol-benchmark:
 	@echo "Compare results against targets in architecture doc"
 
 # ── All ──
-test: engine-test sdk-python-test
+test: verify-versions engine-test sdk-python-test
 
 clean:
 	rm -rf bin/ sdks/python/dist/ sdks/python/*.egg-info

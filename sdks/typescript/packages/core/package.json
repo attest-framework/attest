@@ -1,6 +1,6 @@
 {
   "name": "@attest-ai/core",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "description": "Attest SDK for testing AI agents — protocol types, codec, trace builder, assertion DSL",
   "type": "module",
   "main": "./dist/cjs/index.cjs",

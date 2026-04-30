@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/attest-ai/attest/engine/internal/buildinfo"
 	"github.com/attest-ai/attest/engine/pkg/types"
 )
 
@@ -109,8 +110,8 @@ func TestServer_Initialize(t *testing.T) {
 	if err := json.Unmarshal(resp.Result, &result); err != nil {
 		t.Fatalf("unmarshal result: %v", err)
 	}
-	if result.EngineVersion != engineVersion {
-		t.Errorf("EngineVersion = %q, want %q", result.EngineVersion, engineVersion)
+	if result.EngineVersion != buildinfo.Version {
+		t.Errorf("EngineVersion = %q, want %q", result.EngineVersion, buildinfo.Version)
 	}
 	if !result.Compatible {
 		t.Errorf("Compatible = false, want true")

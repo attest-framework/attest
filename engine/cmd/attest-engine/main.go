@@ -10,16 +10,15 @@ import (
 	"path/filepath"
 	"syscall"
 
+	"github.com/attest-ai/attest/engine/internal/buildinfo"
 	"github.com/attest-ai/attest/engine/internal/server"
 )
-
-const version = "0.6.0"
 
 func main() {
 	if len(os.Args) > 1 {
 		switch os.Args[1] {
 		case "version":
-			fmt.Printf("attest-engine %s\n", version)
+			fmt.Printf("attest-engine %s\n", buildinfo.Version)
 			os.Exit(0)
 		case "cache":
 			handleCacheCommand(os.Args[2:])
@@ -62,7 +61,7 @@ func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
-	logger.Info("engine starting", "version", version)
+	logger.Info("engine starting", "version", buildinfo.Version)
 	if err := srv.Run(ctx); err != nil {
 		logger.Error("engine error", "err", err)
 		os.Exit(1)
