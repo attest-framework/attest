@@ -23,6 +23,9 @@ func main() {
 		case "cache":
 			handleCacheCommand(os.Args[2:])
 			return
+		case "calibrate":
+			handleCalibrateCommand(os.Args[2:])
+			return
 		}
 	}
 

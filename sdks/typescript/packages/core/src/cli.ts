@@ -9,6 +9,12 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
 import { VERSION } from "./version.js";
+import {
+  computeAgreement,
+  loadLabelsCSV,
+  loadLabelsJSONL,
+  type LabelPair,
+} from "./calibration.js";
 
 function cacheDir(): string {
   const envOverride = process.env["ATTEST_CACHE_DIR"];
@@ -151,6 +157,11 @@ export function main(argv: string[] = process.argv.slice(2)): void {
     process.exit(0);
   }
 
+  if (args[0] === "calibrate") {
+    cmdCalibrate(args.slice(1));
+    process.exit(0);
+  }
+
   process.stderr.write(
     "Usage: attest <command>\n\n" +
     "Commands:\n" +
@@ -158,9 +169,124 @@ export function main(argv: string[] = process.argv.slice(2)): void {
     "  init            Scaffold a test project\n" +
     "  validate        Validate test suite\n" +
     "  cache stats     Show cache statistics\n" +
-    "  cache clear     Clear cache database\n",
+    "  cache clear     Clear cache database\n" +
+    "  calibrate       Compute judge agreement metrics over labeled data\n",
   );
   process.exit(args.length === 0 ? 0 : 1);
+}
+
+interface CalibrateOptions {
+  labels: string;
+  rubric: string;
+  rubricVersion: string;
+  threshold: number;
+}
+
+function parseCalibrateArgs(args: string[]): CalibrateOptions {
+  const opts: CalibrateOptions = {
+    labels: "",
+    rubric: "default",
+    rubricVersion: "",
+    threshold: 0.5,
+  };
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i]!;
+    const next = args[i + 1];
+    if (arg === "--labels") {
+      if (next === undefined) throw new Error("--labels requires a path");
+      opts.labels = next;
+      i++;
+    } else if (arg === "--rubric") {
+      if (next === undefined) throw new Error("--rubric requires a name");
+      opts.rubric = next;
+      i++;
+    } else if (arg === "--rubric-version") {
+      if (next === undefined) throw new Error("--rubric-version requires a value");
+      opts.rubricVersion = next;
+      i++;
+    } else if (arg === "--threshold") {
+      if (next === undefined) throw new Error("--threshold requires a number");
+      const parsed = Number(next);
+      if (next.trim() === "" || Number.isNaN(parsed)) {
+        throw new Error(`--threshold value ${JSON.stringify(next)} is not a number`);
+      }
+      opts.threshold = parsed;
+      i++;
+    } else {
+      throw new Error(`unknown calibrate flag: ${arg}`);
+    }
+  }
+  if (!opts.labels) {
+    throw new Error("--labels is required");
+  }
+  return opts;
+}
+
+function cmdCalibrate(args: string[]): void {
+  let opts: CalibrateOptions;
+  try {
+    opts = parseCalibrateArgs(args);
+  } catch (err) {
+    process.stderr.write(`calibrate: ${(err as Error).message}\n`);
+    process.exit(2);
+    return;
+  }
+
+  const text = fs.readFileSync(opts.labels, "utf-8");
+  const ext = path.extname(opts.labels).toLowerCase();
+  let records;
+  try {
+    if (ext === ".jsonl" || ext === ".ndjson") {
+      records = loadLabelsJSONL(text);
+    } else if (ext === ".csv") {
+      records = loadLabelsCSV(text);
+    } else if (text.trimStart().startsWith("{")) {
+      records = loadLabelsJSONL(text);
+    } else {
+      records = loadLabelsCSV(text);
+    }
+  } catch (err) {
+    process.stderr.write(`calibrate: ${(err as Error).message}\n`);
+    process.exit(1);
+    return;
+  }
+
+  const pairs: LabelPair[] = records
+    .filter((r) => r.judgeKnown)
+    .map((r) => ({ human: r.humanLabel, judge: r.judgeScore }));
+  const missing = records.filter((r) => !r.judgeKnown).length;
+  if (pairs.length === 0) {
+    process.stderr.write(
+      `calibrate: no rows had judge_score (${missing} rows missing); pre-score the labels file first\n`,
+    );
+    process.exit(1);
+    return;
+  }
+
+  let result;
+  try {
+    result = computeAgreement(pairs, opts.threshold);
+  } catch (err) {
+    process.stderr.write(`calibrate: ${(err as Error).message}\n`);
+    process.exit(1);
+    return;
+  }
+
+  const output = {
+    rubric_name: opts.rubric,
+    rubric_version: opts.rubricVersion,
+    threshold: result.threshold,
+    label_count: result.n,
+    agreement: round3(result.agreement),
+    cohen_kappa: round3(result.cohenKappa),
+    roc_auc: round3(result.rocAuc),
+    missing_judge: missing,
+  };
+  process.stdout.write(JSON.stringify(output, null, 2) + "\n");
+}
+
+function round3(x: number): number {
+  return Math.round(x * 1000) / 1000;
 }
 
 // Run when executed directly

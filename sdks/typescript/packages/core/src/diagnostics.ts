@@ -151,6 +151,19 @@ function appendJudgeMetadata(lines: string[], meta: JudgeMetadata): void {
       `      samples:    [${formatted}] mean=${mean} stddev=${stddev}${flag}`,
     );
   }
+  const probes = meta.bias_probes ?? [];
+  if (probes.length > 0) {
+    const formatted = probes
+      .map((p) => `${p.name} Δ${p.delta >= 0 ? "+" : ""}${p.delta.toFixed(2)}`)
+      .join(", ");
+    lines.push(`      bias:       ${formatted}`);
+  }
+  if (meta.calibration) {
+    const c = meta.calibration;
+    lines.push(
+      `      calibrated: ${c.label_count} labels, agreement=${c.agreement.toFixed(2)}, κ=${c.cohen_kappa.toFixed(2)}`,
+    );
+  }
 }
 
 export function renderSummary(

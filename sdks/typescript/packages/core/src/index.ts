@@ -42,6 +42,13 @@ export type { AttestPlugin, PluginResult } from "./plugins.js";
 export { PluginRegistry, executePluginAssertion } from "./plugins.js";
 export { ContinuousEvalRunner, Sampler, AlertDispatcher } from "./continuous.js";
 export {
+  computeAgreement,
+  loadLabelsCSV,
+  loadLabelsJSONL,
+  promptHash,
+} from "./calibration.js";
+export type { AgreementResult, LabelPair, LabeledRecord } from "./calibration.js";
+export {
   FRIENDLY_USER,
   ADVERSARIAL_USER,
   CONFUSED_USER,

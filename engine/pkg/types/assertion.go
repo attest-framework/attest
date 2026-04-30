@@ -64,14 +64,36 @@ type Assertion struct {
 // version, and how stable the score is across repeated samples. Only
 // populated for llm_judge results.
 type JudgeMetadata struct {
-	Model            string    `json:"model,omitempty"`
-	RubricName       string    `json:"rubric_name,omitempty"`
-	RubricVersion    string    `json:"rubric_version,omitempty"`
-	PromptHash       string    `json:"prompt_hash,omitempty"`
-	SampleScores     []float64 `json:"sample_scores,omitempty"`
-	ScoreMean        float64   `json:"score_mean,omitempty"`
-	ScoreStddev      float64   `json:"score_stddev,omitempty"`
-	HighVarianceFlag bool      `json:"high_variance,omitempty"`
+	Model            string          `json:"model,omitempty"`
+	RubricName       string          `json:"rubric_name,omitempty"`
+	RubricVersion    string          `json:"rubric_version,omitempty"`
+	PromptHash       string          `json:"prompt_hash,omitempty"`
+	SampleScores     []float64       `json:"sample_scores,omitempty"`
+	ScoreMean        float64         `json:"score_mean,omitempty"`
+	ScoreStddev      float64         `json:"score_stddev,omitempty"`
+	HighVarianceFlag bool            `json:"high_variance,omitempty"`
+	BiasProbes       []BiasProbe     `json:"bias_probes,omitempty"`
+	Calibration      *JudgeAgreement `json:"calibration,omitempty"`
+}
+
+// BiasProbe records the result of one judge-bias mutation. Score is the
+// judge score on the mutated input; Delta is `Score - baseline_score`. A
+// well-calibrated judge has |Delta| close to zero across all probes.
+type BiasProbe struct {
+	Name  string  `json:"name"`
+	Score float64 `json:"score"`
+	Delta float64 `json:"delta"`
+}
+
+// JudgeAgreement summarises how closely a judge's labels match a stored
+// human-labeled calibration set, computed against the
+// (rubric_name, rubric_version, prompt_hash) key. Empty when no calibration
+// data exists for this judge configuration.
+type JudgeAgreement struct {
+	LabelCount int     `json:"label_count"`
+	Agreement  float64 `json:"agreement"`
+	CohenKappa float64 `json:"cohen_kappa"`
+	ROCAUC     float64 `json:"roc_auc,omitempty"`
 }
 
 // AssertionResult holds the result of evaluating a single assertion.
