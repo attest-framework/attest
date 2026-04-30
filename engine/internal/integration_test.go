@@ -22,7 +22,9 @@ func newE2EServer(t *testing.T) (io.WriteCloser, io.ReadCloser) {
 
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 	srv := server.New(stdinR, stdoutW, logger)
-	server.RegisterBuiltinHandlers(srv)
+	if err := server.RegisterBuiltinHandlers(srv); err != nil {
+		t.Fatalf("RegisterBuiltinHandlers: %v", err)
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	t.Cleanup(func() {
