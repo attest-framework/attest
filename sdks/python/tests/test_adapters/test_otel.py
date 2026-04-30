@@ -8,8 +8,14 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from attest._proto.types import STEP_LLM_CALL, STEP_TOOL_CALL
-from attest.adapters.otel import OTelAdapter, _require_numeric_attr
+from attest._proto.types import (
+    STEP_AGENT_CALL,
+    STEP_LLM_CALL,
+    STEP_RETRIEVAL,
+    STEP_TOOL_CALL,
+)
+from attest.adapters.otel import OTelAdapter, _require_numeric_attr, to_otel_spans
+from attest.trace import TraceBuilder
 
 
 def _make_span(
@@ -91,6 +97,7 @@ class TestOTelAdapterFromSpans:
         assert step.type == STEP_LLM_CALL
         assert step.args is not None
         assert step.args.get("model") == "gpt-4.1"
+        assert step.args.get("operation") == "chat"
         assert step.result is not None
         assert step.result.get("completion") == "Hello world"
 
@@ -260,6 +267,205 @@ class TestOTelAdapterFromSpans:
         assert trace.agent_id == "inst-agent"
 
 
+class TestOTelAdapterGenAiOperationCoverage:
+    """New OTel GenAI operation names: text_completion, embeddings, invoke_agent, execute_tool."""
+
+    def test_text_completion_classified_as_llm_call(self) -> None:
+        span = _make_span(
+            "text_completion gpt-4.1",
+            {
+                "gen_ai.operation.name": "text_completion",
+                "gen_ai.request.model": "gpt-4.1",
+                "gen_ai.prompt": "Once upon a time",
+                "gen_ai.completion": "there was a llama.",
+            },
+        )
+        with _otel_available():
+            trace = OTelAdapter.from_spans([span])
+        assert trace.steps[0].type == STEP_LLM_CALL
+        assert trace.steps[0].args is not None
+        assert trace.steps[0].args.get("operation") == "text_completion"
+
+    def test_embeddings_classified_as_llm_call(self) -> None:
+        span = _make_span(
+            "embeddings text-embedding-3-small",
+            {
+                "gen_ai.operation.name": "embeddings",
+                "gen_ai.request.model": "text-embedding-3-small",
+                "gen_ai.usage.input_tokens": 8,
+            },
+        )
+        with _otel_available():
+            trace = OTelAdapter.from_spans([span])
+        assert trace.steps[0].type == STEP_LLM_CALL
+        assert trace.steps[0].args is not None
+        assert trace.steps[0].args.get("operation") == "embeddings"
+
+    def test_execute_tool_classified_as_tool_call(self) -> None:
+        span = _make_span(
+            "execute_tool web_search",
+            {
+                "gen_ai.operation.name": "execute_tool",
+                "gen_ai.tool.name": "web_search",
+                "gen_ai.tool.call.id": "call_abc",
+            },
+        )
+        with _otel_available():
+            trace = OTelAdapter.from_spans([span])
+        assert trace.steps[0].type == STEP_TOOL_CALL
+        assert trace.steps[0].name == "web_search"
+        assert trace.steps[0].args is not None
+        assert trace.steps[0].args.get("call_id") == "call_abc"
+
+    def test_invoke_agent_classified_as_agent_call(self) -> None:
+        span = _make_span(
+            "invoke_agent researcher",
+            {
+                "gen_ai.operation.name": "invoke_agent",
+                "gen_ai.agent.id": "agent-001",
+                "gen_ai.agent.name": "researcher",
+                "gen_ai.agent.description": "Research assistant",
+            },
+        )
+        with _otel_available():
+            trace = OTelAdapter.from_spans([span])
+        assert trace.steps[0].type == STEP_AGENT_CALL
+        assert trace.steps[0].name == "researcher"
+        assert trace.steps[0].args is not None
+        assert trace.steps[0].args.get("agent_id") == "agent-001"
+        assert trace.steps[0].args.get("description") == "Research assistant"
+
+    def test_retrieval_classified_via_operation_name(self) -> None:
+        span = _make_span(
+            "retrieval",
+            {
+                "gen_ai.operation.name": "retrieval",
+                "gen_ai.retrieval.query": "Capital of France",
+                "gen_ai.retrieval.source": "vector_store",
+                "gen_ai.retrieval.documents.count": 3,
+            },
+        )
+        with _otel_available():
+            trace = OTelAdapter.from_spans([span])
+        assert trace.steps[0].type == STEP_RETRIEVAL
+        assert trace.steps[0].args is not None
+        assert trace.steps[0].args.get("query") == "Capital of France"
+        assert trace.steps[0].args.get("source") == "vector_store"
+        assert trace.steps[0].result is not None
+        assert trace.steps[0].result.get("documents_count") == 3
+
+    def test_retrieval_classified_via_attribute_family(self) -> None:
+        # Producer omits operation.name but emits gen_ai.retrieval.* attrs.
+        span = _make_span(
+            "vector-search",
+            {
+                "gen_ai.retrieval.query": "Paris",
+                "gen_ai.retrieval.documents.count": 5,
+            },
+        )
+        with _otel_available():
+            trace = OTelAdapter.from_spans([span])
+        assert trace.steps[0].type == STEP_RETRIEVAL
+
+
+class TestOTelAdapterAgentHierarchy:
+    """gen_ai.agent.* attributes propagate onto Step.agent_id / agent_role."""
+
+    def test_llm_call_inherits_agent_attributes(self) -> None:
+        span = _make_span(
+            "chat",
+            {
+                "gen_ai.operation.name": "chat",
+                "gen_ai.completion": "ok",
+                "gen_ai.agent.id": "agent-42",
+                "gen_ai.agent.name": "support_bot",
+            },
+        )
+        with _otel_available():
+            trace = OTelAdapter.from_spans([span])
+        step = trace.steps[0]
+        assert step.agent_id == "agent-42"
+        assert step.agent_role == "support_bot"
+
+    def test_tool_call_inherits_agent_attributes(self) -> None:
+        span = _make_span(
+            "execute_tool",
+            {
+                "gen_ai.operation.name": "execute_tool",
+                "gen_ai.tool.name": "calculator",
+                "gen_ai.agent.id": "agent-7",
+                "gen_ai.agent.name": "math_agent",
+            },
+        )
+        with _otel_available():
+            trace = OTelAdapter.from_spans([span])
+        step = trace.steps[0]
+        assert step.agent_id == "agent-7"
+        assert step.agent_role == "math_agent"
+
+    def test_invoke_agent_step_records_agent_identity(self) -> None:
+        span = _make_span(
+            "invoke_agent",
+            {
+                "gen_ai.operation.name": "invoke_agent",
+                "gen_ai.agent.id": "agent-99",
+                "gen_ai.agent.name": "delegator",
+            },
+        )
+        with _otel_available():
+            trace = OTelAdapter.from_spans([span])
+        step = trace.steps[0]
+        assert step.type == STEP_AGENT_CALL
+        assert step.agent_id == "agent-99"
+        assert step.agent_role == "delegator"
+
+    def test_missing_agent_attributes_yield_none(self) -> None:
+        span = _make_span(
+            "chat",
+            {"gen_ai.operation.name": "chat", "gen_ai.completion": "ok"},
+        )
+        with _otel_available():
+            trace = OTelAdapter.from_spans([span])
+        step = trace.steps[0]
+        assert step.agent_id is None
+        assert step.agent_role is None
+
+
+class TestOTelAdapterClassifierStrictness:
+    """Span name fallback is narrow: arbitrary substrings no longer match."""
+
+    def test_arbitrary_span_name_with_chat_substring_does_not_match(self) -> None:
+        # Old behavior: `"chat" in name.lower()` matched "rich-chat-history".
+        # New behavior: only first token equality matches.
+        span = _make_span("rich-chat-history", {"http.method": "GET"})
+        with _otel_available():
+            trace = OTelAdapter.from_spans([span])
+        assert trace.steps == []
+
+    def test_first_token_chat_classified_as_llm_call(self) -> None:
+        # OTel legacy span name format: `chat <model>`.
+        span = _make_span("chat gpt-4.1", {})
+        with _otel_available():
+            trace = OTelAdapter.from_spans([span])
+        assert len(trace.steps) == 1
+        assert trace.steps[0].type == STEP_LLM_CALL
+
+    def test_completion_attribute_alone_classifies_as_llm(self) -> None:
+        # Producer that emits gen_ai.completion but omits operation.name.
+        span = _make_span("anonymous-span", {"gen_ai.completion": "result"})
+        with _otel_available():
+            trace = OTelAdapter.from_spans([span])
+        assert len(trace.steps) == 1
+        assert trace.steps[0].type == STEP_LLM_CALL
+
+    def test_agent_attribute_without_operation_classifies_as_agent(self) -> None:
+        span = _make_span("anonymous-span", {"gen_ai.agent.name": "researcher"})
+        with _otel_available():
+            trace = OTelAdapter.from_spans([span])
+        assert len(trace.steps) == 1
+        assert trace.steps[0].type == STEP_AGENT_CALL
+
+
 class TestRequireNumericAttr:
     """Tests for _require_numeric_attr helper used to read OTel usage counters."""
 
@@ -305,3 +511,274 @@ class TestRequireNumericAttr:
             )
         assert "gen_ai.usage.output_tokens" in str(exc.value)
         assert "list" in str(exc.value)
+
+
+def _valid_span_dict(**overrides: object) -> dict[str, object]:
+    """Build a well-formed OTLP span dict with optional field overrides.
+
+    Use ``overrides`` to vary a single field per test (e.g. ``trace_id="bad"``)
+    while keeping the rest of the shape valid. Pass ``trace_id=None`` to drop
+    the field entirely.
+    """
+    base: dict[str, object] = {
+        "name": "chat",
+        "trace_id": "deadbeefdeadbeefdeadbeefdeadbeef",
+        "span_id": "0000000000000001",
+        "attributes": {"gen_ai.operation.name": "chat", "gen_ai.completion": "ok"},
+        "start_time_unix_nano": 0,
+        "end_time_unix_nano": 1_000_000,
+    }
+    for key, value in overrides.items():
+        if value is None:
+            base.pop(key, None)
+        else:
+            base[key] = value
+    return base
+
+
+class TestFromOtelSpanDictsValidation:
+    """Strict validation of span dict shape: malformed input fails loud."""
+
+    def test_empty_input_yields_empty_trace(self) -> None:
+        with _otel_available():
+            trace = OTelAdapter.from_otel_span_dicts([])
+        assert trace.steps == []
+
+    def test_invalid_trace_id_hex_raises(self) -> None:
+        with _otel_available(), pytest.raises(ValueError, match="trace_id"):
+            OTelAdapter.from_otel_span_dicts([_valid_span_dict(trace_id="not-hex-zzz")])
+
+    def test_non_string_trace_id_raises(self) -> None:
+        with _otel_available(), pytest.raises(ValueError, match="trace_id"):
+            OTelAdapter.from_otel_span_dicts([_valid_span_dict(trace_id=12345)])
+
+    def test_invalid_parent_span_id_raises(self) -> None:
+        with _otel_available(), pytest.raises(ValueError, match="parent_span_id"):
+            OTelAdapter.from_otel_span_dicts([_valid_span_dict(parent_span_id="not-hex")])
+
+    def test_non_mapping_attributes_raises(self) -> None:
+        with _otel_available(), pytest.raises(ValueError, match="attributes"):
+            OTelAdapter.from_otel_span_dicts([_valid_span_dict(attributes=["not", "a", "dict"])])
+
+    def test_missing_trace_id_treated_as_empty(self) -> None:
+        # Missing trace_id is allowed (some producers omit it on in-process
+        # spans). The resulting Trace just won't carry an otel_-prefixed id.
+        with _otel_available():
+            trace = OTelAdapter.from_otel_span_dicts([_valid_span_dict(trace_id=None)])
+        assert len(trace.steps) == 1
+
+
+class TestExtractLlmStepTokenStrictness:
+    """_extract_llm_step routes token attrs through _require_numeric_attr."""
+
+    def test_non_numeric_input_tokens_raises_typed_error(self) -> None:
+        span = _make_span(
+            "chat",
+            {
+                "gen_ai.operation.name": "chat",
+                "gen_ai.completion": "ok",
+                "gen_ai.usage.input_tokens": ["bad"],
+                "gen_ai.usage.output_tokens": 5,
+            },
+        )
+        with _otel_available(), pytest.raises(TypeError, match="must be numeric"):
+            OTelAdapter.from_spans([span])
+
+
+class TestToOtelSpansExport:
+    """to_otel_spans produces OTLP-compatible dicts with gen_ai.* attributes."""
+
+    def test_empty_trace_yields_empty_spans(self) -> None:
+        trace = TraceBuilder().set_input(prompt="hi").set_output(message="ok").build()
+        assert to_otel_spans(trace) == []
+
+    def test_llm_step_emits_chat_span_with_model(self) -> None:
+        trace = (
+            TraceBuilder()
+            .add_llm_call(
+                name="chat gpt-4.1",
+                args={"model": "gpt-4.1"},
+                result={
+                    "completion": "hello",
+                    "input_tokens": 12,
+                    "output_tokens": 4,
+                    "model": "gpt-4.1",
+                },
+                metadata={"duration_ms": 150},
+            )
+            .set_output(message="hello")
+            .build()
+        )
+        spans = to_otel_spans(trace)
+        assert len(spans) == 1
+        attrs = spans[0]["attributes"]
+        assert attrs["gen_ai.operation.name"] == "chat"
+        assert attrs["gen_ai.request.model"] == "gpt-4.1"
+        assert attrs["gen_ai.response.model"] == "gpt-4.1"
+        assert attrs["gen_ai.completion"] == "hello"
+        assert attrs["gen_ai.usage.input_tokens"] == 12
+        assert attrs["gen_ai.usage.output_tokens"] == 4
+        # Duration encoded in nanoseconds
+        assert spans[0]["end_time_unix_nano"] - spans[0]["start_time_unix_nano"] == 150_000_000
+
+    def test_tool_step_emits_execute_tool_span(self) -> None:
+        trace = (
+            TraceBuilder()
+            .add_tool_call(
+                name="web_search",
+                args={"call_id": "c1", "parameters": {"q": "Paris"}},
+                result={"output": "results"},
+            )
+            .set_output(message="done")
+            .build()
+        )
+        spans = to_otel_spans(trace)
+        assert spans[0]["attributes"]["gen_ai.operation.name"] == "execute_tool"
+        assert spans[0]["attributes"]["gen_ai.tool.name"] == "web_search"
+        assert spans[0]["attributes"]["gen_ai.tool.call.id"] == "c1"
+
+    def test_agent_attributes_round_trip_via_step_fields(self) -> None:
+        trace = (
+            TraceBuilder()
+            .add_llm_call(
+                name="chat",
+                args={"model": "gpt-4.1"},
+                result={"completion": "ok"},
+                agent_id="agent-42",
+                agent_role="support",
+            )
+            .set_output(message="ok")
+            .build()
+        )
+        attrs = to_otel_spans(trace)[0]["attributes"]
+        assert attrs["gen_ai.agent.id"] == "agent-42"
+        assert attrs["gen_ai.agent.name"] == "support"
+
+    def test_operation_override_preserved(self) -> None:
+        # Producer ingested an embeddings span; export should preserve op name.
+        trace = (
+            TraceBuilder()
+            .add_llm_call(
+                name="embeddings text-embedding-3-small",
+                args={"operation": "embeddings", "model": "text-embedding-3-small"},
+                result={},
+            )
+            .set_output(message="")
+            .build()
+        )
+        attrs = to_otel_spans(trace)[0]["attributes"]
+        assert attrs["gen_ai.operation.name"] == "embeddings"
+
+    def test_parent_span_id_chain(self) -> None:
+        # First span is root (no parent); subsequent spans share root as parent.
+        trace = (
+            TraceBuilder()
+            .add_llm_call(
+                name="chat", args={"model": "gpt-4.1"}, result={"completion": "calling tool"}
+            )
+            .add_tool_call(name="search", args={}, result={"output": "x"})
+            .set_output(message="x")
+            .build()
+        )
+        spans = to_otel_spans(trace)
+        assert spans[0]["parent_span_id"] is None
+        assert spans[1]["parent_span_id"] == spans[0]["span_id"]
+
+
+class TestOtelRoundTrip:
+    """to_otel_spans → OTelAdapter.from_otel_span_dicts preserves step structure."""
+
+    def test_round_trip_preserves_step_types(self) -> None:
+        original = (
+            TraceBuilder()
+            .add_llm_call(
+                name="chat gpt-4.1",
+                args={"model": "gpt-4.1"},
+                result={"completion": "hi", "input_tokens": 5, "output_tokens": 2},
+                metadata={"duration_ms": 100},
+            )
+            .add_tool_call(
+                name="search",
+                args={"call_id": "c1", "parameters": {"q": "Paris"}},
+                result={"output": "results"},
+                metadata={"duration_ms": 50},
+            )
+            .set_output(message="hi")
+            .build()
+        )
+        spans = to_otel_spans(original)
+        with _otel_available():
+            roundtripped = OTelAdapter.from_otel_span_dicts(spans)
+
+        assert [s.type for s in roundtripped.steps] == [STEP_LLM_CALL, STEP_TOOL_CALL]
+        assert roundtripped.steps[1].name == "search"
+        assert roundtripped.steps[0].result is not None
+        assert roundtripped.steps[0].result.get("completion") == "hi"
+        assert roundtripped.steps[0].result.get("input_tokens") == 5
+
+    def test_round_trip_preserves_agent_hierarchy(self) -> None:
+        original = (
+            TraceBuilder()
+            .add_llm_call(
+                name="chat",
+                args={"model": "gpt-4.1"},
+                result={"completion": "ok"},
+                agent_id="agent-42",
+                agent_role="support",
+            )
+            .set_output(message="ok")
+            .build()
+        )
+        spans = to_otel_spans(original)
+        with _otel_available():
+            roundtripped = OTelAdapter.from_otel_span_dicts(spans)
+        assert roundtripped.steps[0].agent_id == "agent-42"
+        assert roundtripped.steps[0].agent_role == "support"
+
+    def test_round_trip_preserves_invoke_agent_step(self) -> None:
+        from attest._proto.types import Step
+
+        original = (
+            TraceBuilder()
+            .add_step(
+                Step(
+                    type=STEP_AGENT_CALL,
+                    name="researcher",
+                    args={
+                        "agent_id": "agent-99",
+                        "agent_name": "researcher",
+                        "description": "Research bot",
+                    },
+                    result={"completion": "found it"},
+                    agent_id="agent-99",
+                    agent_role="researcher",
+                )
+            )
+            .set_output(message="found it")
+            .build()
+        )
+        spans = to_otel_spans(original)
+        with _otel_available():
+            roundtripped = OTelAdapter.from_otel_span_dicts(spans)
+        assert roundtripped.steps[0].type == STEP_AGENT_CALL
+        assert roundtripped.steps[0].agent_id == "agent-99"
+
+    def test_round_trip_preserves_retrieval_step(self) -> None:
+        original = (
+            TraceBuilder()
+            .add_retrieval(
+                name="vector_search",
+                args={"query": "Paris", "source": "vector_store"},
+                result={"documents_count": 3},
+            )
+            .set_output(message="ok")
+            .build()
+        )
+        spans = to_otel_spans(original)
+        with _otel_available():
+            roundtripped = OTelAdapter.from_otel_span_dicts(spans)
+        assert roundtripped.steps[0].type == STEP_RETRIEVAL
+        assert roundtripped.steps[0].args is not None
+        assert roundtripped.steps[0].args.get("query") == "Paris"
+        assert roundtripped.steps[0].result is not None
+        assert roundtripped.steps[0].result.get("documents_count") == 3
