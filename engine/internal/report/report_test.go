@@ -206,7 +206,7 @@ func TestGenerateJSONReport_AllPass(t *testing.T) {
 		},
 	}
 
-	output, err := GenerateJSONReport(results, 0.03, 4)
+	output, err := GenerateJSONReport(results, 0.03, 4, ReportOptions{Version: ReportVersionV1})
 	if err != nil {
 		t.Fatalf("GenerateJSONReport failed: %v", err)
 	}
@@ -277,7 +277,7 @@ func TestGenerateJSONReport_WithFailures(t *testing.T) {
 		},
 	}
 
-	output, err := GenerateJSONReport(results, 0.03, 4)
+	output, err := GenerateJSONReport(results, 0.03, 4, ReportOptions{Version: ReportVersionV1})
 	if err != nil {
 		t.Fatalf("GenerateJSONReport failed: %v", err)
 	}
@@ -369,7 +369,7 @@ func TestGenerateJSONReport_Golden_AllPass(t *testing.T) {
 		},
 	}
 
-	output, err := GenerateJSONReport(results, 0.03, 4)
+	output, err := GenerateJSONReport(results, 0.03, 4, ReportOptions{Version: ReportVersionV1})
 	if err != nil {
 		t.Fatalf("GenerateJSONReport failed: %v", err)
 	}
@@ -441,7 +441,7 @@ func TestGenerateJSONReport_Golden_Mixed(t *testing.T) {
 		},
 	}
 
-	output, err := GenerateJSONReport(results, 0.03, 4)
+	output, err := GenerateJSONReport(results, 0.03, 4, ReportOptions{Version: ReportVersionV1})
 	if err != nil {
 		t.Fatalf("GenerateJSONReport failed: %v", err)
 	}
