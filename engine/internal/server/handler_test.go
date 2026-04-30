@@ -434,3 +434,48 @@ func TestHandler_Shutdown_TracksAssertionCount(t *testing.T) {
 		t.Errorf("AssertionsEvaluated = %d, want >= 1 after submit_plugin_result", result.AssertionsEvaluated)
 	}
 }
+
+func TestBuildRateLimiterConfig_PerProviderEnv(t *testing.T) {
+	t.Setenv("ATTEST_RATE_LIMIT_OPENAI", "240")
+	t.Setenv("ATTEST_RATE_LIMIT_OPENAI_BURST", "20")
+	t.Setenv("ATTEST_JUDGE_RPM", "999")
+	t.Setenv("ATTEST_JUDGE_BURST", "999")
+
+	cfg := buildRateLimiterConfig("openai")
+	if cfg.RequestsPerMinute != 240 {
+		t.Errorf("RequestsPerMinute = %v, want 240 (provider-specific takes precedence)", cfg.RequestsPerMinute)
+	}
+	if cfg.Burst != 20 {
+		t.Errorf("Burst = %d, want 20", cfg.Burst)
+	}
+}
+
+func TestBuildRateLimiterConfig_LegacyFallback(t *testing.T) {
+	t.Setenv("ATTEST_RATE_LIMIT_OPENAI", "")
+	t.Setenv("ATTEST_RATE_LIMIT_OPENAI_BURST", "")
+	t.Setenv("ATTEST_JUDGE_RPM", "180")
+	t.Setenv("ATTEST_JUDGE_BURST", "15")
+
+	cfg := buildRateLimiterConfig("openai")
+	if cfg.RequestsPerMinute != 180 {
+		t.Errorf("RequestsPerMinute = %v, want 180 (legacy)", cfg.RequestsPerMinute)
+	}
+	if cfg.Burst != 15 {
+		t.Errorf("Burst = %d, want 15", cfg.Burst)
+	}
+}
+
+func TestBuildRateLimiterConfig_ProviderIsolation(t *testing.T) {
+	t.Setenv("ATTEST_RATE_LIMIT_OPENAI", "300")
+	t.Setenv("ATTEST_RATE_LIMIT_ANTHROPIC", "60")
+
+	openai := buildRateLimiterConfig("openai")
+	anthropic := buildRateLimiterConfig("anthropic")
+
+	if openai.RequestsPerMinute != 300 {
+		t.Errorf("openai RequestsPerMinute = %v, want 300", openai.RequestsPerMinute)
+	}
+	if anthropic.RequestsPerMinute != 60 {
+		t.Errorf("anthropic RequestsPerMinute = %v, want 60", anthropic.RequestsPerMinute)
+	}
+}

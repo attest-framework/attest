@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/attest-ai/attest/engine/internal/assertion"
@@ -251,26 +252,44 @@ func buildJudgeProvider(logger *slog.Logger) (llm.Provider, string, error) {
 	}
 
 	// Wrap with rate limiter.
-	rlCfg := buildRateLimiterConfig()
+	rlCfg := buildRateLimiterConfig("openai")
 	rlp, rlErr := llm.NewRateLimitedProvider(p, rlCfg)
 	if rlErr != nil {
 		logger.Warn("rate limiter init failed, using bare provider", "err", rlErr)
 		return p, "openai", nil
 	}
-	logger.Info("judge provider rate limiter configured", "rpm", rlCfg.RequestsPerMinute, "burst", rlCfg.Burst)
+	logger.Info("judge provider rate limiter configured",
+		"provider", "openai", "rpm", rlCfg.RequestsPerMinute, "burst", rlCfg.Burst)
 	return rlp, "openai", nil
 }
 
-// buildRateLimiterConfig reads ATTEST_JUDGE_RPM and ATTEST_JUDGE_BURST env vars,
-// falling back to DefaultRateLimiterConfig values.
-func buildRateLimiterConfig() llm.RateLimiterConfig {
+// buildRateLimiterConfig resolves the rate-limiter config for a named provider.
+// Lookup order for requests-per-minute:
+//  1. ATTEST_RATE_LIMIT_<PROVIDER> (e.g. ATTEST_RATE_LIMIT_OPENAI)
+//  2. ATTEST_JUDGE_RPM (legacy global)
+//  3. DefaultRateLimiterConfig.RequestsPerMinute
+//
+// Burst follows the same precedence using ATTEST_RATE_LIMIT_<PROVIDER>_BURST
+// then ATTEST_JUDGE_BURST.
+func buildRateLimiterConfig(provider string) llm.RateLimiterConfig {
 	cfg := llm.DefaultRateLimiterConfig
-	if rpm := envInt("ATTEST_JUDGE_RPM", 0); rpm > 0 {
+
+	upper := strings.ToUpper(provider)
+	rpmKey := "ATTEST_RATE_LIMIT_" + upper
+	burstKey := "ATTEST_RATE_LIMIT_" + upper + "_BURST"
+
+	if rpm := envInt(rpmKey, 0); rpm > 0 {
+		cfg.RequestsPerMinute = float64(rpm)
+	} else if rpm := envInt("ATTEST_JUDGE_RPM", 0); rpm > 0 {
 		cfg.RequestsPerMinute = float64(rpm)
 	}
-	if burst := envInt("ATTEST_JUDGE_BURST", 0); burst > 0 {
+
+	if burst := envInt(burstKey, 0); burst > 0 {
+		cfg.Burst = burst
+	} else if burst := envInt("ATTEST_JUDGE_BURST", 0); burst > 0 {
 		cfg.Burst = burst
 	}
+
 	return cfg
 }
 
