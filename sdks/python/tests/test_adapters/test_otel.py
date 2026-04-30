@@ -513,6 +513,96 @@ class TestRequireNumericAttr:
         assert "list" in str(exc.value)
 
 
+class TestFromOtelSpanDictsValidation:
+    """Strict validation of span dict shape: malformed input fails loud."""
+
+    def test_empty_input_yields_empty_trace(self) -> None:
+        with _otel_available():
+            trace = OTelAdapter.from_otel_span_dicts([])
+        assert trace.steps == []
+
+    def test_invalid_trace_id_hex_raises(self) -> None:
+        bad_dict = {
+            "name": "chat",
+            "trace_id": "not-hex-zzz",
+            "span_id": "0000000000000001",
+            "attributes": {"gen_ai.operation.name": "chat", "gen_ai.completion": "ok"},
+            "start_time_unix_nano": 0,
+            "end_time_unix_nano": 1_000_000,
+        }
+        with _otel_available(), pytest.raises(ValueError, match="trace_id"):
+            OTelAdapter.from_otel_span_dicts([bad_dict])
+
+    def test_non_string_trace_id_raises(self) -> None:
+        bad_dict = {
+            "name": "chat",
+            "trace_id": 12345,
+            "span_id": "0000000000000001",
+            "attributes": {"gen_ai.operation.name": "chat", "gen_ai.completion": "ok"},
+            "start_time_unix_nano": 0,
+            "end_time_unix_nano": 1_000_000,
+        }
+        with _otel_available(), pytest.raises(ValueError, match="trace_id"):
+            OTelAdapter.from_otel_span_dicts([bad_dict])
+
+    def test_invalid_parent_span_id_raises(self) -> None:
+        bad_dict = {
+            "name": "chat",
+            "trace_id": "deadbeefdeadbeefdeadbeefdeadbeef",
+            "span_id": "0000000000000002",
+            "parent_span_id": "not-hex",
+            "attributes": {"gen_ai.operation.name": "chat", "gen_ai.completion": "ok"},
+            "start_time_unix_nano": 0,
+            "end_time_unix_nano": 1_000_000,
+        }
+        with _otel_available(), pytest.raises(ValueError, match="parent_span_id"):
+            OTelAdapter.from_otel_span_dicts([bad_dict])
+
+    def test_non_mapping_attributes_raises(self) -> None:
+        bad_dict = {
+            "name": "chat",
+            "trace_id": "deadbeefdeadbeefdeadbeefdeadbeef",
+            "span_id": "0000000000000001",
+            "attributes": ["not", "a", "dict"],
+            "start_time_unix_nano": 0,
+            "end_time_unix_nano": 1_000_000,
+        }
+        with _otel_available(), pytest.raises(ValueError, match="attributes"):
+            OTelAdapter.from_otel_span_dicts([bad_dict])
+
+    def test_missing_trace_id_treated_as_empty(self) -> None:
+        # Missing/empty trace_id is allowed (some producers omit it on
+        # in-process spans). The resulting Trace just won't carry an
+        # otel_-prefixed trace id.
+        dict_span = {
+            "name": "chat",
+            "span_id": "0000000000000001",
+            "attributes": {"gen_ai.operation.name": "chat", "gen_ai.completion": "ok"},
+            "start_time_unix_nano": 0,
+            "end_time_unix_nano": 1_000_000,
+        }
+        with _otel_available():
+            trace = OTelAdapter.from_otel_span_dicts([dict_span])
+        assert len(trace.steps) == 1
+
+
+class TestExtractLlmStepTokenStrictness:
+    """_extract_llm_step routes token attrs through _require_numeric_attr."""
+
+    def test_non_numeric_input_tokens_raises_typed_error(self) -> None:
+        span = _make_span(
+            "chat",
+            {
+                "gen_ai.operation.name": "chat",
+                "gen_ai.completion": "ok",
+                "gen_ai.usage.input_tokens": ["bad"],
+                "gen_ai.usage.output_tokens": 5,
+            },
+        )
+        with _otel_available(), pytest.raises(TypeError, match="must be numeric"):
+            OTelAdapter.from_spans([span])
+
+
 class TestToOtelSpansExport:
     """to_otel_spans produces OTLP-compatible dicts with gen_ai.* attributes."""
 

@@ -28,6 +28,7 @@ from attest._proto.types import (
     STEP_LLM_CALL,
     STEP_RETRIEVAL,
     STEP_TOOL_CALL,
+    Step,
     Trace,
 )
 from attest.adapters._base import BaseAdapter
@@ -318,9 +319,9 @@ class OTelAdapter(BaseAdapter):
         if "gen_ai.completion" in attrs:
             result["completion"] = str(attrs["gen_ai.completion"])
         if "gen_ai.usage.input_tokens" in attrs:
-            result["input_tokens"] = int(attrs["gen_ai.usage.input_tokens"])
+            result["input_tokens"] = _require_numeric_attr(attrs, "gen_ai.usage.input_tokens")
         if "gen_ai.usage.output_tokens" in attrs:
-            result["output_tokens"] = int(attrs["gen_ai.usage.output_tokens"])
+            result["output_tokens"] = _require_numeric_attr(attrs, "gen_ai.usage.output_tokens")
         if "gen_ai.response.model" in attrs:
             result["model"] = str(attrs["gen_ai.response.model"])
 
@@ -384,10 +385,8 @@ class OTelAdapter(BaseAdapter):
         metadata: dict[str, Any],
         agent_id: str | None,
         agent_role: str | None,
-    ) -> Any:
-        """Construct an agent_call Step. Imported lazily to avoid circular import."""
-        from attest._proto.types import Step
-
+    ) -> Step:
+        """Construct an agent_call Step."""
         return Step(
             type=STEP_AGENT_CALL,
             name=name,
@@ -414,6 +413,13 @@ class _DictSpan:
     ``attributes``, ``start_time``, ``end_time``, ``parent``, ``context``.
     Used internally by :meth:`OTelAdapter.from_otel_span_dicts` so the
     round-trip path does not require opentelemetry-sdk to be importable.
+
+    Required keys: ``name``, ``trace_id``, ``span_id``, plus
+    ``start_time_unix_nano``, ``end_time_unix_nano``. Trace and span IDs
+    must be hex strings (32-char and 16-char, but any hex length is
+    accepted). Bad input raises ``ValueError`` with the offending key —
+    no silent fallback to zero, since the dict source is normally our
+    own ``to_otel_spans`` and a parse error means the data is malformed.
     """
 
     __slots__ = ("name", "attributes", "start_time", "end_time", "parent", "context")
@@ -421,29 +427,45 @@ class _DictSpan:
     def __init__(self, data: dict[str, Any]) -> None:
         self.name: str = str(data.get("name", ""))
         attrs = data.get("attributes") or {}
-        self.attributes: dict[str, Any] = dict(attrs) if isinstance(attrs, dict) else {}
+        if not isinstance(attrs, dict):
+            raise ValueError(
+                f"OTLP span dict 'attributes' must be a mapping; got {type(attrs).__name__}"
+            )
+        self.attributes: dict[str, Any] = dict(attrs)
         self.start_time: int | None = data.get("start_time_unix_nano")
         self.end_time: int | None = data.get("end_time_unix_nano")
 
         parent_id = data.get("parent_span_id")
         self.parent = _DictSpanParent(parent_id) if parent_id else None
 
-        trace_id_hex = str(data.get("trace_id", ""))
-        try:
-            trace_id_int = int(trace_id_hex, 16) if trace_id_hex else 0
-        except ValueError:
-            trace_id_int = 0
-        self.context = _DictSpanContext(trace_id_int)
+        trace_id_hex = data.get("trace_id")
+        self.context = _DictSpanContext(_parse_hex_id(trace_id_hex, "trace_id"))
+
+
+def _parse_hex_id(value: Any, field: str) -> int:
+    """Parse a hex-encoded ID. Empty/None → 0. Invalid hex → ValueError.
+
+    Distinguishes "absent" (acceptable, returns 0 for downstream
+    ``format(..., "032x")``) from "present but malformed" (a producer
+    bug worth surfacing).
+    """
+    if value is None or value == "":
+        return 0
+    if not isinstance(value, str):
+        raise ValueError(
+            f"OTLP span dict {field!r} must be a hex string; got {type(value).__name__}"
+        )
+    try:
+        return int(value, 16)
+    except ValueError as exc:
+        raise ValueError(f"OTLP span dict {field!r} is not valid hex: {value!r}") from exc
 
 
 class _DictSpanParent:
     __slots__ = ("span_id",)
 
-    def __init__(self, span_id_hex: str) -> None:
-        try:
-            self.span_id = int(span_id_hex, 16)
-        except ValueError:
-            self.span_id = 0
+    def __init__(self, span_id_hex: Any) -> None:
+        self.span_id = _parse_hex_id(span_id_hex, "parent_span_id")
 
 
 class _DictSpanContext:
@@ -485,6 +507,17 @@ def to_otel_spans(trace: Trace) -> list[dict[str, Any]]:
     ``gen_ai.agent.name``. Token usage and model identity round-trip via
     the standard ``gen_ai.usage.*`` and ``gen_ai.{request,response}.model``
     attribute families.
+
+    What does NOT round-trip (by design — the contract is step-level):
+      - ``Trace.input`` is not represented in OTLP spans.
+      - ``Trace.metadata.latency_ms`` is recomputed from root-span duration
+        on re-ingest, which equals the first step's ``duration_ms``. If
+        the original Trace had a separately-set ``latency_ms``, it is lost.
+      - Producers must keep ``args["operation"]`` consistent with
+        ``step.type`` (e.g. ``embeddings`` is a valid override on an
+        ``llm_call`` step, but ``execute_tool`` is not). A contradictory
+        override produces an OTLP span that re-ingests with a different
+        step type.
 
     Args:
         trace: Attest Trace to export.
