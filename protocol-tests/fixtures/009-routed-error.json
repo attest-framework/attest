@@ -1,0 +1,8 @@
+{
+  "name": "routed-error",
+  "description": "An error response with a matching pending id should reject the pending request without producing a diagnostic.",
+  "lines": ["{\"jsonrpc\":\"2.0\",\"id\":11,\"error\":{\"code\":3001,\"message\":\"routed\"}}"],
+  "prePending": [11],
+  "expectedDiagnostics": [],
+  "expectedDesync": false
+}

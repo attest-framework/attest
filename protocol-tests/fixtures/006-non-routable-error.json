@@ -1,0 +1,9 @@
+{
+  "name": "non-routable-error",
+  "description": "An RPC error response whose id has no matching pending request must surface a non_routable_error diagnostic so engine bugs become visible.",
+  "lines": ["{\"jsonrpc\":\"2.0\",\"id\":99999,\"error\":{\"code\":3001,\"message\":\"engine error\"}}"],
+  "expectedDiagnostics": [
+    { "kind": "non_routable_error", "messageContains": "engine error" }
+  ],
+  "expectedDesync": false
+}

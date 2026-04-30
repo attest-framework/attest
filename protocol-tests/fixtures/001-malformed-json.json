@@ -1,0 +1,9 @@
+{
+  "name": "malformed-json",
+  "description": "A line that is not valid JSON should produce a malformed_json diagnostic and not desync the client.",
+  "lines": ["{not json"],
+  "expectedDiagnostics": [
+    { "kind": "malformed_json" }
+  ],
+  "expectedDesync": false
+}

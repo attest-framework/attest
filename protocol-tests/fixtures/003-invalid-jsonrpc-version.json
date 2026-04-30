@@ -1,0 +1,9 @@
+{
+  "name": "invalid-jsonrpc-version",
+  "description": "A response that omits jsonrpc 2.0 must surface an invalid_jsonrpc_version diagnostic.",
+  "lines": ["{\"jsonrpc\":\"1.0\",\"id\":1,\"result\":{}}"],
+  "expectedDiagnostics": [
+    { "kind": "invalid_jsonrpc_version", "messageContains": "invalid jsonrpc version" }
+  ],
+  "expectedDesync": false
+}
