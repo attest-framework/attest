@@ -31,9 +31,7 @@ def stub_engine(tmp_path: Path) -> Iterator[Path]:
     log = tmp_path / "argv.log"
     binary = tmp_path / "fake-engine"
     binary.write_text(
-        "#!/usr/bin/env bash\n"
-        f'printf "%s\\n" "$@" > "{log}"\n'
-        "exit ${ENGINE_EXIT:-0}\n"
+        f'#!/usr/bin/env bash\nprintf "%s\\n" "$@" > "{log}"\nexit ${{ENGINE_EXIT:-0}}\n'
     )
     binary.chmod(0o755)
     with mock.patch.dict(os.environ, {"ATTEST_ENGINE_PATH": str(binary)}):

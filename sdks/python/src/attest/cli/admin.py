@@ -100,7 +100,6 @@ def _print_baseline_usage() -> None:
 
 def _print_policy_usage() -> None:
     print(
-        "usage: attest policy evaluate --policy <path> --report <path> "
-        "[--baseline <tag>]",
+        "usage: attest policy evaluate --policy <path> --report <path> [--baseline <tag>]",
         file=sys.stderr,
     )
