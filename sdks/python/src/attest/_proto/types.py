@@ -214,6 +214,65 @@ class Assertion:
 
 
 @dataclass
+class BiasProbe:
+    """One judge-bias probe result.
+
+    Score is the score the judge produced on the mutated input; delta is
+    score - baseline. A well-calibrated judge has |delta| close to zero
+    across all probes. Mirrors engine/pkg/types/assertion.go::BiasProbe.
+    """
+
+    name: str
+    score: float
+    delta: float
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"name": self.name, "score": self.score, "delta": self.delta}
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> BiasProbe:
+        return cls(
+            name=data["name"],
+            score=data.get("score", 0.0),
+            delta=data.get("delta", 0.0),
+        )
+
+
+@dataclass
+class JudgeAgreement:
+    """Calibration agreement summary for a judge configuration.
+
+    Computed against a stored set of human labels for the
+    (rubric_name, rubric_version, prompt_hash) key. Mirrors
+    engine/pkg/types/assertion.go::JudgeAgreement.
+    """
+
+    label_count: int
+    agreement: float
+    cohen_kappa: float
+    roc_auc: float = 0.0
+
+    def to_dict(self) -> dict[str, Any]:
+        d: dict[str, Any] = {
+            "label_count": self.label_count,
+            "agreement": self.agreement,
+            "cohen_kappa": self.cohen_kappa,
+        }
+        if self.roc_auc:
+            d["roc_auc"] = self.roc_auc
+        return d
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> JudgeAgreement:
+        return cls(
+            label_count=data.get("label_count", 0),
+            agreement=data.get("agreement", 0.0),
+            cohen_kappa=data.get("cohen_kappa", 0.0),
+            roc_auc=data.get("roc_auc", 0.0),
+        )
+
+
+@dataclass
 class JudgeMetadata:
     """Audit trail for a single LLM-judge evaluation.
 
@@ -231,6 +290,8 @@ class JudgeMetadata:
     score_mean: float = 0.0
     score_stddev: float = 0.0
     high_variance: bool = False
+    bias_probes: list[BiasProbe] = field(default_factory=list)
+    calibration: JudgeAgreement | None = None
 
     def to_dict(self) -> dict[str, Any]:
         d: dict[str, Any] = {}
@@ -250,10 +311,16 @@ class JudgeMetadata:
             d["score_stddev"] = self.score_stddev
         if self.high_variance:
             d["high_variance"] = self.high_variance
+        if self.bias_probes:
+            d["bias_probes"] = [p.to_dict() for p in self.bias_probes]
+        if self.calibration is not None:
+            d["calibration"] = self.calibration.to_dict()
         return d
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> JudgeMetadata:
+        raw_probes = data.get("bias_probes", [])
+        raw_cal = data.get("calibration")
         return cls(
             model=data.get("model"),
             rubric_name=data.get("rubric_name"),
@@ -263,6 +330,8 @@ class JudgeMetadata:
             score_mean=data.get("score_mean", 0.0),
             score_stddev=data.get("score_stddev", 0.0),
             high_variance=data.get("high_variance", False),
+            bias_probes=[BiasProbe.from_dict(p) for p in raw_probes],
+            calibration=JudgeAgreement.from_dict(raw_cal) if raw_cal else None,
         )
 
 

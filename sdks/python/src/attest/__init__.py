@@ -5,8 +5,11 @@ from __future__ import annotations
 from attest._proto.types import (
     Assertion,
     AssertionResult,
+    BiasProbe,
     ConversationMessage,
     DriftReport,
+    JudgeAgreement,
+    JudgeMetadata,
     SimulateFaultConfig,
     SimulatePersona,
     Step,
@@ -42,6 +45,9 @@ __all__ = [
     # Core types
     "Assertion",
     "AssertionResult",
+    "BiasProbe",
+    "JudgeAgreement",
+    "JudgeMetadata",
     "Step",
     "Trace",
     "TraceMetadata",

@@ -172,6 +172,34 @@ def test_assertion_result_diagnostic_fields_round_trip() -> None:
     assert restored.judge_metadata.sample_scores == [0.4, 0.4, 0.6]
 
 
+def test_judge_metadata_bias_probes_roundtrip() -> None:
+    """BiasProbe and JudgeAgreement round-trip through to_dict/from_dict."""
+    from attest._proto.types import BiasProbe, JudgeAgreement
+
+    original = JudgeMetadata(
+        model="gpt-4.1",
+        rubric_name="default",
+        rubric_version="v1",
+        prompt_hash="abcd1234",
+        sample_scores=[0.5],
+        score_mean=0.5,
+        bias_probes=[
+            BiasProbe(name="verbosity", score=0.7, delta=0.2),
+            BiasProbe(name="position", score=0.55, delta=0.05),
+        ],
+        calibration=JudgeAgreement(
+            label_count=10, agreement=0.8, cohen_kappa=0.6, roc_auc=0.9
+        ),
+    )
+    restored = JudgeMetadata.from_dict(original.to_dict())
+    assert len(restored.bias_probes) == 2
+    assert restored.bias_probes[0].name == "verbosity"
+    assert restored.bias_probes[0].delta == 0.2
+    assert restored.calibration is not None
+    assert restored.calibration.cohen_kappa == 0.6
+    assert restored.calibration.label_count == 10
+
+
 def test_assertion_result_legacy_payload_loads() -> None:
     """Engine v1 payloads (no diagnostic fields) must still parse."""
     legacy: dict = {

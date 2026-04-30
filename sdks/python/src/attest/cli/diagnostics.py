@@ -150,6 +150,15 @@ def _render_judge_meta(buf: StringIO, meta: JudgeMetadata) -> None:
             f"      samples:    [{samples}] mean={meta.score_mean:.2f} "
             f"stddev={meta.score_stddev:.2f}{variance_flag}\n"
         )
+    if meta.bias_probes:
+        probes = ", ".join(f"{p.name} Δ{p.delta:+.2f}" for p in meta.bias_probes)
+        buf.write(f"      bias:       {probes}\n")
+    if meta.calibration is not None:
+        cal = meta.calibration
+        buf.write(
+            f"      calibrated: {cal.label_count} labels, "
+            f"agreement={cal.agreement:.2f}, κ={cal.cohen_kappa:.2f}\n"
+        )
 
 
 def render_summary(result: AgentResult, *, color: bool = False) -> str:

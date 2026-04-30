@@ -44,6 +44,68 @@ def _cmd_cache_clear() -> None:
         print(f"No cache to clear: {db_path}")
 
 
+def _cmd_calibrate(argv: list[str]) -> None:
+    """Run ``attest calibrate --labels <path>``.
+
+    Mirrors the engine's calibrate subcommand: expects the labels file
+    to already include both human_label and judge_score so agreement can
+    run offline without LLM credentials. Prints metrics as JSON.
+    """
+    import argparse
+
+    from attest.calibration import LabelPair, compute_agreement, load_labels
+
+    parser = argparse.ArgumentParser(
+        prog="attest calibrate",
+        description="Compute Cohen's κ, agreement, and ROC-AUC over labeled judge outputs.",
+    )
+    parser.add_argument("--labels", required=True, help="Path to CSV or JSONL labels file")
+    parser.add_argument("--rubric", default="default", help="Rubric name for the report")
+    parser.add_argument(
+        "--rubric-version",
+        default="",
+        help="Rubric version to associate with the result (defaults to engine builtin if known)",
+    )
+    parser.add_argument(
+        "--threshold",
+        type=float,
+        default=0.5,
+        help="Binarization threshold for κ and ROC-AUC (must be in (0, 1))",
+    )
+    args = parser.parse_args(argv)
+
+    records = load_labels(Path(args.labels))
+    pairs = [
+        LabelPair(human=r.human_label, judge=r.judge_score) for r in records if r.judge_known
+    ]
+    missing = sum(1 for r in records if not r.judge_known)
+    if not pairs:
+        print(
+            f"calibrate: no rows had judge_score ({missing} rows missing); "
+            "pre-score the labels file first",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    try:
+        result = compute_agreement(pairs, args.threshold)
+    except ValueError as exc:
+        print(f"calibrate: {exc}", file=sys.stderr)
+        sys.exit(1)
+
+    out = {
+        "rubric_name": args.rubric,
+        "rubric_version": args.rubric_version,
+        "threshold": result.threshold,
+        "label_count": result.n,
+        "agreement": round(result.agreement, 3),
+        "cohen_kappa": round(result.cohen_kappa, 3),
+        "roc_auc": round(result.roc_auc, 3),
+        "missing_judge": missing,
+    }
+    print(json.dumps(out, indent=2, sort_keys=True))
+
+
 def main() -> None:
     """Run attest CLI."""
     args = sys.argv[1:]
@@ -78,6 +140,10 @@ def main() -> None:
         from attest.scaffold import validate_suite
 
         validate_suite(Path.cwd())
+        sys.exit(0)
+
+    if args and args[0] == "calibrate":
+        _cmd_calibrate(args[1:])
         sys.exit(0)
 
     # `attest run [args]` — explicit alias for pytest passthrough
