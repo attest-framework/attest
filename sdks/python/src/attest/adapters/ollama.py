@@ -30,8 +30,10 @@ class OllamaAdapter(BaseProviderAdapter):
         result = []
         for tc in tool_calls:
             fn = tc.get("function", {})
-            result.append({
-                "name": fn.get("name", ""),
-                "args": fn.get("arguments", {}),
-            })
+            result.append(
+                {
+                    "name": fn.get("name", ""),
+                    "args": fn.get("arguments", {}),
+                }
+            )
         return result

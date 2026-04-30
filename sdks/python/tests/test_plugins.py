@@ -10,14 +10,12 @@ import pytest
 
 from attest._proto.types import Trace
 from attest.plugins import (
-    AttestPlugin,
     PluginRegistry,
     PluginResult,
     execute_plugin_assertion,
     load_entrypoint_plugins,
     register_plugin,
 )
-
 
 # ---------------------------------------------------------------------------
 # Fixtures

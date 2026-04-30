@@ -111,6 +111,7 @@ def agent(
         wrapped = Agent(name=name, fn=fn, adapter=adapter)
 
         if inspect.iscoroutinefunction(fn):
+
             @functools.wraps(fn)
             async def async_wrapper(**kwargs: Any) -> AgentResult:
                 return await wrapped.arun(**kwargs)

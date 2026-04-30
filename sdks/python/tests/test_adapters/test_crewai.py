@@ -12,7 +12,6 @@ import pytest
 from attest._proto.types import STEP_AGENT_CALL, STEP_TOOL_CALL
 from attest.adapters.crewai import CrewAIAdapter
 
-
 # ---------------------------------------------------------------------------
 # Mock CrewAI structures (crewai may not be installed in CI)
 # ---------------------------------------------------------------------------

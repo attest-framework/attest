@@ -5,14 +5,14 @@ from __future__ import annotations
 import pytest
 
 from attest._proto.types import (
+    STATUS_PASS,
+    TYPE_CONSTRAINT,
+    TYPE_CONTENT,
+    TYPE_SCHEMA,
+    TYPE_TRACE,
     Assertion,
     AssertionResult,
     Trace,
-    STATUS_PASS,
-    TYPE_CONTENT,
-    TYPE_CONSTRAINT,
-    TYPE_SCHEMA,
-    TYPE_TRACE,
 )
 from attest.result import AgentResult
 from attest.trace import TraceBuilder
@@ -127,7 +127,9 @@ def judge_result() -> AgentResult:
         .add_llm_call(
             "reasoning",
             args={"model": "gpt-4.1"},
-            result={"completion": "A transformer uses attention mechanisms to process sequences in parallel."},
+            result={
+                "completion": "A transformer uses attention mechanisms to process sequences in parallel."
+            },
             metadata={"duration_ms": 1500},
         )
         .set_output(

@@ -56,6 +56,7 @@ def test_engine_timeout_default() -> None:
     """_engine_timeout returns 30.0 when env var is unset."""
     with patch.dict("os.environ", {}, clear=False):
         import os
+
         os.environ.pop("ATTEST_ENGINE_TIMEOUT", None)
         assert _engine_timeout() == 30.0
 
@@ -84,6 +85,7 @@ def test_engine_timeout_error_attributes() -> None:
 def test_engine_timeout_error_is_importable_from_attest() -> None:
     """EngineTimeoutError is exported from the top-level attest package."""
     import attest
+
     assert hasattr(attest, "EngineTimeoutError")
     assert attest.EngineTimeoutError is EngineTimeoutError
 

@@ -84,36 +84,19 @@ class TraceTree:
 
     def all_tool_calls(self) -> list[Step]:
         """Return all tool_call steps across the entire trace tree."""
-        return [
-            step
-            for t in self.flatten()
-            for step in t.steps
-            if step.type == STEP_TOOL_CALL
-        ]
+        return [step for t in self.flatten() for step in t.steps if step.type == STEP_TOOL_CALL]
 
     @property
     def aggregate_tokens(self) -> int:
         """Sum total_tokens across all traces in tree."""
-        return sum(
-            t.metadata.total_tokens or 0
-            for t in self.flatten()
-            if t.metadata is not None
-        )
+        return sum(t.metadata.total_tokens or 0 for t in self.flatten() if t.metadata is not None)
 
     @property
     def aggregate_cost(self) -> float:
         """Sum cost_usd across all traces in tree."""
-        return sum(
-            t.metadata.cost_usd or 0.0
-            for t in self.flatten()
-            if t.metadata is not None
-        )
+        return sum(t.metadata.cost_usd or 0.0 for t in self.flatten() if t.metadata is not None)
 
     @property
     def aggregate_latency(self) -> int:
         """Sum latency_ms across all traces in tree."""
-        return sum(
-            t.metadata.latency_ms or 0
-            for t in self.flatten()
-            if t.metadata is not None
-        )
+        return sum(t.metadata.latency_ms or 0 for t in self.flatten() if t.metadata is not None)

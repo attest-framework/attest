@@ -68,6 +68,7 @@ async def test_agent_decorator_async_fn() -> None:
         return {"response": "async-done"}
 
     import inspect
+
     assert inspect.iscoroutinefunction(my_async_agent)
 
     result = await my_async_agent(user_input="hello")

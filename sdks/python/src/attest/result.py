@@ -59,4 +59,5 @@ class AgentResult:
     def trace_tree(self) -> TraceTree:
         """Build a TraceTree from this result's trace."""
         from attest.trace_tree import TraceTree
+
         return TraceTree(root=self.trace)

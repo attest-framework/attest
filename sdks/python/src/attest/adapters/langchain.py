@@ -185,15 +185,17 @@ class LangChainCallbackHandler(BaseAdapter):
         if start_time is not None:
             metadata["duration_ms"] = int((time.monotonic() - start_time) * 1000)
 
-        self._steps.append({
-            "type": "llm_call",
-            "name": model_name or "llm",
-            "args": args,
-            "result": result,
-            "metadata": metadata,
-            "started_at_ms": started_at_ms,
-            "ended_at_ms": ended_at_ms,
-        })
+        self._steps.append(
+            {
+                "type": "llm_call",
+                "name": model_name or "llm",
+                "args": args,
+                "result": result,
+                "metadata": metadata,
+                "started_at_ms": started_at_ms,
+                "ended_at_ms": ended_at_ms,
+            }
+        )
 
     # ------------------------------------------------------------------
     # Tool callbacks
@@ -242,15 +244,17 @@ class LangChainCallbackHandler(BaseAdapter):
         else:
             output_str = str(output)
 
-        self._steps.append({
-            "type": "tool_call",
-            "name": tool_name,
-            "args": {"input": tool_input},
-            "result": {"output": output_str},
-            "metadata": metadata,
-            "started_at_ms": started_at_ms,
-            "ended_at_ms": ended_at_ms,
-        })
+        self._steps.append(
+            {
+                "type": "tool_call",
+                "name": tool_name,
+                "args": {"input": tool_input},
+                "result": {"output": output_str},
+                "metadata": metadata,
+                "started_at_ms": started_at_ms,
+                "ended_at_ms": ended_at_ms,
+            }
+        )
 
     def on_tool_error(
         self,
@@ -272,15 +276,17 @@ class LangChainCallbackHandler(BaseAdapter):
         if start_time is not None:
             metadata["duration_ms"] = int((time.monotonic() - start_time) * 1000)
 
-        self._steps.append({
-            "type": "tool_call",
-            "name": tool_name,
-            "args": {"input": tool_input},
-            "result": {"error": str(error)},
-            "metadata": metadata,
-            "started_at_ms": started_at_ms,
-            "ended_at_ms": ended_at_ms,
-        })
+        self._steps.append(
+            {
+                "type": "tool_call",
+                "name": tool_name,
+                "args": {"input": tool_input},
+                "result": {"error": str(error)},
+                "metadata": metadata,
+                "started_at_ms": started_at_ms,
+                "ended_at_ms": ended_at_ms,
+            }
+        )
 
     # ------------------------------------------------------------------
     # Build trace

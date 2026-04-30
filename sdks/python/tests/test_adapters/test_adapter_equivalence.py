@@ -9,16 +9,12 @@ from __future__ import annotations
 
 from collections.abc import Generator
 from contextlib import contextmanager
-from typing import Any
 from unittest.mock import MagicMock, patch
 from uuid import uuid4
-
-import pytest
 
 from attest._proto.types import STEP_LLM_CALL, STEP_TOOL_CALL, Trace
 from attest.adapters.google_adk import GoogleADKAdapter
 from attest.adapters.langchain import LangChainCallbackHandler
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -115,9 +111,7 @@ def _make_llm_response(
 def _build_adk_trace() -> Trace:
     """Build a trace using the ADK adapter with a tool call + final response."""
     tc = _make_adk_tool_call("get_weather", {"city": "Paris"})
-    e1 = _make_adk_event(
-        tool_calls=[tc], usage=20, author="planner", timestamp=1000.0
-    )
+    e1 = _make_adk_event(tool_calls=[tc], usage=20, author="planner", timestamp=1000.0)
     e2 = _make_adk_event(
         is_final=True,
         content_text="The weather is sunny.",
@@ -267,12 +261,8 @@ class TestAdapterEquivalence:
         adk_trace = _build_adk_trace()
 
         for step in adk_trace.steps:
-            assert step.started_at_ms is not None, (
-                f"ADK step {step.name!r} missing started_at_ms"
-            )
-            assert step.ended_at_ms is not None, (
-                f"ADK step {step.name!r} missing ended_at_ms"
-            )
+            assert step.started_at_ms is not None, f"ADK step {step.name!r} missing started_at_ms"
+            assert step.ended_at_ms is not None, f"ADK step {step.name!r} missing ended_at_ms"
 
     def test_temporal_fields_populated_on_langchain_steps(self) -> None:
         lc_trace = _build_langchain_trace()
@@ -281,9 +271,7 @@ class TestAdapterEquivalence:
             assert step.started_at_ms is not None, (
                 f"LangChain step {step.name!r} missing started_at_ms"
             )
-            assert step.ended_at_ms is not None, (
-                f"LangChain step {step.name!r} missing ended_at_ms"
-            )
+            assert step.ended_at_ms is not None, f"LangChain step {step.name!r} missing ended_at_ms"
 
     def test_agent_id_populated_on_langchain_steps(self) -> None:
         lc_trace = _build_langchain_trace()
@@ -298,9 +286,7 @@ class TestAdapterEquivalence:
 
         tool_steps = [s for s in adk_trace.steps if s.type == STEP_TOOL_CALL]
         for step in tool_steps:
-            assert step.agent_id is not None, (
-                f"ADK tool step {step.name!r} missing agent_id"
-            )
+            assert step.agent_id is not None, f"ADK tool step {step.name!r} missing agent_id"
 
     def test_input_populated(self) -> None:
         adk_trace = _build_adk_trace()

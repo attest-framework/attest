@@ -6,17 +6,16 @@ evaluate path and that budget exceeded triggers pytest.fail.
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
 from attest._proto.types import (
-    Assertion,
+    STATUS_PASS,
+    STATUS_SOFT_FAIL,
     AssertionResult,
     EvaluateBatchResult,
     Trace,
-    STATUS_PASS,
-    STATUS_SOFT_FAIL,
 )
 from attest.expect import ExpectChain
 from attest.plugin import AttestEngineFixture
@@ -64,6 +63,7 @@ class TestBudgetEnforcement:
     def setup_method(self) -> None:
         """Reset session cost before each test."""
         import attest.plugin
+
         attest.plugin._session_cost = 0.0
         attest.plugin._session_soft_failures = 0
 
@@ -80,6 +80,7 @@ class TestBudgetEnforcement:
 
     def test_process_result_accumulates_cost(self) -> None:
         import attest.plugin
+
         fixture = self._make_fixture()
         chain = _make_chain()
         result = _make_batch_result(cost=0.005)
@@ -91,7 +92,6 @@ class TestBudgetEnforcement:
         assert attest.plugin._session_cost == pytest.approx(0.010)
 
     def test_process_result_no_budget_never_fails(self) -> None:
-        import attest.plugin
         fixture = self._make_fixture()
         chain = _make_chain()
         result = _make_batch_result(cost=999.0)
@@ -131,6 +131,7 @@ class TestBudgetEnforcement:
 
     def test_process_result_tracks_soft_failures(self) -> None:
         import attest.plugin
+
         fixture = self._make_fixture()
         chain = _make_chain()
         result = _make_batch_result(cost=0.0, soft_fails=1)
@@ -156,6 +157,7 @@ class TestBudgetWithSimulation:
 
     def setup_method(self) -> None:
         import attest.plugin
+
         attest.plugin._session_cost = 0.0
         attest.plugin._session_soft_failures = 0
 

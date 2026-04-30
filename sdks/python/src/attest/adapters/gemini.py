@@ -102,8 +102,10 @@ class GeminiAdapter(BaseProviderAdapter):
         for part in response.candidates[0].content.parts:
             if hasattr(part, "function_call") and part.function_call:
                 fc = part.function_call
-                calls.append({
-                    "name": fc.name,
-                    "args": dict(fc.args) if fc.args else {},
-                })
+                calls.append(
+                    {
+                        "name": fc.name,
+                        "args": dict(fc.args) if fc.args else {},
+                    }
+                )
         return calls

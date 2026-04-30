@@ -29,8 +29,10 @@ class AnthropicAdapter(BaseProviderAdapter):
         calls: list[dict[str, Any]] = []
         for block in response.content:
             if block.type == "tool_use":
-                calls.append({
-                    "name": block.name,
-                    "args": block.input if isinstance(block.input, dict) else {},
-                })
+                calls.append(
+                    {
+                        "name": block.name,
+                        "args": block.input if isinstance(block.input, dict) else {},
+                    }
+                )
         return calls

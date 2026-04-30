@@ -26,13 +26,13 @@ def test_my_agent(my_agent_result):
     expect(my_agent_result).output_contains("hello")
 '''
 
-PYPROJECT_SNIPPET = '''\
+PYPROJECT_SNIPPET = """\
 [project.optional-dependencies]
 test = [
     "attest-ai",
     "pytest",
 ]
-'''
+"""
 
 _STALE_DAYS = 30
 
@@ -74,8 +74,7 @@ def validate_suite(target_dir: Path) -> None:
 
     if not conftest_path.exists():
         print(
-            f"Warning: no conftest.py found at {conftest_path}. "
-            "Run `attest init` to scaffold.",
+            f"Warning: no conftest.py found at {conftest_path}. Run `attest init` to scaffold.",
             file=sys.stderr,
         )
 

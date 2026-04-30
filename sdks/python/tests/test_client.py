@@ -5,10 +5,10 @@ from __future__ import annotations
 import asyncio
 import json
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from attest._proto.codec import encode_request
+
 from attest._proto.types import Assertion, EvaluateBatchResult, Trace
 from attest.client import AttestClient
 
@@ -51,8 +51,12 @@ async def test_send_request_id_correlation() -> None:
     # readline blocks until a future is waiting, then returns the response.
     # We use asyncio.Event to synchronize: reader blocks until send has
     # registered its future, then the response is returned.
-    response1 = json.dumps({"jsonrpc": "2.0", "id": 1, "result": {"data": "first"}}).encode() + b"\n"
-    response2 = json.dumps({"jsonrpc": "2.0", "id": 2, "result": {"data": "second"}}).encode() + b"\n"
+    response1 = (
+        json.dumps({"jsonrpc": "2.0", "id": 1, "result": {"data": "first"}}).encode() + b"\n"
+    )
+    response2 = (
+        json.dumps({"jsonrpc": "2.0", "id": 2, "result": {"data": "second"}}).encode() + b"\n"
+    )
 
     call_count = 0
 
@@ -154,7 +158,9 @@ async def test_evaluate_batch_parses_result() -> None:
     client = AttestClient(engine)
 
     trace = Trace(trace_id="trc_1", output={"message": "hello"})
-    assertions = [Assertion(assertion_id="a1", type="content", spec={"check": "contains", "value": "hello"})]
+    assertions = [
+        Assertion(assertion_id="a1", type="content", spec={"check": "contains", "value": "hello"})
+    ]
 
     batch_result = await client.evaluate_batch(trace, assertions)
 

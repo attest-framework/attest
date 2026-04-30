@@ -2,15 +2,15 @@
 
 from __future__ import annotations
 
-from contextlib import contextmanager
 from collections.abc import Generator
+from contextlib import contextmanager
 from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
 import pytest
 
-from attest.adapters.langchain import LangChainCallbackHandler, LangChainAdapter
 from attest._proto.types import STEP_LLM_CALL, STEP_TOOL_CALL
+from attest.adapters.langchain import LangChainAdapter, LangChainCallbackHandler
 
 
 @contextmanager
@@ -73,7 +73,9 @@ class TestLangChainCallbackHandler:
                 invocation_params={"model_name": "gpt-4.1"},
             )
             handler.on_llm_end(
-                response=_make_llm_response(text="Paris is the capital.", prompt_tokens=20, completion_tokens=10),
+                response=_make_llm_response(
+                    text="Paris is the capital.", prompt_tokens=20, completion_tokens=10
+                ),
                 run_id=run_id,
             )
 
@@ -121,13 +123,21 @@ class TestLangChainCallbackHandler:
 
             # First LLM call: 20 + 10 = 30
             run_id_1 = uuid4()
-            handler.on_chat_model_start(serialized={}, messages=[[]], run_id=run_id_1, invocation_params={})
-            handler.on_llm_end(response=_make_llm_response(prompt_tokens=20, completion_tokens=10), run_id=run_id_1)
+            handler.on_chat_model_start(
+                serialized={}, messages=[[]], run_id=run_id_1, invocation_params={}
+            )
+            handler.on_llm_end(
+                response=_make_llm_response(prompt_tokens=20, completion_tokens=10), run_id=run_id_1
+            )
 
             # Second LLM call: 30 + 15 = 45
             run_id_2 = uuid4()
-            handler.on_chat_model_start(serialized={}, messages=[[]], run_id=run_id_2, invocation_params={})
-            handler.on_llm_end(response=_make_llm_response(prompt_tokens=30, completion_tokens=15), run_id=run_id_2)
+            handler.on_chat_model_start(
+                serialized={}, messages=[[]], run_id=run_id_2, invocation_params={}
+            )
+            handler.on_llm_end(
+                response=_make_llm_response(prompt_tokens=30, completion_tokens=15), run_id=run_id_2
+            )
 
             trace = handler.build_trace()
 
@@ -280,7 +290,9 @@ class TestLangChainCallbackHandler:
                 invocation_params={"model_name": "gpt-4.1"},
             )
             handler.on_llm_end(
-                response=_make_llm_response(text="I'll calculate that.", prompt_tokens=15, completion_tokens=8),
+                response=_make_llm_response(
+                    text="I'll calculate that.", prompt_tokens=15, completion_tokens=8
+                ),
                 run_id=llm_id_1,
             )
 
@@ -302,7 +314,9 @@ class TestLangChainCallbackHandler:
                 invocation_params={"model_name": "gpt-4.1"},
             )
             handler.on_llm_end(
-                response=_make_llm_response(text="2+2 equals 4.", prompt_tokens=25, completion_tokens=5),
+                response=_make_llm_response(
+                    text="2+2 equals 4.", prompt_tokens=25, completion_tokens=5
+                ),
                 run_id=llm_id_2,
             )
 

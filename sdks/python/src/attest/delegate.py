@@ -25,8 +25,7 @@ def delegate(agent_id: str) -> Generator[TraceBuilder, None, None]:
     parent = _active_builder.get(None)
     if parent is None:
         raise RuntimeError(
-            "delegate() must be used within an Agent.run() context. "
-            "No active TraceBuilder found."
+            "delegate() must be used within an Agent.run() context. No active TraceBuilder found."
         )
 
     child = TraceBuilder(agent_id=agent_id)
@@ -39,10 +38,12 @@ def delegate(agent_id: str) -> Generator[TraceBuilder, None, None]:
         _active_builder.reset(token)
 
     child_trace = child.build()
-    parent.add_step(Step(
-        type=STEP_AGENT_CALL,
-        name=agent_id,
-        args=None,
-        result=child_trace.output,
-        sub_trace=child_trace,
-    ))
+    parent.add_step(
+        Step(
+            type=STEP_AGENT_CALL,
+            name=agent_id,
+            args=None,
+            result=child_trace.output,
+            sub_trace=child_trace,
+        )
+    )

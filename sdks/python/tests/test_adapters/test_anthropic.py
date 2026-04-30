@@ -77,10 +77,12 @@ def test_anthropic_model_captured() -> None:
 
 def test_anthropic_multi_text_blocks_joined() -> None:
     adapter = AnthropicAdapter()
-    response = MockResponse(content=[
-        MockTextBlock(text="Part 1"),
-        MockTextBlock(text="Part 2"),
-    ])
+    response = MockResponse(
+        content=[
+            MockTextBlock(text="Part 1"),
+            MockTextBlock(text="Part 2"),
+        ]
+    )
     trace = adapter.trace_from_response(response)
     assert trace.output["message"] == "Part 1\nPart 2"
 

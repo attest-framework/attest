@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
-from contextlib import contextmanager
 from collections.abc import Generator
+from contextlib import contextmanager
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-from attest.adapters.otel import OTelAdapter
 from attest._proto.types import STEP_LLM_CALL, STEP_TOOL_CALL
+from attest.adapters.otel import OTelAdapter
 
 
 def _make_span(

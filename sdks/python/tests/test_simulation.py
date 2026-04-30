@@ -18,7 +18,6 @@ from attest.simulation.repeat import RepeatResult, repeat
 from attest.simulation.scenario import ScenarioConfig, ScenarioResult, scenario
 from attest.trace import TraceBuilder
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

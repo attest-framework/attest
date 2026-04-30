@@ -50,6 +50,7 @@ def main() -> None:
 
     if args and args[0] == "--version":
         from attest import __version__
+
         print(f"attest {__version__}")
         sys.exit(0)
 
@@ -69,11 +70,13 @@ def main() -> None:
 
     if args and args[0] == "init":
         from attest.scaffold import scaffold_project
+
         scaffold_project(Path.cwd())
         sys.exit(0)
 
     if args and args[0] == "validate":
         from attest.scaffold import validate_suite
+
         validate_suite(Path.cwd())
         sys.exit(0)
 

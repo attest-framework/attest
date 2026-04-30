@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
-from attest.result import AgentResult
 from attest._proto.types import (
+    STATUS_HARD_FAIL,
+    STATUS_PASS,
+    STATUS_SOFT_FAIL,
     AssertionResult,
     Trace,
-    STATUS_PASS,
-    STATUS_HARD_FAIL,
-    STATUS_SOFT_FAIL,
 )
+from attest.result import AgentResult
 
 
 def test_agent_result_all_pass() -> None:

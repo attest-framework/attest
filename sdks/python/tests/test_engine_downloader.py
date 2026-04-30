@@ -16,8 +16,8 @@ from attest.engine_downloader import (
 )
 from attest.engine_manager import _find_engine_binary
 
-
 # ── _platform_key ──────────────────────────────────────────────────────
+
 
 @patch("attest.engine_downloader.platform")
 def test_platform_key_darwin_arm64(mock_platform: object) -> None:
@@ -46,6 +46,7 @@ def test_platform_key_unsupported(mock_platform: object) -> None:
 
 # ── _binary_filename ───────────────────────────────────────────────────
 
+
 @patch("attest.engine_downloader.platform")
 def test_binary_filename_unix(mock_platform: object) -> None:
     """Returns 'attest-engine' on non-Windows."""
@@ -61,6 +62,7 @@ def test_binary_filename_windows(mock_platform: object) -> None:
 
 
 # ── _parse_checksums ───────────────────────────────────────────────────
+
 
 def test_parse_checksums() -> None:
     """Parses standard checksums-sha256.txt format."""
@@ -84,6 +86,7 @@ def test_parse_checksums_empty() -> None:
 
 
 # ── cached_engine_path ─────────────────────────────────────────────────
+
 
 def test_cached_engine_path_missing(tmp_path: Path) -> None:
     """Returns None when no cached binary exists."""
@@ -111,14 +114,17 @@ def test_cached_engine_path_valid(tmp_path: Path) -> None:
     ver_file = tmp_path / ".engine-version"
     ver_file.write_text(ENGINE_VERSION)
 
-    with patch("attest.engine_downloader._attest_bin_dir", return_value=tmp_path), \
-         patch("attest.engine_downloader._binary_filename", return_value="attest-engine"):
+    with (
+        patch("attest.engine_downloader._attest_bin_dir", return_value=tmp_path),
+        patch("attest.engine_downloader._binary_filename", return_value="attest-engine"),
+    ):
         result = cached_engine_path()
         assert result is not None
         assert result.name == "attest-engine"
 
 
 # ── _find_engine_binary (discovery chain) ──────────────────────────────
+
 
 def test_find_engine_env_override(tmp_path: Path) -> None:
     """ATTEST_ENGINE_PATH env var takes priority over all other methods."""
@@ -143,8 +149,10 @@ def test_find_engine_no_download_raises() -> None:
         "ATTEST_ENGINE_NO_DOWNLOAD": "1",
         "ATTEST_ENGINE_PATH": "",
     }
-    with patch.dict(os.environ, env, clear=False), \
-         patch("shutil.which", return_value=None), \
-         patch("attest.engine_downloader.cached_engine_path", return_value=None):
+    with (
+        patch.dict(os.environ, env, clear=False),
+        patch("shutil.which", return_value=None),
+        patch("attest.engine_downloader.cached_engine_path", return_value=None),
+    ):
         with pytest.raises(FileNotFoundError, match="Cannot find"):
             _find_engine_binary()

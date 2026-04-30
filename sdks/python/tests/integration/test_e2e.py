@@ -12,7 +12,6 @@ from __future__ import annotations
 import pytest
 
 from attest._proto.types import (
-    Assertion,
     STATUS_HARD_FAIL,
     STATUS_PASS,
     STATUS_SOFT_FAIL,
@@ -20,6 +19,7 @@ from attest._proto.types import (
     TYPE_CONTENT,
     TYPE_SCHEMA,
     TYPE_TRACE,
+    Assertion,
 )
 from attest.expect import expect
 from attest.plugin import AttestEngineFixture
@@ -115,9 +115,7 @@ class TestFullRoundTrip:
             ),
         ]
 
-        result = engine.evaluate(
-            _chain_from_raw(trace, assertions)
-        )
+        result = engine.evaluate(_chain_from_raw(trace, assertions))
 
         assert result.passed
         assert result.pass_count == 4

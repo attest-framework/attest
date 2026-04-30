@@ -58,12 +58,7 @@ def test_trace_builder_with_metadata() -> None:
 
 def test_trace_builder_custom_trace_id() -> None:
     """Builder allows custom trace ID."""
-    trace = (
-        TraceBuilder()
-        .set_trace_id("trc_custom123")
-        .set_output(message="ok")
-        .build()
-    )
+    trace = TraceBuilder().set_trace_id("trc_custom123").set_output(message="ok").build()
     assert trace.trace_id == "trc_custom123"
 
 
@@ -76,12 +71,7 @@ def test_trace_builder_missing_output() -> None:
 def test_trace_builder_add_step() -> None:
     """Builder accepts raw Step objects."""
     step = Step(type="tool_call", name="custom", args={"a": 1})
-    trace = (
-        TraceBuilder()
-        .add_step(step)
-        .set_output(message="ok")
-        .build()
-    )
+    trace = TraceBuilder().add_step(step).set_output(message="ok").build()
     assert trace.steps[0] is step
 
 

@@ -13,7 +13,6 @@ from langchain_core.outputs import Generation, LLMResult  # noqa: E402
 
 from attest.adapters.langchain import LangChainCallbackHandler  # noqa: E402
 
-
 pytestmark = pytest.mark.integration
 
 

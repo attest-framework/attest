@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import pytest
 
-import attest
 from attest.config import (
     config,
     get_alert_slack_url,

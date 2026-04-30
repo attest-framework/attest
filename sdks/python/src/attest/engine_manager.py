@@ -132,12 +132,15 @@ class EngineManager:
         )
         logger.info("Engine started (pid=%d)", self._process.pid)
 
-        result = await self._send_request("initialize", InitializeParams(
-            sdk_name="attest-python",
-            sdk_version=__version__,
-            protocol_version=1,
-            required_capabilities=["layers_1_4"],
-        ).to_dict())
+        result = await self._send_request(
+            "initialize",
+            InitializeParams(
+                sdk_name="attest-python",
+                sdk_version=__version__,
+                protocol_version=1,
+                required_capabilities=["layers_1_4"],
+            ).to_dict(),
+        )
 
         self._init_result = InitializeResult.from_dict(result)
         if not self._init_result.compatible:
@@ -186,9 +189,7 @@ class EngineManager:
 
         timeout = _engine_timeout()
         try:
-            line = await asyncio.wait_for(
-                self._process.stdout.readline(), timeout=timeout
-            )
+            line = await asyncio.wait_for(self._process.stdout.readline(), timeout=timeout)
         except asyncio.TimeoutError:
             raise EngineTimeoutError(method=method, timeout=timeout)
 
