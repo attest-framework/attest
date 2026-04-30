@@ -92,12 +92,31 @@ func (s *CalibrationStore) Record(label CalibrationLabel) error {
 // Pairs returns the (human_label, judge_score) pairs stored under the given
 // rubric+version+prompt_hash key. Empty slice when no rows match.
 func (s *CalibrationStore) Pairs(rubricName, rubricVersion, promptHash string) ([]LabelPair, error) {
-	rows, err := s.db.Query(
+	return s.scanPairs(
 		`SELECT human_label, judge_score FROM calibration_labels
 		 WHERE rubric_name = ? AND rubric_version = ? AND prompt_hash = ?
 		 ORDER BY judged_at ASC`,
 		rubricName, rubricVersion, promptHash,
 	)
+}
+
+// PairsForRubric returns all (human, judge) pairs for the rubric+version
+// regardless of prompt_hash. Use when the caller wants an aggregate
+// agreement number across the whole rubric.
+func (s *CalibrationStore) PairsForRubric(rubricName, rubricVersion string) ([]LabelPair, error) {
+	return s.scanPairs(
+		`SELECT human_label, judge_score FROM calibration_labels
+		 WHERE rubric_name = ? AND rubric_version = ?
+		 ORDER BY judged_at ASC`,
+		rubricName, rubricVersion,
+	)
+}
+
+// scanPairs runs the given two-column (human, judge) query and accumulates
+// the rows into LabelPair values. Wraps every error with enough context
+// for the caller to identify which stage failed.
+func (s *CalibrationStore) scanPairs(query string, args ...any) ([]LabelPair, error) {
+	rows, err := s.db.Query(query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("query calibration pairs: %w", err)
 	}
@@ -112,34 +131,6 @@ func (s *CalibrationStore) Pairs(rubricName, rubricVersion, promptHash string) (
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterate pairs: %w", err)
-	}
-	return out, nil
-}
-
-// PairsForRubric returns all (human, judge) pairs for the rubric+version
-// regardless of prompt_hash. Use when the caller wants an aggregate
-// agreement number across the whole rubric.
-func (s *CalibrationStore) PairsForRubric(rubricName, rubricVersion string) ([]LabelPair, error) {
-	rows, err := s.db.Query(
-		`SELECT human_label, judge_score FROM calibration_labels
-		 WHERE rubric_name = ? AND rubric_version = ?
-		 ORDER BY judged_at ASC`,
-		rubricName, rubricVersion,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("query rubric pairs: %w", err)
-	}
-	defer rows.Close()
-	var out []LabelPair
-	for rows.Next() {
-		var p LabelPair
-		if err := rows.Scan(&p.Human, &p.Judge); err != nil {
-			return nil, fmt.Errorf("scan pair: %w", err)
-		}
-		out = append(out, p)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate rubric pairs: %w", err)
 	}
 	return out, nil
 }
