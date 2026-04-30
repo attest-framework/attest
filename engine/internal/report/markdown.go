@@ -27,63 +27,68 @@ type MarkdownReport struct {
 	Verbose bool
 }
 
+// stickyWriter wraps an io.Writer and remembers the first error
+// encountered so a long sequence of Fprintf calls can stay free of
+// per-call error bubbling. Callers run the report and read err once at
+// the end.
+type stickyWriter struct {
+	w   io.Writer
+	err error
+}
+
+func (s *stickyWriter) printf(format string, args ...any) {
+	if s.err != nil {
+		return
+	}
+	_, s.err = fmt.Fprintf(s.w, format, args...)
+}
+
+func (s *stickyWriter) println(args ...any) {
+	if s.err != nil {
+		return
+	}
+	_, s.err = fmt.Fprintln(s.w, args...)
+}
+
 // GenerateMarkdown writes a hierarchical Markdown report to w. Layout:
 //
 //  1. Summary header with simulation banner, pass/fail counts, totals,
 //     P50/P95 latency.
-//  2. Layer sections (1–8) each grouped by assertion type.
-//  3. Per-failure detail block — assertion id, layer, type, trace path,
-//     expected vs actual, judge metadata if present, suggested action.
-//
-// Backwards-compatible callers see no panic on the legacy single-arg
-// shape because all new fields are optional in MarkdownReport.
+//  2. Failure section — one detail block per failing assertion with
+//     trace path, expected vs actual, judge metadata, and suggested
+//     action.
+//  3. Per-layer breakdown grouping every result (pass + fail) by
+//     pipeline layer 1–8.
 func GenerateMarkdown(w io.Writer, r *MarkdownReport) error {
+	sw := &stickyWriter{w: w}
+
 	title := r.Title
 	if title == "" {
 		title = "Attest Evaluation Report"
 	}
-
-	if _, err := fmt.Fprintf(w, "## %s\n\n", title); err != nil {
-		return err
-	}
+	sw.printf("## %s\n\n", title)
 
 	if r.Simulated {
-		if _, err := fmt.Fprintln(w, "> **[SIMULATED]** Results produced without contacting the engine. Do not gate releases on this run."); err != nil {
-			return err
-		}
-		if _, err := fmt.Fprintln(w); err != nil {
-			return err
-		}
+		sw.println("> **[SIMULATED]** Results produced without contacting the engine. Do not gate releases on this run.")
+		sw.println()
 	}
-
 	if !r.RunAt.IsZero() {
-		if _, err := fmt.Fprintf(w, "**Run at:** %s\n\n", r.RunAt.UTC().Format(time.RFC3339)); err != nil {
-			return err
-		}
+		sw.printf("**Run at:** %s\n\n", r.RunAt.UTC().Format(time.RFC3339))
 	}
 
-	stats := computeReportStats(r.Results, r.TotalCost, r.DurationMS)
-	if err := writeSummaryBlock(w, stats); err != nil {
-		return err
-	}
+	writeSummaryBlock(sw, computeReportStats(r.Results, r.TotalCost, r.DurationMS))
 
 	if len(r.Results) == 0 {
-		_, err := fmt.Fprintln(w, "_No assertions evaluated._")
-		return err
+		sw.println("_No assertions evaluated._")
+		return sw.err
 	}
 
 	failures := filterFailures(r.Results)
 	if len(failures) > 0 {
-		if err := writeFailureSection(w, failures); err != nil {
-			return err
-		}
+		writeFailureSection(sw, failures)
 	}
-
-	if err := writeLayerBreakdown(w, r.Results, r.Verbose); err != nil {
-		return err
-	}
-
-	return nil
+	writeLayerBreakdown(sw, r.Results, r.Verbose)
+	return sw.err
 }
 
 // reportStats aggregates pass/fail/cost/latency over a result set so the
@@ -146,37 +151,26 @@ func percentile(xs []int64, p int) int64 {
 	return xs[idx]
 }
 
-func writeSummaryBlock(w io.Writer, s reportStats) error {
-	if _, err := fmt.Fprintln(w, "### Summary"); err != nil {
-		return err
-	}
-	if _, err := fmt.Fprintln(w); err != nil {
-		return err
-	}
-	if _, err := fmt.Fprintln(w, "| Metric | Value |"); err != nil {
-		return err
-	}
-	if _, err := fmt.Fprintln(w, "|--------|-------|"); err != nil {
-		return err
-	}
-	fmt.Fprintf(w, "| Total | %d |\n", s.total)
-	fmt.Fprintf(w, "| Passed | %d |\n", s.passed)
-	fmt.Fprintf(w, "| Soft failed | %d |\n", s.softFailed)
-	fmt.Fprintf(w, "| Hard failed | %d |\n", s.hardFailed)
+func writeSummaryBlock(sw *stickyWriter, s reportStats) {
+	sw.println("### Summary")
+	sw.println()
+	sw.println("| Metric | Value |")
+	sw.println("|--------|-------|")
+	sw.printf("| Total | %d |\n", s.total)
+	sw.printf("| Passed | %d |\n", s.passed)
+	sw.printf("| Soft failed | %d |\n", s.softFailed)
+	sw.printf("| Hard failed | %d |\n", s.hardFailed)
 	if s.totalCost > 0 {
-		fmt.Fprintf(w, "| Cost | $%.6f |\n", s.totalCost)
+		sw.printf("| Cost | $%.6f |\n", s.totalCost)
 	}
 	if s.durationMS > 0 {
-		fmt.Fprintf(w, "| Duration | %dms |\n", s.durationMS)
+		sw.printf("| Duration | %dms |\n", s.durationMS)
 	}
 	if s.p50 > 0 || s.p95 > 0 {
-		fmt.Fprintf(w, "| Latency P50 | %dms |\n", s.p50)
-		fmt.Fprintf(w, "| Latency P95 | %dms |\n", s.p95)
+		sw.printf("| Latency P50 | %dms |\n", s.p50)
+		sw.printf("| Latency P95 | %dms |\n", s.p95)
 	}
-	if _, err := fmt.Fprintln(w); err != nil {
-		return err
-	}
-	return nil
+	sw.println()
 }
 
 func filterFailures(results []types.AssertionResult) []types.AssertionResult {
@@ -189,71 +183,61 @@ func filterFailures(results []types.AssertionResult) []types.AssertionResult {
 	return out
 }
 
-func writeFailureSection(w io.Writer, failures []types.AssertionResult) error {
-	if _, err := fmt.Fprintln(w, "### Failures"); err != nil {
-		return err
-	}
-	if _, err := fmt.Fprintln(w); err != nil {
-		return err
-	}
+func writeFailureSection(sw *stickyWriter, failures []types.AssertionResult) {
+	sw.println("### Failures")
+	sw.println()
 	for i := range failures {
-		if err := writeFailureBlock(w, &failures[i]); err != nil {
-			return err
-		}
+		writeFailureBlock(sw, &failures[i])
 	}
-	return nil
 }
 
-func writeFailureBlock(w io.Writer, r *types.AssertionResult) error {
-	icon := statusIcon(r.Status)
-	layer := r.Layer
+func writeFailureBlock(sw *stickyWriter, r *types.AssertionResult) {
 	typ := r.Type
 	if typ == "" {
 		typ = "(unknown)"
 	}
-	fmt.Fprintf(w, "#### %s `%s` — L%d %s\n\n", icon, r.AssertionID, layer, typ)
+	sw.printf("#### %s `%s` — L%d %s\n\n", statusIcon(r.Status), r.AssertionID, r.Layer, typ)
 	if r.TraceNodePath != "" {
-		fmt.Fprintf(w, "- **Trace path:** `%s`\n", r.TraceNodePath)
+		sw.printf("- **Trace path:** `%s`\n", r.TraceNodePath)
 	}
-	fmt.Fprintf(w, "- **Score:** %.3f\n", r.Score)
+	sw.printf("- **Score:** %.3f\n", r.Score)
 	if r.Expected != "" {
-		fmt.Fprintf(w, "- **Expected:** %s\n", escapeMarkdownInline(r.Expected))
+		sw.printf("- **Expected:** %s\n", escapeMarkdownInline(r.Expected))
 	}
 	if r.Actual != "" {
-		fmt.Fprintf(w, "- **Actual:** %s\n", escapeMarkdownInline(r.Actual))
+		sw.printf("- **Actual:** %s\n", escapeMarkdownInline(r.Actual))
 	}
 	if r.Explanation != "" {
-		fmt.Fprintf(w, "- **Explanation:** %s\n", escapeMarkdownInline(r.Explanation))
+		sw.printf("- **Explanation:** %s\n", escapeMarkdownInline(r.Explanation))
 	}
 	if r.ThresholdSource != "" && r.ThresholdSource != types.ThresholdSourceStatic {
-		fmt.Fprintf(w, "- **Threshold source:** %s\n", r.ThresholdSource)
+		sw.printf("- **Threshold source:** %s\n", r.ThresholdSource)
 	}
 	if r.Judge != nil {
-		writeJudgeMetadata(w, r.Judge)
+		writeJudgeMetadata(sw, r.Judge)
 	}
 	if r.SuggestedAction != "" {
-		fmt.Fprintf(w, "- **Suggested action:** %s\n", escapeMarkdownInline(r.SuggestedAction))
+		sw.printf("- **Suggested action:** %s\n", escapeMarkdownInline(r.SuggestedAction))
 	}
 	if r.Cost > 0 || r.DurationMS > 0 {
-		fmt.Fprintf(w, "- **Cost / latency:** $%.6f, %dms\n", r.Cost, r.DurationMS)
+		sw.printf("- **Cost / latency:** $%.6f, %dms\n", r.Cost, r.DurationMS)
 	}
-	_, err := fmt.Fprintln(w)
-	return err
+	sw.println()
 }
 
-func writeJudgeMetadata(w io.Writer, m *types.JudgeMetadata) {
+func writeJudgeMetadata(sw *stickyWriter, m *types.JudgeMetadata) {
 	if m.Model != "" {
-		fmt.Fprintf(w, "- **Judge model:** `%s`\n", m.Model)
+		sw.printf("- **Judge model:** `%s`\n", m.Model)
 	}
 	if m.RubricName != "" {
 		rubric := m.RubricName
 		if m.RubricVersion != "" {
 			rubric = fmt.Sprintf("%s @ %s", m.RubricName, m.RubricVersion)
 		}
-		fmt.Fprintf(w, "- **Rubric:** %s\n", rubric)
+		sw.printf("- **Rubric:** %s\n", rubric)
 	}
 	if m.PromptHash != "" {
-		fmt.Fprintf(w, "- **Prompt hash:** `%s`\n", m.PromptHash)
+		sw.printf("- **Prompt hash:** `%s`\n", m.PromptHash)
 	}
 	if len(m.SampleScores) > 1 {
 		samples := make([]string, len(m.SampleScores))
@@ -264,7 +248,7 @@ func writeJudgeMetadata(w io.Writer, m *types.JudgeMetadata) {
 		if m.HighVarianceFlag {
 			varianceTag = " ⚠ HIGH VARIANCE"
 		}
-		fmt.Fprintf(w, "- **Sample scores:** [%s] (mean=%.2f, stddev=%.2f)%s\n",
+		sw.printf("- **Sample scores:** [%s] (mean=%.2f, stddev=%.2f)%s\n",
 			strings.Join(samples, ", "), m.ScoreMean, m.ScoreStddev, varianceTag)
 	}
 }
@@ -272,17 +256,13 @@ func writeJudgeMetadata(w io.Writer, m *types.JudgeMetadata) {
 // writeLayerBreakdown groups the entire result set by Layer and emits a
 // per-layer table. Useful when reviewers want the full picture rather
 // than just failures.
-func writeLayerBreakdown(w io.Writer, results []types.AssertionResult, verbose bool) error {
+func writeLayerBreakdown(sw *stickyWriter, results []types.AssertionResult, verbose bool) {
 	groups := groupByLayer(results)
 	if len(groups) == 0 {
-		return nil
+		return
 	}
-	if _, err := fmt.Fprintln(w, "### By layer"); err != nil {
-		return err
-	}
-	if _, err := fmt.Fprintln(w); err != nil {
-		return err
-	}
+	sw.println("### By layer")
+	sw.println()
 
 	layers := make([]int, 0, len(groups))
 	for k := range groups {
@@ -293,32 +273,20 @@ func writeLayerBreakdown(w io.Writer, results []types.AssertionResult, verbose b
 	for _, layer := range layers {
 		group := groups[layer]
 		passed, soft, hard := countByStatus(group)
-		fmt.Fprintf(w, "#### Layer %d (%s) — %d total: %d passed, %d soft failed, %d hard failed\n\n",
+		sw.printf("#### Layer %d (%s) — %d total: %d passed, %d soft failed, %d hard failed\n\n",
 			layer, layerName(layer), len(group), passed, soft, hard)
 
+		rows := group
 		if !verbose {
-			// Show only failures at this layer in the by-layer breakdown.
-			fail := filterFailures(group)
-			if len(fail) == 0 {
-				if _, err := fmt.Fprintln(w, "_All passing._"); err != nil {
-					return err
-				}
-				if _, err := fmt.Fprintln(w); err != nil {
-					return err
-				}
-				continue
-			}
-			if err := writeAssertionTable(w, fail); err != nil {
-				return err
-			}
+			rows = filterFailures(group)
+		}
+		if len(rows) == 0 {
+			sw.println("_All passing._")
+			sw.println()
 			continue
 		}
-
-		if err := writeAssertionTable(w, group); err != nil {
-			return err
-		}
+		writeAssertionTable(sw, rows)
 	}
-	return nil
 }
 
 func groupByLayer(results []types.AssertionResult) map[int][]types.AssertionResult {
@@ -347,15 +315,11 @@ func countByStatus(rs []types.AssertionResult) (pass, soft, hard int) {
 	return
 }
 
-func writeAssertionTable(w io.Writer, rs []types.AssertionResult) error {
-	if _, err := fmt.Fprintln(w, "| Assertion | Status | Score | Trace path | Expected | Actual |"); err != nil {
-		return err
-	}
-	if _, err := fmt.Fprintln(w, "|-----------|--------|-------|-----------|----------|--------|"); err != nil {
-		return err
-	}
+func writeAssertionTable(sw *stickyWriter, rs []types.AssertionResult) {
+	sw.println("| Assertion | Status | Score | Trace path | Expected | Actual |")
+	sw.println("|-----------|--------|-------|-----------|----------|--------|")
 	for _, r := range rs {
-		fmt.Fprintf(w, "| `%s` | %s %s | %.3f | %s | %s | %s |\n",
+		sw.printf("| `%s` | %s %s | %.3f | %s | %s | %s |\n",
 			r.AssertionID,
 			statusIcon(r.Status), r.Status,
 			r.Score,
@@ -364,10 +328,7 @@ func writeAssertionTable(w io.Writer, rs []types.AssertionResult) error {
 			renderCell(r.Actual),
 		)
 	}
-	if _, err := fmt.Fprintln(w); err != nil {
-		return err
-	}
-	return nil
+	sw.println()
 }
 
 func layerName(layer int) string {

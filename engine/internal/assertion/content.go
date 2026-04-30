@@ -54,43 +54,28 @@ func (e *ContentEvaluator) Evaluate(trace *types.Trace, assertion *types.Asserti
 		failStatus = types.StatusSoftFail
 	}
 
-	expected := describeKeywordCheck(spec.Check, spec.Value, spec.Values)
-	actual := truncate(targetStr)
+	d := diagFields{
+		target:   spec.Target,
+		expected: describeKeywordCheck(spec.Check, spec.Value, spec.Values),
+		actual:   truncate(targetStr),
+	}
 
 	switch spec.Check {
 	case "contains":
 		if strings.Contains(compareTarget, compareValue) {
-			return passResultWithDiag(assertion, start, fmt.Sprintf("%s contains '%s'.", spec.Target, spec.Value), spec.Target, expected, actual)
+			return passResultWithDiag(assertion, start, fmt.Sprintf("%s contains '%s'.", spec.Target, spec.Value), d)
 		}
-		return &types.AssertionResult{
-			AssertionID:     assertion.AssertionID,
-			Status:          failStatus,
-			Score:           0.0,
-			Explanation:     fmt.Sprintf("%s does not contain '%s'.", spec.Target, spec.Value),
-			DurationMS:      time.Since(start).Milliseconds(),
-			RequestID:       assertion.RequestID,
-			TraceNodePath:   spec.Target,
-			Expected:        expected,
-			Actual:          actual,
-			SuggestedAction: fmt.Sprintf("Confirm the agent emits %q in %s, or remove the assertion if the contract changed.", spec.Value, spec.Target),
-		}
+		d.suggestion = fmt.Sprintf("Confirm the agent emits %q in %s, or remove the assertion if the contract changed.", spec.Value, spec.Target)
+		return failResultWithDiag(assertion, start, failStatus, 0.0,
+			fmt.Sprintf("%s does not contain '%s'.", spec.Target, spec.Value), d)
 
 	case "not_contains":
 		if !strings.Contains(compareTarget, compareValue) {
-			return passResultWithDiag(assertion, start, fmt.Sprintf("%s does not contain '%s'.", spec.Target, spec.Value), spec.Target, expected, actual)
+			return passResultWithDiag(assertion, start, fmt.Sprintf("%s does not contain '%s'.", spec.Target, spec.Value), d)
 		}
-		return &types.AssertionResult{
-			AssertionID:     assertion.AssertionID,
-			Status:          failStatus,
-			Score:           0.0,
-			Explanation:     fmt.Sprintf("%s contains '%s' but should not.", spec.Target, spec.Value),
-			DurationMS:      time.Since(start).Milliseconds(),
-			RequestID:       assertion.RequestID,
-			TraceNodePath:   spec.Target,
-			Expected:        expected,
-			Actual:          actual,
-			SuggestedAction: fmt.Sprintf("Strip %q from %s before returning.", spec.Value, spec.Target),
-		}
+		d.suggestion = fmt.Sprintf("Strip %q from %s before returning.", spec.Value, spec.Target)
+		return failResultWithDiag(assertion, start, failStatus, 0.0,
+			fmt.Sprintf("%s contains '%s' but should not.", spec.Target, spec.Value), d)
 
 	case "regex_match":
 		// E5: Reject patterns that exceed the length limit to prevent ReDoS.
@@ -102,20 +87,11 @@ func (e *ContentEvaluator) Evaluate(trace *types.Trace, assertion *types.Asserti
 			return failResult(assertion, start, fmt.Sprintf("invalid regex '%s': %v", spec.Value, err))
 		}
 		if re.MatchString(targetStr) {
-			return passResultWithDiag(assertion, start, fmt.Sprintf("%s matches regex '%s'.", spec.Target, spec.Value), spec.Target, expected, actual)
+			return passResultWithDiag(assertion, start, fmt.Sprintf("%s matches regex '%s'.", spec.Target, spec.Value), d)
 		}
-		return &types.AssertionResult{
-			AssertionID:     assertion.AssertionID,
-			Status:          failStatus,
-			Score:           0.0,
-			Explanation:     fmt.Sprintf("%s does not match regex '%s'.", spec.Target, spec.Value),
-			DurationMS:      time.Since(start).Milliseconds(),
-			RequestID:       assertion.RequestID,
-			TraceNodePath:   spec.Target,
-			Expected:        expected,
-			Actual:          actual,
-			SuggestedAction: "Test the regex on the actual output and adjust either the pattern or the agent's response shape.",
-		}
+		d.suggestion = "Test the regex on the actual output and adjust either the pattern or the agent's response shape."
+		return failResultWithDiag(assertion, start, failStatus, 0.0,
+			fmt.Sprintf("%s does not match regex '%s'.", spec.Target, spec.Value), d)
 
 	case "keyword_all":
 		missing := []string{}
@@ -129,20 +105,12 @@ func (e *ContentEvaluator) Evaluate(trace *types.Trace, assertion *types.Asserti
 			}
 		}
 		if len(missing) == 0 {
-			return passResultWithDiag(assertion, start, fmt.Sprintf("%s contains all keywords.", spec.Target), spec.Target, expected, actual)
+			return passResultWithDiag(assertion, start, fmt.Sprintf("%s contains all keywords.", spec.Target), d)
 		}
-		return &types.AssertionResult{
-			AssertionID:     assertion.AssertionID,
-			Status:          failStatus,
-			Score:           float64(len(spec.Values)-len(missing)) / float64(len(spec.Values)),
-			Explanation:     fmt.Sprintf("%s missing keywords: %v", spec.Target, missing),
-			DurationMS:      time.Since(start).Milliseconds(),
-			RequestID:       assertion.RequestID,
-			TraceNodePath:   spec.Target,
-			Expected:        expected,
-			Actual:          actual,
-			SuggestedAction: fmt.Sprintf("Coverage gap: agent missed keywords %v. Update prompt or assertion.", missing),
-		}
+		d.suggestion = fmt.Sprintf("Coverage gap: agent missed keywords %v. Update prompt or assertion.", missing)
+		score := float64(len(spec.Values)-len(missing)) / float64(len(spec.Values))
+		return failResultWithDiag(assertion, start, failStatus, score,
+			fmt.Sprintf("%s missing keywords: %v", spec.Target, missing), d)
 
 	case "keyword_any":
 		for _, kw := range spec.Values {
@@ -151,21 +119,12 @@ func (e *ContentEvaluator) Evaluate(trace *types.Trace, assertion *types.Asserti
 				cmpKW = strings.ToLower(kw)
 			}
 			if strings.Contains(compareTarget, cmpKW) {
-				return passResultWithDiag(assertion, start, fmt.Sprintf("%s contains keyword '%s'.", spec.Target, kw), spec.Target, expected, actual)
+				return passResultWithDiag(assertion, start, fmt.Sprintf("%s contains keyword '%s'.", spec.Target, kw), d)
 			}
 		}
-		return &types.AssertionResult{
-			AssertionID:     assertion.AssertionID,
-			Status:          failStatus,
-			Score:           0.0,
-			Explanation:     fmt.Sprintf("%s contains none of keywords: %v", spec.Target, spec.Values),
-			DurationMS:      time.Since(start).Milliseconds(),
-			RequestID:       assertion.RequestID,
-			TraceNodePath:   spec.Target,
-			Expected:        expected,
-			Actual:          actual,
-			SuggestedAction: "Agent answered without any of the required terms — review the system prompt.",
-		}
+		d.suggestion = "Agent answered without any of the required terms — review the system prompt."
+		return failResultWithDiag(assertion, start, failStatus, 0.0,
+			fmt.Sprintf("%s contains none of keywords: %v", spec.Target, spec.Values), d)
 
 	case "forbidden":
 		found := []string{}
@@ -179,20 +138,12 @@ func (e *ContentEvaluator) Evaluate(trace *types.Trace, assertion *types.Asserti
 			}
 		}
 		if len(found) == 0 {
-			return passResultWithDiag(assertion, start, fmt.Sprintf("%s contains none of forbidden terms.", spec.Target), spec.Target, expected, actual)
+			return passResultWithDiag(assertion, start, fmt.Sprintf("%s contains none of forbidden terms.", spec.Target), d)
 		}
-		return &types.AssertionResult{
-			AssertionID:     assertion.AssertionID,
-			Status:          types.StatusHardFail, // forbidden is always hard_fail
-			Score:           0.0,
-			Explanation:     fmt.Sprintf("%s contains forbidden terms: %v", spec.Target, found),
-			DurationMS:      time.Since(start).Milliseconds(),
-			RequestID:       assertion.RequestID,
-			TraceNodePath:   spec.Target,
-			Expected:        expected,
-			Actual:          actual,
-			SuggestedAction: fmt.Sprintf("Critical: forbidden terms %v leaked into %s. Likely safety regression.", found, spec.Target),
-		}
+		d.suggestion = fmt.Sprintf("Critical: forbidden terms %v leaked into %s. Likely safety regression.", found, spec.Target)
+		// forbidden is always hard_fail regardless of soft flag.
+		return failResultWithDiag(assertion, start, types.StatusHardFail, 0.0,
+			fmt.Sprintf("%s contains forbidden terms: %v", spec.Target, found), d)
 
 	default:
 		return failResult(assertion, start, fmt.Sprintf("unknown content check type: %s", spec.Check))
@@ -202,7 +153,7 @@ func (e *ContentEvaluator) Evaluate(trace *types.Trace, assertion *types.Asserti
 // passResultWithDiag is a passResult variant that carries diagnostic
 // fields. Used by content checks so reports can show the matched value
 // even on success when surfaced under --verbose.
-func passResultWithDiag(assertion *types.Assertion, start time.Time, explanation, target, expected, actual string) *types.AssertionResult {
+func passResultWithDiag(assertion *types.Assertion, start time.Time, explanation string, d diagFields) *types.AssertionResult {
 	return &types.AssertionResult{
 		AssertionID:   assertion.AssertionID,
 		Status:        types.StatusPass,
@@ -210,8 +161,8 @@ func passResultWithDiag(assertion *types.Assertion, start time.Time, explanation
 		Explanation:   explanation,
 		DurationMS:    time.Since(start).Milliseconds(),
 		RequestID:     assertion.RequestID,
-		TraceNodePath: target,
-		Expected:      expected,
-		Actual:        actual,
+		TraceNodePath: d.target,
+		Expected:      d.expected,
+		Actual:        d.actual,
 	}
 }

@@ -3,6 +3,7 @@ package assertion
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/segmentio/encoding/json"
 
@@ -87,4 +88,40 @@ func describeKeywordCheck(check, value string, values []string) string {
 		return fmt.Sprintf("%s %s", check, strings.Join(values, ", "))
 	}
 	return check
+}
+
+// diagFields bundles the five diagnostic strings every evaluator
+// populates — TraceNodePath/Expected/Actual/SuggestedAction — so
+// failResultWithDiag and passResultWithDiag share one parameter shape.
+type diagFields struct {
+	target     string
+	expected   string
+	actual     string
+	suggestion string
+}
+
+// failResultWithDiag builds a fail (hard or soft) AssertionResult with
+// the standard diagnostic fields populated. Used by evaluators with
+// many failure variants (e.g. content checks) to keep each branch a
+// single line.
+func failResultWithDiag(
+	assertion *types.Assertion,
+	start time.Time,
+	status string,
+	score float64,
+	explanation string,
+	d diagFields,
+) *types.AssertionResult {
+	return &types.AssertionResult{
+		AssertionID:     assertion.AssertionID,
+		Status:          status,
+		Score:           score,
+		Explanation:     explanation,
+		DurationMS:      time.Since(start).Milliseconds(),
+		RequestID:       assertion.RequestID,
+		TraceNodePath:   d.target,
+		Expected:        d.expected,
+		Actual:          d.actual,
+		SuggestedAction: d.suggestion,
+	}
 }
