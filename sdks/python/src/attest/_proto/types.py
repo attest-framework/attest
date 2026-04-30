@@ -34,6 +34,18 @@ TYPE_TRACE_TREE: str = "trace_tree"
 TYPE_PLUGIN: str = "plugin"
 
 # ---------------------------------------------------------------------------
+# FailureClass constants
+# ---------------------------------------------------------------------------
+
+# Mirrors engine/pkg/types/failure_class.go. Empty string ("") means
+# "not classified" (passes and results the heuristic declined to label).
+FAILURE_CLASS_BROKEN_CODE: str = "broken_code"
+FAILURE_CLASS_FLAKY_JUDGE: str = "flaky_judge"
+FAILURE_CLASS_BAD_RUBRIC: str = "bad_rubric"
+FAILURE_CLASS_MISSING_TRACE_DATA: str = "missing_trace_data"
+FAILURE_CLASS_STOCHASTIC_VARIANCE: str = "stochastic_variance"
+
+# ---------------------------------------------------------------------------
 # Error code constants
 # ---------------------------------------------------------------------------
 
@@ -352,6 +364,7 @@ class AssertionResult:
     actual: str | None = None
     suggested_action: str | None = None
     judge_metadata: JudgeMetadata | None = None
+    failure_class: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         d: dict[str, Any] = {
@@ -380,6 +393,8 @@ class AssertionResult:
             d["suggested_action"] = self.suggested_action
         if self.judge_metadata is not None:
             d["judge_metadata"] = self.judge_metadata.to_dict()
+        if self.failure_class is not None:
+            d["failure_class"] = self.failure_class
         return d
 
     @classmethod
@@ -402,6 +417,7 @@ class AssertionResult:
             actual=data.get("actual"),
             suggested_action=data.get("suggested_action"),
             judge_metadata=judge,
+            failure_class=data.get("failure_class"),
         )
 
 
