@@ -406,14 +406,18 @@ func statusIcon(status string) string {
 	}
 }
 
-// escapeMarkdownInline collapses pipes and backticks so a value can be
-// embedded in a one-line markdown bullet without breaking surrounding
-// table cells. Strings longer than ~140 chars are truncated.
+// escapeMarkdownInline escapes pipes and backticks and collapses
+// newlines so a value can be embedded in a one-line markdown bullet or
+// table cell without breaking surrounding structure. Strings longer
+// than ~140 chars are truncated; the truncate is byte-based so a
+// multi-byte rune at the cut site is replaced with U+FFFD by
+// ToValidUTF8.
 func escapeMarkdownInline(s string) string {
 	s = strings.ReplaceAll(s, "|", "\\|")
+	s = strings.ReplaceAll(s, "`", "\\`")
 	s = strings.ReplaceAll(s, "\n", " ")
 	if len(s) > 140 {
-		s = s[:137] + "..."
+		s = strings.ToValidUTF8(s[:137], "") + "..."
 	}
 	return s
 }

@@ -64,14 +64,16 @@ func inferTraceNodePath(a *types.Assertion) string {
 	return ""
 }
 
-// truncate cuts s to maxDiagnosticBytes, appending an ellipsis when it
-// truncated. Operates on bytes, not runes — overshoot by one rune is
-// preferable to scanning every multibyte character on every assertion.
+// truncate cuts s to maxDiagnosticBytes and appends an ellipsis. Cuts
+// on byte boundary, then runs strings.ToValidUTF8 over the prefix so a
+// multi-byte rune sliced at the cut site does not produce invalid UTF-8
+// — the orphaned bytes are dropped rather than corrupting downstream
+// JSON encoding or markdown rendering.
 func truncate(s string) string {
 	if len(s) <= maxDiagnosticBytes {
 		return s
 	}
-	return s[:maxDiagnosticBytes-3] + "..."
+	return strings.ToValidUTF8(s[:maxDiagnosticBytes-3], "") + "..."
 }
 
 // describeKeywordCheck renders a content-assertion check name + values

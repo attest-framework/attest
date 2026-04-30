@@ -121,20 +121,32 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
 def pytest_terminal_summary(terminalreporter: Any, exitstatus: int, config: pytest.Config) -> None:
     """Print cost report and per-test diagnostic blocks when requested.
 
-    --attest-cost-report enables the session-cost summary; the
-    diagnostic-block renderer always fires for failed runs but only
-    enumerates passing assertions when --attest-diagnostics is set.
+    --attest-cost-report enables the session-cost summary. The
+    diagnostic-block renderer fires for any failed run; passing
+    assertions are enumerated alongside failures when
+    --attest-diagnostics is set so reviewers can see what was
+    evaluated even when the suite is green.
     """
     diagnostics_opt = config.getoption("--attest-diagnostics", default=False)
     cost_report_opt = config.getoption("--attest-cost-report", default=False)
 
     if _session_results:
-        failed = [(nid, r) for nid, r in _session_results.items() if not r.passed]
-        if failed or diagnostics_opt:
+        if diagnostics_opt:
+            entries = list(_session_results.items())
+        else:
+            entries = [(nid, r) for nid, r in _session_results.items() if not r.passed]
+        if entries:
             terminalreporter.write_sep("=", "Attest Diagnostics")
-            for nodeid, agent_result in failed:
-                terminalreporter.write_line(f"FAILED {nodeid}")
-                terminalreporter.write_line(render_diagnostics(agent_result, test_file=nodeid))
+            for nodeid, agent_result in entries:
+                marker = "FAILED" if not agent_result.passed else "PASSED"
+                terminalreporter.write_line(f"{marker} {nodeid}")
+                terminalreporter.write_line(
+                    render_diagnostics(
+                        agent_result,
+                        test_file=nodeid,
+                        include_passing=diagnostics_opt,
+                    )
+                )
 
     if cost_report_opt:
         terminalreporter.write_sep("=", "Attest Cost Report")

@@ -97,7 +97,7 @@ func (e *JudgeEvaluator) Evaluate(trace *types.Trace, assertion *types.Assertion
 				ScoreMean:    cached.Score,
 			}
 			return e.buildResult(assertion, cached.Score, cached.Explanation, spec.Threshold, spec.Soft, durationMS, 0,
-				judgeBuildArgs{target: spec.Target, model: model, rubric: rubricName, prompt: targetStr, meta: meta})
+				judgeBuildArgs{target: spec.Target, model: model, rubric: rubricName, meta: meta})
 		}
 	}
 
@@ -124,7 +124,6 @@ type judgeBuildArgs struct {
 	target string
 	model  string
 	rubric string
-	prompt string
 	meta   *types.JudgeMetadata
 }
 
@@ -269,7 +268,7 @@ func (e *JudgeEvaluator) evaluateSinglePass(
 		ScoreMean:    scoreResult.Score,
 	}
 	return e.buildResult(assertion, scoreResult.Score, scoreResult.Explanation, spec.Threshold, spec.Soft, durationMS, resp.Cost,
-		judgeBuildArgs{target: spec.Target, model: model, rubric: rubricName, prompt: userContent, meta: meta})
+		judgeBuildArgs{target: spec.Target, model: model, rubric: rubricName, meta: meta})
 }
 
 // metaEvalResult holds one judge run's output.
@@ -388,5 +387,5 @@ func (e *JudgeEvaluator) evaluateWithMetaEval(
 		HighVarianceFlag: spread > metaEvalVarianceThreshold,
 	}
 	return e.buildResult(assertion, medianScore, combinedExplanation, spec.Threshold, spec.Soft, durationMS, totalCost,
-		judgeBuildArgs{target: spec.Target, model: model, rubric: rubricName, prompt: userContent, meta: meta})
+		judgeBuildArgs{target: spec.Target, model: model, rubric: rubricName, meta: meta})
 }
