@@ -79,6 +79,36 @@ describe("renderAssertionFailure", () => {
     }
   });
 
+  it("renders bias probes and calibration agreement", () => {
+    const result: AssertionResult = {
+      assertion_id: "j_calibrated",
+      status: STATUS_HARD_FAIL,
+      score: 0.4,
+      explanation: "low",
+      type: TYPE_LLM_JUDGE,
+      judge_metadata: {
+        model: "gpt-4.1",
+        rubric_name: "default",
+        rubric_version: "v1",
+        prompt_hash: "abcd",
+        sample_scores: [0.4],
+        score_mean: 0.4,
+        bias_probes: [
+          { name: "verbosity", score: 0.7, delta: 0.3 },
+          { name: "position", score: 0.45, delta: 0.05 },
+        ],
+        calibration: {
+          label_count: 12,
+          agreement: 0.83,
+          cohen_kappa: 0.65,
+        },
+      },
+    };
+    const block = renderAssertionFailure(result);
+    expect(block).toContain("bias:       verbosity Δ+0.30, position Δ+0.05");
+    expect(block).toContain("calibrated: 12 labels, agreement=0.83, κ=0.65");
+  });
+
   it("omits threshold source when static", () => {
     const result: AssertionResult = {
       assertion_id: "a",

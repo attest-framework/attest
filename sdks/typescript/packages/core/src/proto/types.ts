@@ -160,6 +160,32 @@ export interface JudgeMetadata {
   readonly score_mean?: number;
   readonly score_stddev?: number;
   readonly high_variance?: boolean;
+  readonly bias_probes?: readonly BiasProbe[];
+  readonly calibration?: JudgeAgreement;
+}
+
+/**
+ * One judge-bias probe result. Score is the score the judge produced on
+ * the mutated input; delta is `score - baseline`. A well-calibrated
+ * judge has |delta| close to zero. Mirrors
+ * engine/pkg/types/assertion.go::BiasProbe.
+ */
+export interface BiasProbe {
+  readonly name: string;
+  readonly score: number;
+  readonly delta: number;
+}
+
+/**
+ * Calibration agreement summary keyed by
+ * (rubric_name, rubric_version, prompt_hash). Mirrors
+ * engine/pkg/types/assertion.go::JudgeAgreement.
+ */
+export interface JudgeAgreement {
+  readonly label_count: number;
+  readonly agreement: number;
+  readonly cohen_kappa: number;
+  readonly roc_auc?: number;
 }
 
 export interface AssertionResult {
