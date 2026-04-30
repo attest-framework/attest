@@ -141,4 +141,9 @@ type AssertionResult struct {
 	// Judge holds judge-specific audit metadata (model, rubric, variance
 	// across repeated runs). Empty for non-judge assertions.
 	Judge *JudgeMetadata `json:"judge_metadata,omitempty"`
+	// FailureClass tags the most likely root cause of a failure
+	// (broken_code / flaky_judge / bad_rubric / missing_trace_data /
+	// stochastic_variance). Empty on passes and on results the
+	// heuristic declined to label. See ClassifyFailure for the rules.
+	FailureClass string `json:"failure_class,omitempty"`
 }
