@@ -103,20 +103,26 @@ def test_agent_reliability():
     return result
 
 repeat_result = test_agent_reliability()
-repeat_result.count       # 10
-repeat_result.pass_rate   # 0.0 to 1.0
-repeat_result.all_passed  # True if all 10 passed
-repeat_result.results     # list[AgentResult]
+repeat_result.count          # 10
+repeat_result.pass_rate      # passing / evaluated runs, or None
+repeat_result.not_evaluated  # runs skipped as not evaluated
+repeat_result.all_passed     # True if all 10 passed
+repeat_result.outcome()      # "fail" | "skip" | "pass" over all runs
+repeat_result.results        # list[AgentResult]
 ```
+
+Build each trial's result with `attest.inspect(chain)`, which never fails or skips the test, and enforce only the aggregate (see [Verdicts](verdicts.md)).
 
 ### RepeatResult Properties
 
-| Property     | Type                | Description                        |
-| ------------ | ------------------- | ---------------------------------- |
-| `count`      | `int`               | Number of runs executed            |
-| `pass_rate`  | `float`             | Fraction of passing runs (0.0-1.0) |
-| `all_passed` | `bool`              | True if every run passed           |
-| `results`    | `list[AgentResult]` | Individual results from each run   |
+| Property        | Type                | Description                                                              |
+| --------------- | ------------------- | ------------------------------------------------------------------------ |
+| `count`         | `int`               | Number of runs executed                                                  |
+| `pass_rate`     | `float \| None`     | Passing / evaluated runs; not-evaluated runs excluded; `None` if none    |
+| `not_evaluated` | `int`               | Runs whose outcome is skip (an assertion was not evaluated)              |
+| `all_passed`    | `bool`              | True if every run's outcome is pass (soft failures allowed)              |
+| `outcome()`     | `str`               | Any failing run → `fail`; else any skipped run → `skip`; else `pass`      |
+| `results`       | `list[AgentResult]` | Individual results from each run                                         |
 
 ## `@mock_tool` Decorator
 

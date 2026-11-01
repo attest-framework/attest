@@ -30,6 +30,7 @@ nav:
   - Overview: overview.md
   - Getting Started: getting-started.md
   - Guides:
+    - Verdicts: guides/verdicts.md
     - Multi-Agent Testing: guides/multi-agent.md
     - Simulation: guides/simulation.md
     - Framework Adapters: guides/framework-adapters.md
