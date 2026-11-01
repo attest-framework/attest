@@ -1,6 +1,6 @@
 # Engine configuration
 
-The engine reads its configuration from environment variables when it starts. A variable that is set to an invalid value stops the engine with an error naming the variable, so broken configuration never silently falls back to a default.
+The engine reads its configuration from environment variables when it starts. An invalid provider, URL or integer setting stops the engine with an error naming the variable. Two exceptions keep their historical behavior: `ATTEST_JUDGE_TIMEOUT_S` falls back to 30 on a non-positive or non-integer value, and `ATTEST_JUDGE_META_EVAL` is enabled only by the exact value `true`.
 
 ## Check your setup
 
@@ -29,8 +29,8 @@ The judge works with OpenAI and with any OpenAI-compatible endpoint (vLLM, Ollam
 | `ATTEST_JUDGE_TIMEOUT_S` | Per-evaluation judge timeout in seconds. | `30` |
 | `ATTEST_JUDGE_META_EVAL` | `true` runs each judge assertion three times and takes the median. | unset |
 | `ATTEST_JUDGE_CACHE_MAX_MB` | Judge response cache size, clamped to 10–10000. | `100` |
-| `ATTEST_RATE_LIMIT_OPENAI` | Judge requests per minute. | `60` |
-| `ATTEST_RATE_LIMIT_OPENAI_BURST` | Judge request burst size. | `10` |
+| `ATTEST_RATE_LIMIT_OPENAI` | Judge requests per minute; must be > 0. | `60` |
+| `ATTEST_RATE_LIMIT_OPENAI_BURST` | Judge request burst size; must be > 0. | `10` |
 
 Point the judge at a local OpenAI-compatible server:
 
@@ -56,7 +56,7 @@ attest-engine doctor
 |---|---|---|
 | `ATTEST_SIMULATION` | `1`/`true`/`yes`: Layers 5–6 return `not_evaluated(simulation)` and no provider is called. | unset |
 | `ATTEST_MAX_SOFT_FAILURES` | Maximum soft failures allowed in one engine session, counted across batches; `0` allows none. Exceeding it fails the batch. | unset (no limit) |
-| `ATTEST_EVAL_CONCURRENCY` | Layer 5–6 worker pool size per batch. | `8` |
+| `ATTEST_EVAL_CONCURRENCY` | Layer 5–6 worker pool size per batch; `0` or a negative value uses the default. | `8` |
 
 ## Cache and history
 
