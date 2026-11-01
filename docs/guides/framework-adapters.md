@@ -401,4 +401,4 @@ from attest.adapters import BaseAdapter, BaseProviderAdapter
 | `BaseAdapter`         | Framework adapters, custom adapters | None (concrete)                                                                         |
 | `BaseProviderAdapter` | Single LLM call adapters            | `_extract_completion`, `_extract_model`, `_extract_total_tokens`, `_extract_tool_calls` |
 
-The legacy `TraceAdapter`, `ProviderAdapter`, and `FrameworkAdapter` Protocols remain exported for backward compatibility. New adapters should use the class hierarchy.
+The `TraceAdapter`, `ProviderAdapter` and `FrameworkAdapter` Protocols were removed from the Python SDK in 1.0. Subclass `BaseAdapter` or `BaseProviderAdapter` instead.
