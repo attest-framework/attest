@@ -1,4 +1,4 @@
-"""evaluate() enforces the C1 aggregate; inspect() never does."""
+"""evaluate() enforces the aggregate verdict; inspect() never does."""
 
 from __future__ import annotations
 

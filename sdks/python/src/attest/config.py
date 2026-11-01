@@ -72,7 +72,7 @@ def is_simulation_mode() -> bool:
 def simulation_env_enabled() -> bool:
     """True when ATTEST_SIMULATION is set for this process (and so for an
     engine it spawns): ``1``, ``true`` or ``yes``."""
-    return os.environ.get("ATTEST_SIMULATION", "").strip() in ("1", "true", "yes")
+    return os.environ.get("ATTEST_SIMULATION", "").strip().lower() in ("1", "true", "yes")
 
 
 def get_sample_rate() -> float:

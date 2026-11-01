@@ -1,4 +1,4 @@
-"""Cross-SDK verdict fixtures (protocol-tests/verdicts): C1 aggregation."""
+"""Cross-SDK verdict fixtures (protocol-tests/verdicts): outcome aggregation."""
 
 from __future__ import annotations
 

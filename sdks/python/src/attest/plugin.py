@@ -96,7 +96,8 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         "--attest-strict",
         action="store_true",
         default=False,
-        help="Fail (instead of skip) tests with assertions that were not evaluated",
+        help="Fail (instead of skip) tests with assertions that were not evaluated "
+        "(also enabled by ATTEST_STRICT=1)",
     )
     group.addoption(
         "--attest-diagnostics",
@@ -393,7 +394,9 @@ def attest_engine(request: pytest.FixtureRequest) -> Generator[AttestEngineFixtu
     engine_path: str | None = request.config.getoption("--attest-engine", default=None)
     log_level: str = request.config.getoption("--attest-log-level", default="warn")
 
-    strict: bool = request.config.getoption("--attest-strict", default=False)
+    strict: bool = request.config.getoption("--attest-strict", default=False) or (
+        os.environ.get("ATTEST_STRICT", "").strip().lower() in ("1", "true", "yes")
+    )
 
     fixture = AttestEngineFixture(engine_path=engine_path, log_level=log_level, strict=strict)
     try:
