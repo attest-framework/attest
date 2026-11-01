@@ -55,7 +55,8 @@ result = test_multi_turn_support()
 
 result.config     # ScenarioConfig used
 result.results    # list[AgentResult] — one per turn
-result.passed     # True if all turns passed
+result.passed     # True if the aggregate outcome() is pass (soft failures allowed)
+result.outcome()  # "fail" | "skip" | "pass" over all turns
 ```
 
 ### Multi-Turn Flow
@@ -111,7 +112,7 @@ repeat_result.outcome()      # "fail" | "skip" | "pass" over all runs
 repeat_result.results        # list[AgentResult]
 ```
 
-Build each trial's result with `attest.inspect(chain)`, which never fails or skips the test, and enforce only the aggregate (see [Verdicts](verdicts.md)).
+Build each trial's result with `attest.inspect(chain)`, which never fails or skips the test, and enforce only the aggregate with `attest.enforce(repeat_result)` (see [Verdicts](verdicts.md)).
 
 ### RepeatResult Properties
 
@@ -255,7 +256,8 @@ def test_adversarial_resilience(persona):
 
 # Each of 5 repeats runs the 3-turn adversarial scenario
 repeat_result = test_adversarial_resilience()
-assert repeat_result.pass_rate >= 0.8
+# pass_rate is None when no repeat was evaluated (e.g. judge-only checks in simulation)
+assert repeat_result.pass_rate is not None and repeat_result.pass_rate >= 0.8
 ```
 
 ## Fault Injection Patterns
@@ -310,5 +312,5 @@ def test_adversarial_with_assertions(persona):
     return result
 
 repeat_result = test_adversarial_with_assertions()
-assert repeat_result.pass_rate >= 0.9
+assert repeat_result.pass_rate is not None and repeat_result.pass_rate >= 0.9
 ```

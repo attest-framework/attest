@@ -55,10 +55,11 @@ def trials(attest):
     return attest.inspect(expect(refund_agent(order_id="ORD-1")).output_contains("refund"))
 
 def test_refund_reliability(attest):
-    run = trials(attest)
-    assert run.outcome() != "fail"          # aggregate verdict over all trials
-    assert run.pass_rate is None or run.pass_rate >= 0.8
+    run = attest.enforce(trials(attest))    # fail / skip on the aggregate verdict
+    assert run.pass_rate >= 0.8             # safe: enforce() skipped if nothing was evaluated
 ```
+
+`attest.enforce(result)` applies the same rules (and `--attest-strict`) to an `AgentResult` from `inspect()`, a `RepeatResult` or a `ScenarioResult`: any failing trial fails the test with that trial's diagnostics; otherwise any not-evaluated trial skips it with the summed reasons, for example `not evaluated: simulation ×5`. A trial with soft failures counts as passing; passed and skipped tests with soft failures are listed in the "Attest soft failures" session summary.
 
 ## Policy
 

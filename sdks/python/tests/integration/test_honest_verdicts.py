@@ -119,3 +119,37 @@ def test_attest_strict_env_fails_not_evaluated(
     run = scratch.runpytest_subprocess("-p", "no:cacheprovider", "-k", "judge")
 
     run.assert_outcomes(failed=1)
+
+
+_TRIALS = """
+from attest import expect
+from attest.simulation import repeat
+from test_refund import refund_agent
+
+
+@repeat(3)
+def judge_trials(attest):
+    return attest.inspect(expect(refund_agent(order_id="ORD-T")).passes_judge("Helpful?"))
+
+
+def test_trial_loop(attest):
+    attest.enforce(judge_trials(attest))
+"""
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("strict", [False, True], ids=["default", "strict"])
+def test_all_not_evaluated_trial_loop_skips_or_fails_strict(
+    scratch: pytest.Pytester, strict: bool
+) -> None:
+    scratch.makepyfile(test_trials=_TRIALS)
+    args = ["-p", "no:cacheprovider", "-rs", "test_trials.py"]
+
+    run = scratch.runpytest_subprocess(*args, *(["--attest-strict"] if strict else []))
+
+    if strict:
+        run.assert_outcomes(failed=1)
+        run.stdout.fnmatch_lines(["*--attest-strict: not evaluated: provider_not_configured ×3*"])
+    else:
+        run.assert_outcomes(skipped=1)
+        run.stdout.fnmatch_lines(["*not evaluated: provider_not_configured ×3*"])
