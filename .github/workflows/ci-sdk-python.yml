@@ -2,10 +2,10 @@ name: Python SDK CI
 
 on:
   push:
-    paths: ["sdks/python/**", "proto/**"]
+    paths: ["sdks/python/**", "proto/**", ".github/workflows/ci-sdk-python.yml"]
     branches: [main]
   pull_request:
-    paths: ["sdks/python/**", "proto/**"]
+    paths: ["sdks/python/**", "proto/**", ".github/workflows/ci-sdk-python.yml"]
 
 jobs:
   test:
@@ -41,10 +41,12 @@ jobs:
           cd sdks/python
           uv run mypy --strict src/attest
       - name: Security audit
+        # Audit the project's installed dependencies from an isolated pip-audit,
+        # so the auditor's own dependencies are not part of the audited set.
         run: |
           cd sdks/python
-          uv pip install pip-audit
-          uv run pip-audit
+          uv pip freeze --exclude-editable > "$RUNNER_TEMP/audit-requirements.txt"
+          uvx pip-audit --no-deps --disable-pip -r "$RUNNER_TEMP/audit-requirements.txt"
 
   # Notify docs site of SDK changes so it can rebuild
   # Requires DOCS_DEPLOY_TOKEN secret: GitHub PAT with repo scope
