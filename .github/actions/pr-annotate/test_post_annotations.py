@@ -112,7 +112,7 @@ class TestBuildReview(unittest.TestCase):
         payload, annotations = _pa.build_review(_REPORT, self._failures(), {}, "abc123")
 
         self.assertEqual(payload["comments"], [])
-        self.assertIn("tests/test_refund.py:4 (not in this diff)", payload["body"])
+        self.assertIn("`tests/test_refund.py:4` (not in this diff)", payload["body"])
         self.assertTrue(annotations[0].startswith("::error file=tests/test_refund.py,line=4,"))
 
     def test_failure_without_location_goes_to_the_body_without_annotation(self) -> None:
@@ -134,29 +134,37 @@ class TestBuildReview(unittest.TestCase):
 
 
 class TestUntrustedMarkdown(unittest.TestCase):
-    def test_report_fields_cannot_mention_link_or_break_out_of_the_comment(self) -> None:
+    def test_report_fields_render_only_inside_code_spans(self) -> None:
+        payload = "a\n@org/team &#64;user [x](http://e) <img src=x> http://evil.example org/repo#1"
         out = _pa._format_failure(
             {
                 "assertion_id": "a`\n# Attest passed",
                 "status": "hard_fail",
                 "score": "high",
                 "type": "x\n\n## fake",
-                "expected": "a\n@org/team @user [x](http://e) <img src=x>",
+                "expected": payload,
             }
         )
 
         self.assertNotIn("\n#", out)
-        self.assertNotIn("@org", out)
-        self.assertNotIn("@user", out)
-        self.assertNotIn("[x](", out)
-        self.assertNotIn("<img", out)
-        self.assertEqual(out.count("`"), 0)
+        self.assertIn("**Attest assertion failed: `a' # Attest passed`**", out)
+        expected_line = next(l for l in out.splitlines() if l.startswith("- **Expected:**"))
+        self.assertEqual(
+            expected_line,
+            "- **Expected:** `a @org/team &#64;user [x](http://e) <img src=x> "
+            "http://evil.example org/repo#1`",
+        )
+        # Outside code spans only the fixed labels remain.
+        outside = "".join(out.split("`")[0::2])
+        for token in ("@", "http", "<", "[", "&#", "#1"):
+            self.assertNotIn(token, outside)
 
     def test_non_numeric_summary_fields_render_as_zero(self) -> None:
-        out = _pa._summary_body({"summary": {"total": "@x"}, "total_cost": "nan"}, [])
+        out = _pa._summary_body({"summary": {"total": "@x"}, "total_cost": float("nan")}, [])
 
         self.assertIn("of 0.", out)
         self.assertIn("$0.000000", out)
+        self.assertIn("L0 ", _pa._format_failure({"layer": float("inf")}))
 
 
 class TestMainArguments(unittest.TestCase):
@@ -222,7 +230,7 @@ class TestFormatFailure(unittest.TestCase):
             }
         )
         self.assertIn("a1", out)
-        self.assertIn("L1 schema", out)
+        self.assertIn("L1 `schema`", out)
         self.assertIn("output.message", out)
         self.assertIn("matches schema X", out)
         self.assertIn("missing required field", out)

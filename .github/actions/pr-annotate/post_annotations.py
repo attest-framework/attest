@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import re
 import sys
@@ -52,17 +53,15 @@ _CONTROL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f\u2028\u2029]")
 
 
 def _md(value: object, limit: int = 280) -> str:
-    """Render an untrusted report field as inert single-line markdown text.
+    """Render an untrusted report field as an inline code span.
 
-    The report comes from the pull request's own test run. Whitespace runs collapse
-    to one space (no new paragraphs or headings), backticks cannot close a code
-    span, ``@`` cannot mention, and ``<``, ``>``, ``[``, ``]`` cannot form HTML or
-    links.
+    The report comes from the pull request's own test run. Inside a code span
+    GitHub renders no markdown, HTML, entities, mentions, autolinks or issue
+    references. Whitespace runs collapse to one space (the span cannot end a
+    line) and backticks become quotes (the span cannot be closed early).
     """
-    text = _truncate(" ".join(str(value).split()), limit)
-    text = text.replace("\\", "\\\\").replace("`", "'").replace("@", "@\u200b")
-    text = text.replace("<", "&lt;").replace(">", "&gt;")
-    return re.sub(r"([\[\]])", r"\\\1", text)
+    text = _truncate(" ".join(str(value).split()), limit).replace("`", "'")
+    return f"`{text}`" if text else "`(empty)`"
 
 
 def _format_failure(result: dict[str, Any]) -> str:
@@ -80,7 +79,7 @@ def _format_failure(result: dict[str, Any]) -> str:
     lines: list[str] = []
     lines.append(f"**Attest assertion failed: {_md(result.get('assertion_id'), 80)}**")
     lines.append("")
-    lines.append(f"- **Layer:** L{_md(layer, 4)} {_md(type_name, 40)}")
+    lines.append(f"- **Layer:** L{int(_number(layer))} {_md(type_name, 40)}")
     lines.append(f"- **Status:** {_md(status, 20)} (score {score_text})")
     if path := result.get("trace_node_path"):
         lines.append(f"- **Trace path:** {_md(path)}")
@@ -106,6 +105,8 @@ def _format_failure(result: dict[str, Any]) -> str:
 def _number(value: object) -> int | float:
     """A numeric report field; anything else (untrusted input) renders as 0."""
     if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return 0
+    if isinstance(value, float) and not math.isfinite(value):
         return 0
     return value
 
@@ -342,7 +343,7 @@ def build_review(
         if line in commentable.get(path, set()):
             comments.append({"path": path, "line": line, "side": "RIGHT", "body": _format_failure(r)})
         else:
-            elsewhere.append(f"{_md(path, 200)}:{line} (not in this diff)\n\n{_format_failure(r)}")
+            elsewhere.append(f"{_md(f'{path}:{line}', 220)} (not in this diff)\n\n{_format_failure(r)}")
 
     body_parts = [_summary_body(report, failures)]
     if elsewhere:
