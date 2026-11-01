@@ -38,6 +38,14 @@ else
     pass "tag without leading v exits non-zero"
 fi
 
+if "$here/check-release-tag.sh" $'v1.0.0-rc.1\nversion=9.9.9' "$work/VERSION" 2>"$work/err"; then
+    fail "tag containing a newline exits non-zero"
+elif grep -q "value not shown" "$work/err" && ! grep -q "9.9.9" "$work/err"; then
+    pass "tag containing a newline exits non-zero without echoing it"
+else
+    fail "tag containing a newline is rejected without echoing it"
+fi
+
 echo "1.0.0" > "$work/VERSION"
 if out="$("$here/check-release-tag.sh" v1.0.0 "$work/VERSION")" \
     && grep -qx 'prerelease=false' <<<"$out" \

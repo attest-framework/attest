@@ -90,7 +90,7 @@ jobs:
                 tag="$version_tag"
               fi
               if [[ "$publish" == "true" && "$tag" != "$REF_NAME" ]]; then
-                echo "::error::tag input '$tag' differs from the dispatched tag ref '$REF_NAME'"
+                echo "::error::the tag input differs from the dispatched tag ref"
                 exit 1
               fi
               ;;
@@ -103,6 +103,12 @@ jobs:
               exit 1
               ;;
           esac
+          # Validate before the value reaches $GITHUB_OUTPUT or the log; the
+          # class excludes newlines, so no output injection is possible.
+          if [[ ! "$tag" =~ ^v[0-9A-Za-z.+-]+$ ]]; then
+            echo "::error::tag must match ^v[0-9A-Za-z.+-]+\$ (value not shown)"
+            exit 1
+          fi
           echo "publish=$publish" >> "$GITHUB_OUTPUT"
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
           echo "mode: $([[ $publish == true ]] && echo publish || echo dry run), tag: $tag"
@@ -236,7 +242,7 @@ jobs:
       - uses: actions/checkout@v6
         with:
           persist-credentials: false
-      - uses: astral-sh/setup-uv@v7
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
         with:
           enable-cache: false
       - name: Build sdist and wheel
@@ -278,7 +284,7 @@ jobs:
       - uses: actions/checkout@v6
         with:
           persist-credentials: false
-      - uses: pnpm/action-setup@v6
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
         with:
           package_json_file: sdks/typescript/package.json
       - uses: actions/setup-node@v6
@@ -356,7 +362,7 @@ jobs:
         with:
           name: python-dist
           path: dist
-      - uses: astral-sh/setup-uv@v7
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
         with:
           enable-cache: false
       - name: twine check
@@ -443,7 +449,7 @@ jobs:
           PRERELEASE: ${{ needs.check-tag.outputs.prerelease }}
         run: |
           set -euo pipefail
-          if gh release view "$TAG" --json tagName > /dev/null 2>&1; then
+          if existing="$(gh release view "$TAG" --json isDraft,assets 2> /dev/null)"; then
             if [[ "$GITHUB_RUN_ATTEMPT" == "1" ]]; then
               echo "::error::release $TAG already exists; a version is never reused"
               exit 1
@@ -454,17 +460,25 @@ jobs:
               echo "::error::release $TAG holds different binaries than this run's stored artifacts"
               exit 1
             fi
-            present="$(gh release view "$TAG" --json assets --jq '.assets[].name')"
+            present="$(jq -r '.assets[].name' <<<"$existing")"
             missing=()
             for f in dist/*; do
               grep -qxF "${f#dist/}" <<<"$present" || missing+=("$f")
             done
+            status="already present (identical checksums)"
             if [[ ${#missing[@]} -gt 0 ]]; then
               gh release upload "$TAG" "${missing[@]}"
-              echo "status=published (completed on re-run)" >> "$GITHUB_OUTPUT"
-            else
-              echo "status=already present (identical checksums)" >> "$GITHUB_OUTPUT"
+              status="published (completed on re-run)"
             fi
+            if [[ "$(jq -r .isDraft <<<"$existing")" == "true" ]]; then
+              gh release edit "$TAG" --draft=false
+              if [[ "$(gh release view "$TAG" --json isDraft --jq .isDraft)" != "false" ]]; then
+                echo "::error::release $TAG is still a draft after publishing it"
+                exit 1
+              fi
+              status="published (draft completed on re-run)"
+            fi
+            echo "status=$status" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           flags=(--verify-tag --title "v$VERSION")
@@ -596,6 +610,9 @@ jobs:
     needs: [check-tag, build-python, publish-github, publish-pypi, publish-npm]
     if: always() && needs.check-tag.outputs.publish == 'true' && needs.publish-github.result == 'success'
     runs-on: ubuntu-latest
+    # DOCS_DEPLOY_TOKEN is an environment secret of website-sync (tags v*, no
+    # reviewers), so workflows on branches cannot read it.
+    environment: website-sync
     permissions:
       contents: write
     env:
@@ -614,7 +631,7 @@ jobs:
           echo "json=$(jq -cn --arg tag "$TAG" '{tag: $tag}')" >> "$GITHUB_OUTPUT"
       - name: Dispatch website sync
         if: env.ALL_PUBLISHED == 'true' && env.HAS_TOKEN == 'true'
-        uses: peter-evans/repository-dispatch@v4
+        uses: peter-evans/repository-dispatch@28959ce8df70de7be546dd1250a005dd32156697 # v4.0.1
         with:
           token: ${{ secrets.DOCS_DEPLOY_TOKEN }}
           repository: attest-framework/attest-website

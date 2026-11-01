@@ -21,6 +21,10 @@ if [[ $# -lt 1 || $# -gt 2 ]]; then
 fi
 
 tag="$1"
+if [[ ! "$tag" =~ ^v[0-9A-Za-z.+-]+$ ]]; then
+    echo "check-release-tag: tag must match ^v[0-9A-Za-z.+-]+\$ (value not shown)" >&2
+    exit 1
+fi
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 version_file="${2:-$repo_root/VERSION}"
 
