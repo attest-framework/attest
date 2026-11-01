@@ -16,6 +16,7 @@ from attest._proto.types import (
     STATUS_NOT_EVALUATED,
     Assertion,
     EvaluateBatchResult,
+    InitializeResult,
     Trace,
 )
 from attest.client import AttestClient
@@ -110,6 +111,25 @@ class TestConfig:
 # ---------------------------------------------------------------------------
 
 
+def _engine(capabilities: list[str] | None) -> AsyncMock:
+    """Engine stand-in whose initialize result advertises ``capabilities``."""
+    engine = AsyncMock()
+    engine._init_result = (
+        None
+        if capabilities is None
+        else InitializeResult.from_dict(
+            {
+                "engine_version": "1.0.0",
+                "protocol_version": 1,
+                "capabilities": capabilities,
+                "missing": [],
+                "compatible": True,
+            }
+        )
+    )
+    return engine
+
+
 def _engine_payload() -> dict[str, object]:
     return {
         "results": [
@@ -141,11 +161,9 @@ class TestClientSimulationMode:
     async def test_evaluate_batch_simulation_still_calls_engine(self, enable: str) -> None:
         if enable == "config":
             config(simulation=True)
-            os.environ["ATTEST_SIMULATION"] = "1"  # the plugin sets this before engine start
         else:
             os.environ["ATTEST_SIMULATION"] = "1"
-        engine = AsyncMock()
-        client = AttestClient(engine=engine)
+        client = AttestClient(engine=_engine(["layers_1_4", "simulation_mode"]))
         client.send_request = AsyncMock(return_value=_engine_payload())  # type: ignore[method-assign]
 
         result = await client.evaluate_batch(_make_trace(), [_make_assertions()[0]])
@@ -156,13 +174,19 @@ class TestClientSimulationMode:
 
 
 @pytest.mark.asyncio
-async def test_config_simulation_without_env_refuses_to_reach_providers() -> None:
+@pytest.mark.parametrize(
+    "capabilities", [["layers_1_4"], None], ids=["no-simulation_mode", "not-initialized"]
+)
+async def test_simulation_with_unsimulated_engine_refuses_to_reach_providers(
+    capabilities: list[str] | None,
+) -> None:
+    # The process environment says simulation; the engine decides.
     config(simulation=True)
-    os.environ.pop("ATTEST_SIMULATION", None)
-    client = AttestClient(engine=AsyncMock())
+    os.environ["ATTEST_SIMULATION"] = "1"
+    client = AttestClient(engine=_engine(capabilities))
     client.send_request = AsyncMock(return_value=_engine_payload())  # type: ignore[method-assign]
 
-    with pytest.raises(RuntimeError, match="ATTEST_SIMULATION is not in the environment"):
+    with pytest.raises(RuntimeError, match="simulation"):
         await client.evaluate_batch(_make_trace(), [_make_assertions()[0]])
 
     client.send_request.assert_not_awaited()

@@ -7,18 +7,20 @@ import logging
 import os
 import threading
 from collections.abc import Generator
-from typing import Any
+from typing import Any, TypeVar
 
 import pytest
 
 from attest.cli.diagnostics import render_diagnostics
-from attest.client import AttestClient
+from attest.client import AttestClient, require_simulation_capability
 from attest.config import is_simulation_mode
 from attest.engine_manager import EngineManager
 from attest.expect import ExpectChain
-from attest.result import OUTCOME_FAIL, OUTCOME_SKIP, AgentResult
+from attest.result import OUTCOME_FAIL, OUTCOME_SKIP, AgentResult, Verdict
 
 logger = logging.getLogger("attest.plugin")
+
+V = TypeVar("V", bound=Verdict)
 
 # Session-level cost accumulator — updated by evaluate() calls
 _session_cost: float = 0.0
@@ -26,6 +28,9 @@ _session_soft_failures: int = 0
 # Maps nodeid → AgentResult for tests that produced one. Used by the
 # terminal summary hook to render diagnostic blocks for failed runs.
 _session_results: dict[str, AgentResult] = {}
+# Maps nodeid → pytest's call-phase outcome ("passed" / "failed" /
+# "skipped") for tests that produced an AgentResult.
+_session_outcomes: dict[str, str] = {}
 # Thread-local-ish slot for the most-recent AgentResult produced inside
 # a test. pytest serialises test execution, so a single slot is safe;
 # the makereport hook below pops it into _session_results keyed on
@@ -139,20 +144,14 @@ def pytest_terminal_summary(terminalreporter: Any, exitstatus: int, config: pyte
     diagnostics_opt = config.getoption("--attest-diagnostics", default=False)
     cost_report_opt = config.getoption("--attest-cost-report", default=False)
 
-    # Failing and skipped tests carry their diagnostics in pytest's own
-    # report; soft failures in passing tests are summarised here.
-    soft_passes = [
-        nid
-        for nid, r in _session_results.items()
-        if r.soft_failures and r.outcome() not in (OUTCOME_FAIL, OUTCOME_SKIP)
-    ]
-    if soft_passes:
+    soft_lines = soft_failure_lines(_session_results, _session_outcomes)
+    if soft_lines:
         terminalreporter.write_sep("=", "Attest soft failures")
         terminalreporter.write_line(
-            f"{len(soft_passes)} passing test(s) recorded soft failures:", yellow=True
+            f"{len(soft_lines)} passed or skipped test(s) recorded soft failures:", yellow=True
         )
-        for nid in soft_passes:
-            terminalreporter.write_line(f"  {nid}: {len(_session_results[nid].soft_failures)} soft")
+        for line in soft_lines:
+            terminalreporter.write_line(line)
 
     if diagnostics_opt and _session_results:
         terminalreporter.write_sep("=", "Attest Diagnostics")
@@ -195,6 +194,17 @@ def pytest_runtest_makereport(
     agent_result = _take_last_result()
     if agent_result is not None:
         _session_results[item.nodeid] = agent_result
+        _session_outcomes[item.nodeid] = report.outcome
+
+
+def soft_failure_lines(results: dict[str, AgentResult], outcomes: dict[str, str]) -> list[str]:
+    """One line per test with soft failures that pytest did not report as
+    failed (failed tests already show their diagnostics in pytest's report)."""
+    return [
+        f"  {nid}: {len(r.soft_failures)} soft ({outcomes.get(nid, 'passed')})"
+        for nid, r in results.items()
+        if r.soft_failures and outcomes.get(nid) != "failed"
+    ]
 
 
 class AttestEngineFixture:
@@ -236,12 +246,12 @@ class AttestEngineFixture:
             log_level=self._log_level,
         )
         init = self._loop.run_until_complete(self._manager.start())
-        if simulation and "simulation_mode" not in init.capabilities:
-            self._loop.run_until_complete(self._manager.stop())
-            raise RuntimeError(
-                f"attest-engine {init.engine_version} does not support simulation mode "
-                "(capability 'simulation_mode'); upgrade the engine to 1.0 or later."
-            )
+        if simulation:
+            try:
+                require_simulation_capability(init)
+            except RuntimeError:
+                self._loop.run_until_complete(self._manager.stop())
+                raise
         self._client = AttestClient(self._manager)
 
         # Run the engine loop in a background thread so callers on any event
@@ -323,7 +333,7 @@ class AttestEngineFixture:
         end of the session. Use ``inspect()`` to get results without
         enforcement.
         """
-        return self._enforce(self.inspect(chain, budget=budget))
+        return self.enforce(self.inspect(chain, budget=budget))
 
     async def evaluate_async(
         self,
@@ -332,7 +342,7 @@ class AttestEngineFixture:
         budget: float | None = None,
     ) -> AgentResult:
         """Async ``evaluate()``: evaluate and enforce the test outcome."""
-        return self._enforce(await self.inspect_async(chain, budget=budget))
+        return self.enforce(await self.inspect_async(chain, budget=budget))
 
     def inspect(
         self,
@@ -374,18 +384,24 @@ class AttestEngineFixture:
         result = await asyncio.wrap_future(future)
         return self._process_result(chain, result, budget)
 
-    def _enforce(self, agent_result: AgentResult) -> AgentResult:
-        """Fail or skip the running test according to the batch outcome."""
-        outcome = agent_result.outcome(strict=self._strict)
+    def enforce(self, verdict: V) -> V:
+        """Fail or skip the running test according to ``verdict``'s outcome.
+
+        Accepts an ``AgentResult`` from ``inspect()`` or the aggregate of a
+        trial loop (``RepeatResult``, ``ScenarioResult``). Fails with
+        diagnostics on any failure; otherwise skips with the not-evaluated
+        reasons (fails under ``--attest-strict``); otherwise returns it.
+        """
+        outcome = verdict.outcome(strict=self._strict)
         if outcome == OUTCOME_FAIL:
             header = ""
-            if not agent_result.hard_failures:
-                header = f"--attest-strict: {agent_result.skip_reason()}\n"
-            diagnostics = render_diagnostics(agent_result).lstrip("\n")
+            if verdict.outcome() != OUTCOME_FAIL:
+                header = f"--attest-strict: {verdict.skip_reason()}\n"
+            diagnostics = verdict.render_diagnostics().lstrip("\n")
             pytest.fail(header + diagnostics, pytrace=False)
         if outcome == OUTCOME_SKIP:
-            pytest.skip(agent_result.skip_reason())
-        return agent_result
+            pytest.skip(verdict.skip_reason())
+        return verdict
 
 
 @pytest.fixture(scope="session")

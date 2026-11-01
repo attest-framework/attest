@@ -28,8 +28,8 @@ def _result(*rows: AssertionResult) -> AgentResult:
     return AgentResult(trace=Trace(trace_id="t", output={}), assertion_results=list(rows))
 
 
-def _enforce(result: AgentResult, *, strict: bool = False) -> Any:
-    return AttestEngineFixture(strict=strict)._enforce(result)
+def _enforce(result: Any, *, strict: bool = False) -> Any:
+    return AttestEngineFixture(strict=strict).enforce(result)
 
 
 def test_enforce_hard_fail_with_not_evaluated_fails_listing_both() -> None:
@@ -155,5 +155,76 @@ def test_start_rejects_engine_without_simulation_mode(monkeypatch: pytest.Monkey
     monkeypatch.setenv("ATTEST_SIMULATION", "1")
     fixture = AttestEngineFixture()
 
-    with pytest.raises(RuntimeError, match="does not support simulation mode"):
+    with pytest.raises(RuntimeError, match="was not started in simulation mode"):
         fixture.start()
+
+
+def _repeat(*results: AgentResult) -> Any:
+    from attest.simulation.repeat import RepeatResult
+
+    return RepeatResult(results=list(results))
+
+
+def test_enforce_trial_loop_all_not_evaluated_skips_with_summed_reasons() -> None:
+    run = _repeat(
+        _result(_row("j", "not_evaluated", "simulation", 6)),
+        _result(_row("j", "not_evaluated", "simulation", 6)),
+    )
+
+    with pytest.raises(pytest.skip.Exception) as exc:
+        _enforce(run)
+
+    assert str(exc.value.msg) == "not evaluated: simulation ×2"
+
+
+def test_enforce_trial_loop_strict_fails_with_trial_diagnostics() -> None:
+    run = _repeat(_result(_row("ok", "pass")), _result(_row("j", "not_evaluated", "simulation", 6)))
+
+    with pytest.raises(pytest.fail.Exception) as exc:
+        _enforce(run, strict=True)
+
+    msg = str(exc.value)
+    assert msg.startswith("--attest-strict: not evaluated: simulation")
+    assert "trial 2/2:" in msg
+    assert "trial 1/2:" not in msg
+
+
+def test_enforce_scenario_failing_turn_fails() -> None:
+    from attest.simulation.scenario import ScenarioConfig, ScenarioResult
+
+    scenario = ScenarioResult(config=ScenarioConfig(), results=[_result(_row("loop", "hard_fail"))])
+
+    with pytest.raises(pytest.fail.Exception) as exc:
+        _enforce(scenario)
+
+    assert "turn 1/1:" in str(exc.value)
+    assert "trace.loop_detection" in str(exc.value)
+
+
+def test_soft_failure_summary_includes_skipped_and_excludes_failed() -> None:
+    import json
+    from pathlib import Path
+
+    from attest.plugin import soft_failure_lines
+
+    fixture = json.loads(
+        (
+            Path(__file__).resolve().parents[3]
+            / "protocol-tests"
+            / "verdicts"
+            / "009-soft-fail-and-not-evaluated.json"
+        ).read_text()
+    )
+    assert fixture["expected"]["softFailWarning"] is True
+    skipped = AgentResult(
+        trace=Trace(trace_id="t", output={}),
+        assertion_results=[AssertionResult.from_dict(r) for r in fixture["results"]],
+    )
+    soft_only = _result(_row("ok", "pass"), _row("soft", "soft_fail"))
+
+    lines = soft_failure_lines(
+        {"t::skipped": skipped, "t::inspected": soft_only, "t::passed": soft_only},
+        {"t::skipped": "skipped", "t::inspected": "failed", "t::passed": "passed"},
+    )
+
+    assert lines == ["  t::skipped: 1 soft (skipped)", "  t::passed: 1 soft (passed)"]

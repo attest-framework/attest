@@ -8,7 +8,13 @@ from contextvars import Token
 from dataclasses import dataclass, field
 from typing import Any
 
-from attest.result import OUTCOME_PASS, AgentResult, aggregate_outcomes
+from attest.result import (
+    OUTCOME_PASS,
+    AgentResult,
+    aggregate_outcomes,
+    trials_diagnostics,
+    trials_skip_reason,
+)
 from attest.simulation._context import _active_mock_registry
 from attest.simulation.personas import Persona
 
@@ -37,6 +43,14 @@ class ScenarioResult:
         """Aggregate verdict over turns: any failing turn fails; otherwise any
         skipped turn skips (fails when ``strict``); otherwise pass."""
         return aggregate_outcomes([r.outcome(strict=strict) for r in self.results])
+
+    def skip_reason(self) -> str:
+        """Not-evaluated reasons summed across turns."""
+        return trials_skip_reason(self.results)
+
+    def render_diagnostics(self, *, color: bool = False) -> str:
+        """Diagnostics of every turn that did not pass."""
+        return trials_diagnostics(self.results, label="turn", color=color)
 
 
 def scenario(

@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol
 
 from attest._proto.types import (
     STATUS_HARD_FAIL,
@@ -27,6 +28,42 @@ def aggregate_outcomes(outcomes: list[str]) -> str:
     if OUTCOME_SKIP in outcomes:
         return OUTCOME_SKIP
     return OUTCOME_PASS
+
+
+class Verdict(Protocol):
+    """Anything ``attest.enforce()`` can turn into a test outcome:
+    ``AgentResult``, ``RepeatResult`` and ``ScenarioResult``."""
+
+    def outcome(self, *, strict: bool = False) -> str: ...
+
+    def skip_reason(self) -> str: ...
+
+    def render_diagnostics(self, *, color: bool = False) -> str: ...
+
+
+def format_skip_reason(counts: dict[str, int]) -> str:
+    """``"not evaluated: <reason>[, <reason> ×n ...]"`` from per-reason counts."""
+    parts = [reason if n == 1 else f"{reason} ×{n}" for reason, n in counts.items()]
+    return "not evaluated: " + ", ".join(parts)
+
+
+def trials_skip_reason(results: Sequence[AgentResult]) -> str:
+    """Skip reason for a set of trials: not-evaluated reasons summed across them."""
+    counts: dict[str, int] = {}
+    for r in results:
+        for reason, n in r.not_evaluated_reasons.items():
+            counts[reason] = counts.get(reason, 0) + n
+    return format_skip_reason(counts)
+
+
+def trials_diagnostics(results: Sequence[AgentResult], *, label: str, color: bool = False) -> str:
+    """Diagnostics of every trial whose outcome is not pass, headed by its index."""
+    blocks = [
+        f"{label} {i}/{len(results)}:{r.render_diagnostics(color=color)}"
+        for i, r in enumerate(results, start=1)
+        if r.outcome() != OUTCOME_PASS
+    ]
+    return "\n".join(blocks) if blocks else f"  (no failing {label}s)\n"
 
 
 if TYPE_CHECKING:
@@ -119,9 +156,7 @@ class AgentResult:
 
     def skip_reason(self) -> str:
         """``"not evaluated: <reason>[, <reason> ...]"`` for skipped tests."""
-        reasons = self.not_evaluated_reasons.items()
-        parts = [reason if n == 1 else f"{reason} ×{n}" for reason, n in reasons]
-        return "not evaluated: " + ", ".join(parts)
+        return format_skip_reason(self.not_evaluated_reasons)
 
     def trace_tree(self) -> TraceTree:
         """Build a TraceTree from this result's trace."""

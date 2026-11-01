@@ -5,7 +5,14 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
-from attest.result import OUTCOME_PASS, OUTCOME_SKIP, AgentResult, aggregate_outcomes
+from attest.result import (
+    OUTCOME_PASS,
+    OUTCOME_SKIP,
+    AgentResult,
+    aggregate_outcomes,
+    trials_diagnostics,
+    trials_skip_reason,
+)
 
 
 @dataclass
@@ -13,8 +20,8 @@ class RepeatResult:
     """Results of ``n`` trials, aggregated under the assertion-status rules.
 
     Each trial should come from ``attest.inspect()``, which never enforces,
-    so one failing trial does not abort the loop. Enforce the aggregate
-    instead (``outcome()`` or ``pass_rate``).
+    so one failing trial does not abort the loop. Enforce the aggregate with
+    ``attest.enforce(repeat_result)``.
     """
 
     results: list[AgentResult] = field(default_factory=list)
@@ -43,12 +50,21 @@ class RepeatResult:
 
     @property
     def all_passed(self) -> bool:
+        """True when every trial's outcome is pass (soft failures included)."""
         return all(r.outcome() == OUTCOME_PASS for r in self.results)
 
     def outcome(self, *, strict: bool = False) -> str:
         """Aggregate verdict: any failing trial fails; otherwise any skipped
         trial skips (fails when ``strict``); otherwise pass."""
         return aggregate_outcomes([r.outcome(strict=strict) for r in self.results])
+
+    def skip_reason(self) -> str:
+        """Not-evaluated reasons summed across trials."""
+        return trials_skip_reason(self.results)
+
+    def render_diagnostics(self, *, color: bool = False) -> str:
+        """Diagnostics of every trial that did not pass."""
+        return trials_diagnostics(self.results, label="trial", color=color)
 
 
 def repeat(n: int) -> Callable[[Callable[..., AgentResult]], Callable[..., RepeatResult]]:
