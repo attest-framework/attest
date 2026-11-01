@@ -18,12 +18,14 @@ inputs:
     default: 'dev'
   ref:
     description: >-
-      attest branch, tag or full 40-character commit SHA to build from. Empty
-      builds from the calling workspace. The action builds and installs that
-      tree and runs its build scripts inside the calling job, so pass only refs
-      you trust and prefer a commit SHA over a mutable branch. Values starting
-      with "-" and refs/pull/* are rejected. Run this in a job whose checkout
-      uses persist-credentials: false and that does not grant id-token: write.
+      attest branch name, tag name or full 40-character commit SHA to build
+      from. Empty builds from the calling workspace. The action builds and
+      installs that tree and runs its build scripts inside the calling job, so
+      pass only refs you trust. Names are fetched only as refs/heads/<name> or
+      refs/tags/<name>; a SHA is fetched as-is and is not checked to be on an
+      attest branch or tag, so prefer a release tag. Run this in a job whose
+      checkout uses persist-credentials: false and that does not grant
+      id-token: write.
     default: ''
   node-version:
     description: 'Node.js version used to pack the TypeScript SDK when ref is set'
@@ -53,20 +55,26 @@ runs:
         ATTEST_REF: ${{ inputs.ref }}
       run: |
         set -euo pipefail
-        case "$ATTEST_REF" in
-          -* | refs/pull/*)
-            echo "::error::setup-attest: ref must be a branch, tag or commit SHA, not an option or a pull-request ref"
+        url=https://github.com/attest-framework/attest.git
+        if [[ "$ATTEST_REF" =~ ^[0-9a-f]{40}$ ]]; then
+          fetch_ref="$ATTEST_REF"
+        elif [[ "$ATTEST_REF" =~ ^[A-Za-z0-9][A-Za-z0-9._/-]*$ && "$ATTEST_REF" != *..* && "$ATTEST_REF" != refs/* ]]; then
+          if git ls-remote --exit-code -q "$url" "refs/heads/$ATTEST_REF" >/dev/null; then
+            fetch_ref="refs/heads/$ATTEST_REF"
+          elif git ls-remote --exit-code -q "$url" "refs/tags/$ATTEST_REF" >/dev/null; then
+            fetch_ref="refs/tags/$ATTEST_REF"
+          else
+            echo "::error::setup-attest: no attest branch or tag named $ATTEST_REF"
             exit 1
-            ;;
-        esac
-        if [[ "$ATTEST_REF" =~ [[:space:]] ]]; then
-          echo "::error::setup-attest: ref must not contain whitespace"
+          fi
+        else
+          echo "::error::setup-attest: ref must be a plain branch or tag name or a 40-character commit SHA"
           exit 1
         fi
         src="$RUNNER_TEMP/attest-src"
         rm -rf "$src"
         git init -q "$src"
-        git -C "$src" fetch -q --depth 1 https://github.com/attest-framework/attest.git -- "$ATTEST_REF"
+        git -C "$src" fetch -q --depth 1 "$url" -- "$fetch_ref"
         git -C "$src" checkout -q --detach FETCH_HEAD
         echo "attest $ATTEST_REF -> $(git -C "$src" rev-parse HEAD)"
 
