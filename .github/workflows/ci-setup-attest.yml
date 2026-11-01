@@ -14,19 +14,6 @@ permissions:
   contents: read
 
 jobs:
-  consumer-remote:
-    name: Consumer (remote action reference)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: attest-framework/attest/.github/actions/setup-attest@ci/release-automation
-        with:
-          ref: main
-      - name: Run engine and SDKs
-        run: |
-          set -euo pipefail
-          attest-engine version
-          python -c 'import attest; print("attest-ai", attest.__version__)'
-
   consumer-local:
     name: Consumer (action from this change)
     runs-on: ubuntu-latest
