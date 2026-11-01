@@ -11,6 +11,14 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"time"
+)
+
+const (
+	// maxDownloadBytes caps a download so a hostile mirror cannot fill the
+	// disk before the checksum check; the pinned model is about 90 MB.
+	maxDownloadBytes = 256 << 20
+	downloadTimeout  = 15 * time.Minute
 )
 
 // The model is pinned to a Hugging Face commit so its sha256 cannot change
@@ -59,17 +67,24 @@ func defaultModelDir() string {
 	return filepath.Join(home, ".attest", "models")
 }
 
-// ensureModel checks for the ONNX model file and downloads it if missing.
-// Returns the absolute path to the model file.
+// ensureModel returns the path of the pinned ONNX model in modelDir. A cached
+// file is used only when its sha256 matches; otherwise the model is downloaded
+// and verified.
 func ensureModel(modelDir string) (string, error) {
 	if modelDir == "" {
 		modelDir = defaultModelDir()
 	}
 
 	modelPath := filepath.Join(modelDir, modelFileName)
-	if _, err := os.Stat(modelPath); err == nil {
+	got, err := fileSHA256(modelPath)
+	switch {
+	case err == nil && got == modelSHA256:
 		return modelPath, nil
+	case err != nil && !os.IsNotExist(err):
+		return "", fmt.Errorf("onnx: read cached model %s: %w", modelPath, err)
 	}
+	// Missing, or cached by an unpinned engine version, or corrupt: download
+	// the pinned file, which replaces the cached one only after verification.
 
 	if err := os.MkdirAll(modelDir, 0o755); err != nil {
 		return "", fmt.Errorf("onnx: create model dir %s: %w", modelDir, err)
@@ -144,7 +159,8 @@ func ensureONNXRuntime(modelDir string) (string, error) {
 // wantSHA256 before moving it into place. A mismatch removes the partial file
 // and returns a checksum error, so a tampered download is never used.
 func downloadFile(url, destPath, wantSHA256 string) error {
-	resp, err := http.Get(url) //nolint:gosec // URL is a pinned constant
+	client := &http.Client{Timeout: downloadTimeout}
+	resp, err := client.Get(url) //nolint:gosec // URL is a pinned constant
 	if err != nil {
 		return fmt.Errorf("download %s: %w", url, err)
 	}
@@ -154,21 +170,31 @@ func downloadFile(url, destPath, wantSHA256 string) error {
 		return fmt.Errorf("download %s: HTTP %d", url, resp.StatusCode)
 	}
 
-	tmpPath := destPath + ".tmp"
-	out, err := os.Create(tmpPath)
+	out, err := os.CreateTemp(filepath.Dir(destPath), filepath.Base(destPath)+".*.tmp")
 	if err != nil {
-		return fmt.Errorf("create %s: %w", tmpPath, err)
+		return fmt.Errorf("create temp file for %s: %w", destPath, err)
 	}
+	tmpPath := out.Name()
 
 	hash := sha256.New()
-	if _, err := io.Copy(io.MultiWriter(out, hash), resp.Body); err != nil {
+	n, err := io.Copy(io.MultiWriter(out, hash), io.LimitReader(resp.Body, maxDownloadBytes+1))
+	if err != nil {
 		out.Close()
 		os.Remove(tmpPath)
 		return fmt.Errorf("write %s: %w", tmpPath, err)
 	}
+	if err := out.Sync(); err != nil {
+		out.Close()
+		os.Remove(tmpPath)
+		return fmt.Errorf("sync %s: %w", tmpPath, err)
+	}
 	if err := out.Close(); err != nil {
 		os.Remove(tmpPath)
 		return fmt.Errorf("close %s: %w", tmpPath, err)
+	}
+	if n > maxDownloadBytes {
+		os.Remove(tmpPath)
+		return fmt.Errorf("download %s: exceeds %d bytes", url, maxDownloadBytes)
 	}
 
 	if got := hex.EncodeToString(hash.Sum(nil)); got != wantSHA256 {
@@ -182,4 +208,18 @@ func downloadFile(url, destPath, wantSHA256 string) error {
 	}
 
 	return nil
+}
+
+// fileSHA256 returns the hex sha256 of the file at path.
+func fileSHA256(path string) (string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
 }

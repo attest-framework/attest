@@ -31,10 +31,12 @@ func TestDownloadFile_TamperedModel_FailsChecksumAndLeavesNoFile(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "checksum mismatch") {
 		t.Fatalf("err = %v, want checksum mismatch", err)
 	}
-	for _, p := range []string{dest, dest + ".tmp"} {
-		if _, statErr := os.Stat(p); !os.IsNotExist(statErr) {
-			t.Errorf("%s exists after a failed checksum (stat err %v)", p, statErr)
-		}
+	entries, err := os.ReadDir(filepath.Dir(dest))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Errorf("files left after a failed checksum: %v", entries)
 	}
 }
 
@@ -61,5 +63,21 @@ func TestEnsureONNXRuntime_ExplicitLibMissing_Errors(t *testing.T) {
 
 	if err == nil || !strings.Contains(err.Error(), "ATTEST_ONNX_RUNTIME_LIB") {
 		t.Fatalf("err = %v, want ATTEST_ONNX_RUNTIME_LIB error", err)
+	}
+}
+
+func TestFileSHA256_DetectsTamperedCachedModel(t *testing.T) {
+	path := filepath.Join(t.TempDir(), modelFileName)
+	if err := os.WriteFile(path, []byte("planted model"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := fileSHA256(path)
+
+	if err != nil {
+		t.Fatalf("fileSHA256: %v", err)
+	}
+	if got == modelSHA256 {
+		t.Fatal("planted file matched the pinned model sha256")
 	}
 }
