@@ -8,8 +8,8 @@ description: |
 
 inputs:
   go-version:
-    description: 'Go version to install'
-    default: '1.24'
+    description: 'Go version to install. Empty uses the version required by the attest engine/go.mod being built.'
+    default: ''
   python-version:
     description: 'Python version to install'
     default: '3.12'
@@ -76,6 +76,7 @@ runs:
       uses: actions/setup-go@v6
       with:
         go-version: ${{ inputs.go-version }}
+        go-version-file: ${{ inputs.go-version == '' && format('{0}/engine/go.mod', steps.paths.outputs.source-dir) || '' }}
         cache-dependency-path: ${{ steps.paths.outputs.source-dir }}/engine/go.sum
 
     - name: Build engine
