@@ -1,0 +1,31 @@
+name: GitHub Config CI
+
+# Validates workflow, action and Dependabot changes on the PRs that make them.
+on:
+  push:
+    paths: [".github/**"]
+    branches: [main]
+  pull_request:
+    paths: [".github/**"]
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v6
+        with:
+          go-version: "1.25"
+          cache: false
+      - name: actionlint
+        run: |
+          go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
+          "$(go env GOPATH)/bin/actionlint" -color
+      - uses: astral-sh/setup-uv@v7
+      - name: dependabot.yml schema
+        run: uvx check-jsonschema==0.39.0 --builtin-schema vendor.dependabot .github/dependabot.yml
