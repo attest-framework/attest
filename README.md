@@ -18,7 +18,7 @@ Attest is an open-source testing framework purpose-built for AI agents and LLM-p
 
 The current ecosystem defaults to LLM-as-judge for everything. This creates cost explosion, flaky tests, and slow suites. Attest provides a graduated 8-layer assertion model that reaches for the cheapest valid assertion first:
 
-```
+```text
 Layer 1: Schema Validation        — free, instant, deterministic
 Layer 2: Constraint Checks        — free, instant, deterministic
 Layer 3: Trace/Behavioral Checks  — free, instant, deterministic
@@ -33,18 +33,27 @@ Layer 8: Multi-Agent              — free, instant, deterministic
 
 ```python
 from attest import agent, expect
+from attest.plugin import AttestEngineFixture
+
 
 @agent("refund-agent")
 def refund_agent(builder, order_id):
-    builder.add_tool_call("lookup_order", args={"order_id": order_id},
-                          result={"status": "delivered", "amount": 89.99})
-    builder.add_tool_call("process_refund", args={"order_id": order_id},
-                          result={"refund_id": "RFD-001"})
+    builder.add_tool_call(
+        "lookup_order",
+        args={"order_id": order_id},
+        result={"status": "delivered", "amount": 89.99},
+    )
+    builder.add_tool_call(
+        "process_refund", args={"order_id": order_id}, result={"refund_id": "RFD-001"}
+    )
     builder.set_metadata(cost_usd=0.005, total_tokens=150, latency_ms=1200)
-    return {"message": "Your refund of $89.99 has been processed.",
-            "structured": {"refund_id": "RFD-001"}}
+    return {
+        "message": "Your refund of $89.99 has been processed.",
+        "structured": {"refund_id": "RFD-001"},
+    }
 
-def test_refund(attest):
+
+def test_refund(attest: AttestEngineFixture) -> None:
     result = refund_agent(order_id="ORD-123456")
 
     chain = (
@@ -58,12 +67,12 @@ def test_refund(attest):
         # Layer 4 — content (free, instant)
         .output_contains("refund")
         .output_not_contains("sorry")
-        # Layer 6 — LLM judge (only when needed)
-        .passes_judge("Is the response helpful and accurate?")
     )
 
     attest.evaluate(chain)
 ```
+
+`attest.evaluate(chain)` sends the whole chain to the engine and fails the test on any hard failure, with the layer, expected and actual value of each failed assertion. Add `.passes_judge("Is the response helpful?")` (layer 6) when a deterministic check cannot express the requirement; without a configured judge it is reported as not evaluated and the test is skipped with the reason, never passed.
 
 ## Architecture
 
@@ -94,7 +103,7 @@ SDK (Python/TS/Go) ──stdin/stdout──▶ Engine Process (Go)
 - **`attest-engine doctor`** — reports engine version, capabilities and judge/embedding configuration (`--json` for tooling); see [configuration](docs/guides/configuration.md)
 - **OpenAI-compatible judge** — point Layer 6 at any compatible endpoint with `ATTEST_JUDGE_BASE_URL`
 - **Python & TypeScript SDKs** — `attest-ai` (PyPI) + `@attest-ai/core` / `@attest-ai/vitest` (npm)
-- **TypeScript CLI** — `npx @attest-ai/core init`, `validate`, `cache stats/clear`
+- **`attest init`** — scaffolds a passing sample test, a merge policy and, with `--ci github`, a GitHub Actions merge gate (Python + TypeScript)
 - **CJS/ESM dual output** — TypeScript SDK supports both `require()` and `import`, tree-shakeable
 - **Branded types** — `TraceId`, `AssertionId`, `AgentId` prevent accidental string assignment (TypeScript)
 - **Discriminated union specs** — type-safe assertion specs per layer (TypeScript)
@@ -113,7 +122,7 @@ SDK (Python/TS/Go) ──stdin/stdout──▶ Engine Process (Go)
 
 ## Repository Layout
 
-```test
+```text
 attest/
 ├── proto/              # Protocol specification (JSON-RPC 2.0)
 ├── engine/             # Core engine (Go)
@@ -133,43 +142,73 @@ attest/
 
 ## Quick Start
 
-### Prerequisites
+No API key, model or network access is needed: the sample test checks a recorded agent run with deterministic assertions.
 
-- Go 1.25+
-- Python 3.10+ with [uv](https://docs.astral.sh/uv/getting-started/installation/)
-- Node.js 18+ with [pnpm](https://pnpm.io/installation) (for TypeScript SDK)
-
-### Build and Test
+### Python
 
 ```bash
-git clone https://github.com/attest-framework/attest.git
-cd attest
-
-# Build engine + install Python SDK
-make dev-setup
-
-# Run all tests
-make test
-
-# Verify engine
-./bin/attest-engine version
-# attest-engine 0.4.0
+uv init --bare my-agent-tests && cd my-agent-tests
+uv add attest-ai pytest
+uv run attest init
+uv run pytest
 ```
 
-### TypeScript SDK
+`pytest` prints `1 passed`. `attest init` wrote three files: `tests/conftest.py` (the `my_agent_result` fixture, a refund agent's run built with `TraceBuilder`), `tests/test_my_agent.py` and `attest.policy.yaml`. The test:
+
+```python
+from __future__ import annotations
+
+from attest import Trace, expect
+from attest.plugin import AttestEngineFixture
+
+
+def test_my_agent(attest: AttestEngineFixture, my_agent_result: Trace) -> None:
+    chain = (
+        expect(my_agent_result)
+        .output_matches_schema({"type": "object", "required": ["refund_id"]})  # layer 1: schema
+        .cost_under(0.01)  # layer 2: constraint
+        .tools_called_in_order(["lookup_order", "issue_refund"])  # layer 3: trace
+        .output_contains("refund")  # ATTEST-DEMO: change "refund" to "store credit"
+    )
+    attest.evaluate(chain)
+```
+
+Change `"refund"` to `"store credit"` on the line marked `ATTEST-DEMO` and run `uv run pytest` again: `1 failed`, exit code 1, with the failed assertion's layer, expected and actual value:
+
+```text
+Attest diagnostic — 1 of 4 assertions failed:
+  FAIL assert_2d1d647b — L4 content
+      trace path: output.message
+      expected:   contains "store credit"
+      actual:     Your refund of $42.00 has been issued.
+```
+
+### Gate merges on it
+
+`--attest-report` writes every test with its outcome, file and line, and every assertion result, as a report-v2 JSON file (`proto/attest/v1/report-v2.schema.json`). `attest policy evaluate` checks it against `attest.policy.yaml`: exit 0 passes, 1 blocks (a hard failure), 2 warns (assertions not evaluated).
 
 ```bash
-cd sdks/typescript
-pnpm install
-pnpm build
-pnpm test
+uv run pytest --attest-report=attest-report.json
+uv run attest policy evaluate --report attest-report.json --policy attest.policy.yaml
+uv run attest init --ci github
 ```
 
-Install in your project:
+`attest init --ci github` writes `.github/workflows/attest.yml`: the test step records its outcome and continues, the report upload, policy evaluation and the `pr-annotate` action always run, and a last step fails the job when the tests failed. Review comments land on the failing test's file and line. See the [merge gate guide](docs/guides/merge-gate.md).
+
+### TypeScript
 
 ```bash
-pnpm add @attest-ai/core @attest-ai/vitest
+npm init -y && npm pkg set type=module
+npm install -D @attest-ai/core @attest-ai/vitest vitest
+npx attest init
+npx vitest run
 ```
+
+`npx attest init` writes `tests/my-agent.test.ts`, `vitest.config.ts` (with `AttestReporter`) and `attest.policy.yaml`; the line marked `ATTEST-DEMO` works the same way. `npx vitest run --outputFile.attest=attest-report.json` writes the report and `npx attest init --ci github` writes the workflow.
+
+### Build from source
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) to build the engine and run the SDK test suites.
 
 ## Roadmap
 
