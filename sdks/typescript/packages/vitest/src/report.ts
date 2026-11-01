@@ -20,6 +20,8 @@ export type TestOutcome = "passed" | "failed" | "skipped";
 
 /** Attest results a test recorded, carried from the worker in task meta. */
 export interface AttestTaskMeta {
+  /** `retryCount` of the attempt that produced `results`. */
+  attempt: number;
   results: AssertionResult[];
   totalCost: number;
   totalDurationMs: number;

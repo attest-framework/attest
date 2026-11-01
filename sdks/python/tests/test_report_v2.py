@@ -175,3 +175,52 @@ def test_attest_report_not_written_without_option(pytester: pytest.Pytester) -> 
     pytester.runpytest().assert_outcomes(passed=1)
 
     assert not list(pytester.path.rglob("*.json"))
+
+
+def _run_phase(item: object, when: str, outcome: str) -> None:
+    """Drive the plugin's makereport hookwrapper for one phase of ``item``."""
+    from attest import plugin
+
+    report = type(
+        "Report",
+        (),
+        {"when": when, "outcome": outcome, "duration": 0.001, "skipped": False, "longrepr": None},
+    )()
+    hook = plugin.pytest_runtest_makereport(item, type("Call", (), {"when": when})())  # type: ignore[arg-type]
+    next(hook)
+    with pytest.raises(StopIteration):
+        hook.send(type("Outcome", (), {"get_result": lambda self: report})())
+
+
+def test_rerun_test_reports_only_the_last_attempt() -> None:
+    from attest import plugin
+
+    class _Item:
+        nodeid = "tests/test_a.py::test_flaky"
+        name = "test_flaky"
+        location = ("tests/test_a.py", 2, "test_flaky")
+        path = "tests/test_a.py"
+        config = type("Config", (), {"getoption": lambda self, *a, **k: "r.json"})()
+
+    plugin._session_tests.clear()
+    plugin._take_test_results()
+    item = _Item()
+    hard = AssertionResult(assertion_id="first", status="hard_fail", score=0.0, explanation="")
+    ok = AssertionResult(assertion_id="second", status="pass", score=1.0, explanation="")
+
+    _run_phase(item, "setup", "passed")
+    plugin._record_result(_agent_result(hard))
+    _run_phase(item, "call", "failed")
+    _run_phase(item, "teardown", "passed")
+    _run_phase(item, "setup", "passed")
+    plugin._record_result(_agent_result(ok))
+    _run_phase(item, "call", "passed")
+    _run_phase(item, "teardown", "passed")
+
+    report = build_report(list(plugin._session_tests.values()), simulated=False)
+    plugin._session_tests.clear()
+    _validate(report)
+    assert report["tests"][0]["outcome"] == "passed"
+    assert report["tests"][0]["line"] == 3
+    assert [r["assertion_id"] for r in report["results"]] == ["second"]
+    assert report["summary"]["hard_fail"] == 0

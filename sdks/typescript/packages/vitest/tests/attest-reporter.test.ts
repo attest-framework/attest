@@ -49,11 +49,12 @@ describe.skipIf(!existsSync(engine))("AttestReporter (real engine)", () => {
     expect(validate(report), JSON.stringify(validate.errors)).toBe(true);
     const byName = new Map(report.tests.map((t) => [t.name, t]));
     expect([...byName.keys()].sort()).toEqual(
-      ["fails", "no attest", "not evaluated", "passes", "plain skip"].sort(),
+      ["fails", "flaky", "no attest", "not evaluated", "passes", "plain skip"].sort(),
     );
     for (const [name, outcome] of [
       ["passes", "passed"],
       ["fails", "failed"],
+      ["flaky", "passed"],
       ["not evaluated", "skipped"],
       ["plain skip", "skipped"],
       ["no attest", "passed"],
@@ -65,6 +66,7 @@ describe.skipIf(!existsSync(engine))("AttestReporter (real engine)", () => {
     expect(failing).toEqual([
       expect.objectContaining({ test_id: `${fixture} > fails`, file: fixture, line: lineOf("fails") }),
     ]);
-    expect(report.summary).toMatchObject({ total: 4, passed: 2, hard_fail: 1, not_evaluated: 1 });
+    // The retried test reports only its passing attempt.
+    expect(report.summary).toMatchObject({ total: 5, passed: 3, hard_fail: 1, not_evaluated: 1 });
   }, 60_000);
 });

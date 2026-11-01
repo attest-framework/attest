@@ -20,6 +20,12 @@ it("not evaluated", async (context) => {
   await evaluate(attestExpect(trace).passesJudge("Is it polite?"), { context });
 });
 
+let flakyAttempts = 0;
+it("flaky", { retry: 1 }, async (context) => {
+  flakyAttempts += 1;
+  await evaluate(attestExpect(trace).outputContains(flakyAttempts === 1 ? "store credit" : "refund"), { context });
+});
+
 it.skip("plain skip", () => {});
 
 it("no attest", () => {});

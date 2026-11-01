@@ -18,7 +18,7 @@ from attest.config import is_simulation_mode
 from attest.engine_manager import EngineManager
 from attest.exceptions import EngineVersionMismatchError
 from attest.expect import ExpectChain
-from attest.report_v2 import TestRecord, write_report
+from attest.report_v2 import TEST_OUTCOMES, TestRecord, write_report
 from attest.result import OUTCOME_FAIL, OUTCOME_SKIP, AgentResult, Verdict
 
 logger = logging.getLogger("attest.plugin")
@@ -199,9 +199,15 @@ def pytest_runtest_makereport(
     """
     outcome = yield
     report: pytest.TestReport = outcome.get_result()
-    if item.config.getoption("--attest-report", default=None):
+    record = (
         _record_test_phase(item, report)
+        if item.config.getoption("--attest-report", default=None)
+        else None
+    )
     if call.when != "call":
+        if record is not None:
+            # Results from evaluations in fixture setup or teardown belong to this test.
+            record.agent_results.extend(_take_test_results())
         return
     if report.skipped and isinstance(report.longrepr, tuple):
         # Attribute "not evaluated" skips to the test, not to this plugin.
@@ -210,7 +216,6 @@ def pytest_runtest_makereport(
             _, lineno, _ = item.location
             report.longrepr = (str(item.path), (lineno or 0) + 1, reason)
     results = _take_test_results()
-    record = _session_tests.get(item.nodeid)
     if record is not None:
         record.agent_results.extend(results)
     if results:
@@ -219,13 +224,18 @@ def pytest_runtest_makereport(
         _session_soft_counts[item.nodeid] = sum(len(r.soft_failures) for r in results)
 
 
-def _record_test_phase(item: pytest.Item, report: pytest.TestReport) -> None:
-    """Fold one setup/call/teardown report into the test's report-v2 row.
+def _record_test_phase(item: pytest.Item, report: pytest.TestReport) -> TestRecord:
+    """Fold one setup/call/teardown report into the test's report-v2 row and return it.
 
     The outcome is the call phase's, overridden by a failed or skipped setup and by a
-    failed teardown. ``line`` is the 1-based line of the test definition.
+    failed teardown. A new setup phase for a test that already ran (a rerun plugin
+    retrying it) starts the row over, so only the last attempt's outcome and results
+    are reported. ``line`` is the 1-based line of the test definition.
     """
     record = _session_tests.get(item.nodeid)
+    if record is not None and report.when == "setup":
+        record.outcome = "passed"
+        record.agent_results.clear()
     if record is None:
         path, lineno, _ = item.location
         record = TestRecord(
@@ -236,9 +246,12 @@ def _record_test_phase(item: pytest.Item, report: pytest.TestReport) -> None:
         )
         _session_tests[item.nodeid] = record
     record.duration_ms += int(report.duration * 1000)
+    if report.outcome not in TEST_OUTCOMES:
+        raise ValueError(f"{item.nodeid}: unknown pytest outcome {report.outcome!r}")
     if report.when == "call" or report.outcome != "passed":
         if not (report.when == "teardown" and report.outcome == "skipped"):
             record.outcome = report.outcome
+    return record
 
 
 def pytest_sessionstart(session: pytest.Session) -> None:

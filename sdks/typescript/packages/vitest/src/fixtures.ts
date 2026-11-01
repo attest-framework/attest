@@ -1,6 +1,5 @@
 import * as vitest from "vitest";
 import type { TestContext } from "vitest";
-import { getCurrentTest } from "vitest/suite";
 import {
   type ExpectChain,
   AgentResult,
@@ -33,13 +32,27 @@ export interface EvaluateOptions extends InspectOptions {
   strict?: boolean;
 }
 
+type RunningTest = NonNullable<TestContext["task"]>;
+
+/**
+ * The running test: `TestRunner.getCurrentTest()` on Vitest 4.1+, `vitest/suite`
+ * before that (loaded only there, because Vitest 4.1 warns when it is imported).
+ */
+async function runningTest(): Promise<RunningTest | undefined> {
+  const runner = (vitest as Partial<typeof vitest>).TestRunner;
+  if (runner !== undefined) return runner.getCurrentTest();
+  const suite = await import("vitest/suite");
+  return suite.getCurrentTest();
+}
+
 /**
  * Attach the results to the running test's meta so AttestReporter, in the main
- * process, can write them with the test's file and line. Outside a test (e.g. in
- * a beforeAll hook) there is no test to attach them to.
+ * process, can write them with the test's file and line. Results from an earlier
+ * attempt of a retried test are dropped, so the report matches the outcome Vitest
+ * reports. Outside a test (e.g. in a beforeAll hook) there is no test to attach to.
  */
-function recordOnTest(result: AgentResult, context?: TestContext): void {
-  const test = context?.task ?? getCurrentTest();
+async function recordOnTest(result: AgentResult, context?: TestContext): Promise<void> {
+  const test = context?.task ?? (await runningTest());
   if (test === undefined) return;
   if (context === undefined && test.concurrent === true) {
     throw new Error(
@@ -47,7 +60,12 @@ function recordOnTest(result: AgentResult, context?: TestContext): void {
         "inspect(chain, { context }) or evaluate(chain, { context })",
     );
   }
-  const meta = (test.meta.attest ??= { results: [], totalCost: 0, totalDurationMs: 0 });
+  const attempt = test.result?.retryCount ?? 0;
+  let meta = test.meta.attest;
+  if (meta === undefined || meta.attempt !== attempt) {
+    meta = { attempt, results: [], totalCost: 0, totalDurationMs: 0 };
+    test.meta.attest = meta;
+  }
   meta.results.push(...result.assertionResults);
   meta.totalCost += result.totalCost;
   meta.totalDurationMs += result.totalDurationMs;
@@ -179,7 +197,7 @@ export class AttestEngineFixture {
       result.total_cost ?? 0,
       result.total_duration_ms ?? 0,
     );
-    recordOnTest(agentResult, options?.context);
+    await recordOnTest(agentResult, options?.context);
 
     // Track non-passing AgentResults so AttestCostReporter can render the
     // diagnostic block at the end of the run. Bound size because long
