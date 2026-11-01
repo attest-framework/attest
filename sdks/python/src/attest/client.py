@@ -29,10 +29,10 @@ from attest._proto.diagnostics import (
 )
 from attest._proto.types import (
     Assertion,
-    AssertionResult,
     ConversationMessage,
     DriftReport,
     EvaluateBatchResult,
+    InitializeResult,
     SimulateFaultConfig,
     SimulatePersona,
     Trace,
@@ -334,14 +334,20 @@ class AttestClient:
     ) -> EvaluateBatchResult:
         """Send evaluate_batch request and return parsed results.
 
-        In simulation mode, returns deterministic pass results without
-        spawning the engine or making API calls.
+        Simulation mode is handled by the engine: started with
+        ``ATTEST_SIMULATION`` set, it evaluates layers 1-4 for real and
+        returns ``not_evaluated`` (reason ``simulation``) for layers 5-6.
+
+        Raises:
+            RuntimeError: simulation mode is on but the running engine did not
+                advertise ``simulation_mode``, so it would call real providers.
         """
         from attest.config import is_simulation_mode
 
         if is_simulation_mode():
-            return _simulation_evaluate_batch(assertions)
-
+            # EngineManager keeps the initialize result privately; read it
+            # here rather than trusting this process's environment.
+            require_simulation_capability(self._engine._init_result)
         params: dict[str, Any] = {
             "trace": trace.to_dict(),
             "assertions": [a.to_dict() for a in assertions],
@@ -394,10 +400,10 @@ class AttestClient:
         if is_simulation_mode():
             return DriftReport(
                 assertion_id=assertion_id,
-                mean=1.0,
+                mean=0.0,
                 stddev=0.0,
                 count=0,
-                latest_score=1.0,
+                latest_score=0.0,
                 deviation=0.0,
                 status="no_data",
             )
@@ -440,23 +446,18 @@ class AttestClient:
         return str(raw["message"])
 
 
-def _simulation_evaluate_batch(assertions: list[Assertion]) -> EvaluateBatchResult:
-    """Return deterministic pass results for all assertions without engine."""
-    results = [
-        AssertionResult(
-            assertion_id=a.assertion_id,
-            status="pass",
-            score=1.0,
-            explanation=f"[simulation] {a.type} assertion passed (deterministic)",
-            cost=0.0,
-            duration_ms=0,
-            request_id=a.request_id,
+def require_simulation_capability(init: InitializeResult | None) -> None:
+    """Raise unless the engine advertised ``simulation_mode`` at initialize.
+
+    An engine started without ``ATTEST_SIMULATION`` (or older than 1.0)
+    would call real embedding and judge providers in simulation mode.
+    """
+    if init is None:
+        raise RuntimeError("simulation mode: the engine has not been initialized")
+    if "simulation_mode" not in init.capabilities:
+        raise RuntimeError(
+            f"simulation mode is on but attest-engine {init.engine_version} was not started "
+            "in simulation mode (capability 'simulation_mode' missing), so it would call real "
+            "providers. Set ATTEST_SIMULATION=1 before the engine starts (the pytest plugin does "
+            "this for you) and use attest-engine 1.0 or later."
         )
-        for a in assertions
-    ]
-    return EvaluateBatchResult(
-        results=results,
-        total_cost=0.0,
-        total_duration_ms=0,
-        simulated=True,
-    )
