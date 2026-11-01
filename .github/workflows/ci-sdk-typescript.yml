@@ -2,10 +2,10 @@ name: TypeScript SDK CI
 
 on:
   push:
-    paths: ["sdks/typescript/**"]
+    paths: ["sdks/typescript/**", ".github/workflows/ci-sdk-typescript.yml"]
     branches: [main]
   pull_request:
-    paths: ["sdks/typescript/**"]
+    paths: ["sdks/typescript/**", ".github/workflows/ci-sdk-typescript.yml"]
 
 defaults:
   run:
