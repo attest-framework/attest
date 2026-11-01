@@ -48,6 +48,7 @@ func RegisterBuiltinHandlers(s *Server) error {
 	} else {
 		pipeline = assertion.NewPipeline(registry)
 	}
+	pipeline.SetSimulation(assertion.SimulationModeFromEnv())
 
 	concurrency, err := envInt("ATTEST_EVAL_CONCURRENCY", 0)
 	if err != nil {
@@ -183,6 +184,20 @@ func buildRegistryOptions(logger *slog.Logger) ([]assertion.RegistryOption, []st
 
 	if embedder != nil || judgeProvider != nil {
 		caps = append(caps, "layers_5_6")
+	}
+	// L5/L6 assertion types are always accepted: without a provider the
+	// pipeline returns not_evaluated(provider_not_configured) rows.
+	if embedder == nil {
+		caps = append(caps, "embedding")
+	}
+	if judgeProvider == nil {
+		caps = append(caps, "llm_judge")
+	}
+	// simulation_mode: ATTEST_SIMULATION is set, so L5/L6 return
+	// not_evaluated(simulation) and no provider is called.
+	if assertion.SimulationModeFromEnv() {
+		caps = append(caps, "simulation_mode")
+		logger.Info("simulation mode: layers 5-6 disabled")
 	}
 
 	// ── History Store ──
