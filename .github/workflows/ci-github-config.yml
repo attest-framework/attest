@@ -1,6 +1,7 @@
 name: GitHub Config CI
 
-# Validates workflow, action and Dependabot changes on the PRs that make them.
+# Validates workflow and Dependabot changes on the PRs that make them.
+# Composite actions under .github/actions/ are only checked where a workflow uses them.
 on:
   push:
     paths: [".github/**"]
