@@ -11,6 +11,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import unittest
+import unittest.mock
 from pathlib import Path
 
 
@@ -84,6 +85,11 @@ class TestDiffLines(unittest.TestCase):
 
     def test_empty_patch_has_no_lines(self) -> None:
         self.assertEqual(_pa._diff_lines(""), set())
+
+    def test_form_feed_and_unicode_separators_stay_inside_a_line(self) -> None:
+        patch = "@@ -1,3 +1,3 @@\n a\x0cb\n+c\u2028d\r\n e\n"
+
+        self.assertEqual(_pa._diff_lines(patch), {1, 2, 3})
 
     def test_unparseable_hunk_header_raises(self) -> None:
         with self.assertRaises(ValueError):
@@ -159,12 +165,72 @@ class TestUntrustedMarkdown(unittest.TestCase):
         for token in ("@", "http", "<", "[", "&#", "#1"):
             self.assertNotIn(token, outside)
 
-    def test_non_numeric_summary_fields_render_as_zero(self) -> None:
+    def test_non_numeric_summary_fields_render_as_inert_text(self) -> None:
         out = _pa._summary_body({"summary": {"total": "@x"}, "total_cost": float("nan")}, [])
 
-        self.assertIn("of 0.", out)
-        self.assertIn("$0.000000", out)
-        self.assertIn("L0 ", _pa._format_failure({"layer": float("inf")}))
+        self.assertIn("of `@x`.", out)
+        self.assertIn("$`nan`", out)
+        self.assertIn("L`inf` ", _pa._format_failure({"layer": float("inf")}))
+
+
+class TestReviewBodyLimit(unittest.TestCase):
+    def test_many_long_failures_keep_whole_blocks_and_count_the_rest(self) -> None:
+        long = "x" * 5000
+        failures = [
+            {
+                "assertion_id": f"a{i}",
+                "status": "hard_fail",
+                "file": f"tests/t{i}.py",
+                "line": 1,
+                "type": long,
+                "trace_node_path": long,
+                "expected": long,
+                "actual": long,
+                "explanation": long,
+                "suggested_action": long if i < 7 else long + " @org/team http://e [x](y)",
+            }
+            for i in range(8)
+        ]
+
+        payload, _ = _pa.build_review(_REPORT, failures, {}, "c")
+        body = payload["body"]
+
+        self.assertLessEqual(len(body), _pa.MAX_BODY_CHARS)
+        self.assertEqual(body.count("`") % 2, 0)
+        shown = body.count("**Attest assertion failed:")
+        self.assertGreater(shown, 0)
+        self.assertIn(f"… and {8 - shown} more failure(s)", body)
+        outside = "".join(body.split("`")[0::2])
+        for token in ("@", "http", "["):
+            self.assertNotIn(token, outside)
+
+    def test_single_block_is_bounded_below_the_limit(self) -> None:
+        long = "y" * 100_000
+        row = {k: long for k in ("assertion_id", "type", "status", "trace_node_path", "expected",
+                                 "actual", "explanation", "failure_class", "threshold_source",
+                                 "suggested_action")}
+
+        self.assertLess(len(_pa._format_failure(row)), _pa.MAX_BODY_CHARS // 2)
+
+    def test_huge_numbers_render_as_inert_text(self) -> None:
+        huge = 10**5000
+        row = {"status": "hard_fail", "layer": huge, "score": huge, "type": huge}
+        report = {
+            "summary": {"total": huge, "passed": 1e308, "soft_fail": -1, "hard_fail": huge},
+            "total_cost": huge,
+            "p50_duration_ms": float("inf"),
+            "failure_classes": {f"c{i}": huge for i in range(20)},
+        }
+
+        block = _pa._format_failure(row)
+        summary = _pa._summary_body(report, [row])
+        annotation = _pa._workflow_annotation("tests/a.py", 1, row)
+
+        self.assertIn("L`(out of range)`", block)
+        self.assertIn("(score `(out of range)`)", block)
+        self.assertIn("and 10 more", summary)
+        self.assertLess(len(summary), 2000)
+        self.assertIn("title=Attest L(out of range)", annotation)
 
 
 class TestMainArguments(unittest.TestCase):
@@ -173,8 +239,12 @@ class TestMainArguments(unittest.TestCase):
         import io
         import sys
 
+        self.addCleanup(setattr, sys, "argv", list(sys.argv))
         for argv in (
             ["--repo", "o/r/../x", "--commit", "a" * 40],
+            ["--repo", "../r", "--commit", "a" * 40],
+            ["--repo", "o/..", "--commit", "a" * 40],
+            ["--repo", "./r", "--commit", "a" * 40],
             ["--repo", "o/r", "--commit", "HEAD"],
         ):
             with self.subTest(argv=argv):
@@ -182,6 +252,41 @@ class TestMainArguments(unittest.TestCase):
                 with contextlib.redirect_stderr(io.StringIO()) as err:
                     self.assertEqual(_pa.main(), 1)
                 self.assertIn("--repo must be owner/name", err.getvalue())
+
+
+class TestMainReport(unittest.TestCase):
+    def _main(self, report: object) -> tuple[int, str]:
+        import contextlib
+        import io
+        import os
+        import sys
+        import tempfile
+
+        self.addCleanup(setattr, sys, "argv", list(sys.argv))
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "r.json"
+            path.write_text(json.dumps(report))
+            sys.argv = ["post_annotations.py", "--report", str(path), "--pr", "1",
+                        "--repo", "o/r", "--commit", "a" * 40]
+            env = {"GITHUB_TOKEN": "t"}
+            with unittest.mock.patch.dict(os.environ, env):
+                with contextlib.redirect_stderr(io.StringIO()) as err:
+                    code = _pa.main()
+        return code, err.getvalue()
+
+    def test_non_object_summary_or_failure_classes_exit_1_with_message(self) -> None:
+        for key in ("summary", "failure_classes"):
+            with self.subTest(key=key):
+                code, err = self._main({"report_version": 2, "results": [], key: [1]})
+                self.assertEqual(code, 1)
+                self.assertIn(f"post_annotations: report {key} must be an object", err)
+
+    def test_untrusted_report_version_is_printed_escaped(self) -> None:
+        code, err = self._main({"report_version": "3\n::error::pwned", "results": []})
+
+        self.assertEqual(code, 1)
+        self.assertEqual(err.count("\n"), 1)
+        self.assertIn("unsupported report_version 3 ::error::pwned (need 2)", err)
 
 
 class TestWorkflowAnnotation(unittest.TestCase):
@@ -199,16 +304,23 @@ class TestWorkflowAnnotation(unittest.TestCase):
         self.assertEqual(out.count("\n"), 0)
         self.assertEqual(out.count("\r"), 0)
         self.assertIn("file=tests/a%2Cb%3Ac.py,line=7,", out)
-        self.assertIn("x%0A::add-mask::secret", out)
-        self.assertIn("50%25%0D%0A::stop-commands::t", out)
+        self.assertIn("expected: x ::add-mask::secret", out)
+        self.assertIn("50%25 ::stop-commands::t", out)
 
-    def test_control_characters_are_stripped(self) -> None:
-        row = {"status": "hard_fail", "expected": "a\x1b[31mred\u2028b"}
+    def test_control_bidi_and_invisible_characters_are_stripped(self) -> None:
+        row = {"status": "hard_fail", "expected": "a\x1b[31mred\u2028b\u202ec\u2066d\u200be"}
 
         out = _pa._workflow_annotation("tests/a.py", 1, row)
+        md = _pa._format_failure(row)
 
-        self.assertNotIn("\x1b", out)
-        self.assertNotIn("\u2028", out)
+        for char in ("\x1b", "\u2028", "\u202e", "\u2066", "\u200b"):
+            self.assertNotIn(char, out)
+            self.assertNotIn(char, md)
+
+    def test_soft_failure_is_a_warning(self) -> None:
+        out = _pa._workflow_annotation("tests/a.py", 1, {"status": "soft_fail"})
+
+        self.assertTrue(out.startswith("::warning file=tests/a.py,line=1,"))
 
 
 class TestFormatFailure(unittest.TestCase):

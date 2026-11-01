@@ -4,7 +4,8 @@ description: |
   file (pytest --attest-report, Vitest AttestReporter). Each failure is
   placed at the file and line of the test that requested it: an inline
   review comment when that line is in the diff, an entry in the review body
-  otherwise, and an ::error workflow annotation either way. Failures without
+  otherwise, and an ::error (hard failure) or ::warning (soft failure)
+  workflow annotation either way. Failures without
   a source location are listed in the review body. Uses the GitHub REST API;
   needs `pull-requests: write` and `contents: read`. Optionally evaluates a
   policy file and fails the step (exit 1) on a blocking violation; a warning

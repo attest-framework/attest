@@ -6,8 +6,9 @@ Reads a report-v2 file (proto/attest/v1/report-v2.schema.json) written by
 carries the file and line of the test that requested it: the failure is
 posted as an inline review comment on that line when the line is part of
 the pull request diff, and listed in the review body otherwise. Located
-failures are also emitted as ``::error`` workflow annotations, which GitHub
-shows at the file and line. Rows without a location go into the review
+failures are also emitted as workflow annotations (``::error`` for hard
+failures, ``::warning`` for soft ones), which GitHub shows at the file and
+line. Rows without a location go into the review
 body; the script never guesses a line. The comment body surfaces every
 diagnostic field the engine populates.
 
@@ -37,9 +38,9 @@ from pathlib import Path
 from typing import Any
 
 
-# Maximum chars per review comment body — GitHub's hard limit is 65536
-# but reviewers stop reading long before that. Truncate to keep noise
-# low; the full report is linked in the summary.
+# Maximum chars per review body — GitHub's hard limit is 65536 but reviewers
+# stop reading long before that. The body holds whole failure blocks up to
+# this size and then counts the rest; one block is bounded well below it.
 MAX_BODY_CHARS = 4000
 
 
@@ -49,7 +50,17 @@ def _truncate(value: str, limit: int = 280) -> str:
     return value[: limit - 3] + "..."
 
 
-_CONTROL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f\u2028\u2029]")
+# Control, line/paragraph separator, bidi override/isolate and zero-width space.
+_CONTROL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f\u200b\u2028\u2029\u202a-\u202e\u2066-\u2069]")
+
+
+def _text(value: object, limit: int) -> str:
+    """Untrusted value as one line of plain text: no control or bidi characters."""
+    try:
+        raw = str(value)
+    except ValueError:  # an integer too long to print (sys.int_info.str_digits_check_threshold)
+        raw = "(out of range)"
+    return _truncate(" ".join(_CONTROL.sub(" ", raw).split()), limit)
 
 
 def _md(value: object, limit: int = 280) -> str:
@@ -60,8 +71,27 @@ def _md(value: object, limit: int = 280) -> str:
     references. Whitespace runs collapse to one space (the span cannot end a
     line) and backticks become quotes (the span cannot be closed early).
     """
-    text = _truncate(" ".join(str(value).split()), limit).replace("`", "'")
+    text = _text(value, limit).replace("`", "'")
     return f"`{text}`" if text else "`(empty)`"
+
+
+def _bounded(value: object, low: float, high: float, fmt: str) -> str:
+    """A report number in [low, high] formatted with ``fmt``; anything else as inert text."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return _md(value, 20)
+    if isinstance(value, float) and not math.isfinite(value):
+        return _md(value, 20)
+    if not low <= value <= high:
+        return "`(out of range)`"
+    return format(value, fmt)
+
+
+def _layer_text(value: object) -> str:
+    return _bounded(value or 0, 0, 8, "d" if isinstance(value, int) else "g")
+
+
+def _count_text(value: object) -> str:
+    return _bounded(value, 0, 10**9, "d" if isinstance(value, int) else "g")
 
 
 def _format_failure(result: dict[str, Any]) -> str:
@@ -70,16 +100,14 @@ def _format_failure(result: dict[str, Any]) -> str:
     Mirrors the engine's writeFailureBlock layout so a reviewer reading
     the inline comment sees the same shape as the PR-summary report.
     """
-    layer = result.get("layer", 0) or 0
     type_name = result.get("type") or "(unknown)"
     status = result.get("status", "unknown")
-    score = result.get("score", 0.0)
-    score_text = f"{score:.3f}" if isinstance(score, (int, float)) else _md(score, 20)
+    score_text = _bounded(result.get("score", 0.0), -1e6, 1e6, ".3f")
 
     lines: list[str] = []
     lines.append(f"**Attest assertion failed: {_md(result.get('assertion_id'), 80)}**")
     lines.append("")
-    lines.append(f"- **Layer:** L{int(_number(layer))} {_md(type_name, 40)}")
+    lines.append(f"- **Layer:** L{_layer_text(result.get('layer'))} {_md(type_name, 40)}")
     lines.append(f"- **Status:** {_md(status, 20)} (score {score_text})")
     if path := result.get("trace_node_path"):
         lines.append(f"- **Trace path:** {_md(path)}")
@@ -96,39 +124,34 @@ def _format_failure(result: dict[str, Any]) -> str:
             lines.append(f"- **Threshold source:** {_md(ts, 40)}")
     if hint := result.get("suggested_action"):
         lines.append(f"- **Hint:** {_md(hint)}")
-    body = "\n".join(lines)
-    if len(body) > MAX_BODY_CHARS:
-        body = body[: MAX_BODY_CHARS - 3] + "..."
-    return body
+    # Every field is bounded, so a block stays under MAX_BODY_CHARS (about 2 KB max).
+    return "\n".join(lines)
 
 
-def _number(value: object) -> int | float:
-    """A numeric report field; anything else (untrusted input) renders as 0."""
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
-        return 0
-    if isinstance(value, float) and not math.isfinite(value):
-        return 0
-    return value
+_MAX_CLASSES = 10
 
 
 def _summary_body(report: dict[str, Any], failures: list[dict[str, Any]]) -> str:
     """Top-level review body posted alongside inline comments."""
     summary = report.get("summary", {})
-    total = _number(summary.get("total", 0))
-    passed = _number(summary.get("passed", 0))
-    soft = _number(summary.get("soft_fail", 0))
-    hard = _number(summary.get("hard_fail", 0))
-    cost = float(_number(report.get("total_cost", 0.0)))
-    p50 = _number(report.get("p50_duration_ms", 0))
-    p95 = _number(report.get("p95_duration_ms", 0))
+    total = _count_text(summary.get("total", 0))
+    passed = _count_text(summary.get("passed", 0))
+    soft = _count_text(summary.get("soft_fail", 0))
+    hard = _count_text(summary.get("hard_fail", 0))
+    cost = _bounded(report.get("total_cost", 0.0), 0, 1e9, ".6f")
+    p50 = _count_text(report.get("p50_duration_ms", 0))
+    p95 = _count_text(report.get("p95_duration_ms", 0))
 
     parts = [
         f"**Attest:** {len(failures)} failing assertion(s) of {total}.",
         f"PASS {passed} | SOFT {soft} | HARD {hard}",
-        f"Cost ${cost:.6f} · P50 {p50}ms · P95 {p95}ms",
+        f"Cost ${cost} · P50 {p50}ms · P95 {p95}ms",
     ]
     if classes := report.get("failure_classes"):
-        items = ", ".join(f"{_md(k, 40)}: {_number(v)}" for k, v in sorted(classes.items()))
+        shown = sorted(classes.items(), key=lambda kv: str(kv[0]))[:_MAX_CLASSES]
+        items = ", ".join(f"{_md(k, 40)}: {_count_text(v)}" for k, v in shown)
+        if len(classes) > _MAX_CLASSES:
+            items += f", and {len(classes) - _MAX_CLASSES} more"
         parts.append(f"Failure classes — {items}")
     if simulated := report.get("simulated"):
         if simulated:
@@ -189,7 +212,10 @@ def _diff_lines(patch: str) -> set[int]:
     """Right-side (head) line numbers a review comment can attach to in one file's patch."""
     lines: set[int] = set()
     right = 0
-    for row in patch.splitlines():
+    # GitHub patches separate lines with "\n" only; str.splitlines() would also
+    # split on form feeds and Unicode separators inside a line's content.
+    for raw in patch.split("\n"):
+        row = raw.removesuffix("\r")
         if row.startswith("@@"):
             match = _HUNK.match(row)
             if match is None:
@@ -201,7 +227,7 @@ def _diff_lines(patch: str) -> set[int]:
     return lines
 
 
-_REPO = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
+_REPO = re.compile(r"^(?!\.\.?/)[A-Za-z0-9_.-]+/(?!\.\.?$)[A-Za-z0-9_.-]+$")
 _SHA = re.compile(r"^[0-9a-f]{40}$")
 
 _HUNK = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@")
@@ -236,11 +262,14 @@ def _escape_property(value: str) -> str:
 
 
 def _workflow_annotation(path: str, line: int, result: dict[str, Any]) -> str:
-    """A ``::error`` workflow command: GitHub shows it at path:line in the run and the diff."""
-    layer = result.get("layer", 0) or 0
-    title = f"Attest L{layer} {result.get('type') or 'assertion'} failed"
+    """An ``::error`` (hard failure) or ``::warning`` (soft failure) workflow command.
+
+    GitHub shows it at path:line in the run summary and the diff.
+    """
+    layer = _layer_text(result.get("layer")).strip("`")
+    title = f"Attest L{layer} {_text(result.get('type') or 'assertion', 40)} failed"
     message = "; ".join(
-        f"{label}: {result[key]}"
+        f"{label}: {_text(result[key], 300)}"
         for label, key in (("expected", "expected"), ("actual", "actual"), ("detail", "explanation"))
         if result.get(key)
     )
@@ -280,11 +309,15 @@ def main() -> int:
     if not isinstance(report, dict) or not isinstance(report.get("results", []), list):
         print("post_annotations: report must be an object with a results list", file=sys.stderr)
         return 1
+    for key in ("summary", "failure_classes"):
+        if not isinstance(report.get(key, {}), dict):
+            print(f"post_annotations: report {key} must be an object", file=sys.stderr)
+            return 1
 
     if report.get("report_version") != 2:
         print(
-            f"post_annotations: unsupported report_version "
-            f"{report.get('report_version')} (need 2)",
+            "post_annotations: unsupported report_version "
+            f"{_escape_data(_text(report.get('report_version'), 40))} (need 2)",
             file=sys.stderr,
         )
         return 1
@@ -345,16 +378,39 @@ def build_review(
         else:
             elsewhere.append(f"{_md(f'{path}:{line}', 220)} (not in this diff)\n\n{_format_failure(r)}")
 
-    body_parts = [_summary_body(report, failures)]
-    if elsewhere:
-        body_parts += ["", "**Failures outside this diff or without a source location:**", ""]
-        for block in elsewhere:
-            body_parts += [block, ""]
-    review_body = "\n".join(body_parts)
-    if len(review_body) > MAX_BODY_CHARS:
-        review_body = review_body[: MAX_BODY_CHARS - 3] + "..."
-    payload = {"commit_id": commit, "body": review_body, "event": "COMMENT", "comments": comments}
+    payload = {
+        "commit_id": commit,
+        "body": _review_body(_summary_body(report, failures), elsewhere),
+        "event": "COMMENT",
+        "comments": comments,
+    }
     return payload, annotations
+
+
+def _review_body(summary: str, blocks: list[str]) -> str:
+    """The summary plus whole failure blocks while they fit in MAX_BODY_CHARS.
+
+    Blocks are never cut (a cut could leave a code span open); the ones that do
+    not fit are counted in a closing line that points at the full results.
+    """
+    body = summary
+    if not blocks:
+        return body
+    body += "\n\n**Failures outside this diff or without a source location:**\n"
+    for shown, block in enumerate(blocks):
+        rest = len(blocks) - shown
+        more = _more_line(rest - 1) if rest > 1 else ""
+        if len(body) + 2 + len(block) + len(more) > MAX_BODY_CHARS:
+            return body + _more_line(rest)
+        body += "\n" + block + "\n"
+    return body
+
+
+def _more_line(count: int) -> str:
+    return (
+        f"\n… and {count} more failure(s); see the workflow annotations and the "
+        "attest-report artifact.\n"
+    )
 
 
 if __name__ == "__main__":
