@@ -1,0 +1,53 @@
+name: setup-attest CI
+
+# Runs the setup-attest action the way a consumer repository does: the
+# workspace holds no attest source, and `ref` makes the action fetch and
+# build attest itself.
+
+on:
+  pull_request:
+    paths:
+      - ".github/actions/setup-attest/**"
+      - ".github/workflows/ci-setup-attest.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  consumer-remote:
+    name: Consumer (remote action reference)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: attest-framework/attest/.github/actions/setup-attest@ci/release-automation
+        with:
+          ref: main
+      - name: Run engine and SDKs
+        run: |
+          set -euo pipefail
+          attest-engine version
+          python -c 'import attest; print("attest-ai", attest.__version__)'
+
+  consumer-local:
+    name: Consumer (action from this change)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          path: attest-action
+          persist-credentials: false
+      - uses: ./attest-action/.github/actions/setup-attest
+        id: setup
+        with:
+          ref: main
+      - name: Run engine and SDKs
+        env:
+          CORE_TARBALL: ${{ steps.setup.outputs.core-tarball }}
+        run: |
+          set -euo pipefail
+          attest-engine version
+          python -c 'import attest; print("attest-ai", attest.__version__)'
+          project="$(mktemp -d)"
+          cd "$project"
+          npm init -y > /dev/null
+          npm install --no-audit --no-fund "$CORE_TARBALL"
+          node --input-type=module -e 'const m = await import("@attest-ai/core"); console.log("@attest-ai/core", m.VERSION)'
