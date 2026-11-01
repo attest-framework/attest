@@ -146,6 +146,9 @@ Capabilities are additive. New capabilities never remove or alter old ones.
 | `multi_agent` | v0.3+ | Hierarchical trace trees, cross-agent assertions |
 | `continuous_eval` | v0.4+ | Production trace ingestion and sampling pipelines |
 | `plugins` | v0.4+ | Custom assertions and judges via plugin interface |
+| `embedding` | v0.2+ | `embedding` assertions accepted. Since v1.0 always advertised; without a provider they return `not_evaluated(provider_not_configured)` |
+| `llm_judge` | v0.2+ | `llm_judge` assertions accepted. Since v1.0 always advertised; without a provider they return `not_evaluated(provider_not_configured)` |
+| `simulation_mode` | v1.0+ | The engine started with `ATTEST_SIMULATION` set: L5/L6 assertions return `not_evaluated(simulation)` |
 
 #### Error: Incompatible Protocol Version
 
@@ -384,12 +387,42 @@ Capabilities are additive. New capabilities never remove or alter old ones.
 | Field | Type | Description |
 |-------|------|-------------|
 | `assertion_id` | string | Matches the assertion from the request |
-| `status` | string | `pass`, `soft_fail`, or `hard_fail` |
-| `score` | float | 0.0 to 1.0. For boolean checks: 0.0 or 1.0. For scored checks: continuous value. |
+| `status` | string | `pass`, `soft_fail`, `hard_fail`, or `not_evaluated` (see [Assertion Status and Aggregation](#assertion-status-and-aggregation)) |
+| `reason` | string | Present only when `status` is `not_evaluated`: `provider_unavailable`, `provider_not_configured`, `simulation`, `missing_evidence`, or `short_circuited` |
+| `score` | float | 0.0 to 1.0. For boolean checks: 0.0 or 1.0. For scored checks: continuous value. `0.0` when `not_evaluated`. |
 | `explanation` | string | Human-readable explanation of the result, including relevant values |
 | `cost` | float | USD cost for this assertion (non-zero for LLM-backed assertions) |
 | `duration_ms` | int | Wall-clock time to evaluate this assertion |
 | `request_id` | string | Echoed from the request if provided |
+| `failure_class` | string | Set only on `soft_fail` / `hard_fail` rows; never on `pass` or `not_evaluated` |
+
+Every requested assertion appears exactly once in `results`, including assertions the engine did not run.
+
+#### Assertion Status and Aggregation
+
+| Status | Meaning |
+|--------|---------|
+| `pass` | The assertion held. |
+| `soft_fail` | The assertion failed a `soft` threshold. |
+| `hard_fail` | The assertion failed. |
+| `not_evaluated` | The engine produced no verdict. `reason` says why. |
+
+| `reason` | When |
+|----------|------|
+| `provider_unavailable` | The embedding (L5) or judge (L6) provider is configured but the call failed: outage, timeout, or unusable response. |
+| `provider_not_configured` | No embedding or judge provider is configured. L5/L6 assertions are always accepted and return this reason instead of an error. |
+| `simulation` | The engine runs with `ATTEST_SIMULATION` set (capability `simulation_mode`). L1–L4 run normally; no provider is called. |
+| `missing_evidence` | The trace does not record the field the assertion checks (for example `metadata.cost_usd` unset). |
+| `short_circuited` | An L5/L6 assertion was not run because an L1–L4 assertion in the same batch returned `hard_fail`. |
+
+SDKs aggregate a test's results after its whole batch:
+
+1. Any `hard_fail` → the test fails.
+2. Otherwise any `not_evaluated` → the test is skipped and lists the reasons (strict mode → fail).
+3. Otherwise any `soft_fail` → the test passes with a summary warning.
+4. Otherwise → pass.
+
+`failed_assertions` holds `hard_fail` and `soft_fail` rows only. Pass rates exclude `not_evaluated` rows from the denominator and report their count separately. In policy evaluation (`attest-engine policy evaluate`), `not_evaluated` rows produce a `not_evaluated` violation with severity `warn` (exit 2) unless the policy sets `not_evaluated: block` (exit 1). The cross-SDK fixtures for these rules live in `protocol-tests/verdicts/`.
 
 ---
 
@@ -674,7 +707,7 @@ A sub-agent delegation. Contains a nested sub-trace for multi-agent evaluation.
 
 Each layer builds on the previous in terms of computational cost and evaluation depth. Layers 1–4 are deterministic and free. Layer 5 requires an embedding API call. Layer 6 requires an LLM API call.
 
-The engine evaluates assertions in layer order within a batch and can short-circuit: if a `hard_fail` is detected at an early layer, later layers may be skipped (engine decides based on configuration).
+The engine evaluates assertions in layer order within a batch and short-circuits: if any layer 1–4 assertion returns `hard_fail`, layer 5–6 assertions are not run and each returns `not_evaluated` with reason `short_circuited`.
 
 ---
 
@@ -1287,6 +1320,7 @@ MUST:
   - Ignore unknown fields in all engine responses
   - Handle unknown error codes without crashing
   - Check `compatible` field in initialize response before sending evaluate_batch
+  - Treat an unknown `status` value as `not_evaluated`, never as `pass`
 
 MUST NOT:
   - Fail on unexpected top-level keys in JSON responses

@@ -1,0 +1,38 @@
+{
+  "name": "007-missing-evidence",
+  "description": "A constraint on an unset trace field is not evaluated.",
+  "results": [
+    {
+      "assertion_id": "a1",
+      "status": "pass",
+      "score": 1.0,
+      "explanation": "a1 pass",
+      "cost": 0.0,
+      "duration_ms": 0,
+      "layer": 4,
+      "type": "content"
+    },
+    {
+      "assertion_id": "c1",
+      "status": "not_evaluated",
+      "score": 0.0,
+      "explanation": "c1 not_evaluated (missing_evidence)",
+      "cost": 0.0,
+      "duration_ms": 0,
+      "layer": 2,
+      "type": "constraint",
+      "reason": "missing_evidence"
+    }
+  ],
+  "expected": {
+    "outcome": "skip",
+    "strictOutcome": "fail",
+    "failedAssertionIds": [],
+    "notEvaluated": {
+      "missing_evidence": 1
+    },
+    "passRate": 1.0,
+    "softFailWarning": false,
+    "policyExit": 2
+  }
+}
