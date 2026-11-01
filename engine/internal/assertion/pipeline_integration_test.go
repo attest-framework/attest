@@ -299,9 +299,17 @@ func TestPipeline_Integration_L14HardFail_GatesL56(t *testing.T) {
 		t.Fatalf("EvaluateBatch: %v", err)
 	}
 
-	// Only L1 result should be present — L5/L6 are gated.
-	if len(result.Results) != 1 {
-		t.Fatalf("expected 1 result (L5/L6 gated), got %d", len(result.Results))
+	// L5/L6 are gated but still reported as not_evaluated(short_circuited).
+	if len(result.Results) != 3 {
+		t.Fatalf("expected 3 results (L1 + 2 short-circuited), got %d", len(result.Results))
+	}
+	for _, r := range result.Results[1:] {
+		if r.Status != types.StatusNotEvaluated || r.Reason != types.ReasonShortCircuited {
+			t.Errorf("%s: status=%q reason=%q, want not_evaluated/short_circuited", r.AssertionID, r.Status, r.Reason)
+		}
+		if r.FailureClass != "" {
+			t.Errorf("%s: failure_class=%q, want empty on not_evaluated", r.AssertionID, r.FailureClass)
+		}
 	}
 	if result.Results[0].AssertionID != "schema-fail" {
 		t.Errorf("result[0] = %q, want schema-fail", result.Results[0].AssertionID)

@@ -6,6 +6,30 @@ const (
 	StatusPass     = "pass"
 	StatusSoftFail = "soft_fail"
 	StatusHardFail = "hard_fail"
+	// StatusNotEvaluated means the engine did not produce a verdict for the
+	// assertion. AssertionResult.Reason names why (Reason* constants). It is
+	// neither a pass nor a failure: SDKs skip the test unless a failure is
+	// also present, and policy treats it as a warning by default.
+	StatusNotEvaluated = "not_evaluated"
+
+	// Reason* values explain a not_evaluated status. They are part of the
+	// JSON wire format (AssertionResult.Reason) and cross both SDKs.
+	//
+	// ReasonProviderUnavailable: the embedding or judge provider was
+	// configured but the call failed (outage, timeout, unusable response).
+	ReasonProviderUnavailable = "provider_unavailable"
+	// ReasonProviderNotConfigured: no embedding or judge provider is
+	// configured for the engine, so the layer cannot run.
+	ReasonProviderNotConfigured = "provider_not_configured"
+	// ReasonSimulation: the engine runs in simulation mode
+	// (ATTEST_SIMULATION=1), where paid layers are disabled.
+	ReasonSimulation = "simulation"
+	// ReasonMissingEvidence: the trace lacks the field the assertion
+	// checks (e.g. metadata.cost_usd unset).
+	ReasonMissingEvidence = "missing_evidence"
+	// ReasonShortCircuited: an L5/L6 assertion was not run because a
+	// deterministic layer (L1–L4) already hard-failed in the same batch.
+	ReasonShortCircuited = "short_circuited"
 
 	TypeSchema     = "schema"
 	TypeConstraint = "constraint"
@@ -102,8 +126,10 @@ type JudgeAgreement struct {
 // the engine for diagnostic reports (report v2, pytest/vitest plugins).
 // They are optional and absent in legacy v1 emissions.
 type AssertionResult struct {
-	AssertionID string  `json:"assertion_id"`
-	Status      string  `json:"status"`
+	AssertionID string `json:"assertion_id"`
+	Status      string `json:"status"`
+	// Reason is set only when Status is not_evaluated (Reason* constants).
+	Reason      string  `json:"reason,omitempty"`
 	Score       float64 `json:"score"`
 	Explanation string  `json:"explanation"`
 	Cost        float64 `json:"cost"`

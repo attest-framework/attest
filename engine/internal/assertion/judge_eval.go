@@ -264,12 +264,15 @@ func (e *JudgeEvaluator) evaluateSinglePass(
 
 	resp, err := e.provider.Complete(ctx, req)
 	if err != nil {
-		return failResult(assertion, start, fmt.Sprintf("LLM call failed: %v", err))
+		return notEvaluatedResult(assertion, start, types.ReasonProviderUnavailable, fmt.Sprintf("judge provider call failed: %v", err))
 	}
 
 	scoreResult, err := judge.ParseScoreResult(resp.Content)
 	if err != nil {
-		return failResult(assertion, start, fmt.Sprintf("parse judge response: %v", err))
+		// The call was billed even though its output is unusable.
+		ar := notEvaluatedResult(assertion, start, types.ReasonProviderUnavailable, fmt.Sprintf("judge response unusable: %v", err))
+		ar.Cost = resp.Cost
+		return ar
 	}
 
 	durationMS := time.Since(start).Milliseconds()
@@ -346,7 +349,7 @@ func (e *JudgeEvaluator) evaluateRepeated(
 
 			sr, err := judge.ParseScoreResult(resp.Content)
 			if err != nil {
-				results[idx] = metaEvalResult{err: err}
+				results[idx] = metaEvalResult{err: err, cost: resp.Cost}
 				return
 			}
 
@@ -367,6 +370,7 @@ func (e *JudgeEvaluator) evaluateRepeated(
 	var firstErr error
 
 	for i, r := range results {
+		totalCost += r.cost
 		if r.err != nil {
 			if firstErr == nil {
 				firstErr = r.err
@@ -375,12 +379,13 @@ func (e *JudgeEvaluator) evaluateRepeated(
 		}
 		scores = append(scores, r.score)
 		explanations = append(explanations, fmt.Sprintf("Run %d: %s", i+1, r.explanation))
-		totalCost += r.cost
 	}
 
 	// Need at least 1 successful run
 	if len(scores) == 0 {
-		return failResult(assertion, start, fmt.Sprintf("all %d judge runs failed: %v", runs, firstErr))
+		ar := notEvaluatedResult(assertion, start, types.ReasonProviderUnavailable, fmt.Sprintf("all %d judge runs failed: %v", runs, firstErr))
+		ar.Cost = totalCost
+		return ar
 	}
 
 	// Sort and take median
