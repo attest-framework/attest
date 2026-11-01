@@ -28,7 +28,6 @@ import {
 } from "./proto/diagnostics.js";
 import type { EngineManager } from "./engine-manager.js";
 import { isSimulationMode } from "./config.js";
-import { simulationEvaluateBatch } from "./simulation.js";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 const DEFAULT_DIAGNOSTIC_BUFFER = 32;
@@ -362,10 +361,9 @@ export class AttestClient {
     assertions: readonly Assertion[],
     options?: { timeout?: number },
   ): Promise<EvaluateBatchResult> {
-    if (isSimulationMode()) {
-      return simulationEvaluateBatch(assertions);
-    }
-
+    // Simulation is decided by the engine: started with ATTEST_SIMULATION
+    // set, it evaluates layers 1-4 for real and returns not_evaluated
+    // (reason "simulation") for layers 5-6.
     const params = {
       trace,
       assertions: [...assertions],

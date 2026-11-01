@@ -11,6 +11,7 @@ import type {
 } from "../../packages/core/src/proto/types.js";
 import {
   STATUS_HARD_FAIL,
+  STATUS_NOT_EVALUATED,
   STATUS_PASS,
   STATUS_SOFT_FAIL,
   TYPE_CONTENT,
@@ -221,5 +222,43 @@ describe("renderDiagnostics", () => {
     });
     const block = renderDiagnostics(result, { color: true });
     expect(block).toMatch(/\x1b\[/);
+  });
+});
+
+describe("renderDiagnostics — not_evaluated", () => {
+  it("counts failures, not rows, and lists not-evaluated rows with their reason", () => {
+    const result = makeAgentResult(
+      { assertion_id: "ok", status: STATUS_PASS, score: 1.0, explanation: "" },
+      { assertion_id: "bad", status: STATUS_HARD_FAIL, score: 0.0, explanation: "x" },
+      {
+        assertion_id: "judge",
+        status: STATUS_NOT_EVALUATED,
+        reason: "short_circuited",
+        score: 0.0,
+        explanation: "not run",
+        type: TYPE_LLM_JUDGE,
+        layer: 6,
+      },
+    );
+
+    const all = renderDiagnostics(result, { includePassing: true });
+    const failing = renderDiagnostics(result);
+
+    expect(all).toContain("1 of 3 assertions failed, 1 not evaluated");
+    expect(failing).toContain("N/E judge");
+    expect(failing).toContain("reason:     not evaluated: short_circuited");
+    expect(failing).not.toContain("ok");
+  });
+
+  it("headers a batch with only not-evaluated rows", () => {
+    const result = makeAgentResult({
+      assertion_id: "judge",
+      status: STATUS_NOT_EVALUATED,
+      reason: "simulation",
+      score: 0.0,
+      explanation: "",
+    });
+
+    expect(renderDiagnostics(result)).toContain("1 of 1 assertions not evaluated");
   });
 });

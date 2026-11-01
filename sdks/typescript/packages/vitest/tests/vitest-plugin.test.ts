@@ -16,64 +16,43 @@ import { filterByTier } from "../src/tier-filter.js";
 // ---------------------------------------------------------------------------
 
 let _mockSimulationMode = false;
+let _mockCapabilities: string[] = ["layers_1_4", "simulation_mode"];
+const PASS_ROW = {
+  assertion_id: "a1",
+  status: "pass",
+  score: 1.0,
+  explanation: "ok",
+  cost: 0.001,
+  duration_ms: 10,
+};
+let _mockResults: unknown[] = [PASS_ROW];
 
-vi.mock("@attest-ai/core", () => {
-  const mockEvaluateBatch = vi.fn().mockResolvedValue({
-    results: [
-      {
-        assertion_id: "a1",
-        status: "pass",
-        score: 1.0,
-        explanation: "ok",
-        cost: 0.001,
-        duration_ms: 10,
-      },
-    ],
-    total_cost: 0.001,
-    total_duration_ms: 10,
-  });
+vi.mock("@attest-ai/core", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@attest-ai/core")>();
 
   class MockEngineManager {
-    start = vi.fn().mockResolvedValue({
+    start = vi.fn(async () => ({
       compatible: true,
-      engine_version: "0.4.0",
-    });
+      engine_version: "1.0.0",
+      capabilities: _mockCapabilities,
+    }));
     stop = vi.fn().mockResolvedValue(undefined);
   }
 
   class MockAttestClient {
-    evaluateBatch = mockEvaluateBatch;
+    evaluateBatch = vi.fn(async () => ({
+      results: _mockResults,
+      total_cost: 0.001,
+      total_duration_ms: 10,
+    }));
     sendRequest = vi.fn();
   }
 
-  class MockAgentResult {
-    constructor(
-      public trace: unknown,
-      public results: unknown[],
-      public totalCost: number,
-      public totalDurationMs: number,
-    ) {}
-  }
-
   return {
+    ...actual,
     EngineManager: MockEngineManager,
     AttestClient: MockAttestClient,
-    AgentResult: MockAgentResult,
-    STATUS_SOFT_FAIL: "soft_fail",
     isSimulationMode: () => _mockSimulationMode,
-    simulationEvaluateBatch: (assertions: unknown[]) => ({
-      results: (assertions as Array<{ assertion_id: string; type: string }>).map((a) => ({
-        assertion_id: a.assertion_id,
-        status: "pass",
-        score: 1.0,
-        explanation: `[simulation] ${a.assertion_id} passed`,
-        cost: 0,
-        duration_ms: 0,
-      })),
-      total_cost: 0,
-      total_duration_ms: 0,
-    }),
-    renderDiagnostics: (_result: unknown) => "  Attest diagnostic — mock\n",
     renderSummary: (_result: unknown) => "PASS 0 | SOFT 0 | FAIL 0",
   };
 });
@@ -171,8 +150,9 @@ describe("attestGlobalSetup", () => {
   afterEach(() => {
     globalThis.__attest_engine__ = undefined;
     globalThis.__attest_client__ = undefined;
-    globalThis.__attest_simulation_mode__ = false;
     _mockSimulationMode = false;
+    _mockCapabilities = ["layers_1_4", "simulation_mode"];
+    delete process.env["ATTEST_SIMULATION"];
   });
 
   it("returns object with setup and teardown functions", () => {
@@ -217,25 +197,25 @@ describe("attestGlobalSetup", () => {
     await hooks.teardown(); // should not throw
   });
 
-  it("setup() skips engine in simulation mode", async () => {
+  it("setup() starts the engine with ATTEST_SIMULATION=1 in simulation mode", async () => {
     _mockSimulationMode = true;
     const hooks = attestGlobalSetup();
+
     await hooks.setup();
 
-    expect(globalThis.__attest_engine__).toBeUndefined();
-    expect(globalThis.__attest_client__).toBeUndefined();
-    expect(globalThis.__attest_simulation_mode__).toBe(true);
-    expect(globalThis.__attest_session_cost__).toBe(0);
-
+    expect(process.env["ATTEST_SIMULATION"]).toBe("1");
+    expect(globalThis.__attest_engine__).toBeDefined();
+    expect(globalThis.__attest_client__).toBeDefined();
     await hooks.teardown();
-    expect(globalThis.__attest_simulation_mode__).toBe(false);
   });
 
-  it("teardown() is safe in simulation mode without engine", async () => {
+  it("setup() rejects an engine without simulation_mode in simulation mode", async () => {
     _mockSimulationMode = true;
+    _mockCapabilities = ["layers_1_4"];
     const hooks = attestGlobalSetup();
-    await hooks.setup();
-    await hooks.teardown(); // should not throw
+
+    await expect(hooks.setup()).rejects.toThrow("does not support simulation mode");
+    expect(globalThis.__attest_engine__).toBeUndefined();
   });
 });
 
@@ -247,35 +227,106 @@ describe("AttestEngineFixture (simulation mode)", () => {
   beforeEach(() => {
     _mockSimulationMode = true;
     globalThis.__attest_session_cost__ = 0;
-    globalThis.__attest_session_soft_failures__ = 0;
   });
 
   afterEach(() => {
     _mockSimulationMode = false;
+    _mockCapabilities = ["layers_1_4", "simulation_mode"];
+    delete process.env["ATTEST_SIMULATION"];
   });
 
-  it("skips engine creation in simulation mode", () => {
+  it("start() launches the engine with ATTEST_SIMULATION=1", async () => {
     const fixture = new AttestEngineFixture();
-    expect(fixture).toBeDefined();
-  });
 
-  it("start() is a no-op in simulation mode", async () => {
-    const fixture = new AttestEngineFixture();
-    await fixture.start(); // should not throw
-  });
-
-  it("evaluate() returns simulation results", async () => {
-    const fixture = new AttestEngineFixture();
     await fixture.start();
 
-    const chain = {
-      trace: { trace_id: "trc_sim", output: {}, steps: [] },
-      assertions: [{ assertion_id: "a1", type: "schema", spec: {} }],
-    };
+    expect(process.env["ATTEST_SIMULATION"]).toBe("1");
+    expect(fixture.client).toBeDefined();
+    await fixture.stop();
+  });
+
+  it("start() rejects an engine without simulation_mode", async () => {
+    _mockCapabilities = ["layers_1_4"];
+    const fixture = new AttestEngineFixture();
+
+    await expect(fixture.start()).rejects.toThrow("does not support simulation mode");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Verdict enforcement
+// ---------------------------------------------------------------------------
+
+describe("evaluate() / inspect() enforcement", () => {
+  const chain = {
+    trace: { trace_id: "trc_v", output: {}, steps: [] },
+    assertions: [{ assertion_id: "a1", type: "trace", spec: {} }],
+  };
+  const row = (id: string, status: string, reason?: string) => ({
+    assertion_id: id,
+    status,
+    score: 0,
+    explanation: `${id} ${status}`,
+    layer: reason ? 6 : 3,
+    type: reason ? "llm_judge" : "trace",
+    trace_node_path: reason ? "output.message" : "trace.loop_detection",
+    ...(reason ? { reason } : {}),
+  });
+
+  afterEach(() => {
+    _mockResults = [PASS_ROW];
+    delete process.env["ATTEST_STRICT"];
+  });
+
+  it("hard_fail plus not_evaluated rejects and lists both", async () => {
+    _mockResults = [row("loop", "hard_fail"), row("judge", "not_evaluated", "short_circuited")];
+    const fixture = new AttestEngineFixture();
+
+    const err = await fixture.evaluate(chain as never).catch((e: Error) => e);
+
+    expect(err).toBeInstanceOf(Error);
+    const msg = (err as Error).message;
+    expect(msg).toContain("1 of 2 assertions failed, 1 not evaluated");
+    expect(msg).toContain("trace.loop_detection");
+    expect(msg).toContain("not evaluated: short_circuited");
+  });
+
+  it("strict option fails a not_evaluated batch", async () => {
+    _mockResults = [PASS_ROW, row("judge", "not_evaluated", "provider_unavailable")];
+    const fixture = new AttestEngineFixture();
+
+    await expect(fixture.evaluate(chain as never, { strict: true })).rejects.toThrow(
+      "strict: not evaluated: provider_unavailable",
+    );
+  });
+
+  it("ATTEST_STRICT=1 fails a not_evaluated batch", async () => {
+    process.env["ATTEST_STRICT"] = "1";
+    _mockResults = [row("judge", "not_evaluated", "simulation")];
+    const fixture = new AttestEngineFixture();
+
+    await expect(fixture.evaluate(chain as never)).rejects.toThrow(
+      "strict: not evaluated: simulation",
+    );
+  });
+
+  it("soft_fail passes", async () => {
+    _mockResults = [PASS_ROW, { ...row("soft", "soft_fail"), layer: 5 }];
+    const fixture = new AttestEngineFixture();
 
     const result = await fixture.evaluate(chain as never);
-    expect(result).toBeDefined();
-    expect(globalThis.__attest_session_cost__).toBe(0);
+
+    expect(result.outcome()).toBe("pass");
+    expect(result.softFailures).toHaveLength(1);
+  });
+
+  it("inspect() never enforces", async () => {
+    _mockResults = [row("loop", "hard_fail")];
+    const fixture = new AttestEngineFixture();
+
+    const result = await fixture.inspect(chain as never);
+
+    expect(result.outcome()).toBe("fail");
   });
 });
 

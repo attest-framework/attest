@@ -1,6 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { config, isSimulationMode, getSampleRate, resetConfig } from "../../packages/core/src/config.js";
-import { simulationEvaluateBatch } from "../../packages/core/src/simulation.js";
 import type { Assertion, Trace } from "../../packages/core/src/proto/types.js";
 
 // ---------------------------------------------------------------------------
@@ -163,127 +162,41 @@ describe("getSampleRate", () => {
 });
 
 // ---------------------------------------------------------------------------
-// simulationEvaluateBatch
+// AttestClient.evaluateBatch: simulation is decided by the engine
 // ---------------------------------------------------------------------------
 
-describe("simulationEvaluateBatch", () => {
-  it("returns all-pass results", () => {
-    const assertions = [makeAssertion("a1"), makeAssertion("a2")];
-    const result = simulationEvaluateBatch(assertions);
-
-    expect(result.results).toHaveLength(2);
-    for (const r of result.results) {
-      expect(r.status).toBe("pass");
-      expect(r.score).toBe(1.0);
-    }
-  });
-
-  it("preserves assertion IDs in output", () => {
-    const assertions = [makeAssertion("assert-xyz-001"), makeAssertion("assert-xyz-002")];
-    const result = simulationEvaluateBatch(assertions);
-
-    expect(result.results[0].assertion_id).toBe("assert-xyz-001");
-    expect(result.results[1].assertion_id).toBe("assert-xyz-002");
-  });
-
-  it("includes [simulation] marker in explanation", () => {
-    const assertions = [makeAssertion("a1", "content")];
-    const result = simulationEvaluateBatch(assertions);
-
-    expect(result.results[0].explanation).toContain("[simulation]");
-  });
-
-  it("reports zero cost and zero duration", () => {
-    const assertions = [makeAssertion("a1")];
-    const result = simulationEvaluateBatch(assertions);
-
-    expect(result.total_cost).toBe(0);
-    expect(result.total_duration_ms).toBe(0);
-    expect(result.results[0].cost).toBe(0);
-    expect(result.results[0].duration_ms).toBe(0);
-  });
-
-  it("handles empty assertions array", () => {
-    const result = simulationEvaluateBatch([]);
-    expect(result.results).toHaveLength(0);
-    expect(result.total_cost).toBe(0);
-  });
-
-  it("marks the result as simulated", () => {
-    const result = simulationEvaluateBatch([makeAssertion("a1")]);
-    expect(result.simulated).toBe(true);
-  });
-
-  it("marks the empty-batch result as simulated", () => {
-    const result = simulationEvaluateBatch([]);
-    expect(result.simulated).toBe(true);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// AttestClient.evaluateBatch delegates to simulation when enabled
-// ---------------------------------------------------------------------------
-
-describe("AttestClient.evaluateBatch — simulation delegation", () => {
+describe("AttestClient.evaluateBatch — simulation goes to the engine", () => {
   afterEach(() => {
     resetConfig();
     delete process.env["ATTEST_SIMULATION"];
   });
 
-  it("returns simulation result without calling sendRequest", async () => {
-    // We test the delegation without a real engine by importing AttestClient
-    // and providing a stub EngineManager.
+  it.each([
+    ["config", () => config({ simulation: true })],
+    ["env", () => { process.env["ATTEST_SIMULATION"] = "1"; }],
+  ])("sends evaluate_batch to the engine (%s)", async (_name, enable) => {
     const { AttestClient } = await import("../../packages/core/src/client.js");
-
-    // Minimal EngineManager stub — sendRequest must never be called.
-    const stubEngine = {
-      sendRequest: vi.fn().mockRejectedValue(new Error("should not be called")),
-      readlineInterface: null,
-      childProcess: null,
-      isRunning: false,
-      start: vi.fn(),
-      stop: vi.fn(),
+    const client = new AttestClient({} as never);
+    const engineResult = {
+      results: [
+        {
+          assertion_id: "sim-001",
+          status: "not_evaluated",
+          reason: "simulation",
+          score: 0,
+          explanation: "not run: simulation mode",
+        },
+      ],
+      total_cost: 0,
+      total_duration_ms: 0,
     };
+    const send = vi.spyOn(client, "sendRequest").mockResolvedValue(engineResult as never);
+    enable();
 
-    const client = new AttestClient(stubEngine as never);
-    const trace = makeTrace();
-    const assertions = [makeAssertion("sim-001", "schema"), makeAssertion("sim-002", "constraint")];
+    const result = await client.evaluateBatch(makeTrace(), [makeAssertion("sim-001", "llm_judge")]);
 
-    config({ simulation: true });
-
-    const result = await client.evaluateBatch(trace, assertions);
-
-    expect(stubEngine.sendRequest).not.toHaveBeenCalled();
-    expect(result.results).toHaveLength(2);
-    expect(result.results[0].assertion_id).toBe("sim-001");
-    expect(result.results[1].assertion_id).toBe("sim-002");
-    expect(result.results[0].status).toBe("pass");
-    expect(result.results[1].status).toBe("pass");
-    expect(result.simulated).toBe(true);
-  });
-
-  it("also delegates when ATTEST_SIMULATION env var is set", async () => {
-    process.env["ATTEST_SIMULATION"] = "1";
-
-    const { AttestClient } = await import("../../packages/core/src/client.js");
-
-    const stubEngine = {
-      sendRequest: vi.fn().mockRejectedValue(new Error("should not be called")),
-      readlineInterface: null,
-      childProcess: null,
-      isRunning: false,
-      start: vi.fn(),
-      stop: vi.fn(),
-    };
-
-    const client = new AttestClient(stubEngine as never);
-    const trace = makeTrace();
-    const assertions = [makeAssertion("env-001")];
-
-    const result = await client.evaluateBatch(trace, assertions);
-
-    expect(stubEngine.sendRequest).not.toHaveBeenCalled();
-    expect(result.results[0].assertion_id).toBe("env-001");
-    expect(result.results[0].explanation).toContain("[simulation]");
+    expect(send).toHaveBeenCalledOnce();
+    expect(result.results[0].status).toBe("not_evaluated");
+    expect(result.results[0].reason).toBe("simulation");
   });
 });
