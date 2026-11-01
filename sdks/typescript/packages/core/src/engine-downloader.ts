@@ -147,12 +147,15 @@ export async function downloadEngine(): Promise<string> {
   const dir = versionedBinDir();
   fs.mkdirSync(dir, { recursive: true });
   const destPath = path.join(dir, binaryFilename());
-  const tmpPath = path.join(dir, `.${binaryFilename()}.tmp.${process.pid}`);
+  const suffix = `${String(process.pid)}.${crypto.randomBytes(8).toString("hex")}`;
+  const tmpPath = path.join(dir, `.${binaryFilename()}.tmp.${suffix}`);
   try {
-    fs.writeFileSync(tmpPath, data, { mode: 0o755 });
+    fs.writeFileSync(tmpPath, data, { flag: "wx", mode: 0o755 });
+    fs.chmodSync(tmpPath, 0o755);
     fs.renameSync(tmpPath, destPath);
   } catch (err) {
-    fs.rmSync(tmpPath, { force: true });
+    // EEXIST means the temp name belongs to someone else; leave it alone.
+    if ((err as NodeJS.ErrnoException).code !== "EEXIST") fs.rmSync(tmpPath, { force: true });
     throw err;
   }
 

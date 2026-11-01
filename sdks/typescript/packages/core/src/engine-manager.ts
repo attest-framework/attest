@@ -72,7 +72,10 @@ function requireFile(enginePath: string, label: string): void {
   }
 }
 
-async function locateEngine(explicitPath: string | undefined): Promise<[string, string]> {
+async function locateEngine(
+  explicitPath: string | undefined,
+  allowDownload: boolean,
+): Promise<[string, string]> {
   if (explicitPath) {
     requireFile(explicitPath, "Engine path");
     return [explicitPath, "explicit engine path"];
@@ -86,6 +89,13 @@ async function locateEngine(explicitPath: string | undefined): Promise<[string, 
   if (found) return [found, "PATH"];
   const cached = cachedEnginePath();
   if (cached) return [cached, "engine cache"];
+
+  if (!allowDownload) {
+    throw new Error(
+      `No '${ENGINE_BINARY_NAME}' ${ENGINE_VERSION} in ATTEST_ENGINE_PATH, PATH or ` +
+        `~/.attest/bin/${ENGINE_VERSION}/.`,
+    );
+  }
 
   const noDownload = process.env["ATTEST_ENGINE_NO_DOWNLOAD"]?.toLowerCase();
   if (noDownload === "1" || noDownload === "true" || noDownload === "yes") {
@@ -105,12 +115,16 @@ async function locateEngine(explicitPath: string | undefined): Promise<[string, 
  *
  * The single discovery function behind `EngineManager` and the `attest` CLI. Order:
  * explicit path → `ATTEST_ENGINE_PATH` → `attest-engine` on `PATH` →
- * `~/.attest/bin/<ENGINE_VERSION>/` → download (unless `ATTEST_ENGINE_NO_DOWNLOAD`).
+ * `~/.attest/bin/<ENGINE_VERSION>/` → download (unless `ATTEST_ENGINE_NO_DOWNLOAD` is set or
+ * `allowDownload` is false).
  * The first engine found must report exactly `ENGINE_VERSION`; a mismatched engine is
  * never skipped in favor of the next location.
  */
-export async function resolveEngine(explicitPath?: string): Promise<string> {
-  const [enginePath, source] = await locateEngine(explicitPath);
+export async function resolveEngine(
+  explicitPath?: string,
+  options: { allowDownload?: boolean } = {},
+): Promise<string> {
+  const [enginePath, source] = await locateEngine(explicitPath, options.allowDownload ?? true);
   const found = engineVersion(enginePath);
   if (found !== ENGINE_VERSION) {
     throw new EngineVersionMismatchError(enginePath, source, found, ENGINE_VERSION);

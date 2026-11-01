@@ -12,7 +12,7 @@ All notable changes to Attest are documented in this file. The format follows [K
 - `attest-engine doctor [--json]` reports the engine and protocol versions, the capabilities `initialize` would advertise, the judge provider, model, base URL and key source (never the key), the embedding provider, simulation mode and the cache directory. JSON follows `proto/attest/v1/doctor.schema.json`. A configuration error exits 1 with the server's startup message; a plain-http judge endpoint on a non-loopback host is flagged as insecure.
 - `ATTEST_JUDGE_BASE_URL` points the LLM judge at any OpenAI-compatible endpoint. `ATTEST_JUDGE_API_KEY` overrides `OPENAI_API_KEY` for the judge. See `docs/guides/configuration.md`.
 - `attest-engine --help` lists every command; each command is one file registered through a command registry.
-- `attest` console script for the Python SDK (`uv run attest`), matching `npx attest`. Both implement `attest init` and forward every other command (`doctor`, `baseline`, `policy`, `cache`, `calibrate`, `version`) to a version-checked engine with arguments, output and exit code unchanged. `attest --help` lists SDK and engine commands and exits 0; without a resolvable engine it prints the SDK commands, explains why and exits 1.
+- `attest` console script for the Python SDK (`uv run attest`), matching `npx attest`. Both implement `attest init` and forward every other command (`doctor`, `baseline`, `policy`, `cache`, `calibrate`, `version`) to a version-checked engine with arguments, output and exit code unchanged. A forwarded command must be listed by the engine's `help`; an engine that predates it (such as the `v1.0.0-rc` prerelease, which reports the same version but has no command registry) exits 1 before running. `attest --help` and bare `attest` always exit 0 and never download: they list `init`, plus the engine's commands when a matching engine is already available through `ATTEST_ENGINE_PATH`, `PATH` or the versioned cache, and otherwise print how to get one.
 - `EngineVersionMismatchError` (Python `attest.exceptions`, TypeScript `engine-manager`) names the engine path, where discovery found it, the version it reports and the version required.
 
 ### Changed
@@ -29,6 +29,7 @@ All notable changes to Attest are documented in this file. The format follows [K
 - **BREAKING:** `attest policy evaluate` and every other forwarded command exit 1 before running when no matching engine is available, instead of running whatever `attest-engine` was found.
 - **BREAKING:** `attest cache` and `attest calibrate` run in the engine (`attest-engine cache`, `attest-engine calibrate`); their output follows the engine's format.
 - The TypeScript engine download uses the `.exe` asset name on Windows, matching the release assets.
+- `PATH` discovery in the Python SDK checks only the platform binary name in each `PATH` entry, skipping empty entries, so the current directory and other `PATHEXT` extensions are never searched. Forwarded commands killed by a signal exit 128 + N in both SDKs.
 
 ### Removed
 

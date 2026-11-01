@@ -5,7 +5,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { main } from "../../packages/core/src/cli.js";
+import { engineCommands, exitStatus, main } from "../../packages/core/src/cli.js";
 import { ENGINE_VERSION, VERSION } from "../../packages/core/src/version.js";
 import {
   forwardedCalls,
@@ -13,6 +13,7 @@ import {
   legacyCachePath,
   writeScriptedEngine,
   type IsolatedEngineEnv,
+  type ScriptedEngineOptions,
 } from "../support/scripted-engine.js";
 
 let env: IsolatedEngineEnv;
@@ -38,7 +39,7 @@ afterEach(() => {
   env.restore();
 });
 
-function useEngine(options: { version?: string; exitCode?: number } = {}): string {
+function useEngine(options: ScriptedEngineOptions = {}): string {
   const engine = writeScriptedEngine(path.join(env.root, "e", "attest-engine"), options);
   process.env["ATTEST_ENGINE_PATH"] = engine;
   return engine;
@@ -63,19 +64,30 @@ describe("attest --help", () => {
     expect(stdout.join("")).toContain("SDK commands");
   });
 
-  it("exits 1 when the engine help has no commands section", async () => {
-    const engine = path.join(env.root, "bare", "attest-engine");
-    fs.mkdirSync(path.dirname(engine));
-    fs.writeFileSync(engine, `#!/bin/sh\necho 'attest-engine ${ENGINE_VERSION}'\n`, { mode: 0o755 });
-    process.env["ATTEST_ENGINE_PATH"] = engine;
+  it("exits 0 with a note when no engine resolves, without downloading", async () => {
+    delete process.env["ATTEST_ENGINE_NO_DOWNLOAD"];
 
-    await expect(main(["--help"])).resolves.toBe(1);
-    expect(stderr.join("")).toContain("no commands section");
+    await expect(main(["--help"])).resolves.toBe(0);
+    await expect(main([])).resolves.toBe(0);
+
+    const out = stdout.join("");
+    expect(out).toContain("init");
+    expect(out).toContain("engine commands: not available");
+    expect(fs.existsSync(path.join(env.home, ".attest"))).toBe(false);
   });
 
-  it("exits 1 when no engine can be resolved", async () => {
-    await expect(main(["--help"])).resolves.toBe(1);
-    expect(stderr.join("")).toContain("ATTEST_ENGINE_NO_DOWNLOAD");
+  it("exits 0 with a note for a mismatched engine", async () => {
+    useEngine({ version: "0.8.0" });
+
+    await expect(main(["--help"])).resolves.toBe(0);
+    expect(stdout.join("")).toContain("reports version 0.8.0");
+  });
+
+  it("exits 0 with a note for an engine without a command registry", async () => {
+    useEngine({ helpMode: "server" });
+
+    await expect(main(["--help"])).resolves.toBe(0);
+    expect(stdout.join("")).toContain("predates the command registry");
   });
 });
 
@@ -158,8 +170,53 @@ describe("forwarded commands", () => {
     expect(forwardedCalls(legacy)).toEqual([]);
   });
 
+  it("refuses a same-version engine without a command registry", async () => {
+    const engine = useEngine({ helpMode: "server" });
+
+    await expect(main(["doctor", "--json"])).resolves.toBe(1);
+    expect(forwardedCalls(engine)).toEqual([]);
+    expect(stderr.join("")).toContain("predates `attest doctor`");
+  });
+
+  it("refuses a command the engine does not list", async () => {
+    const engine = useEngine({ commands: ["policy"] });
+
+    await expect(main(["doctor", "--json"])).resolves.toBe(1);
+    expect(forwardedCalls(engine)).toEqual([]);
+    expect(stderr.join("")).toContain("predates `attest doctor`");
+  });
+
+  it("exits 128 + signal when the engine is killed", async () => {
+    useEngine({ signal: "TERM" });
+
+    await expect(main(["policy", "evaluate"])).resolves.toBe(128 + 15);
+  });
+
   it("rejects unknown options with exit 2", async () => {
     await expect(main(["--bogus"])).resolves.toBe(2);
     expect(stderr.join("")).toContain("unknown option --bogus");
+  });
+});
+
+describe("engineCommands", () => {
+  it("returns null when help hangs past the timeout", () => {
+    const engine = writeScriptedEngine(path.join(env.root, "e", "attest-engine"), {
+      helpMode: "hang",
+    });
+
+    expect(engineCommands(engine, 300)).toBeNull();
+  });
+
+  it("parses command names and summaries", () => {
+    const engine = writeScriptedEngine(path.join(env.root, "e", "attest-engine"));
+
+    expect([...(engineCommands(engine) ?? new Map()).keys()]).toEqual(["doctor", "policy"]);
+  });
+});
+
+describe("exitStatus", () => {
+  it("passes exit codes through and maps signals to 128 + N", () => {
+    expect(exitStatus(2, null)).toBe(2);
+    expect(exitStatus(null, "SIGKILL")).toBe(137);
   });
 });

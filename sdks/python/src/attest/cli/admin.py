@@ -3,9 +3,10 @@
 ``attest init`` runs in the SDK. Every other command (``doctor``, ``baseline``,
 ``policy``, ``cache``, ``calibrate``, ``version`` and any command a later engine adds)
 runs in ``attest-engine``: the CLI resolves a version-checked engine with
-:func:`attest.engine_manager.resolve_engine` and forwards the arguments, stdout, stderr
-and exit code unchanged. A missing or mismatched engine exits 1 before anything runs, so
-a gate such as ``attest policy evaluate`` never exits 0 without evaluating.
+:func:`attest.engine_manager.resolve_engine`, checks that the engine's ``help`` lists the
+command, and forwards the arguments, stdout, stderr and exit code unchanged. A missing,
+mismatched or too-old engine exits 1 before anything runs, so a gate such as
+``attest policy evaluate`` never exits 0 without evaluating.
 """
 
 from __future__ import annotations
@@ -21,6 +22,8 @@ from attest.exceptions import AttestError
 
 _HELP_FLAGS = frozenset({"-h", "--help"})
 
+_HELP_PROBE_TIMEOUT = 10.0
+
 _SDK_USAGE = (
     "usage: attest <command> [args]\n"
     "\n"
@@ -32,50 +35,90 @@ _SDK_USAGE = (
     "  --help     print this help\n"
 )
 
+_RESOLVE_ERRORS = (OSError, RuntimeError, subprocess.SubprocessError, AttestError)
 
-def _engine_or_error() -> str | None:
-    """Resolve the engine, printing the reason to stderr when that fails."""
+
+def engine_commands(engine: str) -> dict[str, str] | None:
+    """Return ``{command: summary}`` from ``<engine> help``, or ``None`` if it lists none.
+
+    stdin is closed and the probe times out after 10 s, so an engine that predates the
+    command registry (and starts the JSON-RPC server for ``help``) cannot hang the CLI.
+    """
     try:
-        return resolve_engine()
-    except (OSError, RuntimeError, subprocess.SubprocessError, AttestError) as exc:
-        print(f"attest: {exc}", file=sys.stderr)
+        proc = subprocess.run(
+            [engine, "help"],
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            timeout=_HELP_PROBE_TIMEOUT,
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
         return None
-
-
-def _engine_commands(engine: str) -> str:
-    """Return the ``commands:`` section of ``attest-engine help``."""
-    proc = subprocess.run(
-        [engine, "help"], stdin=subprocess.DEVNULL, capture_output=True, text=True, check=True
-    )
     lines = proc.stdout.splitlines()
-    if "commands:" not in lines:
-        raise RuntimeError(f"{engine} help printed no commands section:\n{proc.stdout}")
-    return "\n".join(lines[lines.index("commands:") + 1 :])
+    if proc.returncode != 0 or "commands:" not in lines:
+        return None
+    commands: dict[str, str] = {}
+    for line in lines[lines.index("commands:") + 1 :]:
+        name, _, summary = line.strip().partition(" ")
+        if name:
+            commands[name] = summary.strip()
+    return commands
 
 
 def print_help() -> int:
-    """Print SDK and engine commands. Returns 1 when the engine commands cannot be listed."""
+    """Print SDK commands, plus engine commands when an engine is available without download.
+
+    Never downloads and always returns 0.
+    """
     print(_SDK_USAGE)
-    engine = _engine_or_error()
-    if engine is None:
-        print("engine commands: unavailable (see error above)")
-        return 1
     try:
-        commands = _engine_commands(engine)
-    except (subprocess.CalledProcessError, RuntimeError) as exc:
-        print(f"attest: {exc}", file=sys.stderr)
-        return 1
+        engine = resolve_engine(allow_download=False)
+    except _RESOLVE_ERRORS as exc:
+        first_line = str(exc).splitlines()[0]
+        print(
+            f"engine commands: not available ({first_line}). Run `attest doctor` to download "
+            f"attest-engine {ENGINE_VERSION}, or set ATTEST_ENGINE_PATH."
+        )
+        return 0
+    commands = engine_commands(engine)
+    if commands is None:
+        print(
+            f"engine commands: not available (attest-engine at {engine} lists no commands; "
+            "it predates the command registry)."
+        )
+        return 0
+    width = max(len(name) for name in commands) if commands else 0
     print(f"engine commands (attest-engine {ENGINE_VERSION}, {engine}):")
-    print(commands)
+    for name, summary in commands.items():
+        print(f"  {name.ljust(width)}  {summary}")
     return 0
 
 
+def exit_status(returncode: int) -> int:
+    """Map a subprocess return code to a shell exit status (signal N → 128 + N)."""
+    return 128 - returncode if returncode < 0 else returncode
+
+
 def forward(argv: Sequence[str]) -> int:
-    """Run ``<engine> <argv>`` on a version-checked engine and return its exit code."""
-    engine = _engine_or_error()
-    if engine is None:
+    """Run ``<engine> <argv>`` on a version-checked engine that provides the command."""
+    try:
+        engine = resolve_engine()
+    except _RESOLVE_ERRORS as exc:
+        print(f"attest: {exc}", file=sys.stderr)
         return 1
-    return subprocess.run([engine, *argv], check=False).returncode
+    commands = engine_commands(engine)
+    command = argv[0]
+    if commands is None or (command != "help" and command not in commands):
+        print(
+            f"attest: attest-engine at {engine} (version {ENGINE_VERSION}) predates "
+            f"`attest {command}`: its help does not list that command. Set ATTEST_ENGINE_PATH "
+            "to an engine built from this release (make engine), or install a release whose "
+            "engine provides it.",
+            file=sys.stderr,
+        )
+        return 1
+    return exit_status(subprocess.run([engine, *argv], check=False).returncode)
 
 
 def main(argv: Sequence[str] | None = None) -> int:

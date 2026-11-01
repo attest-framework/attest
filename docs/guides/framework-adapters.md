@@ -23,8 +23,8 @@ BaseAdapter                          ← shared utilities
 **Framework adapters** capture a complete agent run (multiple LLM calls, tool calls, sub-agent delegations). They inherit `BaseAdapter` for shared utilities but implement their own capture mechanics.
 
 ```
-ProviderAdapter    — one LLM call → one Trace
-FrameworkAdapter   — one agent run (N LLM calls, M tool calls) → one Trace
+provider adapter (BaseProviderAdapter)  — one LLM call → one Trace
+framework adapter (BaseAdapter)         — one agent run (N LLM calls, M tool calls) → one Trace
 ```
 
 ## Provider Adapters

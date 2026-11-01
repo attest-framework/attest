@@ -5,14 +5,13 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-import shutil
 import subprocess
 from typing import Any
 
 from attest import ENGINE_VERSION, __version__
 from attest._proto.codec import decode_response, encode_request, extract_result
 from attest._proto.types import InitializeParams, InitializeResult
-from attest.engine_downloader import cached_engine_path, download_engine
+from attest.engine_downloader import _binary_filename, cached_engine_path, download_engine
 from attest.exceptions import EngineTimeoutError, EngineVersionMismatchError
 
 logger = logging.getLogger("attest.engine")
@@ -70,7 +69,23 @@ def engine_version(path: str) -> str | None:
     return out[len(prefix) :].strip()
 
 
-def _locate_engine(explicit_path: str | None) -> tuple[str, str]:
+def _on_path() -> str | None:
+    """Return the first executable engine binary in a ``PATH`` directory.
+
+    Only the platform binary name is considered (``attest-engine.exe`` on Windows, no other
+    ``PATHEXT`` extension) and empty ``PATH`` entries are skipped, so the current directory
+    is never searched implicitly.
+    """
+    for directory in os.environ.get("PATH", "").split(os.pathsep):
+        if not directory:
+            continue
+        candidate = os.path.join(directory, _binary_filename())
+        if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+            return candidate
+    return None
+
+
+def _locate_engine(explicit_path: str | None, allow_download: bool) -> tuple[str, str]:
     """Return ``(path, source)`` for the first engine in the discovery chain."""
     if explicit_path:
         if not os.path.isfile(explicit_path):
@@ -85,7 +100,7 @@ def _locate_engine(explicit_path: str | None) -> tuple[str, str]:
             )
         return env_path, "ATTEST_ENGINE_PATH"
 
-    found = shutil.which(ENGINE_BINARY_NAME)
+    found = _on_path()
     if found:
         return found, "PATH"
 
@@ -93,6 +108,11 @@ def _locate_engine(explicit_path: str | None) -> tuple[str, str]:
     if cached is not None:
         return str(cached), "engine cache"
 
+    if not allow_download:
+        raise FileNotFoundError(
+            f"No '{ENGINE_BINARY_NAME}' {ENGINE_VERSION} in ATTEST_ENGINE_PATH, PATH or "
+            f"~/.attest/bin/{ENGINE_VERSION}/."
+        )
     if _is_download_disabled():
         raise FileNotFoundError(
             f"Cannot find '{ENGINE_BINARY_NAME}' {ENGINE_VERSION} and "
@@ -106,7 +126,7 @@ def _locate_engine(explicit_path: str | None) -> tuple[str, str]:
     return str(download_engine()), "download"
 
 
-def resolve_engine(explicit_path: str | None = None) -> str:
+def resolve_engine(explicit_path: str | None = None, *, allow_download: bool = True) -> str:
     """Find an engine whose version matches this SDK and return its path.
 
     The single discovery function behind the pytest fixture, ``EngineManager`` and the
@@ -117,7 +137,7 @@ def resolve_engine(explicit_path: str | None = None) -> str:
         3. ``attest-engine`` on ``PATH``
         4. ``~/.attest/bin/<ENGINE_VERSION>/`` cache
         5. Download ``ENGINE_VERSION`` from GitHub Releases (unless
-           ``ATTEST_ENGINE_NO_DOWNLOAD`` is set)
+           ``ATTEST_ENGINE_NO_DOWNLOAD`` is set or ``allow_download`` is False)
 
     The first engine found must report exactly ``ENGINE_VERSION``; discovery never skips a
     mismatched engine to try the next location.
@@ -126,7 +146,7 @@ def resolve_engine(explicit_path: str | None = None) -> str:
         FileNotFoundError: No engine was found and download is disabled.
         EngineVersionMismatchError: The engine found reports a different version.
     """
-    path, source = _locate_engine(explicit_path)
+    path, source = _locate_engine(explicit_path, allow_download)
     found = engine_version(path)
     if found != ENGINE_VERSION:
         raise EngineVersionMismatchError(path, source, found, ENGINE_VERSION)

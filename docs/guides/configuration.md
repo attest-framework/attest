@@ -8,7 +8,7 @@ Each SDK release requires one engine version, `ENGINE_VERSION` (`1.0.0-rc.N` dur
 
 1. `--attest-engine` (pytest) or the `engine_path` / `enginePath` argument of `EngineManager`
 2. `ATTEST_ENGINE_PATH`
-3. `attest-engine` on `PATH`
+3. `attest-engine` (`attest-engine.exe` on Windows) in a `PATH` directory; empty entries are skipped, so the current directory is never searched
 4. `~/.attest/bin/<ENGINE_VERSION>/attest-engine`
 5. A download of `ENGINE_VERSION` from GitHub Releases into that directory, verified against the release's `checksums-sha256.txt` and written atomically. `ATTEST_ENGINE_NO_DOWNLOAD=1` turns the download off.
 
@@ -17,14 +17,14 @@ The engine found must report exactly `ENGINE_VERSION` (`attest-engine version`).
 The `attest` command (`uv run attest`, `npx attest`) implements `attest init` itself and forwards every other command to the version-checked engine, passing arguments, output and exit code through unchanged:
 
 ```bash
-attest --help                     # SDK and engine commands
+attest --help                     # SDK commands, plus engine commands when one is installed
 attest --version                  # SDK version and the engine version it requires
 attest init                       # scaffold a test project (no engine needed)
 attest doctor --json              # = attest-engine doctor --json
 attest policy evaluate --policy attest.policy.yaml --report report.json
 ```
 
-If no matching engine is available, every forwarded command exits 1 before anything runs, so `attest policy evaluate` never exits 0 without evaluating. Run tests with `pytest` or `vitest` directly.
+Before forwarding, the CLI checks that the engine's `help` lists the command. If no matching engine is available, or the engine predates the command, the command exits 1 before anything runs, so `attest policy evaluate` never exits 0 without evaluating. A command killed by a signal exits 128 + N. `attest --help` never downloads: it lists the engine's commands only when a matching engine is already available, and always exits 0. Run tests with `pytest` or `vitest` directly.
 
 ## Check your setup
 

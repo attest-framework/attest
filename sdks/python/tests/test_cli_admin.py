@@ -43,15 +43,42 @@ def test_main_no_args_prints_help(
     assert "SDK commands" in capsys.readouterr().out
 
 
-def test_main_help_without_engine_exits_1(
+def test_main_help_without_engine_lists_sdk_commands_and_exits_0(
     isolated_engine_env: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     code = main(["--help"])
 
-    captured = capsys.readouterr()
-    assert code == 1
-    assert "init" in captured.out
-    assert "ATTEST_ENGINE_NO_DOWNLOAD" in captured.err
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "init" in out
+    assert "engine commands: not available" in out
+    assert "ATTEST_ENGINE_PATH" in out
+
+
+def test_main_help_never_downloads(
+    isolated_engine_env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("ATTEST_ENGINE_NO_DOWNLOAD")
+
+    def no_download() -> Path:
+        raise AssertionError("attest --help must not download the engine")
+
+    monkeypatch.setattr("attest.engine_manager.download_engine", no_download)
+
+    assert main(["--help"]) == 0
+    assert main([]) == 0
+
+
+def test_main_help_with_mismatched_engine_exits_0(
+    isolated_engine_env: Path,
+    scripted_engine: ScriptedEngine,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("ATTEST_ENGINE_PATH", str(scripted_engine(version="0.8.0")))
+
+    assert main(["--help"]) == 0
+    assert "reports version 0.8.0" in capsys.readouterr().out
 
 
 def test_main_version_prints_sdk_and_required_engine(capsys: pytest.CaptureFixture[str]) -> None:
@@ -169,19 +196,69 @@ def test_main_help_subcommand_is_forwarded(
     assert "SDK commands" not in out
 
 
-def test_main_help_engine_without_commands_section_exits_1(
+def test_main_help_engine_without_registry_exits_0(
     isolated_engine_env: Path,
-    tmp_path: Path,
+    scripted_engine: ScriptedEngine,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    from attest import ENGINE_VERSION
+    monkeypatch.setenv("ATTEST_ENGINE_PATH", str(scripted_engine(help_mode="server")))
 
-    engine = tmp_path / "bare" / "attest-engine"
-    engine.parent.mkdir()
-    engine.write_text(f"#!/bin/sh\necho 'attest-engine {ENGINE_VERSION}'\n")
-    engine.chmod(0o755)
-    monkeypatch.setenv("ATTEST_ENGINE_PATH", str(engine))
+    assert main(["--help"]) == 0
+    assert "predates the command registry" in capsys.readouterr().out
 
-    assert main(["--help"]) == 1
-    assert "no commands section" in capsys.readouterr().err
+
+def test_main_forward_to_engine_without_registry_exits_1_without_running(
+    isolated_engine_env: Path,
+    scripted_engine: ScriptedEngine,
+    monkeypatch: pytest.MonkeyPatch,
+    capfd: pytest.CaptureFixture[str],
+) -> None:
+    """A same-version engine built before the registry (the v1.0.0-rc prerelease)."""
+    monkeypatch.setenv("ATTEST_ENGINE_PATH", str(scripted_engine(help_mode="server")))
+
+    code = main(["doctor", "--json"])
+
+    captured = capfd.readouterr()
+    assert code == 1
+    assert "forwarded" not in captured.out
+    assert "predates `attest doctor`" in captured.err
+
+
+def test_main_forward_command_missing_from_engine_exits_1_without_running(
+    isolated_engine_env: Path,
+    scripted_engine: ScriptedEngine,
+    monkeypatch: pytest.MonkeyPatch,
+    capfd: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("ATTEST_ENGINE_PATH", str(scripted_engine(commands=("policy",))))
+
+    code = main(["doctor", "--json"])
+
+    captured = capfd.readouterr()
+    assert code == 1
+    assert "forwarded" not in captured.out
+    assert "predates `attest doctor`" in captured.err
+
+
+def test_main_forward_engine_help_hang_times_out_and_exits_1(
+    isolated_engine_env: Path,
+    scripted_engine: ScriptedEngine,
+    monkeypatch: pytest.MonkeyPatch,
+    capfd: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("ATTEST_ENGINE_PATH", str(scripted_engine(help_mode="hang")))
+    monkeypatch.setattr("attest.cli.admin._HELP_PROBE_TIMEOUT", 0.5)
+
+    assert main(["doctor"]) == 1
+    assert "predates `attest doctor`" in capfd.readouterr().err
+
+
+def test_main_forward_engine_killed_by_signal_exits_128_plus_signal(
+    isolated_engine_env: Path,
+    scripted_engine: ScriptedEngine,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("ATTEST_ENGINE_PATH", str(scripted_engine(signal="TERM")))
+
+    assert main(["policy", "evaluate"]) == 128 + 15

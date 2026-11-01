@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
@@ -10,6 +11,8 @@ from attest import ENGINE_VERSION
 from attest.engine_manager import engine_version, resolve_engine
 from attest.exceptions import EngineVersionMismatchError
 from tests.conftest import ScriptedEngine
+
+pytest_plugins = ["pytester"]
 
 
 def _versioned_cache(home: Path) -> Path:
@@ -147,3 +150,57 @@ def test_resolve_engine_downloaded_engine_with_wrong_version_raises(
 
     with pytest.raises(EngineVersionMismatchError, match="from download"):
         resolve_engine()
+
+
+def test_resolve_engine_empty_path_entry_does_not_search_cwd(
+    isolated_engine_env: Path,
+    scripted_engine: ScriptedEngine,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workdir = tmp_path / "workdir"
+    scripted_engine(workdir / "attest-engine")
+    monkeypatch.chdir(workdir)
+    monkeypatch.setenv("PATH", os.pathsep)
+
+    with pytest.raises(FileNotFoundError, match="ATTEST_ENGINE_NO_DOWNLOAD"):
+        resolve_engine()
+
+
+def test_resolve_engine_path_ignores_non_executable_file(
+    isolated_engine_env: Path, tmp_path: Path
+) -> None:
+    (tmp_path / "path-bin" / "attest-engine").write_text("not executable")
+
+    with pytest.raises(FileNotFoundError):
+        resolve_engine()
+
+
+def test_resolve_engine_without_download_never_downloads(
+    isolated_engine_env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("ATTEST_ENGINE_NO_DOWNLOAD")
+
+    def download() -> Path:
+        raise AssertionError("must not download")
+
+    monkeypatch.setattr("attest.engine_manager.download_engine", download)
+
+    with pytest.raises(FileNotFoundError, match="No 'attest-engine'"):
+        resolve_engine(allow_download=False)
+
+
+def test_pytest_plugin_old_engine_fails_session_cleanly(
+    isolated_engine_env: Path,
+    scripted_engine: ScriptedEngine,
+    pytester: pytest.Pytester,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("ATTEST_ENGINE_PATH", str(scripted_engine(version="0.8.0")))
+    pytester.makepyfile("def test_uses_engine(attest):\n    pass\n")
+
+    result = pytester.runpytest_subprocess()
+
+    result.assert_outcomes(errors=1)
+    result.stdout.fnmatch_lines(["*attest-engine version mismatch*reports version 0.8.0*"])
+    assert "Traceback" not in result.stdout.str()
