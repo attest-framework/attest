@@ -264,12 +264,12 @@ func (e *JudgeEvaluator) evaluateSinglePass(
 
 	resp, err := e.provider.Complete(ctx, req)
 	if err != nil {
-		return failResult(assertion, start, fmt.Sprintf("LLM call failed: %v", err))
+		return notEvaluatedResult(assertion, start, types.ReasonProviderUnavailable, fmt.Sprintf("judge provider call failed: %v", err))
 	}
 
 	scoreResult, err := judge.ParseScoreResult(resp.Content)
 	if err != nil {
-		return failResult(assertion, start, fmt.Sprintf("parse judge response: %v", err))
+		return notEvaluatedResult(assertion, start, types.ReasonProviderUnavailable, fmt.Sprintf("judge response unusable: %v", err))
 	}
 
 	durationMS := time.Since(start).Milliseconds()
@@ -380,7 +380,7 @@ func (e *JudgeEvaluator) evaluateRepeated(
 
 	// Need at least 1 successful run
 	if len(scores) == 0 {
-		return failResult(assertion, start, fmt.Sprintf("all %d judge runs failed: %v", runs, firstErr))
+		return notEvaluatedResult(assertion, start, types.ReasonProviderUnavailable, fmt.Sprintf("all %d judge runs failed: %v", runs, firstErr))
 	}
 
 	// Sort and take median

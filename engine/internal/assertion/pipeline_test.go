@@ -90,7 +90,7 @@ func TestPipeline_EvaluateBatch_UnknownType(t *testing.T) {
 		},
 		{
 			AssertionID: "bad_assert",
-			Type:        "llm_judge", // not registered in built-in registry
+			Type:        "not_a_layer", // unknown assertion type
 			Spec:        json.RawMessage(`{}`),
 		},
 	}
