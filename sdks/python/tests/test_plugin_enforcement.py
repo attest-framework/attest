@@ -220,11 +220,60 @@ def test_soft_failure_summary_includes_skipped_and_excludes_failed() -> None:
         trace=Trace(trace_id="t", output={}),
         assertion_results=[AssertionResult.from_dict(r) for r in fixture["results"]],
     )
-    soft_only = _result(_row("ok", "pass"), _row("soft", "soft_fail"))
-
     lines = soft_failure_lines(
-        {"t::skipped": skipped, "t::inspected": soft_only, "t::passed": soft_only},
-        {"t::skipped": "skipped", "t::inspected": "failed", "t::passed": "passed"},
+        {"t::skipped": len(skipped.soft_failures), "t::inspected": 1, "t::passed": 2, "t::none": 0},
+        {
+            "t::skipped": "skipped",
+            "t::inspected": "failed",
+            "t::passed": "passed",
+            "t::none": "passed",
+        },
     )
 
-    assert lines == ["  t::skipped: 1 soft (skipped)", "  t::passed: 1 soft (passed)"]
+    assert lines == ["  t::skipped: 1 soft (skipped)", "  t::passed: 2 soft (passed)"]
+
+
+def test_enforce_repeat_over_scenario_sums_reasons_across_turns() -> None:
+    from attest.simulation.scenario import ScenarioConfig, ScenarioResult
+
+    turn = _row("j", "not_evaluated", "simulation", 6)
+    scenario = ScenarioResult(config=ScenarioConfig(), results=[_result(turn), _result(turn)])
+    run = _repeat(scenario, scenario)
+
+    assert run.not_evaluated_reasons == {"simulation": 4}
+    with pytest.raises(pytest.skip.Exception) as exc:
+        _enforce(run)
+    assert str(exc.value.msg) == "not evaluated: simulation ×4"
+    with pytest.raises(pytest.fail.Exception) as strict_exc:
+        _enforce(run, strict=True)
+    assert "trial 1/2:turn 1/2:" in str(strict_exc.value)
+
+
+def test_soft_failures_counted_across_every_trial_of_a_test(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from attest import plugin
+
+    # Isolate the session registries so this test does not leak into the
+    # real session summary.
+    monkeypatch.setattr(plugin, "_session_results", {})
+    monkeypatch.setattr(plugin, "_session_outcomes", {})
+    monkeypatch.setattr(plugin, "_session_soft_counts", {})
+
+    class _Item:
+        nodeid = "t::loop"
+        location = ("t.py", 0, "loop")
+        path = "t.py"
+
+    plugin._take_test_results()
+    for _ in range(3):
+        plugin._record_result(_result(_row("ok", "pass"), _row("soft", "soft_fail")))
+    hook = plugin.pytest_runtest_makereport(_Item(), type("Call", (), {"when": "call"})())  # type: ignore[arg-type]
+    next(hook)
+    report = type("Report", (), {"skipped": False, "longrepr": None, "outcome": "passed"})()
+    outcome = type("Outcome", (), {"get_result": lambda self: report})()
+
+    with pytest.raises(StopIteration):
+        hook.send(outcome)
+
+    assert plugin._session_soft_counts["t::loop"] == 3

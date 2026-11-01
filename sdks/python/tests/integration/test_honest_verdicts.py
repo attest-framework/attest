@@ -153,3 +153,36 @@ def test_all_not_evaluated_trial_loop_skips_or_fails_strict(
     else:
         run.assert_outcomes(skipped=1)
         run.stdout.fnmatch_lines(["*not evaluated: provider_not_configured ×3*"])
+
+
+_REPEAT_OVER_SCENARIO = """
+from attest import expect
+from attest.simulation import FRIENDLY_USER, repeat, scenario
+from test_refund import refund_agent
+
+
+@repeat(n=2)
+@scenario(persona=FRIENDLY_USER, max_turns=1, seed=1)
+def judge_scenario(attest, persona):
+    return attest.inspect(expect(refund_agent(order_id="ORD-S")).passes_judge("Helpful?"))
+
+
+def test_repeat_over_scenario(attest):
+    attest.enforce(judge_scenario(attest))
+"""
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("strict", [False, True], ids=["default", "strict"])
+def test_repeat_over_scenario_skips_or_fails_strict(scratch: pytest.Pytester, strict: bool) -> None:
+    scratch.makepyfile(test_composed=_REPEAT_OVER_SCENARIO)
+    args = ["-p", "no:cacheprovider", "-rs", "test_composed.py"]
+
+    run = scratch.runpytest_subprocess(*args, *(["--attest-strict"] if strict else []))
+
+    if strict:
+        run.assert_outcomes(failed=1)
+        run.stdout.fnmatch_lines(["*--attest-strict: not evaluated: provider_not_configured ×2*"])
+    else:
+        run.assert_outcomes(skipped=1)
+        run.stdout.fnmatch_lines(["*not evaluated: provider_not_configured ×2*"])

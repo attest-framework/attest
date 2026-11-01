@@ -32,7 +32,11 @@ def aggregate_outcomes(outcomes: list[str]) -> str:
 
 class Verdict(Protocol):
     """Anything ``attest.enforce()`` can turn into a test outcome:
-    ``AgentResult``, ``RepeatResult`` and ``ScenarioResult``."""
+    ``AgentResult``, ``RepeatResult`` and ``ScenarioResult``. Aggregates
+    nest: a ``RepeatResult`` may hold ``ScenarioResult`` trials."""
+
+    @property
+    def not_evaluated_reasons(self) -> dict[str, int]: ...
 
     def outcome(self, *, strict: bool = False) -> str: ...
 
@@ -47,16 +51,21 @@ def format_skip_reason(counts: dict[str, int]) -> str:
     return "not evaluated: " + ", ".join(parts)
 
 
-def trials_skip_reason(results: Sequence[AgentResult]) -> str:
-    """Skip reason for a set of trials: not-evaluated reasons summed across them."""
+def trials_not_evaluated_reasons(results: Sequence[Verdict]) -> dict[str, int]:
+    """Not-evaluated reasons summed across trials, in first-seen order."""
     counts: dict[str, int] = {}
     for r in results:
         for reason, n in r.not_evaluated_reasons.items():
             counts[reason] = counts.get(reason, 0) + n
-    return format_skip_reason(counts)
+    return counts
 
 
-def trials_diagnostics(results: Sequence[AgentResult], *, label: str, color: bool = False) -> str:
+def trials_skip_reason(results: Sequence[Verdict]) -> str:
+    """Skip reason for a set of trials: not-evaluated reasons summed across them."""
+    return format_skip_reason(trials_not_evaluated_reasons(results))
+
+
+def trials_diagnostics(results: Sequence[Verdict], *, label: str, color: bool = False) -> str:
     """Diagnostics of every trial whose outcome is not pass, headed by its index."""
     blocks = [
         f"{label} {i}/{len(results)}:{r.render_diagnostics(color=color)}"
