@@ -59,7 +59,7 @@ const stochasticBoundaryEps = 0.05
 //
 // Heuristic order, first match wins:
 //
-//  1. Pass status → ""
+//  1. Pass or not_evaluated status → ""
 //  2. ThresholdSource == dynamic_unavailable → missing_trace_data
 //     (the result reflects the static fallback, not a real comparison)
 //  3. type == llm_judge AND Judge.HighVarianceFlag → flaky_judge
@@ -73,7 +73,7 @@ const stochasticBoundaryEps = 0.05
 //     heuristic treats as borderline noise rather than broken code)
 //  8. Anything else → broken_code (most conservative non-empty label)
 func ClassifyFailure(r *AssertionResult) string {
-	if r == nil || r.Status == StatusPass {
+	if r == nil || r.Status == StatusPass || r.Status == StatusNotEvaluated {
 		return ""
 	}
 

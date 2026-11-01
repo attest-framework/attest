@@ -1,0 +1,35 @@
+{
+  "name": "001-all-pass",
+  "description": "Every assertion passes.",
+  "results": [
+    {
+      "assertion_id": "a1",
+      "status": "pass",
+      "score": 1.0,
+      "explanation": "a1 pass",
+      "cost": 0.0,
+      "duration_ms": 0,
+      "layer": 4,
+      "type": "content"
+    },
+    {
+      "assertion_id": "a2",
+      "status": "pass",
+      "score": 1.0,
+      "explanation": "a2 pass",
+      "cost": 0.0,
+      "duration_ms": 0,
+      "layer": 4,
+      "type": "content"
+    }
+  ],
+  "expected": {
+    "outcome": "pass",
+    "strictOutcome": "pass",
+    "failedAssertionIds": [],
+    "notEvaluated": {},
+    "passRate": 1.0,
+    "softFailWarning": false,
+    "policyExit": 0
+  }
+}
