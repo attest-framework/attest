@@ -116,11 +116,19 @@ func onnxRuntimeLibName() string {
 
 // ensureONNXRuntime returns the path of the ONNX Runtime shared library:
 // ATTEST_ONNX_RUNTIME_LIB when set, otherwise modelDir or a standard system
-// location. It never downloads the runtime.
+// location. It never downloads the runtime. The returned path is the one
+// passed to ort.SetSharedLibraryPath.
 func ensureONNXRuntime(modelDir string) (string, error) {
-	if lib := os.Getenv("ATTEST_ONNX_RUNTIME_LIB"); lib != "" {
+	if raw := os.Getenv("ATTEST_ONNX_RUNTIME_LIB"); raw != "" {
+		// Resolve once so the existence check and the path handed to the
+		// dynamic loader are the same file, independent of later chdir or
+		// loader search rules for relative names.
+		lib, err := filepath.Abs(raw)
+		if err != nil {
+			return "", fmt.Errorf("onnx runtime: resolve ATTEST_ONNX_RUNTIME_LIB=%s: %w", raw, err)
+		}
 		if _, err := os.Stat(lib); err != nil {
-			return "", fmt.Errorf("onnx runtime: ATTEST_ONNX_RUNTIME_LIB=%s: %w", lib, err)
+			return "", fmt.Errorf("onnx runtime: ATTEST_ONNX_RUNTIME_LIB=%s: %w", raw, err)
 		}
 		return lib, nil
 	}
@@ -187,6 +195,13 @@ func downloadFile(url, destPath, wantSHA256 string) error {
 		out.Close()
 		os.Remove(tmpPath)
 		return fmt.Errorf("write %s: %w", tmpPath, err)
+	}
+	// CreateTemp creates the file 0600; models are shared read-only data, so
+	// widen to 0644 before the rename publishes it.
+	if err := out.Chmod(0o644); err != nil {
+		out.Close()
+		os.Remove(tmpPath)
+		return fmt.Errorf("chmod %s: %w", tmpPath, err)
 	}
 	if err := out.Sync(); err != nil {
 		out.Close()

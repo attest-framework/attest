@@ -54,6 +54,13 @@ func TestDownloadFile_MatchingChecksum_WritesFile(t *testing.T) {
 	if err != nil || string(got) != string(body) {
 		t.Fatalf("dest = %q (err %v), want %q", got, err, body)
 	}
+	info, err := os.Stat(dest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mode := info.Mode().Perm(); mode != 0o644 {
+		t.Errorf("mode = %o, want 0644 so shared model dirs stay readable", mode)
+	}
 }
 
 func TestEnsureONNXRuntime_ExplicitLibMissing_Errors(t *testing.T) {
@@ -118,5 +125,31 @@ func TestDownloadFile_Oversize_Rejected(t *testing.T) {
 	}
 	if entries, _ := os.ReadDir(dir); len(entries) != 0 {
 		t.Errorf("files left after oversize download: %v", entries)
+	}
+}
+
+func TestEnsureONNXRuntime_RelativeLib_ResolvedToAbsolute(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "libonnxruntime.test"), []byte("lib"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(dir)
+	t.Setenv("ATTEST_ONNX_RUNTIME_LIB", "libonnxruntime.test")
+
+	got, err := ensureONNXRuntime(t.TempDir())
+
+	if err != nil {
+		t.Fatalf("ensureONNXRuntime: %v", err)
+	}
+	want, err := filepath.EvalSymlinks(filepath.Join(dir, "libonnxruntime.test"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	gotResolved, err := filepath.EvalSymlinks(got)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !filepath.IsAbs(got) || gotResolved != want {
+		t.Errorf("path = %q, want absolute path to %q", got, want)
 	}
 }
