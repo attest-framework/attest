@@ -17,7 +17,7 @@ import { fileURLToPath } from "node:url";
 import { ENGINE_VERSION, VERSION } from "./version.js";
 import { resolveEngine } from "./engine-manager.js";
 
-const HELP_FLAGS = new Set(["-h", "--help", "help"]);
+const HELP_FLAGS = new Set(["-h", "--help"]);
 
 const SDK_USAGE =
   "usage: attest <command> [args]\n" +
@@ -91,8 +91,15 @@ async function printHelp(): Promise<number> {
     process.stdout.write("engine commands: unavailable (see error above)\n");
     return 1;
   }
+  let commands: string;
+  try {
+    commands = engineCommands(engine);
+  } catch (err) {
+    process.stderr.write(`attest: ${err instanceof Error ? err.message : String(err)}\n`);
+    return 1;
+  }
   process.stdout.write(`engine commands (attest-engine ${ENGINE_VERSION}, ${engine}):\n`);
-  process.stdout.write(`${engineCommands(engine)}\n`);
+  process.stdout.write(`${commands}\n`);
   return 0;
 }
 
@@ -107,12 +114,18 @@ async function forward(args: string[]): Promise<number> {
 /** Dispatch `attest` arguments and resolve to the process exit code. */
 export async function main(argv: string[] = process.argv.slice(2)): Promise<number> {
   const [command] = argv;
-  if (command === undefined || HELP_FLAGS.has(command)) return printHelp();
+  if (command === undefined || HELP_FLAGS.has(command) || (command === "help" && argv.length === 1)) {
+    return printHelp();
+  }
   if (command === "--version") {
     process.stdout.write(`attest ${VERSION} (requires attest-engine ${ENGINE_VERSION})\n`);
     return 0;
   }
   if (command === "init") {
+    if (argv.length > 1) {
+      process.stderr.write("usage: attest init  (scaffolds into the current directory)\n");
+      return HELP_FLAGS.has(argv[1] ?? "") ? 0 : 2;
+    }
     cmdInit(process.cwd());
     return 0;
   }
@@ -124,11 +137,13 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
 }
 
 // Run when executed directly, including through the node_modules/.bin/attest symlink.
-const isDirectExecution =
-  process.argv[1] !== undefined &&
-  fs.realpathSync(process.argv[1]) === fs.realpathSync(fileURLToPath(import.meta.url));
+function isDirectExecution(): boolean {
+  const script = process.argv[1];
+  if (script === undefined || !fs.existsSync(script)) return false;
+  return fs.realpathSync(script) === fs.realpathSync(fileURLToPath(import.meta.url));
+}
 
-if (isDirectExecution) {
+if (isDirectExecution()) {
   main().then(
     (code) => process.exit(code),
     (err: unknown) => {

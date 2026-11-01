@@ -55,7 +55,7 @@ export function binaryFilename(): string {
 /** The engine binary in the versioned cache, or null if it is absent. */
 export function cachedEnginePath(): string | null {
   const binPath = path.join(versionedBinDir(), binaryFilename());
-  return fs.existsSync(binPath) ? binPath : null;
+  return fs.statSync(binPath, { throwIfNoEntry: false })?.isFile() ? binPath : null;
 }
 
 export function parseChecksums(text: string): Map<string, string> {

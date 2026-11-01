@@ -19,7 +19,7 @@ from attest import ENGINE_VERSION, __version__
 from attest.engine_manager import resolve_engine
 from attest.exceptions import AttestError
 
-_HELP_FLAGS = frozenset({"-h", "--help", "help"})
+_HELP_FLAGS = frozenset({"-h", "--help"})
 
 _SDK_USAGE = (
     "usage: attest <command> [args]\n"
@@ -54,14 +54,19 @@ def _engine_commands(engine: str) -> str:
 
 
 def print_help() -> int:
-    """Print SDK and engine commands. Returns 1 when the engine cannot be resolved."""
+    """Print SDK and engine commands. Returns 1 when the engine commands cannot be listed."""
     print(_SDK_USAGE)
     engine = _engine_or_error()
     if engine is None:
         print("engine commands: unavailable (see error above)")
         return 1
+    try:
+        commands = _engine_commands(engine)
+    except (subprocess.CalledProcessError, RuntimeError) as exc:
+        print(f"attest: {exc}", file=sys.stderr)
+        return 1
     print(f"engine commands (attest-engine {ENGINE_VERSION}, {engine}):")
-    print(_engine_commands(engine))
+    print(commands)
     return 0
 
 
@@ -77,12 +82,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     """Dispatch ``attest`` arguments and return the process exit code."""
     args = list(sys.argv[1:] if argv is None else argv)
 
-    if not args or args[0] in _HELP_FLAGS:
+    if not args or args[0] in _HELP_FLAGS or args == ["help"]:
         return print_help()
     if args[0] == "--version":
         print(f"attest {__version__} (requires attest-engine {ENGINE_VERSION})")
         return 0
     if args[0] == "init":
+        if len(args) > 1:
+            print("usage: attest init  (scaffolds into the current directory)", file=sys.stderr)
+            return 0 if args[1] in _HELP_FLAGS else 2
         from attest.scaffold import scaffold_project
 
         scaffold_project(Path.cwd())

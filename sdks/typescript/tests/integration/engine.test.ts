@@ -31,15 +31,11 @@ describe("Engine Integration", () => {
     for (const key of ["OPENAI_API_KEY", "ATTEST_JUDGE_API_KEY", "ATTEST_JUDGE_BASE_URL"]) {
       delete process.env[key];
     }
-    try {
-      engine = new EngineManager({ enginePath });
-      const initResult = await engine.start();
-      expect(initResult.compatible).toBe(true);
-      client = new AttestClient(engine);
-    } catch (err) {
-      skipReason =
-        err instanceof Error ? err.message : "Engine binary not available";
-    }
+    // A stale or incompatible engine fails the suite instead of skipping it.
+    engine = new EngineManager({ enginePath });
+    const initResult = await engine.start();
+    expect(initResult.compatible).toBe(true);
+    client = new AttestClient(engine);
   });
 
   afterAll(async () => {

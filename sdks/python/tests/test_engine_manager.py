@@ -51,6 +51,24 @@ def test_engine_manager_start_initialize_version_mismatch_stops_and_raises(
     asyncio.run(_run())
 
 
+def test_engine_manager_start_initialize_error_stops_engine(
+    isolated_engine_env: Path, scripted_engine: ScriptedEngine
+) -> None:
+    manager = EngineManager(engine_path=str(scripted_engine()))
+
+    async def _run() -> None:
+        with (
+            patch("asyncio.create_subprocess_exec", AsyncMock(return_value=MagicMock(pid=1))),
+            patch.object(manager, "_send_request", AsyncMock(side_effect=ConnectionError("eof"))),
+            patch.object(manager, "stop", AsyncMock()) as stop,
+            pytest.raises(ConnectionError),
+        ):
+            await manager.start()
+        stop.assert_awaited_once()
+
+    asyncio.run(_run())
+
+
 def test_engine_manager_not_initialized_raises() -> None:
     """send_request raises RuntimeError before start() is called."""
     import asyncio

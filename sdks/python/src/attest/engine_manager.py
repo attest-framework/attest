@@ -149,7 +149,10 @@ class EngineManager:
         self._init_result: InitializeResult | None = None
 
     async def start(self) -> InitializeResult:
-        """Start the engine subprocess and send initialize."""
+        """Start the engine subprocess and send initialize.
+
+        Any failure after the process starts stops it before the error propagates.
+        """
         self._process = await asyncio.create_subprocess_exec(
             self._engine_path,
             f"--log-level={self._log_level}",
@@ -158,7 +161,16 @@ class EngineManager:
             stderr=asyncio.subprocess.PIPE,
         )
         logger.info("Engine started (pid=%d)", self._process.pid)
+        try:
+            self._init_result = await self._initialize()
+        except BaseException:
+            await self.stop()
+            raise
+        self._initialized = True
+        return self._init_result
 
+    async def _initialize(self) -> InitializeResult:
+        """Send initialize and check the engine's version and capabilities."""
         result = await self._send_request(
             "initialize",
             InitializeParams(
@@ -168,20 +180,14 @@ class EngineManager:
                 required_capabilities=["layers_1_4"],
             ).to_dict(),
         )
-
-        self._init_result = InitializeResult.from_dict(result)
-        if self._init_result.engine_version != ENGINE_VERSION:
-            await self.stop()
+        init = InitializeResult.from_dict(result)
+        if init.engine_version != ENGINE_VERSION:
             raise EngineVersionMismatchError(
-                self._engine_path, "initialize", self._init_result.engine_version, ENGINE_VERSION
+                self._engine_path, "initialize", init.engine_version, ENGINE_VERSION
             )
-        if not self._init_result.compatible:
-            await self.stop()
-            raise RuntimeError(
-                f"Engine incompatible. Missing capabilities: {self._init_result.missing}"
-            )
-        self._initialized = True
-        return self._init_result
+        if not init.compatible:
+            raise RuntimeError(f"Engine incompatible. Missing capabilities: {init.missing}")
+        return init
 
     async def stop(self) -> None:
         """Send shutdown and wait for process exit."""

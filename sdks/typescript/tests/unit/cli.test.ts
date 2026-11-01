@@ -63,6 +63,16 @@ describe("attest --help", () => {
     expect(stdout.join("")).toContain("SDK commands");
   });
 
+  it("exits 1 when the engine help has no commands section", async () => {
+    const engine = path.join(env.root, "bare", "attest-engine");
+    fs.mkdirSync(path.dirname(engine));
+    fs.writeFileSync(engine, `#!/bin/sh\necho 'attest-engine ${ENGINE_VERSION}'\n`, { mode: 0o755 });
+    process.env["ATTEST_ENGINE_PATH"] = engine;
+
+    await expect(main(["--help"])).resolves.toBe(1);
+    expect(stderr.join("")).toContain("no commands section");
+  });
+
   it("exits 1 when no engine can be resolved", async () => {
     await expect(main(["--help"])).resolves.toBe(1);
     expect(stderr.join("")).toContain("ATTEST_ENGINE_NO_DOWNLOAD");
@@ -94,6 +104,12 @@ describe("attest init", () => {
 
     const sample = path.join(env.root, "tests", "test_my_agent.test.ts");
     expect(fs.readFileSync(sample, "utf-8")).toContain("@attest-ai/core");
+  });
+
+  it("does not scaffold when given extra arguments", async () => {
+    await expect(main(["init", "--help"])).resolves.toBe(0);
+    await expect(main(["init", "somedir"])).resolves.toBe(2);
+    expect(fs.existsSync(path.join(env.root, "tests"))).toBe(false);
   });
 
   it("does not overwrite an existing test file", async () => {

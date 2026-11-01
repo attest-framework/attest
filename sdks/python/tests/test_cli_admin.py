@@ -147,3 +147,41 @@ def test_python_m_attest_help_exits_0(matching_engine: Path) -> None:
 
     assert proc.returncode == 0, proc.stderr
     assert "doctor" in proc.stdout
+
+
+def test_main_init_with_extra_args_does_not_scaffold(
+    isolated_engine_env: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+
+    assert main(["init", "--help"]) == 0
+    assert main(["init", "somedir"]) == 2
+    assert not (tmp_path / "tests").exists()
+
+
+def test_main_help_subcommand_is_forwarded(
+    matching_engine: Path, capfd: pytest.CaptureFixture[str]
+) -> None:
+    main(["help", "policy"])
+
+    out = capfd.readouterr().out
+    assert "commands:" in out  # the engine's own help output
+    assert "SDK commands" not in out
+
+
+def test_main_help_engine_without_commands_section_exits_1(
+    isolated_engine_env: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from attest import ENGINE_VERSION
+
+    engine = tmp_path / "bare" / "attest-engine"
+    engine.parent.mkdir()
+    engine.write_text(f"#!/bin/sh\necho 'attest-engine {ENGINE_VERSION}'\n")
+    engine.chmod(0o755)
+    monkeypatch.setenv("ATTEST_ENGINE_PATH", str(engine))
+
+    assert main(["--help"]) == 1
+    assert "no commands section" in capsys.readouterr().err

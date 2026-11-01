@@ -112,6 +112,12 @@ describe("resolveEngine", () => {
     expect(fs.readFileSync(legacy)).toEqual(legacyBytes);
   });
 
+  it("treats a directory at the cache path as no cached engine", () => {
+    fs.mkdirSync(versionedCachePath(env.home), { recursive: true });
+
+    expect(cachedEnginePath()).toBeNull();
+  });
+
   it("ignores a legacy-only cache when download is disabled", async () => {
     writeScriptedEngine(legacyCachePath(env.home), { version: "0.8.0" });
 

@@ -141,32 +141,37 @@ export class EngineManager {
 
     this.reader = createInterface({ input: this.process.stdout! });
 
-    const result = await this.sendRequestInternal("initialize", {
+    try {
+      this.initResult = await this.initialize();
+    } catch (err) {
+      await this.stop();
+      throw err;
+    }
+    this.initialized = true;
+    return this.initResult;
+  }
+
+  /** Send initialize and check the engine's version and capabilities. */
+  private async initialize(): Promise<InitializeResult> {
+    const init = (await this.sendRequestInternal("initialize", {
       sdk_name: "attest-typescript",
       sdk_version: VERSION,
       protocol_version: 1,
       required_capabilities: ["layers_1_4"],
       preferred_encoding: "json",
-    });
-
-    this.initResult = result as InitializeResult;
-    if (this.initResult.engine_version !== ENGINE_VERSION) {
-      await this.stop();
+    })) as InitializeResult;
+    if (init.engine_version !== ENGINE_VERSION) {
       throw new EngineVersionMismatchError(
         this.enginePath,
         "initialize",
-        this.initResult.engine_version,
+        init.engine_version,
         ENGINE_VERSION,
       );
     }
-    if (!this.initResult.compatible) {
-      await this.stop();
-      throw new Error(
-        `Engine incompatible. Missing capabilities: ${JSON.stringify(this.initResult.missing)}`,
-      );
+    if (!init.compatible) {
+      throw new Error(`Engine incompatible. Missing capabilities: ${JSON.stringify(init.missing)}`);
     }
-    this.initialized = true;
-    return this.initResult;
+    return init;
   }
 
   async stop(): Promise<void> {
