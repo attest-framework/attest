@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "engine_version": "1.0.0-rc.1",
+  "protocol_version": 1,
+  "capabilities": ["layers_1_4"],
+  "simulation_mode": false,
+  "judge": {
+    "configured": true,
+    "provider": "openai",
+    "model": "gpt-4.1",
+    "base_url": "https://api.openai.com/v1",
+    "api_key_source": "OPENAI_API_KEY",
+    "api_key": "sk-must-never-appear"
+  },
+  "embedding": { "configured": false, "requested": "auto", "provider": null },
+  "cache_dir": "/home/dev/.attest/cache"
+}
