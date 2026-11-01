@@ -14,6 +14,12 @@ updates:
     directory: "/sdks/typescript"
     schedule:
       interval: "weekly"
+    ignore:
+      # TypeScript 7.0 ships no compiler API, so tsup's declaration build
+      # crashes (egoist/tsup#1405). Revisit when Vitest and ESLint support
+      # TS 7 and tsup emits declarations with typescript@7.
+      - dependency-name: "typescript"
+        update-types: ["version-update:semver-major"]
 
   - package-ecosystem: "github-actions"
     directory: "/"
