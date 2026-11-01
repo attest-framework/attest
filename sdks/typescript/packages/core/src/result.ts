@@ -90,7 +90,7 @@ export class AgentResult {
   get notEvaluatedReasons(): Readonly<Record<string, number>> {
     const counts: Record<string, number> = {};
     for (const r of this.notEvaluated) {
-      const key = r.reason ?? "unknown";
+      const key = r.reason || "unknown";
       counts[key] = (counts[key] ?? 0) + 1;
     }
     return counts;

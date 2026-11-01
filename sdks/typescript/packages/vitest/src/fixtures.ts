@@ -1,4 +1,5 @@
-import { TestRunner } from "vitest";
+import * as vitest from "vitest";
+import type { TestContext } from "vitest";
 import {
   type ExpectChain,
   AgentResult,
@@ -18,6 +19,12 @@ export interface InspectOptions {
 
 export interface EvaluateOptions extends InspectOptions {
   /**
+   * The running test's context (`it("…", async (context) => …)`). Used to
+   * skip the right test; required under `test.concurrent` and on Vitest
+   * versions before 4.1.
+   */
+  context?: TestContext;
+  /**
    * Fail (instead of skip) when an assertion was not evaluated. Defaults to
    * the ATTEST_STRICT environment variable ("1", "true" or "yes").
    */
@@ -35,22 +42,37 @@ function strictFromEnv(): boolean {
  * not_evaluated skips with "not evaluated: <reasons>" (throws when strict);
  * soft failures pass.
  */
-export function enforceOutcome(result: AgentResult, strict: boolean): AgentResult {
+export function enforceOutcome(
+  result: AgentResult,
+  strict: boolean,
+  context?: TestContext,
+): AgentResult {
   const outcome = result.outcome({ strict });
   if (outcome === OUTCOME_FAIL) {
     const header = result.hardFailures.length === 0 ? `strict: ${result.skipReason()}\n` : "";
     throw new Error(header + renderDiagnostics(result).replace(/^\n/, ""));
   }
   if (outcome === OUTCOME_SKIP) {
-    const test = TestRunner.getCurrentTest();
-    if (test === undefined) {
-      throw new Error(
-        `${result.skipReason()} — evaluate() must run inside a Vitest test to skip it`,
-      );
-    }
-    test.context.skip(result.skipReason());
+    (context ?? currentTestContext(result)).skip(result.skipReason());
   }
   return result;
+}
+
+/**
+ * The running test's context when Vitest can name it unambiguously:
+ * TestRunner exists from Vitest 4.1, and under test.concurrent the
+ * "current test" may be another test, so the caller must pass `context`.
+ */
+function currentTestContext(result: AgentResult): TestContext {
+  const runner = (vitest as Partial<typeof vitest>).TestRunner;
+  const test = runner?.getCurrentTest();
+  if (test === undefined || test.concurrent === true) {
+    throw new Error(
+      `${result.skipReason()} — pass the test context to skip this test: ` +
+        "evaluate(chain, { context }) (required for test.concurrent and Vitest < 4.1)",
+    );
+  }
+  return test.context;
 }
 
 export class AttestEngineFixture {
@@ -161,12 +183,13 @@ export class AttestEngineFixture {
   /** Evaluate collected assertions and enforce the test outcome. */
   async evaluate(chain: ExpectChain, options?: EvaluateOptions): Promise<AgentResult> {
     const result = await this.inspect(chain, options);
-    return enforceOutcome(result, options?.strict ?? strictFromEnv());
+    return enforceOutcome(result, options?.strict ?? strictFromEnv(), options?.context);
   }
 }
 
 // Vitest runs globalSetup in the main process and tests in workers, so a
 // worker that cannot see the global client starts its own engine on first use.
+// The engine exits when its stdin closes, i.e. when the worker exits.
 let workerFixture: AttestEngineFixture | undefined;
 
 export function useAttest(): AttestEngineFixture {

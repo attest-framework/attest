@@ -68,12 +68,16 @@ describe.skipIf(!existsSync(engine))("honest verdicts (real engine)", () => {
     expect(loop).toContain("trace.loop_detection");
     expect(loop).toContain("not evaluated: short_circuited");
     expect(run.byTitle.get("judge only")?.status).toBe("skipped");
+    expect(run.byTitle.get("judge only with context")?.status).toBe("skipped");
+    const concurrent = run.byTitle.get("concurrent without context");
+    expect(concurrent?.status).toBe("failed");
+    expect(concurrent?.failureMessages.join("\n")).toContain("pass the test context");
     expect(run.stdout).toContain(`judge only`);
     expect(run.stdout).toContain(`[not evaluated: ${reason}]`);
   }, 60_000);
 
   it("ATTEST_STRICT=1 fails a not-evaluated test", () => {
-    const run = runFixture({ ATTEST_STRICT: "1" }, ["-t", "judge only"]);
+    const run = runFixture({ ATTEST_STRICT: "1" }, ["-t", "^judge only$"]);
 
     expect(run.status).toBe(1);
     const judge = run.byTitle.get("judge only");

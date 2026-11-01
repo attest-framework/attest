@@ -320,6 +320,16 @@ describe("evaluate() / inspect() enforcement", () => {
     expect(result.softFailures).toHaveLength(1);
   });
 
+  it("not_evaluated skips through the provided test context", async () => {
+    _mockResults = [row("judge", "not_evaluated", "provider_unavailable")];
+    const fixture = new AttestEngineFixture();
+    const skip = vi.fn();
+
+    await fixture.evaluate(chain as never, { context: { skip } as never });
+
+    expect(skip).toHaveBeenCalledWith("not evaluated: provider_unavailable");
+  });
+
   it("inspect() never enforces", async () => {
     _mockResults = [row("loop", "hard_fail")];
     const fixture = new AttestEngineFixture();

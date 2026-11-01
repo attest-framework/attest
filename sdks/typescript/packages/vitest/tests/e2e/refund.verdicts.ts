@@ -45,3 +45,13 @@ it("content violated", async () => {
 it("judge only", async () => {
   await evaluate(attestExpect(refundAgent.run({ order_id: "ORD-4" })).passesJudge("Helpful?"));
 });
+
+it.concurrent("judge only with context", async (context) => {
+  await evaluate(attestExpect(refundAgent.run({ order_id: "ORD-5" })).passesJudge("Helpful?"), {
+    context,
+  });
+});
+
+it.concurrent("concurrent without context", async () => {
+  await evaluate(attestExpect(refundAgent.run({ order_id: "ORD-6" })).passesJudge("Helpful?"));
+});
