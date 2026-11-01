@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/attest-ai/attest/engine/internal/llm"
 	"github.com/attest-ai/attest/engine/pkg/types"
 )
 
@@ -319,10 +320,11 @@ func TestHandler_QueryDrift_BeforeInitialize(t *testing.T) {
 
 // ── generate_user_message ──
 // Note: generate_user_message is only registered when a judge provider is configured.
-// Without ATTEST_OPENAI_API_KEY, the handler won't be registered, so we expect method_not_found.
+// Without a judge API key, the handler won't be registered, so we expect method_not_found.
 
 func TestHandler_GenerateUserMessage_NotRegisteredWithoutProvider(t *testing.T) {
-	// In the default test server (no env vars), generate_user_message should be unregistered.
+	// Without a judge API key, generate_user_message should be unregistered.
+	withoutProviders(t, "")
 	send, recv := initServer(t)
 
 	params := types.GenerateUserMessageParams{
@@ -441,8 +443,6 @@ func TestHandler_Shutdown_TracksAssertionCount(t *testing.T) {
 func TestBuildRateLimiterConfig_PerProviderEnv(t *testing.T) {
 	t.Setenv("ATTEST_RATE_LIMIT_OPENAI", "240")
 	t.Setenv("ATTEST_RATE_LIMIT_OPENAI_BURST", "20")
-	t.Setenv("ATTEST_JUDGE_RPM", "999")
-	t.Setenv("ATTEST_JUDGE_BURST", "999")
 
 	cfg, err := buildRateLimiterConfig("openai")
 	if err != nil {
@@ -456,7 +456,7 @@ func TestBuildRateLimiterConfig_PerProviderEnv(t *testing.T) {
 	}
 }
 
-func TestBuildRateLimiterConfig_LegacyFallback(t *testing.T) {
+func TestBuildRateLimiterConfig_IgnoresRemovedGlobals(t *testing.T) {
 	t.Setenv("ATTEST_RATE_LIMIT_OPENAI", "")
 	t.Setenv("ATTEST_RATE_LIMIT_OPENAI_BURST", "")
 	t.Setenv("ATTEST_JUDGE_RPM", "180")
@@ -466,11 +466,8 @@ func TestBuildRateLimiterConfig_LegacyFallback(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildRateLimiterConfig: %v", err)
 	}
-	if cfg.RequestsPerMinute != 180 {
-		t.Errorf("RequestsPerMinute = %v, want 180 (legacy)", cfg.RequestsPerMinute)
-	}
-	if cfg.Burst != 15 {
-		t.Errorf("Burst = %d, want 15", cfg.Burst)
+	if cfg != llm.DefaultRateLimiterConfig {
+		t.Errorf("cfg = %+v, want defaults %+v (ATTEST_JUDGE_RPM/BURST are removed)", cfg, llm.DefaultRateLimiterConfig)
 	}
 }
 
@@ -528,7 +525,7 @@ func TestRegisterBuiltinHandlers_RejectsInvalidEnv(t *testing.T) {
 }
 
 func TestBuildBudgetTracker_RejectsInvalid(t *testing.T) {
-	t.Setenv("ATTEST_BUDGET_MAX_COST", "abc")
+	t.Setenv("ATTEST_MAX_SOFT_FAILURES", "abc")
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 	if _, err := buildBudgetTracker(logger); err == nil {
 		t.Fatal("expected error for non-integer budget value")
@@ -536,7 +533,7 @@ func TestBuildBudgetTracker_RejectsInvalid(t *testing.T) {
 }
 
 func TestBuildBudgetTracker_RejectsNegative(t *testing.T) {
-	t.Setenv("ATTEST_BUDGET_MAX_COST", "-3")
+	t.Setenv("ATTEST_MAX_SOFT_FAILURES", "-3")
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 	if _, err := buildBudgetTracker(logger); err == nil {
 		t.Fatal("expected error for negative budget value")

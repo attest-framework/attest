@@ -9,11 +9,9 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/attest-ai/attest/engine/internal/assertion"
-	"github.com/attest-ai/attest/engine/internal/assertion/embedding"
 	"github.com/attest-ai/attest/engine/internal/assertion/judge"
 	"github.com/attest-ai/attest/engine/internal/buildinfo"
 	"github.com/attest-ai/attest/engine/internal/cache"
@@ -36,6 +34,9 @@ const (
 // operator sees broken config at startup rather than after an evaluation runs
 // with silently-defaulted values.
 func RegisterBuiltinHandlers(s *Server) error {
+	if err := validateEngineEnv(); err != nil {
+		return err
+	}
 	opts, caps, judgeProvider, historyStore, err := buildRegistryOptions(s.logger)
 	if err != nil {
 		return err
@@ -59,7 +60,7 @@ func RegisterBuiltinHandlers(s *Server) error {
 		s.logger.Info("eval concurrency set", "limit", concurrency)
 	}
 
-	// Wire BudgetTracker from ATTEST_BUDGET_MAX_COST env var (nil when unset).
+	// Wire BudgetTracker from ATTEST_MAX_SOFT_FAILURES (nil when unset).
 	budget, err := buildBudgetTracker(s.logger)
 	if err != nil {
 		return err
@@ -83,48 +84,16 @@ func RegisterBuiltinHandlers(s *Server) error {
 // and the HistoryStore (may be nil on failure). Returns an error when any
 // explicitly-set env var has an invalid value.
 func buildRegistryOptions(logger *slog.Logger) ([]assertion.RegistryOption, []string, llm.Provider, *cache.HistoryStore, error) {
-	caps := []string{"layers_1_4", "trace_tree", "continuous_eval", "plugins"}
+	provs, err := buildProviders(logger)
+	if err != nil {
+		return nil, nil, nil, nil, err
+	}
+	simulation := assertion.SimulationModeFromEnv()
+	caps := provs.capabilities(simulation)
 	var opts []assertion.RegistryOption
 
 	// ── Layer 5: Embedding ──
-	openAIKey := os.Getenv("ATTEST_OPENAI_API_KEY")
-	embeddingProvider := os.Getenv("ATTEST_EMBEDDING_PROVIDER") // "openai" or "auto" (default)
-	if embeddingProvider == "" {
-		embeddingProvider = "auto"
-	}
-
-	var embedder embedding.Embedder
-	var embProviderName string
-
-	if openAIKey != "" && (embeddingProvider == "auto" || embeddingProvider == "openai") {
-		e, err := embedding.NewOpenAIEmbedder(embedding.EmbedderConfig{
-			APIKey: openAIKey,
-		})
-		if err != nil {
-			logger.Warn("failed to create OpenAI embedder", "err", err)
-		} else {
-			embedder = e
-			embProviderName = "openai"
-		}
-	}
-
-	// ONNX fallback: explicit "onnx" provider or auto-detect when no OpenAI key
-	if embedder == nil && (embeddingProvider == "onnx" || (embeddingProvider == "auto" && openAIKey == "")) {
-		if embedding.ONNXAvailable {
-			modelDir := os.Getenv("ATTEST_ONNX_MODEL_DIR")
-			e, err := embedding.NewONNXEmbedder(embedding.EmbedderConfig{ModelDir: modelDir})
-			if err != nil {
-				logger.Warn("failed to create ONNX embedder", "err", err)
-			} else {
-				embedder = e
-				embProviderName = "onnx"
-			}
-		} else if embeddingProvider == "onnx" {
-			logger.Warn("ONNX embedding requested but not compiled in — rebuild with -tags onnx")
-		}
-	}
-
-	if embedder != nil {
+	if provs.embedder != nil {
 		var embCache *cache.EmbeddingCache
 		cacheDir := cacheDirectory()
 		maxMB, err := envInt("ATTEST_EMBEDDING_CACHE_MAX_MB", 500)
@@ -142,17 +111,12 @@ func buildRegistryOptions(logger *slog.Logger) ([]assertion.RegistryOption, []st
 				embCache = c
 			}
 		}
-		opts = append(opts, assertion.WithEmbedding(embedder, embCache))
-		caps = append(caps, "embedding")
-		logger.Info("layer 5 (embedding) enabled", "provider", embProviderName)
+		opts = append(opts, assertion.WithEmbedding(provs.embedder, embCache))
+		logger.Info("layer 5 (embedding) enabled", "provider", provs.embeddingProvider)
 	}
 
 	// ── Layer 6: LLM Judge ──
-	judgeProvider, providerName, judgeErr := buildJudgeProvider(logger)
-	if judgeErr != nil {
-		return nil, nil, nil, nil, judgeErr
-	}
-	if judgeProvider != nil {
+	if provs.judge != nil {
 		rubrics := judge.NewRubricRegistry()
 
 		var jCache *cache.JudgeCache
@@ -170,33 +134,19 @@ func buildRegistryOptions(logger *slog.Logger) ([]assertion.RegistryOption, []st
 			} else if judgeCacheMaxMB > 10000 {
 				judgeCacheMaxMB = 10000
 			}
-			c, err := cache.NewJudgeCache(dbPath, judgeCacheMaxMB)
+			c, err := cache.NewJudgeCache(dbPath, judgeCacheMaxMB, provs.judgeConfig.baseURL)
 			if err != nil {
 				logger.Warn("failed to create judge cache", "err", err)
 			} else {
 				jCache = c
 			}
 		}
-		opts = append(opts, assertion.WithJudge(judgeProvider, rubrics, jCache))
-		caps = append(caps, "llm_judge", "simulation")
-		logger.Info("layer 6 (judge) enabled", "provider", providerName)
+		opts = append(opts, assertion.WithJudge(provs.judge, rubrics, jCache))
+		logger.Info("layer 6 (judge) enabled",
+			"provider", provs.judgeConfig.provider, "base_url", provs.judgeConfig.baseURL)
 	}
 
-	if embedder != nil || judgeProvider != nil {
-		caps = append(caps, "layers_5_6")
-	}
-	// L5/L6 assertion types are always accepted: without a provider the
-	// pipeline returns not_evaluated(provider_not_configured) rows.
-	if embedder == nil {
-		caps = append(caps, "embedding")
-	}
-	if judgeProvider == nil {
-		caps = append(caps, "llm_judge")
-	}
-	// simulation_mode: ATTEST_SIMULATION is set, so L5/L6 return
-	// not_evaluated(simulation) and no provider is called.
-	if assertion.SimulationModeFromEnv() {
-		caps = append(caps, "simulation_mode")
+	if simulation {
 		logger.Info("simulation mode: layers 5-6 disabled")
 	}
 
@@ -244,7 +194,7 @@ func buildRegistryOptions(logger *slog.Logger) ([]assertion.RegistryOption, []st
 		}
 	}
 
-	return opts, caps, judgeProvider, historyStore, nil
+	return opts, caps, provs.judge, historyStore, nil
 }
 
 // openHistoryDB opens the SQLite database at dbPath for the history store.
@@ -254,105 +204,6 @@ func openHistoryDB(dbPath string) (*sql.DB, error) {
 		return nil, fmt.Errorf("open sqlite: %w", err)
 	}
 	return db, nil
-}
-
-// buildJudgeProvider selects and constructs an LLM provider for judging.
-// Reads ATTEST_JUDGE_PROVIDER and corresponding API keys.
-// Returns an error if the provider is explicitly set to an unimplemented or unknown value.
-func buildJudgeProvider(logger *slog.Logger) (llm.Provider, string, error) {
-	preferred := os.Getenv("ATTEST_JUDGE_PROVIDER")
-	model := os.Getenv("ATTEST_JUDGE_MODEL")
-
-	// If explicitly set, validate before attempting construction.
-	if preferred != "" {
-		switch preferred {
-		case "openai":
-			// handled below
-		case "anthropic", "gemini", "ollama":
-			return nil, "", fmt.Errorf(
-				"ATTEST_JUDGE_PROVIDER=%q is not yet implemented; supported: openai",
-				preferred,
-			)
-		default:
-			return nil, "", fmt.Errorf(
-				"ATTEST_JUDGE_PROVIDER=%q is unknown; supported: openai",
-				preferred,
-			)
-		}
-	}
-
-	// Try OpenAI (the only implemented provider).
-	key := os.Getenv("ATTEST_OPENAI_API_KEY")
-	if key == "" {
-		return nil, "", nil
-	}
-
-	p, err := llm.NewOpenAIProvider(key, model, "")
-	if err != nil {
-		logger.Warn("failed to create OpenAI judge provider", "err", err)
-		return nil, "", nil
-	}
-
-	// Wrap with rate limiter.
-	rlCfg, rlCfgErr := buildRateLimiterConfig("openai")
-	if rlCfgErr != nil {
-		return nil, "", rlCfgErr
-	}
-	rlp, rlErr := llm.NewRateLimitedProvider(p, rlCfg)
-	if rlErr != nil {
-		logger.Warn("rate limiter init failed, using bare provider", "err", rlErr)
-		return p, "openai", nil
-	}
-	logger.Info("judge provider rate limiter configured",
-		"provider", "openai", "rpm", rlCfg.RequestsPerMinute, "burst", rlCfg.Burst)
-	return rlp, "openai", nil
-}
-
-// buildRateLimiterConfig resolves the rate-limiter config for a named provider.
-// Lookup order for requests-per-minute:
-//  1. ATTEST_RATE_LIMIT_<PROVIDER> (e.g. ATTEST_RATE_LIMIT_OPENAI)
-//  2. ATTEST_JUDGE_RPM (legacy global)
-//  3. DefaultRateLimiterConfig.RequestsPerMinute
-//
-// Burst follows the same precedence using ATTEST_RATE_LIMIT_<PROVIDER>_BURST
-// then ATTEST_JUDGE_BURST. Returns an error when any consulted env var is set
-// to an invalid value.
-func buildRateLimiterConfig(provider string) (llm.RateLimiterConfig, error) {
-	cfg := llm.DefaultRateLimiterConfig
-
-	upper := strings.ToUpper(provider)
-	rpmKey := "ATTEST_RATE_LIMIT_" + upper
-	burstKey := "ATTEST_RATE_LIMIT_" + upper + "_BURST"
-
-	rpm, err := envInt(rpmKey, 0)
-	if err != nil {
-		return cfg, err
-	}
-	if rpm == 0 {
-		rpm, err = envInt("ATTEST_JUDGE_RPM", 0)
-		if err != nil {
-			return cfg, err
-		}
-	}
-	if rpm > 0 {
-		cfg.RequestsPerMinute = float64(rpm)
-	}
-
-	burst, err := envInt(burstKey, 0)
-	if err != nil {
-		return cfg, err
-	}
-	if burst == 0 {
-		burst, err = envInt("ATTEST_JUDGE_BURST", 0)
-		if err != nil {
-			return cfg, err
-		}
-	}
-	if burst > 0 {
-		cfg.Burst = burst
-	}
-
-	return cfg, nil
 }
 
 // cacheDirectory returns the cache directory from env or default.
@@ -380,25 +231,49 @@ func envInt(key string, fallback int) (int, error) {
 	return n, nil
 }
 
-// buildBudgetTracker constructs a BudgetTracker from ATTEST_BUDGET_MAX_COST.
-// Returns nil when the env var is unset, preserving backward-compatible behavior.
-// The env var is interpreted as a maximum number of soft failures allowed per batch
-// (integer). A value of 0 means no soft failures are permitted. Returns an error
-// when the env var is set but invalid so the operator sees broken config at
-// startup.
-func buildBudgetTracker(logger *slog.Logger) (*assertion.BudgetTracker, error) {
-	v := os.Getenv("ATTEST_BUDGET_MAX_COST")
-	if v == "" {
-		return nil, nil
+// validateEngineEnv checks every integer setting the server reads at startup,
+// including those consulted only when a provider is configured, so the server
+// and doctor reject the same broken configuration.
+func validateEngineEnv() error {
+	for _, key := range []string{
+		"ATTEST_EVAL_CONCURRENCY", "ATTEST_EMBEDDING_CACHE_MAX_MB", "ATTEST_JUDGE_CACHE_MAX_MB",
+		"ATTEST_HISTORY_MAX_ROWS", "ATTEST_HISTORY_MAX_AGE_DAYS",
+	} {
+		if _, err := envInt(key, 0); err != nil {
+			return err
+		}
 	}
-	limit, err := strconv.Atoi(v)
+	_, _, err := maxSoftFailures()
+	return err
+}
+
+// maxSoftFailures reads ATTEST_MAX_SOFT_FAILURES, the maximum number of soft
+// failures allowed in one engine session; the count accumulates across
+// batches. set is false when the variable is unset. A value of 0 means no
+// soft failures are permitted; negative or non-integer values are errors.
+func maxSoftFailures() (limit int, set bool, err error) {
+	v := os.Getenv("ATTEST_MAX_SOFT_FAILURES")
+	if v == "" {
+		return 0, false, nil
+	}
+	limit, err = strconv.Atoi(v)
 	if err != nil {
-		return nil, fmt.Errorf("env var ATTEST_BUDGET_MAX_COST=%q is not a valid integer: %w", v, err)
+		return 0, false, fmt.Errorf("env var ATTEST_MAX_SOFT_FAILURES=%q is not a valid integer: %w", v, err)
 	}
 	if limit < 0 {
-		return nil, fmt.Errorf("env var ATTEST_BUDGET_MAX_COST=%d must be >= 0", limit)
+		return 0, false, fmt.Errorf("env var ATTEST_MAX_SOFT_FAILURES=%d must be >= 0", limit)
 	}
-	logger.Info("budget tracker enabled", "max_soft_fails", limit)
+	return limit, true, nil
+}
+
+// buildBudgetTracker constructs a BudgetTracker from ATTEST_MAX_SOFT_FAILURES.
+// Returns nil when the variable is unset and an error when it is invalid.
+func buildBudgetTracker(logger *slog.Logger) (*assertion.BudgetTracker, error) {
+	limit, set, err := maxSoftFailures()
+	if err != nil || !set {
+		return nil, err
+	}
+	logger.Info("soft-failure limit enabled", "max_soft_failures", limit)
 	return assertion.NewBudgetTracker(limit), nil
 }
 

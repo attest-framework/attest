@@ -16,6 +16,10 @@ import (
 	"github.com/attest-ai/attest/engine/pkg/types"
 )
 
+func init() {
+	register(command{name: "baseline", summary: "pin, list, show or delete report baselines (pin|list|show|delete)", run: handleBaselineCommand})
+}
+
 // handleBaselineCommand dispatches `attest-engine baseline pin|list|show|delete`.
 // Baselines are persisted in $ATTEST_CACHE_DIR/attest.db via cache.BaselineStore.
 func handleBaselineCommand(args []string) {

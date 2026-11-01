@@ -14,6 +14,7 @@ from attest.exceptions import EngineTimeoutError
 def test_find_engine_binary_not_found(monkeypatch: pytest.MonkeyPatch) -> None:
     """Raises FileNotFoundError with descriptive message when binary absent."""
     monkeypatch.setenv("ATTEST_ENGINE_NO_DOWNLOAD", "1")
+    monkeypatch.delenv("ATTEST_ENGINE_PATH", raising=False)
     with pytest.raises(FileNotFoundError, match="attest-engine"):
         _find_engine_binary()
 

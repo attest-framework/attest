@@ -19,6 +19,17 @@ STEP_AGENT_CALL: str = "agent_call"
 STATUS_PASS: str = "pass"
 STATUS_SOFT_FAIL: str = "soft_fail"
 STATUS_HARD_FAIL: str = "hard_fail"
+STATUS_NOT_EVALUATED: str = "not_evaluated"
+KNOWN_STATUSES: frozenset[str] = frozenset(
+    {STATUS_PASS, STATUS_SOFT_FAIL, STATUS_HARD_FAIL, STATUS_NOT_EVALUATED}
+)
+
+# Reasons carried by a not_evaluated result (AssertionResult.reason).
+REASON_PROVIDER_UNAVAILABLE: str = "provider_unavailable"
+REASON_PROVIDER_NOT_CONFIGURED: str = "provider_not_configured"
+REASON_SIMULATION: str = "simulation"
+REASON_MISSING_EVIDENCE: str = "missing_evidence"
+REASON_SHORT_CIRCUITED: str = "short_circuited"
 
 # ---------------------------------------------------------------------------
 # Assertion type constants
@@ -356,6 +367,7 @@ class AssertionResult:
     cost: float = 0.0
     duration_ms: int = 0
     request_id: str | None = None
+    reason: str | None = None
     threshold_source: str | None = None
     layer: int = 0
     type: str | None = None
@@ -377,6 +389,8 @@ class AssertionResult:
         }
         if self.request_id is not None:
             d["request_id"] = self.request_id
+        if self.reason is not None:
+            d["reason"] = self.reason
         if self.threshold_source is not None:
             d["threshold_source"] = self.threshold_source
         if self.layer:
@@ -401,14 +415,21 @@ class AssertionResult:
     def from_dict(cls, data: dict[str, Any]) -> AssertionResult:
         raw_judge = data.get("judge_metadata")
         judge = JudgeMetadata.from_dict(raw_judge) if raw_judge else None
+        status = data["status"]
+        explanation = data["explanation"]
+        if status not in KNOWN_STATUSES:
+            # Protocol rule: an unknown status is never a pass.
+            explanation = f"[unknown status {status!r}] {explanation}"
+            status = STATUS_NOT_EVALUATED
         return cls(
             assertion_id=data["assertion_id"],
-            status=data["status"],
+            status=status,
             score=data["score"],
-            explanation=data["explanation"],
+            explanation=explanation,
             cost=data.get("cost", 0.0),
             duration_ms=data.get("duration_ms", 0),
             request_id=data.get("request_id"),
+            reason=data.get("reason"),
             threshold_source=data.get("threshold_source"),
             layer=data.get("layer", 0),
             type=data.get("type"),

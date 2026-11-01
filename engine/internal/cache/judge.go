@@ -17,14 +17,21 @@ type JudgeCacheEntry struct {
 }
 
 // JudgeCache is an LRU-evicting SQLite-backed cache for LLM judge results.
+// Entries are scoped to one judge endpoint, so two endpoints serving the same
+// model name never share scores.
 type JudgeCache struct {
-	db    *sql.DB
-	maxMB int
+	db       *sql.DB
+	maxMB    int
+	endpoint string
 }
 
-// NewJudgeCache opens (or creates) a judge cache at dbPath.
-// maxMB sets the maximum size in megabytes before LRU eviction triggers.
-func NewJudgeCache(dbPath string, maxMB int) (*JudgeCache, error) {
+// NewJudgeCache opens (or creates) a judge cache at dbPath for the judge
+// endpoint (a normalized base URL). maxMB sets the maximum size in megabytes
+// before LRU eviction triggers.
+func NewJudgeCache(dbPath string, maxMB int, endpoint string) (*JudgeCache, error) {
+	if endpoint == "" {
+		return nil, fmt.Errorf("judge cache: endpoint is required")
+	}
 	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite: %w", err)
@@ -56,7 +63,7 @@ func NewJudgeCache(dbPath string, maxMB int) (*JudgeCache, error) {
 		return nil, fmt.Errorf("create index: %w", err)
 	}
 
-	return &JudgeCache{db: db, maxMB: maxMB}, nil
+	return &JudgeCache{db: db, maxMB: maxMB, endpoint: endpoint}, nil
 }
 
 // JudgeContentHash returns the SHA-256 hex digest of the agent output text.
@@ -65,9 +72,16 @@ func JudgeContentHash(agentOutput string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// Get retrieves a cached judge result for the given content, rubric, and model.
-// Returns (nil, nil) on cache miss.
+// modelKey is the stored model column: the endpoint and the model name. A
+// space cannot occur in a normalized URL, so the pair is unambiguous.
+func (c *JudgeCache) modelKey(model string) string {
+	return c.endpoint + " " + model
+}
+
+// Get retrieves a cached judge result for the given content, rubric, and model
+// at this cache's endpoint. Returns (nil, nil) on cache miss.
 func (c *JudgeCache) Get(contentHash, rubric, model string) (*JudgeCacheEntry, error) {
+	model = c.modelKey(model)
 	row := c.db.QueryRow(
 		`SELECT score, explanation FROM judge_cache WHERE content_hash = ? AND rubric = ? AND model = ?`,
 		contentHash, rubric, model,
@@ -92,6 +106,7 @@ func (c *JudgeCache) Get(contentHash, rubric, model string) (*JudgeCacheEntry, e
 
 // Put stores a judge result, then evicts if over size limit.
 func (c *JudgeCache) Put(contentHash, rubric, model string, entry *JudgeCacheEntry) error {
+	model = c.modelKey(model)
 	now := time.Now().UnixNano()
 
 	_, err := c.db.Exec(

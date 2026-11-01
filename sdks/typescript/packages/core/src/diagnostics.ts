@@ -3,13 +3,15 @@
  *
  * Mirrors the Python attest.cli.diagnostics module so PR comments,
  * pytest output, and vitest output show the same fields. Use as the
- * message argument to a vitest `expect(result.passed, ...)` so
+ * message argument when asserting the verdict, e.g.
+ * `expect(result.outcome(), renderDiagnostics(result)).not.toBe("fail")`, so
  * reviewers see trace path, expected vs actual, and judge metadata.
  */
 
 import type { AssertionResult, JudgeMetadata } from "./proto/types.js";
 import {
   STATUS_HARD_FAIL,
+  STATUS_NOT_EVALUATED,
   STATUS_PASS,
   STATUS_SOFT_FAIL,
 } from "./proto/constants.js";
@@ -53,6 +55,9 @@ function statusGlyph(status: string, color: boolean): string {
   } else if (status === STATUS_HARD_FAIL) {
     glyph = "FAIL";
     c = ANSI_RED;
+  } else if (status === STATUS_NOT_EVALUATED) {
+    glyph = "N/E";
+    c = ANSI_DIM;
   } else {
     glyph = status.toUpperCase() || "????";
     c = ANSI_DIM;
@@ -97,10 +102,15 @@ export function renderAssertionFailure(
   lines.push(
     `  ${statusGlyph(result.status, color)} ${bold(result.assertion_id, color)} ${dim(`— ${label}`, color)}`,
   );
+  if (result.reason) {
+    lines.push(`      reason:     not evaluated: ${result.reason}`);
+  }
   if (result.trace_node_path) {
     lines.push(`      trace path: ${result.trace_node_path}`);
   }
-  lines.push(`      score:      ${result.score.toFixed(3)}`);
+  if (result.status !== STATUS_NOT_EVALUATED) {
+    lines.push(`      score:      ${result.score.toFixed(3)}`);
+  }
   if (result.expected) {
     lines.push(`      expected:   ${truncate(result.expected)}`);
   }
@@ -185,6 +195,7 @@ export function renderSummary(
     `${statusGlyph(STATUS_PASS, color)} ${passN}`,
     `${statusGlyph(STATUS_SOFT_FAIL, color)} ${soft}`,
     `${statusGlyph(STATUS_HARD_FAIL, color)} ${hard}`,
+    `${statusGlyph(STATUS_NOT_EVALUATED, color)} ${result.notEvaluated.length}`,
     `cost $${result.totalCost.toFixed(6)}`,
     `dur ${result.totalDurationMs}ms`,
   ];
@@ -199,20 +210,26 @@ export function renderDiagnostics(
   const includePassing = options.includePassing ?? false;
   const rows = includePassing
     ? result.assertionResults
-    : result.failedAssertions;
+    : result.assertionResults.filter((r) => r.status !== STATUS_PASS);
   if (rows.length === 0) {
     return dim("  (no failures)\n", color);
   }
   const out: string[] = [""];
-  out.push(
-    bold(
-      `Attest diagnostic — ${rows.length} of ${result.assertionResults.length} assertions failed:`,
-      color,
-    ),
-  );
+  out.push(bold(`Attest diagnostic — ${headerCounts(result)}:`, color));
   for (const r of rows) {
     out.push(renderAssertionFailure(r, options));
   }
   out.push(dim(`  Summary: ${renderSummary(result, { color })}`, color));
   return out.join("\n");
+}
+
+/** "F of N assertions failed[, K not evaluated]" — counts failures, not rows. */
+function headerCounts(result: AgentResult): string {
+  const total = result.assertionResults.length;
+  const notEvaluated = result.notEvaluated.length;
+  if (result.failCount === 0 && notEvaluated > 0) {
+    return `${notEvaluated} of ${total} assertions not evaluated`;
+  }
+  const text = `${result.failCount} of ${total} assertions failed`;
+  return notEvaluated > 0 ? `${text}, ${notEvaluated} not evaluated` : text;
 }

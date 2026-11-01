@@ -12,7 +12,7 @@ import (
 
 const (
 	openAIDefaultModel   = "gpt-4.1"
-	openAIDefaultBaseURL = "https://api.openai.com/v1"
+	OpenAIDefaultBaseURL = "https://api.openai.com/v1"
 )
 
 // OpenAIProvider implements Provider using the OpenAI chat completions API.
@@ -32,7 +32,7 @@ func NewOpenAIProvider(apiKey, model, baseURL string) (*OpenAIProvider, error) {
 		model = openAIDefaultModel
 	}
 	if baseURL == "" {
-		baseURL = openAIDefaultBaseURL
+		baseURL = OpenAIDefaultBaseURL
 	}
 	return &OpenAIProvider{
 		client:  &http.Client{Timeout: 60 * time.Second},
