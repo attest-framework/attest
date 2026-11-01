@@ -75,7 +75,7 @@ def print_help() -> int:
     try:
         engine = resolve_engine(allow_download=False)
     except _RESOLVE_ERRORS as exc:
-        first_line = str(exc).splitlines()[0]
+        first_line = str(exc).splitlines()[0].rstrip(".")
         print(
             f"engine commands: not available ({first_line}). Run `attest doctor` to download "
             f"attest-engine {ENGINE_VERSION}, or set ATTEST_ENGINE_PATH."

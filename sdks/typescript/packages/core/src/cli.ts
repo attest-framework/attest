@@ -99,7 +99,7 @@ async function printHelp(): Promise<number> {
   try {
     engine = await resolveEngine(undefined, { allowDownload: false });
   } catch (err) {
-    const firstLine = errorMessage(err).split("\n")[0] ?? "";
+    const firstLine = (errorMessage(err).split("\n")[0] ?? "").replace(/\.$/, "");
     process.stdout.write(
       `engine commands: not available (${firstLine}). Run \`attest doctor\` to download ` +
         `attest-engine ${ENGINE_VERSION}, or set ATTEST_ENGINE_PATH.\n`,
