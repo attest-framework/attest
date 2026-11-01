@@ -1,0 +1,4 @@
+# Policy used to compute expected.policyExit in every verdict fixture.
+layers:
+  0:
+    max_hard_fails: 0
