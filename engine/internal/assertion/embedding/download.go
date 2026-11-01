@@ -3,6 +3,8 @@
 package embedding
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"net/http"
@@ -11,18 +13,41 @@ import (
 	"runtime"
 )
 
+// The model is pinned to a Hugging Face commit so its sha256 cannot change
+// under the engine.
 const (
 	modelFileName = "all-MiniLM-L6-v2.onnx"
-	modelURL      = "https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main/onnx/model.onnx"
+	modelURL      = "https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/1110a243fdf4706b3f48f1d95db1a4f5529b4d41/onnx/model.onnx"
+	modelSHA256   = "6fd5d72fe4589f189f8ebc006442dbb529bb7ce38f8082112682524616046452"
 )
 
-// onnxRuntimeURLs maps platform to shared library download URL.
-var onnxRuntimeURLs = map[string]string{
-	"darwin-arm64":  "https://github.com/microsoft/onnxruntime/releases/download/v1.17.1/onnxruntime-osx-arm64-1.17.1.tgz",
-	"darwin-amd64":  "https://github.com/microsoft/onnxruntime/releases/download/v1.17.1/onnxruntime-osx-x86_64-1.17.1.tgz",
-	"linux-amd64":   "https://github.com/microsoft/onnxruntime/releases/download/v1.17.1/onnxruntime-linux-x64-1.17.1.tgz",
-	"linux-arm64":   "https://github.com/microsoft/onnxruntime/releases/download/v1.17.1/onnxruntime-linux-aarch64-1.17.1.tgz",
-	"windows-amd64": "https://github.com/microsoft/onnxruntime/releases/download/v1.17.1/onnxruntime-win-x64-1.17.1.zip",
+// runtimeArchive is an ONNX Runtime release archive with its published sha256.
+type runtimeArchive struct {
+	url    string
+	sha256 string
+}
+
+// onnxRuntimeArchives maps platform to the ONNX Runtime 1.26.0 release
+// archive the engine was built against: onnxruntime_go v1.31 requires ORT API
+// 26. The engine does not download the runtime; these are shown so users can
+// install and verify it manually. ORT 1.26.0 publishes no macOS x86_64 build.
+var onnxRuntimeArchives = map[string]runtimeArchive{
+	"darwin-arm64": {
+		"https://github.com/microsoft/onnxruntime/releases/download/v1.26.0/onnxruntime-osx-arm64-1.26.0.tgz",
+		"7a1280bbb1701ea514f71828765237e7896e0f2e1cd332f1f70dbd5c3e33aca3",
+	},
+	"linux-amd64": {
+		"https://github.com/microsoft/onnxruntime/releases/download/v1.26.0/onnxruntime-linux-x64-1.26.0.tgz",
+		"1254da24fb389cf39dc0ff3451ab48301740ffbfcbaf646849df92f80ee92c57",
+	},
+	"linux-arm64": {
+		"https://github.com/microsoft/onnxruntime/releases/download/v1.26.0/onnxruntime-linux-aarch64-1.26.0.tgz",
+		"34ff1c2d0f12e2cf3d33a0c5f82e39792e1d581fbd6968fd7c30d173654be01a",
+	},
+	"windows-amd64": {
+		"https://github.com/microsoft/onnxruntime/releases/download/v1.26.0/onnxruntime-win-x64-1.26.0.zip",
+		"6ebe99b5564bf4d029b6e93eac9ff423682b6212eade769e9ca3f685eaf500b4",
+	},
 }
 
 // defaultModelDir returns the default model directory (~/.attest/models/).
@@ -50,7 +75,7 @@ func ensureModel(modelDir string) (string, error) {
 		return "", fmt.Errorf("onnx: create model dir %s: %w", modelDir, err)
 	}
 
-	if err := downloadFile(modelURL, modelPath); err != nil {
+	if err := downloadFile(modelURL, modelPath, modelSHA256); err != nil {
 		return "", fmt.Errorf("onnx: download model: %w", err)
 	}
 
@@ -69,9 +94,16 @@ func onnxRuntimeLibName() string {
 	}
 }
 
-// ensureONNXRuntime checks for the ONNX Runtime shared library and returns its path.
-// The library is expected in modelDir or a system-discoverable location.
+// ensureONNXRuntime returns the path of the ONNX Runtime shared library:
+// ATTEST_ONNX_RUNTIME_LIB when set, otherwise modelDir or a standard system
+// location. It never downloads the runtime.
 func ensureONNXRuntime(modelDir string) (string, error) {
+	if lib := os.Getenv("ATTEST_ONNX_RUNTIME_LIB"); lib != "" {
+		if _, err := os.Stat(lib); err != nil {
+			return "", fmt.Errorf("onnx runtime: ATTEST_ONNX_RUNTIME_LIB=%s: %w", lib, err)
+		}
+		return lib, nil
+	}
 	if modelDir == "" {
 		modelDir = defaultModelDir()
 	}
@@ -97,17 +129,22 @@ func ensureONNXRuntime(modelDir string) (string, error) {
 	}
 
 	platform := runtime.GOOS + "-" + runtime.GOARCH
-	url, ok := onnxRuntimeURLs[platform]
+	archive, ok := onnxRuntimeArchives[platform]
 	if !ok {
-		return "", fmt.Errorf("onnx runtime: unsupported platform %s — install ONNX Runtime manually and set ATTEST_ONNX_RUNTIME_LIB", platform)
+		return "", fmt.Errorf("onnx runtime: no ONNX Runtime 1.26.0 release for %s — build it, then set ATTEST_ONNX_RUNTIME_LIB to %s", platform, libName)
 	}
 
-	return "", fmt.Errorf("onnx runtime: shared library not found at %s — download from %s or install via package manager", libPath, url)
+	return "", fmt.Errorf(
+		"onnx runtime: %s not found in %s or system library paths — download ONNX Runtime 1.26.0 from %s (sha256 %s), "+
+			"then copy lib/%s into %s or set ATTEST_ONNX_RUNTIME_LIB",
+		libName, modelDir, archive.url, archive.sha256, libName, modelDir)
 }
 
-// downloadFile downloads a URL to a local file path.
-func downloadFile(url, destPath string) error {
-	resp, err := http.Get(url) //nolint:gosec // URL is a hardcoded constant
+// downloadFile downloads url to destPath and verifies its sha256 against
+// wantSHA256 before moving it into place. A mismatch removes the partial file
+// and returns a checksum error, so a tampered download is never used.
+func downloadFile(url, destPath, wantSHA256 string) error {
+	resp, err := http.Get(url) //nolint:gosec // URL is a pinned constant
 	if err != nil {
 		return fmt.Errorf("download %s: %w", url, err)
 	}
@@ -123,12 +160,21 @@ func downloadFile(url, destPath string) error {
 		return fmt.Errorf("create %s: %w", tmpPath, err)
 	}
 
-	if _, err := io.Copy(out, resp.Body); err != nil {
+	hash := sha256.New()
+	if _, err := io.Copy(io.MultiWriter(out, hash), resp.Body); err != nil {
 		out.Close()
 		os.Remove(tmpPath)
 		return fmt.Errorf("write %s: %w", tmpPath, err)
 	}
-	out.Close()
+	if err := out.Close(); err != nil {
+		os.Remove(tmpPath)
+		return fmt.Errorf("close %s: %w", tmpPath, err)
+	}
+
+	if got := hex.EncodeToString(hash.Sum(nil)); got != wantSHA256 {
+		os.Remove(tmpPath)
+		return fmt.Errorf("download %s: checksum mismatch: got sha256 %s, want %s", url, got, wantSHA256)
+	}
 
 	if err := os.Rename(tmpPath, destPath); err != nil {
 		os.Remove(tmpPath)
