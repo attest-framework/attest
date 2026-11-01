@@ -112,9 +112,13 @@ func initializeCapabilities(t *testing.T, bin string, env []string) []string {
 
 	var resp struct {
 		Result types.InitializeResult `json:"result"`
+		Error  *types.RPCError        `json:"error"`
 	}
 	if err := json.Unmarshal(line, &resp); err != nil {
 		t.Fatalf("decode initialize response %s: %v", line, err)
+	}
+	if resp.Error != nil {
+		t.Fatalf("initialize returned an error: %+v", resp.Error)
 	}
 	return resp.Result.Capabilities
 }
