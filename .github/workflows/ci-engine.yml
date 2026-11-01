@@ -2,10 +2,10 @@ name: Engine CI
 
 on:
   push:
-    paths: ["engine/**", "proto/**"]
+    paths: ["engine/**", "proto/**", ".github/workflows/ci-engine.yml"]
     branches: [main]
   pull_request:
-    paths: ["engine/**", "proto/**"]
+    paths: ["engine/**", "proto/**", ".github/workflows/ci-engine.yml"]
 
 jobs:
   test:
