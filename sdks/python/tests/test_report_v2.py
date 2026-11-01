@@ -225,3 +225,33 @@ def test_rerun_test_reports_only_the_last_attempt() -> None:
     assert [r["assertion_id"] for r in report["results"]] == ["second"]
     assert report["summary"]["hard_fail"] == 0
     assert report["tests"][0]["duration_ms"] == 3  # setup, call, teardown of the last attempt
+
+
+@pytest.mark.parametrize("report_path", [None, "r.json"])
+def test_setup_and_teardown_results_count_in_soft_failure_summary(report_path: str | None) -> None:
+    from attest import plugin
+
+    class _Item:
+        nodeid = "tests/test_a.py::test_fixture_evaluates"
+        name = "test_fixture_evaluates"
+        location = ("tests/test_a.py", 0, "test_fixture_evaluates")
+        path = "tests/test_a.py"
+        config = type("Config", (), {"getoption": lambda self, *a, **k: report_path})()
+
+    plugin._session_tests.clear()
+    plugin._take_test_results()
+    item = _Item()
+    soft = AssertionResult(assertion_id="s", status="soft_fail", score=0.6, explanation="")
+
+    for when in ("setup", "call", "teardown"):
+        plugin._record_result(_agent_result(soft))
+        _run_phase(item, when, "passed")
+
+    assert plugin._session_soft_counts.pop(item.nodeid) == 3
+    assert plugin._session_outcomes.pop(item.nodeid) == "passed"
+    assert plugin._session_results.pop(item.nodeid).soft_failures
+    assert plugin._take_test_results() == []
+    tests = list(plugin._session_tests.values())
+    plugin._session_tests.clear()
+    if report_path is not None:
+        assert len(tests[0].agent_results) == 3

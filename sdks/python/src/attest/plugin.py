@@ -195,7 +195,7 @@ def pytest_runtest_makereport(
     attribute ``not evaluated`` skips to the test's own location.
 
     Pytest serialises tests within a worker, so the stashed AgentResults
-    always belong to the call phase that just ran.
+    always belong to the phase (setup, call or teardown) that just ran.
     """
     outcome = yield
     report: pytest.TestReport = outcome.get_result()
@@ -204,24 +204,27 @@ def pytest_runtest_makereport(
         if item.config.getoption("--attest-report", default=None)
         else None
     )
-    if call.when != "call":
-        if record is not None:
-            # Results from evaluations in fixture setup or teardown belong to this test.
-            record.agent_results.extend(_take_test_results())
-        return
-    if report.skipped and isinstance(report.longrepr, tuple):
+    if call.when == "call" and report.skipped and isinstance(report.longrepr, tuple):
         # Attribute "not evaluated" skips to the test, not to this plugin.
         path, _, reason = report.longrepr
         if os.path.abspath(path) == os.path.abspath(__file__) and "not evaluated:" in reason:
             _, lineno, _ = item.location
             report.longrepr = (str(item.path), (lineno or 0) + 1, reason)
+    if call.when == "setup":
+        # A new attempt (a rerun plugin retrying the test) starts its counts over.
+        _session_soft_counts.pop(item.nodeid, None)
+    # Evaluations in fixture setup or teardown belong to this test, like the call's.
     results = _take_test_results()
     if record is not None:
         record.agent_results.extend(results)
     if results:
         _session_results[item.nodeid] = results[-1]
-        _session_outcomes[item.nodeid] = report.outcome
-        _session_soft_counts[item.nodeid] = sum(len(r.soft_failures) for r in results)
+        _session_soft_counts[item.nodeid] = _session_soft_counts.get(item.nodeid, 0) + sum(
+            len(r.soft_failures) for r in results
+        )
+    if results or item.nodeid in _session_results:
+        if call.when == "call" or report.outcome != "passed":
+            _session_outcomes[item.nodeid] = report.outcome
 
 
 def _record_test_phase(item: pytest.Item, report: pytest.TestReport) -> TestRecord:
