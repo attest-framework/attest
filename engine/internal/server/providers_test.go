@@ -124,6 +124,11 @@ func TestResolveJudgeConfig_InvalidSettingsError(t *testing.T) {
 		{"unimplemented provider", map[string]string{"ATTEST_JUDGE_PROVIDER": "anthropic"}, "supported: openai"},
 		{"unknown provider", map[string]string{"ATTEST_JUDGE_PROVIDER": "bogus"}, "supported: openai"},
 		{"base URL without key", map[string]string{"ATTEST_JUDGE_BASE_URL": "http://localhost:8080/v1"}, "ATTEST_JUDGE_API_KEY"},
+		{"base URL with only standard key", map[string]string{"ATTEST_JUDGE_BASE_URL": "https://other.example/v1", "OPENAI_API_KEY": "secret-key"}, "OPENAI_API_KEY is not sent"},
+		{"credentials with bad scheme", map[string]string{"ATTEST_JUDGE_BASE_URL": "ftp://user:pw@host/v1", "ATTEST_JUDGE_API_KEY": "secret-key"}, "must not contain credentials"},
+		{"credentials with no host", map[string]string{"ATTEST_JUDGE_BASE_URL": "http://user:pw@/v1", "ATTEST_JUDGE_API_KEY": "secret-key"}, "must not contain credentials"},
+		{"malformed URL", map[string]string{"ATTEST_JUDGE_BASE_URL": "http://user:pw@host:bad port/v1", "ATTEST_JUDGE_API_KEY": "secret-key"}, "not a valid URL"},
+		{"key in query", map[string]string{"ATTEST_JUDGE_BASE_URL": "https://host/v1?api-key=pw", "ATTEST_JUDGE_API_KEY": "secret-key"}, "query or fragment"},
 		{"non-http scheme", map[string]string{"ATTEST_JUDGE_BASE_URL": "ftp://host/v1", "ATTEST_JUDGE_API_KEY": "secret-key"}, "http or https"},
 		{"missing host", map[string]string{"ATTEST_JUDGE_BASE_URL": "http:///v1", "ATTEST_JUDGE_API_KEY": "secret-key"}, "no host"},
 		{"credentials in URL", map[string]string{"ATTEST_JUDGE_BASE_URL": "https://user:pw@host/v1", "ATTEST_JUDGE_API_KEY": "secret-key"}, "must not contain credentials"},
@@ -144,7 +149,7 @@ func TestResolveJudgeConfig_InvalidSettingsError(t *testing.T) {
 			if !strings.Contains(err.Error(), tc.wantPart) {
 				t.Errorf("error %q does not contain %q", err, tc.wantPart)
 			}
-			if strings.Contains(err.Error(), "secret-key") || strings.Contains(err.Error(), ":pw@") {
+			if strings.Contains(err.Error(), "secret-key") || strings.Contains(err.Error(), "pw") {
 				t.Errorf("error leaks a credential: %q", err)
 			}
 			if strings.Contains(err.Error(), "anthropic,") || strings.Contains(err.Error(), "gemini") {

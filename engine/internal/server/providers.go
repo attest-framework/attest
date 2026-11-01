@@ -11,11 +11,6 @@ import (
 	"github.com/attest-ai/attest/engine/internal/llm"
 )
 
-// judgeAPIKeyVars lists the variables consulted for the judge API key, in
-// precedence order: the Attest-specific override, then the provider's
-// standard variable.
-var judgeAPIKeyVars = []string{"ATTEST_JUDGE_API_KEY", "OPENAI_API_KEY"}
-
 // judgeConfig is the Layer 6 judge configuration resolved from the environment.
 type judgeConfig struct {
 	provider  string // "openai"; empty when no API key is set
@@ -27,35 +22,40 @@ type judgeConfig struct {
 
 // resolveJudgeConfig reads ATTEST_JUDGE_PROVIDER, ATTEST_JUDGE_MODEL,
 // ATTEST_JUDGE_BASE_URL, ATTEST_JUDGE_API_KEY and OPENAI_API_KEY. A config
-// with an empty provider means no judge is configured. Errors never include
-// the API key.
+// with an empty provider means no judge is configured.
+//
+// ATTEST_JUDGE_API_KEY overrides the provider's standard OPENAI_API_KEY. With
+// ATTEST_JUDGE_BASE_URL set, only ATTEST_JUDGE_API_KEY is used, so an exported
+// OPENAI_API_KEY is never sent to a custom endpoint. Errors never include the
+// API key or the base URL, which may embed credentials.
 func resolveJudgeConfig() (judgeConfig, error) {
 	if p := os.Getenv("ATTEST_JUDGE_PROVIDER"); p != "" && p != "openai" {
 		return judgeConfig{}, fmt.Errorf("ATTEST_JUDGE_PROVIDER=%q is not supported; supported: openai", p)
 	}
 
 	cfg := judgeConfig{model: os.Getenv("ATTEST_JUDGE_MODEL"), baseURL: llm.OpenAIDefaultBaseURL}
-	rawBaseURL := os.Getenv("ATTEST_JUDGE_BASE_URL")
-	if rawBaseURL != "" {
-		u, err := parseJudgeBaseURL(rawBaseURL)
+	keyVars := []string{"ATTEST_JUDGE_API_KEY", "OPENAI_API_KEY"}
+	if raw := os.Getenv("ATTEST_JUDGE_BASE_URL"); raw != "" {
+		u, err := parseJudgeBaseURL(raw)
 		if err != nil {
 			return judgeConfig{}, err
 		}
 		cfg.baseURL = u
+		keyVars = keyVars[:1]
+		if os.Getenv("ATTEST_JUDGE_API_KEY") == "" {
+			return judgeConfig{}, fmt.Errorf(
+				"ATTEST_JUDGE_BASE_URL is set without ATTEST_JUDGE_API_KEY: OPENAI_API_KEY is not sent to " +
+					"a custom endpoint; set ATTEST_JUDGE_API_KEY (any non-empty value for an endpoint without authentication)")
+		}
 	}
 
-	for _, name := range judgeAPIKeyVars {
+	for _, name := range keyVars {
 		if v := os.Getenv(name); v != "" {
 			cfg.apiKey, cfg.keySource = v, name
 			break
 		}
 	}
 	if cfg.apiKey == "" {
-		if rawBaseURL != "" {
-			return judgeConfig{}, fmt.Errorf(
-				"ATTEST_JUDGE_BASE_URL is set without a judge API key: set ATTEST_JUDGE_API_KEY " +
-					"(any non-empty value for an endpoint without authentication) or OPENAI_API_KEY")
-		}
 		return cfg, nil
 	}
 	cfg.provider = "openai"
@@ -64,23 +64,24 @@ func resolveJudgeConfig() (judgeConfig, error) {
 
 // parseJudgeBaseURL validates an OpenAI-compatible base URL such as
 // http://localhost:11434/v1. Credentials in the URL are rejected so they never
-// reach logs or doctor output; the key belongs in ATTEST_JUDGE_API_KEY.
+// reach logs or doctor output; the key belongs in ATTEST_JUDGE_API_KEY. Error
+// messages never echo the URL.
 func parseJudgeBaseURL(raw string) (string, error) {
 	u, err := url.Parse(raw)
 	if err != nil {
-		return "", fmt.Errorf("ATTEST_JUDGE_BASE_URL is not a valid URL: %w", err)
-	}
-	if u.Scheme != "http" && u.Scheme != "https" {
-		return "", fmt.Errorf("ATTEST_JUDGE_BASE_URL=%q must use http or https", raw)
-	}
-	if u.Host == "" {
-		return "", fmt.Errorf("ATTEST_JUDGE_BASE_URL=%q has no host", raw)
+		return "", fmt.Errorf("ATTEST_JUDGE_BASE_URL is not a valid URL")
 	}
 	if u.User != nil {
 		return "", fmt.Errorf("ATTEST_JUDGE_BASE_URL must not contain credentials; set ATTEST_JUDGE_API_KEY instead")
 	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return "", fmt.Errorf("ATTEST_JUDGE_BASE_URL must use http or https")
+	}
+	if u.Host == "" {
+		return "", fmt.Errorf("ATTEST_JUDGE_BASE_URL has no host")
+	}
 	if u.RawQuery != "" || u.Fragment != "" {
-		return "", fmt.Errorf("ATTEST_JUDGE_BASE_URL=%q must not contain a query or fragment", raw)
+		return "", fmt.Errorf("ATTEST_JUDGE_BASE_URL must not contain a query or fragment")
 	}
 	return strings.TrimRight(u.String(), "/"), nil
 }
