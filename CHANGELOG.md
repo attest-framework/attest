@@ -9,10 +9,31 @@ All notable changes to Attest are documented in this file. The format follows [K
 - `release.yml` publishes a release from one tag push: it builds the six engine binaries, checksums, the Python distributions and the npm tarballs once, verifies them, and after `release` environment approval publishes the GitHub (pre-)release, then PyPI (trusted publishing) and npm (trusted publishing with provenance) from those stored artifacts, records which components published in the release notes, and dispatches the website sync. A tag that differs from `VERSION` fails before anything builds. `workflow_dispatch` with `dry_run: true` runs the whole pipeline without publishing.
 - `setup-attest` accepts a `ref` input: consumer repositories build the engine and install the Python and TypeScript SDKs from any attest branch, tag or commit.
 - `CHANGELOG.md` is the single changelog; `scripts/release-notes.sh <version>` prints one version's section.
+- `attest-engine doctor [--json]` reports the engine and protocol versions, the capabilities `initialize` would advertise, the judge provider, model, base URL and key source (never the key), the embedding provider, simulation mode and the cache directory. JSON follows `proto/attest/v1/doctor.schema.json`. A configuration error exits 1 with the server's startup message; a plain-http judge endpoint on a non-loopback host is flagged as insecure.
+- `ATTEST_JUDGE_BASE_URL` points the LLM judge at any OpenAI-compatible endpoint. `ATTEST_JUDGE_API_KEY` overrides `OPENAI_API_KEY` for the judge. See `docs/guides/configuration.md`.
+- `attest-engine --help` lists every command; each command is one file registered through a command registry.
+
+### Changed
+
+- **BREAKING:** `ATTEST_BUDGET_MAX_COST` is renamed `ATTEST_MAX_SOFT_FAILURES`; it always counted soft failures in one engine session, not cost. No alias.
+- **BREAKING:** with `ATTEST_JUDGE_BASE_URL` set, only `ATTEST_JUDGE_API_KEY` is sent to the endpoint; `OPENAI_API_KEY` is used only at the default OpenAI endpoint. A base URL without `ATTEST_JUDGE_API_KEY`, with credentials, a query or a fragment, is a startup error.
+- **BREAKING:** `OPENAI_API_KEY` in the engine's environment now enables the OpenAI judge and OpenAI embeddings (previously only `ATTEST_OPENAI_API_KEY` did).
+- **BREAKING:** non-integer `ATTEST_EMBEDDING_CACHE_MAX_MB`, `ATTEST_JUDGE_CACHE_MAX_MB`, `ATTEST_HISTORY_MAX_ROWS` and `ATTEST_HISTORY_MAX_AGE_DAYS` now fail startup even when no provider is configured, and `ATTEST_RATE_LIMIT_OPENAI[_BURST]` values <= 0 fail startup instead of falling back to defaults.
+- **BREAKING:** an unknown `ATTEST_EMBEDDING_PROVIDER` (anything other than `auto`, `openai`, `onnx`) is rejected at startup.
+- **BREAKING:** `attest-engine <unknown command>` exits 2 with usage instead of starting the JSON-RPC server.
+- Judge cache entries are scoped to the judge endpoint, so two endpoints serving the same model name no longer share scores; entries cached by earlier versions become misses.
 
 ### Removed
 
 - `docs/changelog.md`, superseded by this file.
+- **BREAKING:** `ATTEST_OPENAI_API_KEY`; use `ATTEST_JUDGE_API_KEY` or `OPENAI_API_KEY`.
+- **BREAKING:** `ATTEST_JUDGE_RPM` and `ATTEST_JUDGE_BURST`; use `ATTEST_RATE_LIMIT_OPENAI` and `ATTEST_RATE_LIMIT_OPENAI_BURST`.
+
+### Security
+
+- The ONNX embedding model downloads from a pinned Hugging Face revision and is rejected unless its sha256 matches; a cached model that does not match is replaced. Downloads use a unique temp file, a timeout and a 256 MiB cap, and are published 0644.
+- ONNX Runtime guidance targets 1.26.0 (required by `onnxruntime_go` v1.31) with published checksums; `ATTEST_ONNX_RUNTIME_LIB` is honored and resolved to an absolute path.
+- Judge base URL errors never echo the URL, so credentials in it cannot reach logs.
 
 ## [1.0.0-rc] — 2026-04-30
 
