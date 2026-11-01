@@ -75,7 +75,7 @@ uv run attest policy evaluate --report attest-report.json --policy attest.policy
 
 1. **Run tests** has `continue-on-error: true` and `id: tests`, so a failing test does not stop the job before the report is handled.
 2. **Upload the Attest report**, **Evaluate the merge policy** and **Annotate the pull request** run with `if: always()`. The policy step treats exit 2 as a warning and fails on exit 1.
-3. **Annotate the pull request** uses the `pr-annotate` action at the SDK's release tag. Each failure is annotated at its test's file and line: an inline review comment when that line is in the pull request diff (otherwise the review body lists it with `file:line`), and a workflow annotation either way.
+3. **Annotate the pull request** uses the `pr-annotate` action at the SDK's release tag. Each failure is annotated at its test's file and line: an inline review comment when that line is in the pull request diff (otherwise the review body lists it with `file:line`), and a workflow annotation either way. It runs only for pull requests from branches of the same repository: a fork's read-only token cannot post reviews, so annotating would fail the job for a reason unrelated to the tests.
 4. **Fail the job when tests failed** checks `steps.tests.outcome == 'failure'` and exits 1, so a red test is never hidden by `continue-on-error`.
 
 The job needs `pull-requests: write` for the review comments; the template sets it.

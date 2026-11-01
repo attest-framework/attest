@@ -64,7 +64,8 @@ def test_scaffold_project_ci_github_writes_merge_gate_workflow(tmp_path: Path) -
         assert "if: always()" in by_name[name], name
     assert '"$code" -eq 2' in by_name["Evaluate the merge policy"]
     annotate = by_name["Annotate the pull request"]
-    assert "if: always() && github.event_name == 'pull_request'" in annotate
+    assert "always() && github.event_name == 'pull_request' &&" in annotate
+    assert "github.event.pull_request.head.repo.full_name == github.repository" in annotate
     assert f"pr-annotate@v{__version__}" in annotate
     final = steps[-1]
     assert "if: always() && steps.tests.outcome == 'failure'" in final

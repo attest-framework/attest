@@ -128,7 +128,11 @@ jobs:
           fi
           exit "$code"
       - name: Annotate the pull request
-        if: always() && github.event_name == 'pull_request'
+        # Fork pull requests get a read-only token that cannot post reviews; the last step
+        # still fails the job when tests failed.
+        if: >-
+          always() && github.event_name == 'pull_request' &&
+          github.event.pull_request.head.repo.full_name == github.repository
         uses: attest-framework/attest/.github/actions/pr-annotate@v{__version__}
         with:
           report: attest-report.json

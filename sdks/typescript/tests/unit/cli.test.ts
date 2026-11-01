@@ -146,6 +146,9 @@ describe("attest init", () => {
       expect(byName.get("Evaluate the merge policy")).toContain("if: always()");
       expect(byName.get("Evaluate the merge policy")).toContain('"$code" -eq 2');
       expect(byName.get("Annotate the pull request")).toContain(`pr-annotate@v${VERSION}`);
+      expect(byName.get("Annotate the pull request")).toContain(
+        "github.event.pull_request.head.repo.full_name == github.repository",
+      );
       expect(steps.at(-1)).toContain("if: always() && steps.tests.outcome == 'failure'");
     },
   );
