@@ -301,3 +301,58 @@ func TestEvaluate_AggregateLayerCap(t *testing.T) {
 		t.Errorf("layer 0 cap should aggregate; got exit %d", r.ExitCode())
 	}
 }
+
+func notEvaluatedResults() []types.AssertionResult {
+	return []types.AssertionResult{
+		{AssertionID: "a1", Type: types.TypeSchema, Status: types.StatusPass, Layer: 1},
+		{AssertionID: "j1", Type: types.TypeLLMJudge, Status: types.StatusNotEvaluated, Reason: types.ReasonProviderUnavailable, Layer: 6},
+		{AssertionID: "j2", Type: types.TypeLLMJudge, Status: types.StatusNotEvaluated, Reason: types.ReasonProviderNotConfigured, Layer: 6},
+	}
+}
+
+func TestEvaluate_NotEvaluatedWarnsByDefault(t *testing.T) {
+	// Policy-wide block severity must not leak into not_evaluated.
+	p := &policy.Policy{Severity: policy.SeverityBlock}
+
+	r := policy.Evaluate(p, notEvaluatedResults(), 0, nil)
+
+	if r.ExitCode() != policy.ExitWarn {
+		t.Fatalf("ExitCode = %d, want %d; violations: %+v", r.ExitCode(), policy.ExitWarn, r.Violations)
+	}
+	v := r.Violations[0]
+	if v.Rule != "not_evaluated" || v.Detail != "2 assertions not evaluated (provider_not_configured: 1, provider_unavailable: 1)" {
+		t.Errorf("violation = %+v", v)
+	}
+}
+
+func TestEvaluate_NotEvaluatedBlockWhenPolicySetsBlock(t *testing.T) {
+	p := &policy.Policy{NotEvaluated: policy.SeverityBlock}
+
+	r := policy.Evaluate(p, notEvaluatedResults(), 0, nil)
+
+	if r.ExitCode() != policy.ExitBlock {
+		t.Errorf("ExitCode = %d, want %d", r.ExitCode(), policy.ExitBlock)
+	}
+}
+
+func TestEvaluate_NoNotEvaluatedRowsPasses(t *testing.T) {
+	p := &policy.Policy{NotEvaluated: policy.SeverityBlock}
+	results := []types.AssertionResult{{AssertionID: "a1", Type: types.TypeSchema, Status: types.StatusPass, Layer: 1}}
+
+	r := policy.Evaluate(p, results, 0, nil)
+
+	if !r.Passed() {
+		t.Errorf("expected pass, got %+v", r.Violations)
+	}
+}
+
+func TestLoad_RejectsBadNotEvaluatedSeverity(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "p.yaml")
+	if err := os.WriteFile(path, []byte("not_evaluated: ignore\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := policy.Load(path); err == nil {
+		t.Error("expected error for not_evaluated: ignore")
+	}
+}
