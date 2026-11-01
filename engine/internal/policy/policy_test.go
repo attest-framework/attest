@@ -356,3 +356,16 @@ func TestLoad_RejectsBadNotEvaluatedSeverity(t *testing.T) {
 		t.Error("expected error for not_evaluated: ignore")
 	}
 }
+
+func TestEvaluate_UnknownStatusCountsAsNotEvaluated(t *testing.T) {
+	results := []types.AssertionResult{{AssertionID: "x", Type: types.TypeSchema, Status: "error", Layer: 1}}
+
+	r := policy.Evaluate(&policy.Policy{}, results, 0, nil)
+
+	if r.ExitCode() != policy.ExitWarn {
+		t.Fatalf("ExitCode = %d, want %d; violations: %+v", r.ExitCode(), policy.ExitWarn, r.Violations)
+	}
+	if want := `1 assertions not evaluated (unknown status "error": 1)`; r.Violations[0].Detail != want {
+		t.Errorf("detail = %q, want %q", r.Violations[0].Detail, want)
+	}
+}

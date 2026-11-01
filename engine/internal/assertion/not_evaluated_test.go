@@ -90,13 +90,16 @@ func TestPipeline_FailingJudgeProvider_ReturnsProviderUnavailable(t *testing.T) 
 }
 
 func TestPipeline_UnparseableJudgeResponse_ReturnsProviderUnavailable(t *testing.T) {
-	provider := llm.NewMockProvider([]*llm.CompletionResponse{{Content: "not json"}}, nil)
+	provider := llm.NewMockProvider([]*llm.CompletionResponse{{Content: "not json", Cost: 0.002}}, nil)
 	p := NewPipeline(NewRegistry(WithJudge(provider, judge.NewRubricRegistry(), nil)))
 	p.SetSimulation(false)
 
 	got := evalOne(t, p, testTrace(), judgeAssertion("judge"))
 
 	assertNotEvaluated(t, got["judge"], types.ReasonProviderUnavailable)
+	if got["judge"].Cost != 0.002 {
+		t.Errorf("cost = %v, want 0.002 (billed call must be reported)", got["judge"].Cost)
+	}
 }
 
 func TestPipeline_RepeatedJudgeAllRunsFail_ReturnsProviderUnavailable(t *testing.T) {
