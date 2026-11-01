@@ -38,8 +38,13 @@ Point the judge at a local OpenAI-compatible server:
 export ATTEST_JUDGE_BASE_URL=http://localhost:11434/v1
 export ATTEST_JUDGE_API_KEY=unused
 export ATTEST_JUDGE_MODEL=llama3.1
+export ATTEST_EMBEDDING_PROVIDER=onnx   # keep Layer 5 local too (onnx builds)
 attest-engine doctor
 ```
+
+`ATTEST_JUDGE_BASE_URL` scopes only the judge. An `OPENAI_API_KEY` left in the environment still enables OpenAI embeddings at the default endpoint, and without `ATTEST_JUDGE_BASE_URL` it enables the paid OpenAI judge too. Unset it, or set `ATTEST_EMBEDDING_PROVIDER=onnx`, for a fully local setup, and check the result with `attest-engine doctor`.
+
+Plain `http` to a host other than `localhost` or a loopback address is allowed for internal servers, but the key travels in cleartext: the engine logs a warning at startup and `doctor` prints `insecure: plain http to non-loopback host`.
 
 ## Embeddings (Layer 5)
 

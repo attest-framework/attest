@@ -32,6 +32,9 @@ type JudgeDiagnosis struct {
 	Model        *string `json:"model"`
 	BaseURL      *string `json:"base_url"`
 	APIKeySource *string `json:"api_key_source"`
+	// Warning is a human-readable caveat for text output only; it is not
+	// part of doctor.schema.json.
+	Warning string `json:"-"`
 }
 
 // EmbedDiagnosis describes the Layer 5 embedder.
@@ -76,6 +79,9 @@ func Diagnose(logger *slog.Logger) (*Diagnosis, error) {
 			Model:        &model,
 			BaseURL:      &cfg.baseURL,
 			APIKeySource: &cfg.keySource,
+		}
+		if cfg.insecure {
+			d.Judge.Warning = insecureNote
 		}
 	}
 	return d, nil

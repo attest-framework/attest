@@ -232,3 +232,47 @@ func TestResolveJudgeConfig_NormalizesBaseURL(t *testing.T) {
 		t.Errorf("baseURL = %q, want http://localhost:8000/v1", cfg.baseURL)
 	}
 }
+
+func TestIsInsecureEndpoint(t *testing.T) {
+	cases := map[string]bool{
+		"http://localhost:11434/v1": false,
+		"http://127.0.0.1:8000/v1":  false,
+		"http://[::1]:8000/v1":      false,
+		"https://vllm.internal/v1":  false,
+		"http://vllm.internal:8000": true,
+		"http://10.0.0.5:8000/v1":   true,
+		llm.OpenAIDefaultBaseURL:    false,
+	}
+	for in, want := range cases {
+		if got := isInsecureEndpoint(in); got != want {
+			t.Errorf("isInsecureEndpoint(%q) = %v, want %v", in, got, want)
+		}
+	}
+}
+
+func TestDiagnose_InsecureEndpoint_WarnsWithoutSchemaField(t *testing.T) {
+	withoutProviders(t, "")
+	t.Setenv("ATTEST_JUDGE_BASE_URL", "http://vllm.internal:8000/v1")
+	t.Setenv("ATTEST_JUDGE_API_KEY", "k")
+	var logs strings.Builder
+	logger := slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelWarn}))
+
+	d, err := Diagnose(logger)
+
+	if err != nil {
+		t.Fatalf("Diagnose: %v", err)
+	}
+	if d.Judge.Warning != insecureNote {
+		t.Errorf("Warning = %q, want %q", d.Judge.Warning, insecureNote)
+	}
+	if !strings.Contains(logs.String(), "insecure judge endpoint") {
+		t.Errorf("no startup warning logged: %q", logs.String())
+	}
+	data, err := json.Marshal(d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "insecure") {
+		t.Errorf("warning leaked into doctor JSON: %s", data)
+	}
+}

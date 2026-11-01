@@ -3,6 +3,7 @@ package server
 import (
 	"fmt"
 	"log/slog"
+	"net"
 	"net/url"
 	"os"
 	"strings"
@@ -18,6 +19,7 @@ type judgeConfig struct {
 	baseURL   string // OpenAI-compatible endpoint, without trailing slash
 	apiKey    string
 	keySource string // name of the variable apiKey came from
+	insecure  bool   // plain http to a non-loopback host: the key travels in cleartext
 }
 
 // resolveJudgeConfig reads ATTEST_JUDGE_PROVIDER, ATTEST_JUDGE_MODEL,
@@ -41,6 +43,7 @@ func resolveJudgeConfig() (judgeConfig, error) {
 			return judgeConfig{}, err
 		}
 		cfg.baseURL = u
+		cfg.insecure = isInsecureEndpoint(u)
 		keyVars = keyVars[:1]
 		if os.Getenv("ATTEST_JUDGE_API_KEY") == "" {
 			return judgeConfig{}, fmt.Errorf(
@@ -87,6 +90,25 @@ func parseJudgeBaseURL(raw string) (string, error) {
 	return strings.TrimRight(u.String(), "/"), nil
 }
 
+// insecureNote is shown by doctor for a plain-http, non-loopback judge endpoint.
+const insecureNote = "insecure: plain http to non-loopback host"
+
+// isInsecureEndpoint reports whether baseURL (already validated) uses plain
+// http to a host other than localhost or a loopback IP. Such endpoints stay
+// allowed for internal servers but are reported at startup and by doctor.
+func isInsecureEndpoint(baseURL string) bool {
+	u, err := url.Parse(baseURL)
+	if err != nil || u.Scheme != "http" {
+		return false
+	}
+	host := u.Hostname()
+	if host == "localhost" {
+		return false
+	}
+	ip := net.ParseIP(host)
+	return ip == nil || !ip.IsLoopback()
+}
+
 // providers holds the Layer 5/6 providers configured from the environment.
 type providers struct {
 	embeddingRequested string // ATTEST_EMBEDDING_PROVIDER: auto, openai or onnx
@@ -124,6 +146,10 @@ func buildProviders(logger *slog.Logger) (providers, error) {
 			return p, err
 		}
 		p.judge = judge
+		if cfg.insecure {
+			logger.Warn("insecure judge endpoint: plain http to a non-loopback host sends ATTEST_JUDGE_API_KEY in cleartext",
+				"base_url", cfg.baseURL)
+		}
 	}
 	return p, nil
 }

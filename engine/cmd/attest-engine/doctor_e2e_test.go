@@ -225,6 +225,12 @@ func TestDoctor_TextOutputAndConfigError(t *testing.T) {
 		t.Fatalf("text doctor: exit %d\n%s", code, stdout)
 	}
 
+	insecureEnv := engineEnv(t.TempDir(), "ATTEST_JUDGE_BASE_URL=http://vllm.internal:8000/v1", "ATTEST_JUDGE_API_KEY=k")
+	stdout, _, code = runDoctor(t, bin, insecureEnv)
+	if code != 0 || !strings.Contains(stdout, "insecure: plain http to non-loopback host") {
+		t.Fatalf("insecure endpoint text doctor: exit %d\n%s", code, stdout)
+	}
+
 	_, stderr, code := runDoctor(t, bin, engineEnv(t.TempDir(), "ATTEST_JUDGE_PROVIDER=gemini"), "--json")
 	if code != 1 || !strings.Contains(stderr, "supported: openai") {
 		t.Fatalf("config error: exit %d stderr %q, want 1 naming supported providers", code, stderr)

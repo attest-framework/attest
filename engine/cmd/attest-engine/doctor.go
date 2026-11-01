@@ -54,6 +54,9 @@ func printDiagnosis(w io.Writer, d *server.Diagnosis) {
 	if d.Judge.Configured {
 		fmt.Fprintf(w, "judge (L6):      %s, model %s, base URL %s, key from %s\n",
 			*d.Judge.Provider, *d.Judge.Model, *d.Judge.BaseURL, *d.Judge.APIKeySource)
+		if d.Judge.Warning != "" {
+			fmt.Fprintf(w, "                 %s\n", d.Judge.Warning)
+		}
 	} else {
 		fmt.Fprintln(w, "judge (L6):      not configured (set ATTEST_JUDGE_API_KEY or OPENAI_API_KEY)")
 	}
