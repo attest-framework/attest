@@ -130,7 +130,7 @@ func failResultWithDiag(
 }
 
 // notEvaluatedResult builds a not_evaluated AssertionResult carrying a
-// C1 reason (types.Reason*). Score is 0 and FailureClass stays empty:
+// not_evaluated reason (types.Reason*). Score is 0 and FailureClass stays empty:
 // a not_evaluated row is neither a pass nor a failure.
 func notEvaluatedResult(assertion *types.Assertion, start time.Time, reason, explanation string) *types.AssertionResult {
 	return &types.AssertionResult{
