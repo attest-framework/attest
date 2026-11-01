@@ -1,105 +1,99 @@
-"""CLI subcommand handlers for ``attest baseline`` and ``attest policy``.
+"""The ``attest`` command line.
 
-Both commands are thin pass-throughs to the ``attest-engine`` binary —
-the engine owns the SQLite cache (baselines table) and the policy
-evaluator, so re-implementing in Python would create two sources of
-truth. The Python SDK owns argument parsing, locating the engine
-binary, and forwarding stdout/stderr/exit-code unchanged.
+``attest init`` runs in the SDK. Every other command (``doctor``, ``baseline``,
+``policy``, ``cache``, ``calibrate``, ``version`` and any command a later engine adds)
+runs in ``attest-engine``: the CLI resolves a version-checked engine with
+:func:`attest.engine_manager.resolve_engine` and forwards the arguments, stdout, stderr
+and exit code unchanged. A missing or mismatched engine exits 1 before anything runs, so
+a gate such as ``attest policy evaluate`` never exits 0 without evaluating.
 """
 
 from __future__ import annotations
 
-import os
-import shutil
 import subprocess
 import sys
 from collections.abc import Sequence
 from pathlib import Path
 
+from attest import ENGINE_VERSION, __version__
+from attest.engine_manager import resolve_engine
+from attest.exceptions import AttestError
 
-def _find_engine_binary() -> str:
-    """Locate the attest-engine binary using the same precedence as
-    ``EngineManager``: ATTEST_ENGINE_PATH → PATH → ~/.attest/bin.
+_HELP_FLAGS = frozenset({"-h", "--help", "help"})
 
-    Raises:
-        FileNotFoundError: If the binary cannot be located. Callers
-            should print a single-line install hint and exit 1.
-    """
-    env = os.environ.get("ATTEST_ENGINE_PATH")
-    if env:
-        if not Path(env).is_file():
-            raise FileNotFoundError(
-                f"ATTEST_ENGINE_PATH={env} does not point to an executable file"
-            )
-        return env
-
-    on_path = shutil.which("attest-engine")
-    if on_path:
-        return on_path
-
-    home_bin = Path.home() / ".attest" / "bin" / "attest-engine"
-    if home_bin.is_file():
-        return str(home_bin)
-
-    raise FileNotFoundError(
-        "attest-engine binary not found; set ATTEST_ENGINE_PATH or run "
-        "`attest-engine` install (see docs)"
-    )
+_SDK_USAGE = (
+    "usage: attest <command> [args]\n"
+    "\n"
+    "SDK commands:\n"
+    "  init  scaffold an attest test project in the current directory\n"
+    "\n"
+    "options:\n"
+    "  --version  print the SDK version and the engine version it requires\n"
+    "  --help     print this help\n"
+)
 
 
-def _passthrough(subcommand: str, argv: Sequence[str]) -> int:
-    """Run ``<engine-binary> <subcommand> <argv>`` and return its exit code.
-
-    stdout/stderr stream through unchanged so callers get the engine's
-    JSON output verbatim.
-    """
+def _engine_or_error() -> str | None:
+    """Resolve the engine, printing the reason to stderr when that fails."""
     try:
-        engine = _find_engine_binary()
-    except FileNotFoundError as exc:
-        print(f"attest {subcommand}: {exc}", file=sys.stderr)
+        return resolve_engine()
+    except (OSError, RuntimeError, subprocess.SubprocessError, AttestError) as exc:
+        print(f"attest: {exc}", file=sys.stderr)
+        return None
+
+
+def _engine_commands(engine: str) -> str:
+    """Return the ``commands:`` section of ``attest-engine help``."""
+    proc = subprocess.run(
+        [engine, "help"], stdin=subprocess.DEVNULL, capture_output=True, text=True, check=True
+    )
+    lines = proc.stdout.splitlines()
+    if "commands:" not in lines:
+        raise RuntimeError(f"{engine} help printed no commands section:\n{proc.stdout}")
+    return "\n".join(lines[lines.index("commands:") + 1 :])
+
+
+def print_help() -> int:
+    """Print SDK and engine commands. Returns 1 when the engine cannot be resolved."""
+    print(_SDK_USAGE)
+    engine = _engine_or_error()
+    if engine is None:
+        print("engine commands: unavailable (see error above)")
         return 1
-    cmd = [engine, subcommand, *argv]
-    proc = subprocess.run(cmd, check=False)
-    return proc.returncode
+    print(f"engine commands (attest-engine {ENGINE_VERSION}, {engine}):")
+    print(_engine_commands(engine))
+    return 0
 
 
-def cmd_baseline(argv: Sequence[str]) -> int:
-    """Run ``attest baseline <subcommand>`` via the engine binary.
+def forward(argv: Sequence[str]) -> int:
+    """Run ``<engine> <argv>`` on a version-checked engine and return its exit code."""
+    engine = _engine_or_error()
+    if engine is None:
+        return 1
+    return subprocess.run([engine, *argv], check=False).returncode
 
-    Returns the engine's exit code. With no subcommand or with ``--help``
-    a usage line is printed and 2 is returned to match the engine.
-    """
-    if not argv or argv[0] in {"-h", "--help"}:
-        _print_baseline_usage()
+
+def main(argv: Sequence[str] | None = None) -> int:
+    """Dispatch ``attest`` arguments and return the process exit code."""
+    args = list(sys.argv[1:] if argv is None else argv)
+
+    if not args or args[0] in _HELP_FLAGS:
+        return print_help()
+    if args[0] == "--version":
+        print(f"attest {__version__} (requires attest-engine {ENGINE_VERSION})")
+        return 0
+    if args[0] == "init":
+        from attest.scaffold import scaffold_project
+
+        scaffold_project(Path.cwd())
+        return 0
+    if args[0].startswith("-"):
+        print(f"attest: unknown option {args[0]}\n", file=sys.stderr)
+        print(_SDK_USAGE, file=sys.stderr)
         return 2
-    return _passthrough("baseline", argv)
+    return forward(args)
 
 
-def cmd_policy(argv: Sequence[str]) -> int:
-    """Run ``attest policy <subcommand>`` via the engine binary.
-
-    The policy evaluate exit codes (0/1/2 = pass/block/warn) propagate
-    untouched so a workflow can use this command as a merge gate.
-    """
-    if not argv or argv[0] in {"-h", "--help"}:
-        _print_policy_usage()
-        return 2
-    return _passthrough("policy", argv)
-
-
-def _print_baseline_usage() -> None:
-    print(
-        "usage: attest baseline <pin|list|show|delete> [args]\n"
-        "  pin    --tag <name> --report <path>\n"
-        "  list\n"
-        "  show   --tag <name>\n"
-        "  delete --tag <name>",
-        file=sys.stderr,
-    )
-
-
-def _print_policy_usage() -> None:
-    print(
-        "usage: attest policy evaluate --policy <path> --report <path> [--baseline <tag>]",
-        file=sys.stderr,
-    )
+def run() -> None:
+    """Console-script entry point for ``attest``."""
+    sys.exit(main())

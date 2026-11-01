@@ -6,7 +6,6 @@ engine produce byte-identical metrics on the same inputs.
 
 from __future__ import annotations
 
-import json
 import math
 from pathlib import Path
 
@@ -141,22 +140,3 @@ def test_calibrate_roundtrip(tmp_path: Path) -> None:
     # Perfect class agreement on 0.5 threshold → κ=1, AUC=1.
     assert result.cohen_kappa == 1.0
     assert result.roc_auc == 1.0
-
-
-def test_calibrate_cli_emits_json(tmp_path: Path) -> None:
-    """Smoke-test the CLI subcommand by invoking through __main__."""
-    import subprocess
-    import sys as sysmod
-
-    csv_path = tmp_path / "labels.csv"
-    csv_path.write_text("input,human,judge\nok,0.9,0.85\nbad,0.1,0.15\n")
-    proc = subprocess.run(
-        [sysmod.executable, "-m", "attest", "calibrate", "--labels", str(csv_path)],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    assert proc.returncode == 0, proc.stderr
-    payload = json.loads(proc.stdout)
-    assert payload["label_count"] == 2
-    assert payload["agreement"] == 1.0

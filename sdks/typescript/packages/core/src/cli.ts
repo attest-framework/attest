@@ -1,51 +1,33 @@
 #!/usr/bin/env node
 /**
- * CLI entry point for Attest: npx attest or attest (after global install).
+ * The `attest` command line (`npx attest`).
  *
- * Ported from Python sdks/python/src/attest/__main__.py
+ * `attest init` runs in the SDK. Every other command (`doctor`, `baseline`, `policy`,
+ * `cache`, `calibrate`, `version` and any command a later engine adds) runs in
+ * `attest-engine`: the CLI resolves a version-checked engine with `resolveEngine` and
+ * forwards the arguments, stdio and exit code unchanged. A missing or mismatched engine
+ * exits 1 before anything runs, so a gate such as `attest policy evaluate` never exits 0
+ * without evaluating.
  */
 
+import { spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import * as os from "node:os";
-import { VERSION } from "./version.js";
-import {
-  computeAgreement,
-  loadLabelsCSV,
-  loadLabelsJSONL,
-  type LabelPair,
-} from "./calibration.js";
+import { fileURLToPath } from "node:url";
+import { ENGINE_VERSION, VERSION } from "./version.js";
+import { resolveEngine } from "./engine-manager.js";
 
-function cacheDir(): string {
-  const envOverride = process.env["ATTEST_CACHE_DIR"];
-  if (envOverride) return envOverride;
-  return path.join(os.homedir(), ".attest", "cache");
-}
+const HELP_FLAGS = new Set(["-h", "--help", "help"]);
 
-function cacheDbPath(): string {
-  return path.join(cacheDir(), "attest.db");
-}
-
-function cmdCacheStats(): void {
-  const dbPath = cacheDbPath();
-  const exists = fs.existsSync(dbPath);
-  let fileSize = 0;
-  if (exists) {
-    fileSize = fs.statSync(dbPath).size;
-  }
-  const stats = { exists, file_size: fileSize, path: dbPath };
-  process.stdout.write(JSON.stringify(stats) + "\n");
-}
-
-function cmdCacheClear(): void {
-  const dbPath = cacheDbPath();
-  if (fs.existsSync(dbPath)) {
-    fs.unlinkSync(dbPath);
-    process.stdout.write(`Cleared cache: ${dbPath}\n`);
-  } else {
-    process.stdout.write(`No cache to clear: ${dbPath}\n`);
-  }
-}
+const SDK_USAGE =
+  "usage: attest <command> [args]\n" +
+  "\n" +
+  "SDK commands:\n" +
+  "  init  scaffold an attest test project in the current directory\n" +
+  "\n" +
+  "options:\n" +
+  "  --version  print the SDK version and the engine version it requires\n" +
+  "  --help     print this help\n";
 
 const CONFTEST_TEMPLATE = `import { describe, it, expect } from "vitest";
 import { attestExpect, TraceBuilder } from "@attest-ai/core";
@@ -76,226 +58,82 @@ function cmdInit(targetDir: string): void {
   }
 }
 
-function cmdValidate(targetDir: string): void {
-  const testsDir = path.join(targetDir, "tests");
-
-  let testFiles: string[] = [];
-  if (fs.existsSync(testsDir)) {
-    testFiles = fs
-      .readdirSync(testsDir)
-      .filter((f) => f.endsWith(".test.ts") || f.endsWith(".test.js"));
-  }
-
-  if (testFiles.length === 0) {
-    process.stderr.write(
-      `Warning: no test files (*.test.ts / *.test.js) found in ${testsDir}.\n`,
-    );
-  } else {
-    process.stdout.write(`Found ${testFiles.length} test file(s) in ${testsDir}\n`);
-  }
-
-  // Check for stale golden traces
-  const STALE_DAYS = 30;
-  const now = Date.now();
-  const goldenFiles = findGoldenFiles(targetDir);
-  for (const golden of goldenFiles) {
-    const mtime = fs.statSync(golden).mtimeMs;
-    const ageDays = Math.floor((now - mtime) / (1000 * 60 * 60 * 24));
-    if (ageDays > STALE_DAYS) {
-      process.stderr.write(
-        `Warning: golden trace ${golden} is ${ageDays} days old (>${STALE_DAYS} days). Consider regenerating.\n`,
-      );
-    }
+async function engineOrError(): Promise<string | null> {
+  try {
+    return await resolveEngine();
+  } catch (err) {
+    process.stderr.write(`attest: ${err instanceof Error ? err.message : String(err)}\n`);
+    return null;
   }
 }
 
-function findGoldenFiles(dir: string): string[] {
-  const results: string[] = [];
-  if (!fs.existsSync(dir)) return results;
-
-  const entries = fs.readdirSync(dir, { withFileTypes: true });
-  for (const entry of entries) {
-    const fullPath = path.join(dir, entry.name);
-    if (entry.isDirectory() && entry.name !== "node_modules") {
-      results.push(...findGoldenFiles(fullPath));
-    } else if (entry.isFile() && entry.name.endsWith(".golden")) {
-      results.push(fullPath);
-    }
+function engineCommands(engine: string): string {
+  const proc = spawnSync(engine, ["help"], {
+    stdio: ["ignore", "pipe", "pipe"],
+    encoding: "utf-8",
+  });
+  if (proc.error) throw proc.error;
+  if (proc.status !== 0) {
+    throw new Error(`${engine} help exited ${String(proc.status)}: ${proc.stderr}`);
   }
-  return results;
+  const lines = proc.stdout.split("\n");
+  const start = lines.indexOf("commands:");
+  if (start === -1) {
+    throw new Error(`${engine} help printed no commands section:\n${proc.stdout}`);
+  }
+  return lines.slice(start + 1).join("\n");
 }
 
-export function main(argv: string[] = process.argv.slice(2)): void {
-  const args = argv;
-
-  if (args[0] === "--version") {
-    process.stdout.write(`attest ${VERSION}\n`);
-    process.exit(0);
+async function printHelp(): Promise<number> {
+  process.stdout.write(`${SDK_USAGE}\n`);
+  const engine = await engineOrError();
+  if (engine === null) {
+    process.stdout.write("engine commands: unavailable (see error above)\n");
+    return 1;
   }
+  process.stdout.write(`engine commands (attest-engine ${ENGINE_VERSION}, ${engine}):\n`);
+  process.stdout.write(`${engineCommands(engine)}\n`);
+  return 0;
+}
 
-  if (args[0] === "cache" && args.length >= 2) {
-    if (args[1] === "stats") {
-      cmdCacheStats();
-      process.exit(0);
-    } else if (args[1] === "clear") {
-      cmdCacheClear();
-      process.exit(0);
-    } else {
-      process.stderr.write(`Unknown cache subcommand: ${args[1]}\n`);
-      process.stderr.write("Available: cache stats, cache clear\n");
-      process.exit(1);
-    }
+async function forward(args: string[]): Promise<number> {
+  const engine = await engineOrError();
+  if (engine === null) return 1;
+  const proc = spawnSync(engine, args, { stdio: "inherit" });
+  if (proc.error) throw proc.error;
+  return proc.status ?? 1;
+}
+
+/** Dispatch `attest` arguments and resolve to the process exit code. */
+export async function main(argv: string[] = process.argv.slice(2)): Promise<number> {
+  const [command] = argv;
+  if (command === undefined || HELP_FLAGS.has(command)) return printHelp();
+  if (command === "--version") {
+    process.stdout.write(`attest ${VERSION} (requires attest-engine ${ENGINE_VERSION})\n`);
+    return 0;
   }
-
-  if (args[0] === "init") {
+  if (command === "init") {
     cmdInit(process.cwd());
-    process.exit(0);
+    return 0;
   }
-
-  if (args[0] === "validate") {
-    cmdValidate(process.cwd());
-    process.exit(0);
+  if (command.startsWith("-")) {
+    process.stderr.write(`attest: unknown option ${command}\n\n${SDK_USAGE}`);
+    return 2;
   }
-
-  if (args[0] === "calibrate") {
-    cmdCalibrate(args.slice(1));
-    process.exit(0);
-  }
-
-  process.stderr.write(
-    "Usage: attest <command>\n\n" +
-    "Commands:\n" +
-    "  --version       Print version\n" +
-    "  init            Scaffold a test project\n" +
-    "  validate        Validate test suite\n" +
-    "  cache stats     Show cache statistics\n" +
-    "  cache clear     Clear cache database\n" +
-    "  calibrate       Compute judge agreement metrics over labeled data\n",
-  );
-  process.exit(args.length === 0 ? 0 : 1);
+  return forward(argv);
 }
 
-interface CalibrateOptions {
-  labels: string;
-  rubric: string;
-  rubricVersion: string;
-  threshold: number;
-}
-
-function parseCalibrateArgs(args: string[]): CalibrateOptions {
-  const opts: CalibrateOptions = {
-    labels: "",
-    rubric: "default",
-    rubricVersion: "",
-    threshold: 0.5,
-  };
-  for (let i = 0; i < args.length; i++) {
-    const arg = args[i]!;
-    const next = args[i + 1];
-    if (arg === "--labels") {
-      if (next === undefined) throw new Error("--labels requires a path");
-      opts.labels = next;
-      i++;
-    } else if (arg === "--rubric") {
-      if (next === undefined) throw new Error("--rubric requires a name");
-      opts.rubric = next;
-      i++;
-    } else if (arg === "--rubric-version") {
-      if (next === undefined) throw new Error("--rubric-version requires a value");
-      opts.rubricVersion = next;
-      i++;
-    } else if (arg === "--threshold") {
-      if (next === undefined) throw new Error("--threshold requires a number");
-      const parsed = Number(next);
-      if (next.trim() === "" || Number.isNaN(parsed)) {
-        throw new Error(`--threshold value ${JSON.stringify(next)} is not a number`);
-      }
-      opts.threshold = parsed;
-      i++;
-    } else {
-      throw new Error(`unknown calibrate flag: ${arg}`);
-    }
-  }
-  if (!opts.labels) {
-    throw new Error("--labels is required");
-  }
-  return opts;
-}
-
-function cmdCalibrate(args: string[]): void {
-  let opts: CalibrateOptions;
-  try {
-    opts = parseCalibrateArgs(args);
-  } catch (err) {
-    process.stderr.write(`calibrate: ${(err as Error).message}\n`);
-    process.exit(2);
-    return;
-  }
-
-  const text = fs.readFileSync(opts.labels, "utf-8");
-  const ext = path.extname(opts.labels).toLowerCase();
-  let records;
-  try {
-    if (ext === ".jsonl" || ext === ".ndjson") {
-      records = loadLabelsJSONL(text);
-    } else if (ext === ".csv") {
-      records = loadLabelsCSV(text);
-    } else if (text.trimStart().startsWith("{")) {
-      records = loadLabelsJSONL(text);
-    } else {
-      records = loadLabelsCSV(text);
-    }
-  } catch (err) {
-    process.stderr.write(`calibrate: ${(err as Error).message}\n`);
-    process.exit(1);
-    return;
-  }
-
-  const pairs: LabelPair[] = records
-    .filter((r) => r.judgeKnown)
-    .map((r) => ({ human: r.humanLabel, judge: r.judgeScore }));
-  const missing = records.filter((r) => !r.judgeKnown).length;
-  if (pairs.length === 0) {
-    process.stderr.write(
-      `calibrate: no rows had judge_score (${missing} rows missing); pre-score the labels file first\n`,
-    );
-    process.exit(1);
-    return;
-  }
-
-  let result;
-  try {
-    result = computeAgreement(pairs, opts.threshold);
-  } catch (err) {
-    process.stderr.write(`calibrate: ${(err as Error).message}\n`);
-    process.exit(1);
-    return;
-  }
-
-  const output = {
-    rubric_name: opts.rubric,
-    rubric_version: opts.rubricVersion,
-    threshold: result.threshold,
-    label_count: result.n,
-    agreement: round3(result.agreement),
-    cohen_kappa: round3(result.cohenKappa),
-    roc_auc: round3(result.rocAuc),
-    missing_judge: missing,
-  };
-  process.stdout.write(JSON.stringify(output, null, 2) + "\n");
-}
-
-function round3(x: number): number {
-  return Math.round(x * 1000) / 1000;
-}
-
-// Run when executed directly
+// Run when executed directly, including through the node_modules/.bin/attest symlink.
 const isDirectExecution =
-  typeof import.meta.url === "string" &&
-  import.meta.url.startsWith("file:") &&
   process.argv[1] !== undefined &&
-  import.meta.url.endsWith(path.basename(process.argv[1]));
+  fs.realpathSync(process.argv[1]) === fs.realpathSync(fileURLToPath(import.meta.url));
 
 if (isDirectExecution) {
-  main();
+  main().then(
+    (code) => process.exit(code),
+    (err: unknown) => {
+      process.stderr.write(`attest: ${err instanceof Error ? err.message : String(err)}\n`);
+      process.exit(1);
+    },
+  );
 }
