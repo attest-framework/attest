@@ -1,36 +1,119 @@
+import * as vitest from "vitest";
+import type { TestContext } from "vitest";
 import {
   type ExpectChain,
-  type Assertion,
-  type Trace,
-  type EvaluateBatchResult,
-  type AssertionResult,
   AgentResult,
   AttestClient,
   EngineManager,
   isSimulationMode,
-  simulationEvaluateBatch,
+  renderDiagnostics,
+  requireSimulationCapability,
+  OUTCOME_FAIL,
+  OUTCOME_SKIP,
   STATUS_SOFT_FAIL,
 } from "@attest-ai/core";
+
+export interface InspectOptions {
+  /** Throw when the cumulative session cost exceeds this USD amount. */
+  budget?: number;
+}
+
+export interface EvaluateOptions extends InspectOptions {
+  /**
+   * The running test's context (`it("…", async (context) => …)`). Used to
+   * skip the right test; required under `test.concurrent` and on Vitest
+   * versions before 4.1.
+   */
+  context?: TestContext;
+  /**
+   * Fail (instead of skip) when an assertion was not evaluated. Defaults to
+   * the ATTEST_STRICT environment variable ("1", "true" or "yes").
+   */
+  strict?: boolean;
+}
+
+function strictFromEnv(): boolean {
+  const v = (process.env["ATTEST_STRICT"] ?? "").trim().toLowerCase();
+  return v === "1" || v === "true" || v === "yes";
+}
+
+/**
+ * Fail or skip the running Vitest test according to the batch outcome:
+ * any hard_fail throws with rendered diagnostics; otherwise any
+ * not_evaluated skips with "not evaluated: <reasons>" (throws when strict);
+ * soft failures pass.
+ */
+export function enforceOutcome(
+  result: AgentResult,
+  strict: boolean,
+  context?: TestContext,
+): AgentResult {
+  const outcome = result.outcome({ strict });
+  if (outcome === OUTCOME_FAIL) {
+    const header = result.hardFailures.length === 0 ? `strict: ${result.skipReason()}\n` : "";
+    throw new Error(header + renderDiagnostics(result).replace(/^\n/, ""));
+  }
+  if (outcome === OUTCOME_SKIP) {
+    (context ?? currentTestContext(result)).skip(result.skipReason());
+  }
+  return result;
+}
+
+/**
+ * The running test's context when Vitest can name it unambiguously:
+ * TestRunner exists from Vitest 4.1, and under test.concurrent the
+ * "current test" may be another test, so the caller must pass `context`.
+ */
+function currentTestContext(result: AgentResult): TestContext {
+  const runner = (vitest as Partial<typeof vitest>).TestRunner;
+  const test = runner?.getCurrentTest();
+  if (test === undefined || test.concurrent === true) {
+    throw new Error(
+      `${result.skipReason()} — pass the test context to skip this test: ` +
+        "evaluate(chain, { context }) (required for test.concurrent and Vitest < 4.1)",
+    );
+  }
+  return test.context;
+}
 
 export class AttestEngineFixture {
   private manager: EngineManager | undefined;
   private _client: AttestClient | undefined;
+  private starting: Promise<void> | undefined;
 
-  constructor(options?: { enginePath?: string; logLevel?: string }) {
-    if (!isSimulationMode()) {
-      this.manager = new EngineManager({
-        enginePath: options?.enginePath,
-        logLevel: options?.logLevel ?? "warn",
-      });
+  constructor(options?: { enginePath?: string; logLevel?: string; client?: AttestClient }) {
+    if (options?.client !== undefined) {
+      this._client = options.client;
+      return;
     }
+    this.manager = new EngineManager({
+      enginePath: options?.enginePath,
+      logLevel: options?.logLevel ?? "warn",
+    });
   }
 
+  /**
+   * Start the engine. In simulation mode the engine is started with
+   * ATTEST_SIMULATION=1 so it evaluates layers 1-4 and reports layers 5-6
+   * as not evaluated; an engine without that capability is rejected.
+   */
   async start(): Promise<void> {
-    if (isSimulationMode()) return;
     if (this.manager === undefined) {
       throw new Error("AttestEngineFixture already stopped.");
     }
-    await this.manager.start();
+    const simulation = isSimulationMode();
+    if (simulation) {
+      process.env["ATTEST_SIMULATION"] = "1";
+    }
+    const init = await this.manager.start();
+    if (simulation) {
+      try {
+        requireSimulationCapability(init);
+      } catch (err) {
+        await this.manager.stop();
+        throw err;
+      }
+    }
     this._client = new AttestClient(this.manager);
   }
 
@@ -43,23 +126,22 @@ export class AttestEngineFixture {
   }
 
   get client(): AttestClient {
-    if (this._client === undefined && !isSimulationMode()) {
+    if (this._client === undefined) {
       throw new Error("Engine not started. Call start() first.");
     }
-    return this._client!;
+    return this._client;
   }
 
-  async evaluate(
-    chain: ExpectChain,
-    options?: { budget?: number },
-  ): Promise<AgentResult> {
-    let result: EvaluateBatchResult;
+  private async ensureStarted(): Promise<void> {
+    if (this._client !== undefined) return;
+    this.starting ??= this.start();
+    await this.starting;
+  }
 
-    if (isSimulationMode()) {
-      result = simulationEvaluateBatch(chain.assertions);
-    } else {
-      result = await this.client.evaluateBatch(chain.trace, chain.assertions);
-    }
+  /** Evaluate collected assertions without enforcing the test outcome. */
+  async inspect(chain: ExpectChain, options?: InspectOptions): Promise<AgentResult> {
+    await this.ensureStarted();
+    const result = await this.client.evaluateBatch(chain.trace, chain.assertions);
 
     globalThis.__attest_session_cost__ =
       (globalThis.__attest_session_cost__ ?? 0) + (result.total_cost ?? 0);
@@ -77,9 +159,9 @@ export class AttestEngineFixture {
       result.total_duration_ms ?? 0,
     );
 
-    // Track failing AgentResults so AttestCostReporter can render the
-    // hierarchical diagnostic block at the end of the run. Bound size
-    // because long suites with many failures should not balloon RAM.
+    // Track non-passing AgentResults so AttestCostReporter can render the
+    // diagnostic block at the end of the run. Bound size because long
+    // suites with many failures should not balloon RAM.
     if (!agentResult.passed) {
       const list = (globalThis.__attest_session_failures__ ??= []);
       if (list.length < 200) {
@@ -99,31 +181,40 @@ export class AttestEngineFixture {
 
     return agentResult;
   }
+
+  /** Evaluate collected assertions and enforce the test outcome. */
+  async evaluate(chain: ExpectChain, options?: EvaluateOptions): Promise<AgentResult> {
+    const result = await this.inspect(chain, options);
+    return enforceOutcome(result, options?.strict ?? strictFromEnv(), options?.context);
+  }
 }
+
+// Vitest runs globalSetup in the main process and tests in workers, so a
+// worker that cannot see the global client starts its own engine on first use.
+// The engine exits when its stdin closes, i.e. when the worker exits.
+let workerFixture: AttestEngineFixture | undefined;
 
 export function useAttest(): AttestEngineFixture {
-  if (isSimulationMode() || globalThis.__attest_simulation_mode__) {
-    return new AttestEngineFixture();
-  }
-
   const client = globalThis.__attest_client__;
-  const engine = globalThis.__attest_engine__;
-
-  if (client === undefined || engine === undefined) {
-    throw new Error(
-      "Attest engine not available. Configure attestGlobalSetup() in vitest.config.ts globalSetup.",
-    );
+  if (client !== undefined) {
+    return new AttestEngineFixture({ client });
   }
-
-  const fixture = new AttestEngineFixture();
-  Object.defineProperty(fixture, "client", { get: () => client });
-  return fixture;
+  workerFixture ??= new AttestEngineFixture();
+  return workerFixture;
 }
 
+/** Evaluate and enforce: hard_fail throws, not_evaluated skips (strict: throws). */
 export async function evaluate(
   chain: ExpectChain,
-  options?: { budget?: number },
+  options?: EvaluateOptions,
 ): Promise<AgentResult> {
-  const fixture = useAttest();
-  return fixture.evaluate(chain, options);
+  return useAttest().evaluate(chain, options);
+}
+
+/** Evaluate without enforcing; use for trial loops and custom checks. */
+export async function inspect(
+  chain: ExpectChain,
+  options?: InspectOptions,
+): Promise<AgentResult> {
+  return useAttest().inspect(chain, options);
 }

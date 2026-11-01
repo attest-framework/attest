@@ -3,6 +3,7 @@ import type {
   ConversationMessage,
   DriftReport,
   EvaluateBatchResult,
+  InitializeResult,
   SimulateFaultConfig,
   SimulatePersona,
   Trace,
@@ -28,7 +29,6 @@ import {
 } from "./proto/diagnostics.js";
 import type { EngineManager } from "./engine-manager.js";
 import { isSimulationMode } from "./config.js";
-import { simulationEvaluateBatch } from "./simulation.js";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 const DEFAULT_DIAGNOSTIC_BUFFER = 32;
@@ -362,10 +362,14 @@ export class AttestClient {
     assertions: readonly Assertion[],
     options?: { timeout?: number },
   ): Promise<EvaluateBatchResult> {
+    // Simulation is decided by the engine: started with ATTEST_SIMULATION
+    // set, it evaluates layers 1-4 for real and returns not_evaluated
+    // (reason "simulation") for layers 5-6. Refuse to send when the running
+    // engine did not advertise that mode: it would call real providers.
     if (isSimulationMode()) {
-      return simulationEvaluateBatch(assertions);
+      // EngineManager keeps the initialize result private.
+      requireSimulationCapability(this.engine["initResult"]);
     }
-
     const params = {
       trace,
       assertions: [...assertions],
@@ -417,10 +421,10 @@ export class AttestClient {
     if (isSimulationMode()) {
       return {
         assertion_id: assertionId,
-        mean: 1.0,
+        mean: 0.0,
         stddev: 0,
         count: 0,
-        latest_score: 1.0,
+        latest_score: 0.0,
         deviation: 0,
         status: "no_data",
       };
@@ -466,4 +470,23 @@ function classifyDecodeError(message: string): ProtocolDiagnosticKind {
   if (message.startsWith("invalid jsonrpc version")) return "invalid_jsonrpc_version";
   if (message.startsWith("empty response line")) return "malformed_json";
   return "malformed_json";
+}
+
+/**
+ * Throw unless the engine advertised `simulation_mode` at initialize. An
+ * engine started without ATTEST_SIMULATION (or older than 1.0) would call
+ * real embedding and judge providers in simulation mode.
+ */
+export function requireSimulationCapability(init: InitializeResult | null | undefined): void {
+  if (init === null || init === undefined) {
+    throw new Error("simulation mode: the engine has not been initialized");
+  }
+  if (!(init.capabilities ?? []).includes("simulation_mode")) {
+    throw new Error(
+      `simulation mode is on but attest-engine ${init.engine_version} was not started in ` +
+        "simulation mode (capability 'simulation_mode' missing), so it would call real " +
+        "providers. Set ATTEST_SIMULATION=1 before the engine starts (the Vitest fixtures do " +
+        "this for you) and use attest-engine 1.0 or later.",
+    );
+  }
 }

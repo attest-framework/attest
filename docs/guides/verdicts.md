@@ -23,10 +23,10 @@ A `not_evaluated` assertion is never a pass and never a `broken_code` failure.
 
 ## Test outcome
 
-| Batch contains | pytest outcome |
+| Batch contains | pytest / Vitest outcome |
 | --- | --- |
 | any `hard_fail` | **failed**, with a diagnostic for every failed and not-evaluated assertion |
-| otherwise any `not_evaluated` | **skipped** with `not evaluated: <reasons>` (failed with `--attest-strict`) |
+| otherwise any `not_evaluated` | **skipped** with `not evaluated: <reasons>` (failed with `--attest-strict` / `ATTEST_STRICT=1`) |
 | otherwise any `soft_fail` | passed; the session summary lists the soft failures |
 | otherwise | passed |
 
@@ -61,6 +61,18 @@ def test_refund_reliability(attest):
 
 `attest.enforce(result)` applies the same rules (and `--attest-strict`) to an `AgentResult` from `inspect()`, a `RepeatResult` or a `ScenarioResult`: any failing trial fails the test with that trial's diagnostics; otherwise any not-evaluated trial skips it with the summed reasons, for example `not evaluated: simulation ×5`. A trial with soft failures counts as passing; passed and skipped tests with soft failures are listed in the "Attest soft failures" session summary.
 
+### Vitest
+
+```ts
+import { evaluate, inspect } from "@attest-ai/vitest";
+
+it("refund", async () => {
+  await evaluate(attestExpect(refundAgent.run({ order_id: "ORD-123" })).noToolLoops("lookup_order"));
+});
+```
+
+`evaluate(chain)` throws with the diagnostics on any hard failure and skips the running test (`↓ refund [not evaluated: provider_not_configured]`) when an assertion was not evaluated; pass `{ strict: true }` or set `ATTEST_STRICT=1` to fail instead. Under `it.concurrent`, or on Vitest before 4.1, pass the test context so the right test is skipped: `it.concurrent("refund", async (context) => evaluate(chain, { context }))`. `inspect(chain)` never enforces. `AgentResult` exposes `outcome()`, `notEvaluated`, `notEvaluatedReasons`, `passRate` and `skipReason()`. Each Vitest worker starts its own engine on first use when the `attestGlobalSetup()` client is not visible to it; that engine exits with the worker.
+
 ## Policy
 
 `attest-engine policy evaluate` adds a `not_evaluated` violation when any assertion is `not_evaluated`. Its severity is `warn` (exit 2) by default:
@@ -72,4 +84,4 @@ not_evaluated: block   # exit 1 instead of 2
 
 ## Simulation mode
 
-`ATTEST_SIMULATION=1` (or `attest.config(simulation=True)` before the engine starts) starts the engine with providers disabled. Deterministic layers still evaluate, so a violated schema, constraint, trace or content contract still fails; judge and embedding assertions report `not_evaluated: simulation`.
+`ATTEST_SIMULATION=1` (or `attest.config(simulation=True)` / `config({ simulation: true })` before the engine starts) starts the engine with providers disabled. Deterministic layers still evaluate, so a violated schema, constraint, trace or content contract still fails; judge and embedding assertions report `not_evaluated: simulation`.
