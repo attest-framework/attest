@@ -3,20 +3,52 @@
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from attest.engine_manager import EngineManager, _engine_timeout, _find_engine_binary
-from attest.exceptions import EngineTimeoutError
+from attest.engine_manager import EngineManager, _engine_timeout
+from attest.exceptions import EngineTimeoutError, EngineVersionMismatchError
+from tests.conftest import ScriptedEngine
 
 
-def test_find_engine_binary_not_found(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Raises FileNotFoundError with descriptive message when binary absent."""
-    monkeypatch.setenv("ATTEST_ENGINE_NO_DOWNLOAD", "1")
-    monkeypatch.delenv("ATTEST_ENGINE_PATH", raising=False)
+def test_engine_manager_old_engine_path_raises_mismatch(
+    isolated_engine_env: Path, scripted_engine: ScriptedEngine
+) -> None:
+    """An explicit engine path goes through the same version check as discovery."""
+    with pytest.raises(EngineVersionMismatchError, match="0.8.0"):
+        EngineManager(engine_path=str(scripted_engine(version="0.8.0")))
+
+
+def test_engine_manager_no_engine_raises_file_not_found(isolated_engine_env: Path) -> None:
     with pytest.raises(FileNotFoundError, match="attest-engine"):
-        _find_engine_binary()
+        EngineManager()
+
+
+def test_engine_manager_start_initialize_version_mismatch_stops_and_raises(
+    isolated_engine_env: Path, scripted_engine: ScriptedEngine
+) -> None:
+    manager = EngineManager(engine_path=str(scripted_engine()))
+    init = {
+        "engine_version": "0.9.0",
+        "protocol_version": 1,
+        "capabilities": ["layers_1_4"],
+        "missing": [],
+        "compatible": True,
+    }
+
+    async def _run() -> None:
+        with (
+            patch("asyncio.create_subprocess_exec", AsyncMock(return_value=MagicMock(pid=1))),
+            patch.object(manager, "_send_request", AsyncMock(return_value=init)),
+            patch.object(manager, "stop", AsyncMock()) as stop,
+            pytest.raises(EngineVersionMismatchError, match="from initialize"),
+        ):
+            await manager.start()
+        stop.assert_awaited_once()
+
+    asyncio.run(_run())
 
 
 def test_engine_manager_not_initialized_raises() -> None:

@@ -1,20 +1,24 @@
-"""Tests for engine_downloader and updated discovery chain."""
+"""Tests for engine_downloader: versioned cache and checksum-verified download."""
 
 from __future__ import annotations
 
+import hashlib
 import os
+import platform
 from pathlib import Path
 from unittest.mock import patch
 
 import pytest
 
+from attest import ENGINE_VERSION
 from attest.engine_downloader import (
     _binary_filename,
     _parse_checksums,
     _platform_key,
     cached_engine_path,
+    download_engine,
+    versioned_bin_dir,
 )
-from attest.engine_manager import _find_engine_binary
 
 # ── _platform_key ──────────────────────────────────────────────────────
 
@@ -85,74 +89,75 @@ def test_parse_checksums_empty() -> None:
     assert _parse_checksums("") == {}
 
 
-# ── cached_engine_path ─────────────────────────────────────────────────
+# ── versioned cache ────────────────────────────────────────────────────
 
 
-def test_cached_engine_path_missing(tmp_path: Path) -> None:
-    """Returns None when no cached binary exists."""
-    with patch("attest.engine_downloader._attest_bin_dir", return_value=tmp_path):
-        assert cached_engine_path() is None
+def test_versioned_bin_dir_uses_canonical_engine_version(isolated_engine_env: Path) -> None:
+    assert versioned_bin_dir() == isolated_engine_env / ".attest" / "bin" / ENGINE_VERSION
 
 
-def test_cached_engine_path_version_mismatch(tmp_path: Path) -> None:
-    """Returns None when cached version doesn't match ENGINE_VERSION."""
-    bin_file = tmp_path / "attest-engine"
-    bin_file.write_bytes(b"\x00")
-    ver_file = tmp_path / ".engine-version"
-    ver_file.write_text("0.0.0")
-
-    with patch("attest.engine_downloader._attest_bin_dir", return_value=tmp_path):
-        assert cached_engine_path() is None
+def test_cached_engine_path_missing_returns_none(isolated_engine_env: Path) -> None:
+    assert cached_engine_path() is None
 
 
-def test_cached_engine_path_valid(tmp_path: Path) -> None:
-    """Returns path when version matches and binary exists."""
-    from attest import ENGINE_VERSION
+def test_cached_engine_path_ignores_legacy_unversioned_binary(isolated_engine_env: Path) -> None:
+    legacy = isolated_engine_env / ".attest" / "bin" / _binary_filename()
+    legacy.parent.mkdir(parents=True)
+    legacy.write_bytes(b"old")
 
-    bin_file = tmp_path / "attest-engine"
-    bin_file.write_bytes(b"\x00")
-    ver_file = tmp_path / ".engine-version"
-    ver_file.write_text(ENGINE_VERSION)
-
-    with (
-        patch("attest.engine_downloader._attest_bin_dir", return_value=tmp_path),
-        patch("attest.engine_downloader._binary_filename", return_value="attest-engine"),
-    ):
-        result = cached_engine_path()
-        assert result is not None
-        assert result.name == "attest-engine"
+    assert cached_engine_path() is None
 
 
-# ── _find_engine_binary (discovery chain) ──────────────────────────────
+def test_cached_engine_path_present_returns_versioned_binary(isolated_engine_env: Path) -> None:
+    binary = versioned_bin_dir() / _binary_filename()
+    binary.parent.mkdir(parents=True)
+    binary.write_bytes(b"engine")
+
+    assert cached_engine_path() == binary
 
 
-def test_find_engine_env_override(tmp_path: Path) -> None:
-    """ATTEST_ENGINE_PATH env var takes priority over all other methods."""
-    fake_binary = tmp_path / "attest-engine"
-    fake_binary.write_bytes(b"\x00")
-
-    with patch.dict(os.environ, {"ATTEST_ENGINE_PATH": str(fake_binary)}):
-        result = _find_engine_binary()
-        assert result == str(fake_binary)
+# ── download_engine ────────────────────────────────────────────────────
 
 
-def test_find_engine_env_override_missing() -> None:
-    """ATTEST_ENGINE_PATH pointing to nonexistent file raises FileNotFoundError."""
-    with patch.dict(os.environ, {"ATTEST_ENGINE_PATH": "/nonexistent/attest-engine"}):
-        with pytest.raises(FileNotFoundError, match="ATTEST_ENGINE_PATH"):
-            _find_engine_binary()
-
-
-def test_find_engine_no_download_raises() -> None:
-    """ATTEST_ENGINE_NO_DOWNLOAD=1 produces actionable error when binary is missing."""
-    env = {
-        "ATTEST_ENGINE_NO_DOWNLOAD": "1",
-        "ATTEST_ENGINE_PATH": "",
+def _release(binary: bytes, digest: str) -> dict[str, bytes]:
+    asset = f"attest-engine-{_platform_key()}"
+    if platform.system() == "Windows":
+        asset += ".exe"
+    base = f"https://github.com/attest-framework/attest/releases/download/v{ENGINE_VERSION}"
+    return {
+        f"{base}/checksums-sha256.txt": f"{digest}  {asset}\n".encode(),
+        f"{base}/{asset}": binary,
     }
+
+
+def test_download_engine_writes_versioned_cache_and_keeps_legacy(
+    isolated_engine_env: Path,
+) -> None:
+    legacy = isolated_engine_env / ".attest" / "bin" / _binary_filename()
+    legacy.parent.mkdir(parents=True)
+    legacy.write_bytes(b"old engine")
+    binary = b"new engine"
+    release = _release(binary, hashlib.sha256(binary).hexdigest())
+
+    with patch("attest.engine_downloader._url_read", side_effect=release.__getitem__):
+        target = download_engine()
+
+    assert target == versioned_bin_dir() / _binary_filename()
+    assert target.read_bytes() == binary
+    assert os.access(target, os.X_OK)
+    assert legacy.read_bytes() == b"old engine"
+    assert sorted(p.name for p in versioned_bin_dir().iterdir()) == [_binary_filename()]
+
+
+def test_download_engine_tampered_binary_raises_and_writes_nothing(
+    isolated_engine_env: Path,
+) -> None:
+    release = _release(b"tampered", hashlib.sha256(b"published").hexdigest())
+
     with (
-        patch.dict(os.environ, env, clear=False),
-        patch("shutil.which", return_value=None),
-        patch("attest.engine_downloader.cached_engine_path", return_value=None),
+        patch("attest.engine_downloader._url_read", side_effect=release.__getitem__),
+        pytest.raises(RuntimeError, match="SHA256 mismatch"),
     ):
-        with pytest.raises(FileNotFoundError, match="Cannot find"):
-            _find_engine_binary()
+        download_engine()
+
+    assert cached_engine_path() is None

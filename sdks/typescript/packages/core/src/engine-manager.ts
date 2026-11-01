@@ -1,69 +1,121 @@
-import { spawn, execSync, type ChildProcess } from "node:child_process";
+import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { createInterface, type Interface as ReadlineInterface } from "node:readline";
-import { existsSync, accessSync, constants as fsConstants } from "node:fs";
-import { resolve, join, dirname } from "node:path";
-import { fileURLToPath } from "node:url";
+import { existsSync, accessSync, statSync, constants as fsConstants } from "node:fs";
+import { delimiter, join } from "node:path";
 import type { InitializeResult } from "./proto/types.js";
 import { decodeResponse, encodeRequest, extractResult } from "./proto/codec.js";
-import { VERSION } from "./version.js";
-import { cachedEnginePath, downloadEngine } from "./engine-downloader.js";
+import { ENGINE_VERSION, VERSION } from "./version.js";
+import { binaryFilename, cachedEnginePath, downloadEngine } from "./engine-downloader.js";
 
 const ENGINE_BINARY_NAME = "attest-engine";
+const VERSION_PROBE_TIMEOUT_MS = 10_000;
 
-async function findEngineBinary(): Promise<string> {
-  // 1. Explicit env var override
+/** A discovered engine does not report the version this SDK requires. */
+export class EngineVersionMismatchError extends Error {
+  readonly enginePath: string;
+  readonly source: string;
+  readonly found: string | null;
+  readonly required: string;
+
+  constructor(enginePath: string, source: string, found: string | null, required: string) {
+    const reported = found === null ? "reports no version" : `reports version ${found}`;
+    super(
+      `attest-engine at ${enginePath} (from ${source}) ${reported}; ` +
+        `this SDK requires attest-engine ${required}. ` +
+        "Point ATTEST_ENGINE_PATH at a matching engine, or remove the mismatched one " +
+        `from PATH so the SDK can download ${required} into ~/.attest/bin/${required}/.`,
+    );
+    this.name = "EngineVersionMismatchError";
+    this.enginePath = enginePath;
+    this.source = source;
+    this.found = found;
+    this.required = required;
+  }
+}
+
+/**
+ * The version `<path> version` reports, or null if it reports none.
+ *
+ * Every engine since 0.4 answers `version` with `attest-engine <version>`. stdin is
+ * closed so a binary that starts the JSON-RPC server instead reads EOF and exits.
+ */
+export function engineVersion(enginePath: string): string | null {
+  const proc = spawnSync(enginePath, ["version"], {
+    stdio: ["ignore", "pipe", "pipe"],
+    encoding: "utf-8",
+    timeout: VERSION_PROBE_TIMEOUT_MS,
+  });
+  if (proc.error) throw proc.error;
+  const out = proc.stdout.trim();
+  const prefix = `${ENGINE_BINARY_NAME} `;
+  if (proc.status !== 0 || !out.startsWith(prefix)) return null;
+  return out.slice(prefix.length).trim();
+}
+
+function onPath(): string | null {
+  for (const dir of (process.env["PATH"] ?? "").split(delimiter)) {
+    if (!dir) continue;
+    const candidate = join(dir, binaryFilename());
+    try {
+      accessSync(candidate, fsConstants.X_OK);
+    } catch {
+      continue;
+    }
+    if (statSync(candidate).isFile()) return candidate;
+  }
+  return null;
+}
+
+function requireFile(enginePath: string, label: string): void {
+  if (!existsSync(enginePath) || !statSync(enginePath).isFile()) {
+    throw new Error(`${label}=${enginePath} does not exist or is not a file.`);
+  }
+}
+
+async function locateEngine(explicitPath: string | undefined): Promise<[string, string]> {
+  if (explicitPath) {
+    requireFile(explicitPath, "Engine path");
+    return [explicitPath, "explicit engine path"];
+  }
   const envPath = process.env["ATTEST_ENGINE_PATH"];
   if (envPath) {
-    if (!existsSync(envPath)) {
-      throw new Error(
-        `ATTEST_ENGINE_PATH is set to '${envPath}' but the file does not exist.`
-      );
-    }
-    return envPath;
+    requireFile(envPath, "ATTEST_ENGINE_PATH");
+    return [envPath, "ATTEST_ENGINE_PATH"];
   }
-
-  // 2. Check PATH via which/where
-  try {
-    const cmd = process.platform === "win32" ? "where" : "which";
-    const found = execSync(`${cmd} ${ENGINE_BINARY_NAME}`, { encoding: "utf-8" }).trim();
-    if (found) return found;
-  } catch {
-    // not on PATH
-  }
-
-  // 3. Cached download in ~/.attest/bin/
+  const found = onPath();
+  if (found) return [found, "PATH"];
   const cached = cachedEnginePath();
-  if (cached) return cached;
+  if (cached) return [cached, "engine cache"];
 
-  // 4. Monorepo dev layout (../../bin/ relative to this file)
-  // 5. CWD ./bin/
-  const candidates = [
-    join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "..", "..", "bin", ENGINE_BINARY_NAME),
-    join(process.cwd(), "bin", ENGINE_BINARY_NAME)
-  ];
-
-  for (const candidate of candidates) {
-    const resolved = resolve(candidate);
-    try {
-      accessSync(resolved, fsConstants.X_OK);
-      if (existsSync(resolved)) return resolved;
-    } catch {
-      // not accessible
-    }
-  }
-
-  // 6. Auto-download
-  const noDownload = process.env["ATTEST_ENGINE_NO_DOWNLOAD"];
+  const noDownload = process.env["ATTEST_ENGINE_NO_DOWNLOAD"]?.toLowerCase();
   if (noDownload === "1" || noDownload === "true" || noDownload === "yes") {
     throw new Error(
-      `Cannot find '${ENGINE_BINARY_NAME}' binary and auto-download is disabled ` +
-      "(ATTEST_ENGINE_NO_DOWNLOAD is set). Install the engine manually:\n" +
-      "  1. Download from https://github.com/attest-framework/attest/releases\n" +
-      "  2. Place the binary on your PATH or set ATTEST_ENGINE_PATH"
+      `Cannot find '${ENGINE_BINARY_NAME}' ${ENGINE_VERSION} and ATTEST_ENGINE_NO_DOWNLOAD is set.\n` +
+        "Install options:\n" +
+        "  1. Build from source: make engine, then set ATTEST_ENGINE_PATH\n" +
+        `  2. Download release v${ENGINE_VERSION}: https://github.com/attest-framework/attest/releases\n` +
+        "  3. Allow auto-download by unsetting ATTEST_ENGINE_NO_DOWNLOAD",
     );
   }
+  return [await downloadEngine(), "download"];
+}
 
-  return downloadEngine();
+/**
+ * Find an engine whose version matches this SDK and return its path.
+ *
+ * The single discovery function behind `EngineManager` and the `attest` CLI. Order:
+ * explicit path → `ATTEST_ENGINE_PATH` → `attest-engine` on `PATH` →
+ * `~/.attest/bin/<ENGINE_VERSION>/` → download (unless `ATTEST_ENGINE_NO_DOWNLOAD`).
+ * The first engine found must report exactly `ENGINE_VERSION`; a mismatched engine is
+ * never skipped in favor of the next location.
+ */
+export async function resolveEngine(explicitPath?: string): Promise<string> {
+  const [enginePath, source] = await locateEngine(explicitPath);
+  const found = engineVersion(enginePath);
+  if (found !== ENGINE_VERSION) {
+    throw new EngineVersionMismatchError(enginePath, source, found, ENGINE_VERSION);
+  }
+  return enginePath;
 }
 
 export class EngineManager {
@@ -81,9 +133,7 @@ export class EngineManager {
   }
 
   async start(): Promise<InitializeResult> {
-    if (!this.enginePath) {
-      this.enginePath = await findEngineBinary();
-    }
+    this.enginePath = await resolveEngine(this.enginePath || undefined);
 
     this.process = spawn(this.enginePath, [`--log-level=${this.logLevel}`], {
       stdio: ["pipe", "pipe", "pipe"],
@@ -100,7 +150,17 @@ export class EngineManager {
     });
 
     this.initResult = result as InitializeResult;
+    if (this.initResult.engine_version !== ENGINE_VERSION) {
+      await this.stop();
+      throw new EngineVersionMismatchError(
+        this.enginePath,
+        "initialize",
+        this.initResult.engine_version,
+        ENGINE_VERSION,
+      );
+    }
     if (!this.initResult.compatible) {
+      await this.stop();
       throw new Error(
         `Engine incompatible. Missing capabilities: ${JSON.stringify(this.initResult.missing)}`,
       );

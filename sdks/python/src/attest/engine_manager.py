@@ -6,18 +6,22 @@ import asyncio
 import logging
 import os
 import shutil
+import subprocess
 from typing import Any
 
-from attest import __version__
+from attest import ENGINE_VERSION, __version__
 from attest._proto.codec import decode_response, encode_request, extract_result
 from attest._proto.types import InitializeParams, InitializeResult
-from attest.exceptions import EngineTimeoutError
+from attest.engine_downloader import cached_engine_path, download_engine
+from attest.exceptions import EngineTimeoutError, EngineVersionMismatchError
 
 logger = logging.getLogger("attest.engine")
 
 ENGINE_BINARY_NAME = "attest-engine"
 
 _DEFAULT_ENGINE_TIMEOUT: float = 30.0
+
+_VERSION_PROBE_TIMEOUT: float = 10.0
 
 
 def _engine_timeout() -> float:
@@ -44,66 +48,89 @@ def _is_download_disabled() -> bool:
     return val in ("1", "true", "yes")
 
 
-def _find_engine_binary() -> str:
-    """Find the engine binary using the full discovery chain.
+def engine_version(path: str) -> str | None:
+    """Return the version ``<path> version`` reports, or ``None`` if it reports none.
 
-    Discovery order:
-        1. ATTEST_ENGINE_PATH env var (absolute path override)
-        2. PATH lookup (shutil.which)
-        3. ~/.attest/bin/ shared cache (version-checked)
-        4. Monorepo dev layout (../../bin/)
-        5. Local ./bin/
-        6. Auto-download from GitHub Releases
-        7. FileNotFoundError with actionable message
+    Every engine since 0.4 answers ``version`` with ``attest-engine <version>``. stdin is
+    closed so a binary that does not know the subcommand and starts the JSON-RPC server
+    instead reads EOF and exits.
     """
-    # Step 1: Explicit env override
+    proc = subprocess.run(
+        [path, "version"],
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        text=True,
+        timeout=_VERSION_PROBE_TIMEOUT,
+        check=False,
+    )
+    prefix = f"{ENGINE_BINARY_NAME} "
+    out = proc.stdout.strip()
+    if proc.returncode != 0 or not out.startswith(prefix):
+        return None
+    return out[len(prefix) :].strip()
+
+
+def _locate_engine(explicit_path: str | None) -> tuple[str, str]:
+    """Return ``(path, source)`` for the first engine in the discovery chain."""
+    if explicit_path:
+        if not os.path.isfile(explicit_path):
+            raise FileNotFoundError(f"Engine path {explicit_path} does not exist or is not a file.")
+        return explicit_path, "explicit engine path"
+
     env_path = os.environ.get("ATTEST_ENGINE_PATH")
     if env_path:
         if not os.path.isfile(env_path):
             raise FileNotFoundError(
                 f"ATTEST_ENGINE_PATH={env_path} does not exist or is not a file."
             )
-        return env_path
+        return env_path, "ATTEST_ENGINE_PATH"
 
-    # Step 2: PATH lookup
     found = shutil.which(ENGINE_BINARY_NAME)
     if found:
-        return found
-
-    # Step 3: Shared cache (~/.attest/bin/) with version check
-    from attest.engine_downloader import cached_engine_path
+        return found, "PATH"
 
     cached = cached_engine_path()
     if cached is not None:
-        return str(cached)
+        return str(cached), "engine cache"
 
-    # Step 4: Monorepo dev layout
-    # Step 5: Local ./bin/
-    candidates = [
-        os.path.join(os.path.dirname(__file__), "..", "..", "..", "bin", ENGINE_BINARY_NAME),
-        os.path.join(os.getcwd(), "bin", ENGINE_BINARY_NAME),
-    ]
-    for candidate in candidates:
-        resolved = os.path.realpath(candidate)
-        if os.path.isfile(resolved) and os.access(resolved, os.X_OK):
-            return resolved
+    if _is_download_disabled():
+        raise FileNotFoundError(
+            f"Cannot find '{ENGINE_BINARY_NAME}' {ENGINE_VERSION} and "
+            "ATTEST_ENGINE_NO_DOWNLOAD is set.\n"
+            "Install options:\n"
+            "  1. Build from source: make engine, then set ATTEST_ENGINE_PATH\n"
+            f"  2. Download release v{ENGINE_VERSION}: "
+            "https://github.com/attest-framework/attest/releases\n"
+            "  3. Allow auto-download by unsetting ATTEST_ENGINE_NO_DOWNLOAD"
+        )
+    return str(download_engine()), "download"
 
-    # Step 6: Auto-download
-    if not _is_download_disabled():
-        from attest.engine_downloader import download_engine
 
-        downloaded = download_engine()
-        return str(downloaded)
+def resolve_engine(explicit_path: str | None = None) -> str:
+    """Find an engine whose version matches this SDK and return its path.
 
-    # Step 7: Actionable error
-    raise FileNotFoundError(
-        f"Cannot find '{ENGINE_BINARY_NAME}' binary.\n"
-        "Install options:\n"
-        "  1. Build from source: make engine\n"
-        "  2. Download a release: https://github.com/attest-framework/attest/releases\n"
-        "  3. Allow auto-download by unsetting ATTEST_ENGINE_NO_DOWNLOAD\n"
-        "  4. Set ATTEST_ENGINE_PATH to point to the binary"
-    )
+    The single discovery function behind the pytest fixture, ``EngineManager`` and the
+    ``attest`` CLI. Discovery order:
+
+        1. ``explicit_path`` (``--attest-engine`` / ``EngineManager(engine_path=...)``)
+        2. ``ATTEST_ENGINE_PATH``
+        3. ``attest-engine`` on ``PATH``
+        4. ``~/.attest/bin/<ENGINE_VERSION>/`` cache
+        5. Download ``ENGINE_VERSION`` from GitHub Releases (unless
+           ``ATTEST_ENGINE_NO_DOWNLOAD`` is set)
+
+    The first engine found must report exactly ``ENGINE_VERSION``; discovery never skips a
+    mismatched engine to try the next location.
+
+    Raises:
+        FileNotFoundError: No engine was found and download is disabled.
+        EngineVersionMismatchError: The engine found reports a different version.
+    """
+    path, source = _locate_engine(explicit_path)
+    found = engine_version(path)
+    if found != ENGINE_VERSION:
+        raise EngineVersionMismatchError(path, source, found, ENGINE_VERSION)
+    return path
 
 
 class EngineManager:
@@ -114,7 +141,7 @@ class EngineManager:
         engine_path: str | None = None,
         log_level: str = "warn",
     ) -> None:
-        self._engine_path = engine_path or _find_engine_binary()
+        self._engine_path = resolve_engine(engine_path)
         self._log_level = log_level
         self._process: asyncio.subprocess.Process | None = None
         self._initialized = False
@@ -143,7 +170,13 @@ class EngineManager:
         )
 
         self._init_result = InitializeResult.from_dict(result)
+        if self._init_result.engine_version != ENGINE_VERSION:
+            await self.stop()
+            raise EngineVersionMismatchError(
+                self._engine_path, "initialize", self._init_result.engine_version, ENGINE_VERSION
+            )
         if not self._init_result.compatible:
+            await self.stop()
             raise RuntimeError(
                 f"Engine incompatible. Missing capabilities: {self._init_result.missing}"
             )

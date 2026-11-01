@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import stat
+from collections.abc import Callable
+from pathlib import Path
+
 import pytest
 
 from attest._proto.types import (
@@ -211,3 +215,58 @@ def sample_assertions() -> list[Assertion]:
             },
         ),
     ]
+
+
+ScriptedEngine = Callable[..., Path]
+
+_SCRIPTED_ENGINE = """#!/bin/sh
+case "$1" in
+  version) {version_cmd} ;;
+  help)
+    echo 'usage: attest-engine <command> [args]'
+    echo 'commands:'
+    echo '  doctor  report engine configuration'
+    echo '  policy  evaluate a report against a policy' ;;
+  *) echo "forwarded: $*"; exit {exit_code} ;;
+esac
+"""
+
+
+@pytest.fixture
+def scripted_engine(tmp_path: Path) -> ScriptedEngine:
+    """Return a factory writing an executable shell script that behaves like attest-engine.
+
+    ``version`` prints ``attest-engine <version>`` (``version`` defaults to ENGINE_VERSION; an
+    empty string prints nothing, like a binary without the subcommand), ``help`` prints a
+    commands section, and any other command echoes its arguments and exits ``exit_code``.
+    """
+
+    def make(path: Path | None = None, version: str | None = None, exit_code: int = 0) -> Path:
+        from attest import ENGINE_VERSION
+
+        target = path or tmp_path / "engine" / "attest-engine"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        reported = ENGINE_VERSION if version is None else version
+        version_cmd = "true" if reported == "" else f"echo 'attest-engine {reported}'"
+        target.write_text(_SCRIPTED_ENGINE.format(version_cmd=version_cmd, exit_code=exit_code))
+        target.chmod(target.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+        return target
+
+    return make
+
+
+@pytest.fixture
+def isolated_engine_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Isolate engine discovery: HOME and PATH point into tmp_path, download is disabled.
+
+    Returns the redirected HOME directory.
+    """
+    home = tmp_path / "home"
+    path_dir = tmp_path / "path-bin"
+    home.mkdir()
+    path_dir.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("PATH", str(path_dir))
+    monkeypatch.setenv("ATTEST_ENGINE_NO_DOWNLOAD", "1")
+    monkeypatch.delenv("ATTEST_ENGINE_PATH", raising=False)
+    return home

@@ -10,10 +10,14 @@ const RELEASE_BASE = `https://github.com/attest-framework/attest/releases/downlo
 const CHECKSUMS_URL = `${RELEASE_BASE}/checksums-sha256.txt`;
 const MAX_REDIRECTS = 5;
 
-export function attestBinDir(): string {
-  const dir = path.join(os.homedir(), ".attest", "bin");
-  fs.mkdirSync(dir, { recursive: true });
-  return dir;
+/**
+ * Cache directory for this SDK's engine: `~/.attest/bin/<ENGINE_VERSION>/`.
+ *
+ * The directory name is the canonical engine version (`1.0.0-rc.N`). The legacy
+ * unversioned `~/.attest/bin/attest-engine` is neither read nor modified.
+ */
+export function versionedBinDir(): string {
+  return path.join(os.homedir(), ".attest", "bin", ENGINE_VERSION);
 }
 
 export function platformKey(): string {
@@ -48,25 +52,10 @@ export function binaryFilename(): string {
   return os.platform() === "win32" ? "attest-engine.exe" : "attest-engine";
 }
 
+/** The engine binary in the versioned cache, or null if it is absent. */
 export function cachedEnginePath(): string | null {
-  const dir = path.join(os.homedir(), ".attest", "bin");
-  const binPath = path.join(dir, binaryFilename());
-  const versionFile = path.join(dir, ".engine-version");
-
-  if (!fs.existsSync(binPath)) {
-    return null;
-  }
-
-  if (!fs.existsSync(versionFile)) {
-    return null;
-  }
-
-  const cachedVersion = fs.readFileSync(versionFile, "utf-8").trim();
-  if (cachedVersion !== ENGINE_VERSION) {
-    return null;
-  }
-
-  return binPath;
+  const binPath = path.join(versionedBinDir(), binaryFilename());
+  return fs.existsSync(binPath) ? binPath : null;
 }
 
 export function parseChecksums(text: string): Map<string, string> {
@@ -122,7 +111,7 @@ function httpsGet(url: string, redirectCount = 0): Promise<Buffer> {
 
 export async function downloadEngine(): Promise<string> {
   const key = platformKey();
-  const filename = `attest-engine-${key}`;
+  const filename = `attest-engine-${key}${os.platform() === "win32" ? ".exe" : ""}`;
   const binaryUrl = `${RELEASE_BASE}/${filename}`;
 
   process.stderr.write(`[attest] Downloading engine v${ENGINE_VERSION} for ${key}...\n`);
@@ -149,23 +138,23 @@ export async function downloadEngine(): Promise<string> {
     throw new Error(
       `SHA256 mismatch for ${filename}. ` +
       `Expected: ${expectedHash}, got: ${actualHash}. ` +
-      `The download may be corrupted. Delete ~/.attest/bin/ and retry.`
+      `The download may be corrupted. Retry or download manually.`
     );
   }
   process.stderr.write(`[attest] Checksum verified.\n`);
 
   // Atomic write: temp file + rename
-  const dir = attestBinDir();
-  const destFilename = binaryFilename();
-  const destPath = path.join(dir, destFilename);
-  const tmpPath = path.join(dir, `.${destFilename}.tmp.${process.pid}`);
-
-  fs.writeFileSync(tmpPath, data);
-  fs.chmodSync(tmpPath, 0o755);
-  fs.renameSync(tmpPath, destPath);
-
-  // Write version marker
-  fs.writeFileSync(path.join(dir, ".engine-version"), ENGINE_VERSION);
+  const dir = versionedBinDir();
+  fs.mkdirSync(dir, { recursive: true });
+  const destPath = path.join(dir, binaryFilename());
+  const tmpPath = path.join(dir, `.${binaryFilename()}.tmp.${process.pid}`);
+  try {
+    fs.writeFileSync(tmpPath, data, { mode: 0o755 });
+    fs.renameSync(tmpPath, destPath);
+  } catch (err) {
+    fs.rmSync(tmpPath, { force: true });
+    throw err;
+  }
 
   process.stderr.write(`[attest] Engine installed at ${destPath}\n`);
   return destPath;

@@ -1,4 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { existsSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   EngineManager,
   AttestClient,
@@ -15,8 +18,21 @@ describe("Engine Integration", () => {
   let skipReason: string | undefined;
 
   beforeAll(async () => {
+    // The engine built by `make engine`; never auto-download from a test run.
+    const enginePath = resolve(
+      dirname(fileURLToPath(import.meta.url)),
+      "../../../../bin/attest-engine",
+    );
+    if (!existsSync(enginePath)) {
+      skipReason = "attest-engine binary not found; build with 'make engine'";
+      return;
+    }
+    // Engine-spawning tests must not pick up a developer's judge configuration.
+    for (const key of ["OPENAI_API_KEY", "ATTEST_JUDGE_API_KEY", "ATTEST_JUDGE_BASE_URL"]) {
+      delete process.env[key];
+    }
     try {
-      engine = new EngineManager();
+      engine = new EngineManager({ enginePath });
       const initResult = await engine.start();
       expect(initResult.compatible).toBe(true);
       client = new AttestClient(engine);
