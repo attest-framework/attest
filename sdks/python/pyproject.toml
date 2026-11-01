@@ -22,6 +22,9 @@ dependencies = [
     "jsonschema>=4.20",
 ]
 
+[project.scripts]
+attest = "attest.cli.admin:run"
+
 [project.optional-dependencies]
 dev = [
     "pytest>=8.0",

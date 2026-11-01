@@ -12,6 +12,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from attest import ENGINE_VERSION
 from attest.engine_manager import EngineManager
 from attest.exceptions import EngineTimeoutError
 
@@ -43,7 +44,7 @@ def _make_mock_process(
                     "id": 1,
                     "result": {
                         "compatible": True,
-                        "engine_version": "0.4.0",
+                        "engine_version": ENGINE_VERSION,
                         "protocol_version": 1,
                         "capabilities": ["layers_1_4"],
                         "missing": [],

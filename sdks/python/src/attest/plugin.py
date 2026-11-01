@@ -15,6 +15,7 @@ from attest.cli.diagnostics import render_diagnostics
 from attest.client import AttestClient, require_simulation_capability
 from attest.config import is_simulation_mode
 from attest.engine_manager import EngineManager
+from attest.exceptions import EngineVersionMismatchError
 from attest.expect import ExpectChain
 from attest.result import OUTCOME_FAIL, OUTCOME_SKIP, AgentResult, Verdict
 
@@ -427,6 +428,8 @@ def attest_engine(request: pytest.FixtureRequest) -> Generator[AttestEngineFixtu
             "Set ATTEST_ENGINE_PATH or allow auto-download.",
             pytrace=False,
         )
+    except EngineVersionMismatchError as exc:
+        pytest.fail(f"attest-engine version mismatch: {exc}", pytrace=False)
 
     yield fixture
     fixture.stop()

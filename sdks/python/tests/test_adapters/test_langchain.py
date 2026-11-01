@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 from collections.abc import Generator
 from contextlib import contextmanager
 from unittest.mock import MagicMock, patch
@@ -47,7 +48,10 @@ class TestLangChainImportGuard:
     """Verify ImportError when langchain_core is not installed."""
 
     def test_raises_import_error_when_langchain_missing(self) -> None:
-        with pytest.raises(ImportError, match="Install langchain extras"):
+        with (
+            patch.dict(sys.modules, {"langchain_core": None}),
+            pytest.raises(ImportError, match="Install langchain extras"),
+        ):
             LangChainCallbackHandler()
 
 

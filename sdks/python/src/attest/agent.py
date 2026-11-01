@@ -9,7 +9,7 @@ from collections.abc import Callable
 from typing import Any
 
 from attest._proto.types import Trace
-from attest.adapters import TraceAdapter
+from attest.adapters import BaseAdapter
 from attest.adapters.manual import ManualAdapter
 from attest.result import AgentResult
 from attest.trace import TraceBuilder
@@ -27,11 +27,11 @@ class Agent:
         self,
         name: str,
         fn: Callable[..., Any] | None = None,
-        adapter: TraceAdapter | None = None,
+        adapter: BaseAdapter | None = None,
     ) -> None:
         self.name = name
         self._fn = fn
-        self._adapter: TraceAdapter = adapter or ManualAdapter(agent_id=name)
+        self._adapter: BaseAdapter = adapter or ManualAdapter(agent_id=name)
 
     def run(self, **kwargs: Any) -> AgentResult:
         """Run the agent synchronously and capture the trace."""
@@ -94,7 +94,7 @@ class Agent:
 
 
 def agent(
-    name: str, adapter: TraceAdapter | None = None
+    name: str, adapter: BaseAdapter | None = None
 ) -> Callable[[Callable[..., Any]], Callable[..., AgentResult]]:
     """Decorator to wrap a function as an Attest agent.
 

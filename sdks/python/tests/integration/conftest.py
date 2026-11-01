@@ -21,11 +21,14 @@ def engine(request: pytest.FixtureRequest) -> Generator[AttestEngineFixture, Non
     """Session-scoped fixture providing a running engine for integration tests."""
     path = request.config.getoption("--attest-engine", default=None) or _engine_binary_path()
 
-    fixture = AttestEngineFixture(engine_path=path, log_level="warn")
-    try:
-        fixture.start()
-    except FileNotFoundError:
+    if not os.path.exists(path):
         pytest.skip("attest-engine binary not found; build with 'make engine'")
 
-    yield fixture
-    fixture.stop()
+    # Engine-spawning tests must not pick up a developer's judge configuration.
+    with pytest.MonkeyPatch.context() as mp:
+        for key in ("OPENAI_API_KEY", "ATTEST_JUDGE_API_KEY", "ATTEST_JUDGE_BASE_URL"):
+            mp.delenv(key, raising=False)
+        fixture = AttestEngineFixture(engine_path=path, log_level="warn")
+        fixture.start()
+        yield fixture
+        fixture.stop()

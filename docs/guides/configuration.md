@@ -2,13 +2,37 @@
 
 The engine reads its configuration from environment variables when it starts. An invalid provider, URL or integer setting stops the engine with an error naming the variable. Two exceptions keep their historical behavior: `ATTEST_JUDGE_TIMEOUT_S` falls back to 30 on a non-positive or non-integer value, and `ATTEST_JUDGE_META_EVAL` is enabled only by the exact value `true`.
 
-## Check your setup
+## Engine discovery and the `attest` command
 
-`attest-engine doctor` reports what the engine would start with under the current environment: engine and protocol versions, the capabilities `initialize` advertises, the judge and embedding providers, simulation mode and the cache directory.
+Each SDK release requires one engine version, `ENGINE_VERSION` (`1.0.0-rc.N` during the release candidates). The SDK looks for an engine in this order and uses the first one it finds:
+
+1. `--attest-engine` (pytest) or the `engine_path` / `enginePath` argument of `EngineManager`
+2. `ATTEST_ENGINE_PATH`
+3. `attest-engine` (`attest-engine.exe` on Windows) in a `PATH` directory; empty entries are skipped, so the current directory is never searched
+4. `~/.attest/bin/<ENGINE_VERSION>/attest-engine`
+5. A download of `ENGINE_VERSION` from GitHub Releases into that directory, verified against the release's `checksums-sha256.txt` and written atomically. `ATTEST_ENGINE_NO_DOWNLOAD=1` turns the download off.
+
+The engine found must report exactly `ENGINE_VERSION` (`attest-engine version`). Otherwise the SDK stops with a version-mismatch error naming the engine, where it came from, the version it reports and the version required. It never skips a mismatched engine in favor of the next location. The pytest fixture, Vitest, `EngineManager` and the `attest` command all use this check. The legacy unversioned `~/.attest/bin/attest-engine` from releases before 1.0 is neither used nor deleted.
+
+The `attest` command (`uv run attest`, `npx attest`) implements `attest init` itself and forwards every other command to the version-checked engine, passing arguments, output and exit code through unchanged:
 
 ```bash
-attest-engine doctor          # human-readable
-attest-engine doctor --json   # machine-readable, schema: proto/attest/v1/doctor.schema.json
+attest --help                     # SDK commands, plus engine commands when one is installed
+attest --version                  # SDK version and the engine version it requires
+attest init                       # scaffold a test project (no engine needed)
+attest doctor --json              # = attest-engine doctor --json
+attest policy evaluate --policy attest.policy.yaml --report report.json
+```
+
+Before forwarding, the CLI checks that the engine's `help` lists the command. If no matching engine is available, or the engine predates the command, the command exits 1 before anything runs, so `attest policy evaluate` never exits 0 without evaluating. A command killed by a signal exits 128 + N. `attest --help` never downloads: it lists the engine's commands only when a matching engine is already available, and always exits 0. Run tests with `pytest` or `vitest` directly.
+
+## Check your setup
+
+`attest doctor` (or `attest-engine doctor`) reports what the engine would start with under the current environment: engine and protocol versions, the capabilities `initialize` advertises, the judge and embedding providers, simulation mode and the cache directory.
+
+```bash
+attest doctor          # human-readable
+attest doctor --json   # machine-readable, schema: proto/attest/v1/doctor.schema.json
 ```
 
 The output never contains an API key. It shows only which variable the judge key came from. A configuration error exits 1 with the same message the server would fail to start with. In `onnx` builds that select ONNX embeddings, `doctor` constructs the embedder just as the server does, so the first run downloads the model.

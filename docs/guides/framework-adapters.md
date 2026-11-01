@@ -23,8 +23,8 @@ BaseAdapter                          ← shared utilities
 **Framework adapters** capture a complete agent run (multiple LLM calls, tool calls, sub-agent delegations). They inherit `BaseAdapter` for shared utilities but implement their own capture mechanics.
 
 ```
-ProviderAdapter    — one LLM call → one Trace
-FrameworkAdapter   — one agent run (N LLM calls, M tool calls) → one Trace
+provider adapter (BaseProviderAdapter)  — one LLM call → one Trace
+framework adapter (BaseAdapter)         — one agent run (N LLM calls, M tool calls) → one Trace
 ```
 
 ## Provider Adapters
@@ -401,4 +401,4 @@ from attest.adapters import BaseAdapter, BaseProviderAdapter
 | `BaseAdapter`         | Framework adapters, custom adapters | None (concrete)                                                                         |
 | `BaseProviderAdapter` | Single LLM call adapters            | `_extract_completion`, `_extract_model`, `_extract_total_tokens`, `_extract_tool_calls` |
 
-The legacy `TraceAdapter`, `ProviderAdapter`, and `FrameworkAdapter` Protocols remain exported for backward compatibility. New adapters should use the class hierarchy.
+The `TraceAdapter`, `ProviderAdapter` and `FrameworkAdapter` Protocols were removed from the Python SDK in 1.0. Subclass `BaseAdapter` or `BaseProviderAdapter` instead.

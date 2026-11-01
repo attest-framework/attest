@@ -108,7 +108,7 @@ SDK (Python/TS/Go) ──stdin/stdout──▶ Engine Process (Go)
 - **Result history** — SQLite-backed with configurable retention, automatic pruning
 - **Engine performance** — schema compiler cache, deferred LRU writes, batch SQL eviction, `segmentio/encoding` (2.4x JSON speedup)
 - **Configurable timeouts** — engine read timeout, concurrent request support, judge cache sizing
-- **CLI** — `attest init` scaffolding and `attest validate` config checking (Python + TypeScript)
+- **CLI** — `attest init` scaffolding; `attest doctor`, `baseline`, `policy` and every other command forwarded to a version-checked engine (Python + TypeScript)
 - **Single binary engine** — no runtime dependencies, cross-platform
 
 ## Repository Layout

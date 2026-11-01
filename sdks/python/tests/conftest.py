@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import stat
+from collections.abc import Callable
+from pathlib import Path
+
 import pytest
 
 from attest._proto.types import (
@@ -211,3 +215,78 @@ def sample_assertions() -> list[Assertion]:
             },
         ),
     ]
+
+
+ScriptedEngine = Callable[..., Path]
+
+_SCRIPTED_ENGINE = """#!/bin/sh
+case "$1" in
+  version) {version_cmd} ;;
+  help) {help_cmd} ;;
+  *) echo "forwarded: $*"; {after_forward} ;;
+esac
+"""
+
+_HELP_MODES = {
+    # The command registry's help output.
+    "registry": "echo 'usage: attest-engine <command> [args]'; echo 'commands:'{command_lines}",
+    # An engine that predates the registry: `help` starts the server, which exits on EOF.
+    "server": "true",
+    # An engine that never answers.
+    "hang": "sleep 30",
+}
+
+
+@pytest.fixture
+def scripted_engine(tmp_path: Path) -> ScriptedEngine:
+    """Return a factory writing an executable shell script that behaves like attest-engine.
+
+    ``version`` prints ``attest-engine <version>`` (``version`` defaults to ENGINE_VERSION; an
+    empty string prints nothing, like a binary without the subcommand). ``help`` follows
+    ``help_mode`` (see ``_HELP_MODES``) and lists ``commands``. Any other command echoes its
+    arguments and exits ``exit_code``, or kills itself with ``signal`` when given.
+    """
+
+    def make(
+        path: Path | None = None,
+        version: str | None = None,
+        exit_code: int = 0,
+        *,
+        help_mode: str = "registry",
+        commands: tuple[str, ...] = ("doctor", "policy"),
+        signal: str | None = None,
+    ) -> Path:
+        from attest import ENGINE_VERSION
+
+        target = path or tmp_path / "engine" / "attest-engine"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        reported = ENGINE_VERSION if version is None else version
+        command_lines = "".join(f"; echo '  {name}  {name} command'" for name in commands)
+        target.write_text(
+            _SCRIPTED_ENGINE.format(
+                version_cmd="true" if reported == "" else f"echo 'attest-engine {reported}'",
+                help_cmd=_HELP_MODES[help_mode].format(command_lines=command_lines),
+                after_forward=f"kill -{signal} $$" if signal else f"exit {exit_code}",
+            )
+        )
+        target.chmod(target.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+        return target
+
+    return make
+
+
+@pytest.fixture
+def isolated_engine_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Isolate engine discovery: HOME and PATH point into tmp_path, download is disabled.
+
+    Returns the redirected HOME directory.
+    """
+    home = tmp_path / "home"
+    path_dir = tmp_path / "path-bin"
+    home.mkdir()
+    path_dir.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("PATH", str(path_dir))
+    monkeypatch.setenv("ATTEST_ENGINE_NO_DOWNLOAD", "1")
+    monkeypatch.delenv("ATTEST_ENGINE_PATH", raising=False)
+    return home
