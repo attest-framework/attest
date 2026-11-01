@@ -5,11 +5,18 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
-from attest.result import AgentResult
+from attest.result import OUTCOME_FAIL, OUTCOME_PASS, OUTCOME_SKIP, AgentResult
 
 
 @dataclass
 class RepeatResult:
+    """Results of ``n`` trials, aggregated under the assertion-status rules.
+
+    Each trial should come from ``attest.inspect()``, which never enforces,
+    so one failing trial does not abort the loop. Enforce the aggregate
+    instead (``outcome()`` or ``pass_rate``).
+    """
+
     results: list[AgentResult] = field(default_factory=list)
 
     @property
@@ -17,15 +24,36 @@ class RepeatResult:
         return len(self.results)
 
     @property
-    def pass_rate(self) -> float:
-        if not self.results:
-            return 0.0
-        passed = sum(1 for r in self.results if r.passed)
-        return passed / len(self.results)
+    def not_evaluated(self) -> int:
+        """Trials skipped because an assertion was not evaluated."""
+        return sum(1 for r in self.results if r.outcome() == OUTCOME_SKIP)
+
+    @property
+    def pass_rate(self) -> float | None:
+        """Passing / evaluated trials; ``None`` when no trial was evaluated.
+
+        Trials whose outcome is skip (``not_evaluated``) are excluded from
+        the denominator and counted in ``not_evaluated``.
+        """
+        evaluated = self.count - self.not_evaluated
+        if evaluated == 0:
+            return None
+        passed = sum(1 for r in self.results if r.outcome() == OUTCOME_PASS)
+        return passed / evaluated
 
     @property
     def all_passed(self) -> bool:
-        return all(r.passed for r in self.results)
+        return all(r.outcome() == OUTCOME_PASS for r in self.results)
+
+    def outcome(self, *, strict: bool = False) -> str:
+        """Aggregate verdict: any failing trial fails; otherwise any skipped
+        trial skips (fails when ``strict``); otherwise pass."""
+        outcomes = [r.outcome(strict=strict) for r in self.results]
+        if OUTCOME_FAIL in outcomes:
+            return OUTCOME_FAIL
+        if OUTCOME_SKIP in outcomes:
+            return OUTCOME_SKIP
+        return OUTCOME_PASS
 
 
 def repeat(n: int) -> Callable[[Callable[..., AgentResult]], Callable[..., RepeatResult]]:

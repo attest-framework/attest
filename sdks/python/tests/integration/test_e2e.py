@@ -118,7 +118,7 @@ class TestFullRoundTrip:
             ),
         ]
 
-        result = engine.evaluate(_chain_from_raw(trace, assertions))
+        result = engine.inspect(_chain_from_raw(trace, assertions))
 
         assert result.passed
         assert result.pass_count == 4
@@ -137,7 +137,7 @@ class TestFullRoundTrip:
             ),
         ]
 
-        result = engine.evaluate(_chain_from_raw(trace, assertions))
+        result = engine.inspect(_chain_from_raw(trace, assertions))
 
         assert not result.passed
         assert result.fail_count == 1
@@ -159,7 +159,7 @@ class TestFullRoundTrip:
             ),
         ]
 
-        result = engine.evaluate(_chain_from_raw(trace, assertions))
+        result = engine.inspect(_chain_from_raw(trace, assertions))
 
         assert len(result.soft_failures) == 1
         assert result.assertion_results[0].status == STATUS_SOFT_FAIL
@@ -181,7 +181,7 @@ class TestFullRoundTrip:
             ),
         ]
 
-        result = engine.evaluate(_chain_from_raw(trace, assertions))
+        result = engine.inspect(_chain_from_raw(trace, assertions))
 
         assert not result.passed
         assert result.assertion_results[0].status == STATUS_HARD_FAIL
@@ -200,7 +200,7 @@ class TestFullRoundTrip:
             ),
         ]
 
-        result = engine.evaluate(_chain_from_raw(trace, assertions))
+        result = engine.inspect(_chain_from_raw(trace, assertions))
 
         assert not result.passed
         assert result.assertion_results[0].status == STATUS_HARD_FAIL
@@ -220,7 +220,7 @@ class TestFullRoundTrip:
             ),
         ]
 
-        result = engine.evaluate(_chain_from_raw(trace, assertions))
+        result = engine.inspect(_chain_from_raw(trace, assertions))
 
         assert result.passed
         assert result.assertion_results[0].score == 1.0
@@ -243,7 +243,7 @@ class TestFullRoundTrip:
             ),
         ]
 
-        result = engine.evaluate(_chain_from_raw(trace, assertions))
+        result = engine.inspect(_chain_from_raw(trace, assertions))
 
         assert not result.passed
         assert result.pass_count == 1
@@ -264,7 +264,7 @@ class TestFullRoundTrip:
             .output_matches_regex(r"\$\d+\.\d{2}")
         )
 
-        result = engine.evaluate(chain)
+        result = engine.inspect(chain)
 
         assert result.passed
         assert result.pass_count == 4
@@ -280,7 +280,7 @@ class TestFullRoundTrip:
             ),
         ]
 
-        result = engine.evaluate(_chain_from_raw(trace, assertions))
+        result = engine.inspect(_chain_from_raw(trace, assertions))
 
         assert result.passed
 
@@ -299,13 +299,13 @@ class TestFullRoundTrip:
             ),
         ]
 
-        result = engine.evaluate(_chain_from_raw(trace, assertions))
+        result = engine.inspect(_chain_from_raw(trace, assertions))
 
         assert result.passed
 
 
 class _FakeChain:
-    """Minimal stand-in providing .trace and .assertions for engine.evaluate()."""
+    """Minimal stand-in providing .trace and .assertions for engine.inspect()."""
 
     def __init__(self, trace: object, assertions: list[Assertion]) -> None:
         self.trace = trace
@@ -313,5 +313,5 @@ class _FakeChain:
 
 
 def _chain_from_raw(trace: object, assertions: list[Assertion]) -> _FakeChain:  # type: ignore[return]
-    """Create a minimal chain-like object for engine.evaluate()."""
+    """Create a minimal chain-like object for engine.inspect()."""
     return _FakeChain(trace, assertions)

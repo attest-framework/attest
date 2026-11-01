@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING
 
 from attest._proto.types import (
     STATUS_HARD_FAIL,
+    STATUS_NOT_EVALUATED,
     STATUS_PASS,
     STATUS_SOFT_FAIL,
     AssertionResult,
@@ -71,6 +72,9 @@ def _status_glyph(status: str, color: bool) -> str:
     elif status == STATUS_HARD_FAIL:
         glyph = "FAIL"
         c = _ANSI_RED
+    elif status == STATUS_NOT_EVALUATED:
+        glyph = "N/E"
+        c = _ANSI_DIM
     else:
         glyph = status.upper() or "????"
         c = _ANSI_DIM
@@ -113,9 +117,12 @@ def render_assertion_failure(
         f"{_bold(result.assertion_id, color)} "
         f"{_dim('— ' + label, color)}\n"
     )
+    if result.reason:
+        buf.write(f"      reason:     not evaluated: {result.reason}\n")
     if result.trace_node_path:
         buf.write(f"      trace path: {result.trace_node_path}\n")
-    buf.write(f"      score:      {result.score:.3f}\n")
+    if result.status != STATUS_NOT_EVALUATED:
+        buf.write(f"      score:      {result.score:.3f}\n")
     if result.expected:
         buf.write(f"      expected:   {_truncate(result.expected)}\n")
     if result.actual:
@@ -166,7 +173,7 @@ def _render_judge_meta(buf: StringIO, meta: JudgeMetadata) -> None:
 def render_summary(result: AgentResult, *, color: bool = False) -> str:
     """One-line summary of an AgentResult.
 
-    Format: ``{N passed, N soft, N hard | cost $X | dur Yms}``.
+    Format: ``PASS n | SOFT n | FAIL n | N/E n | cost $X | dur Yms``.
     """
     pass_n = result.pass_count
     soft = sum(1 for r in result.assertion_results if r.status == STATUS_SOFT_FAIL)
@@ -175,6 +182,7 @@ def render_summary(result: AgentResult, *, color: bool = False) -> str:
         f"{_status_glyph(STATUS_PASS, color)} {pass_n}",
         f"{_status_glyph(STATUS_SOFT_FAIL, color)} {soft}",
         f"{_status_glyph(STATUS_HARD_FAIL, color)} {hard}",
+        f"{_status_glyph(STATUS_NOT_EVALUATED, color)} {len(result.not_evaluated)}",
         f"cost ${result.total_cost:.6f}",
         f"dur {result.total_duration_ms}ms",
     ]
@@ -194,21 +202,29 @@ def render_diagnostics(
     message — leading newline, indented blocks, no trailing summary.
     """
     rows: list[AssertionResult] = (
-        list(result.assertion_results) if include_passing else list(result.failed_assertions)
+        list(result.assertion_results)
+        if include_passing
+        else [r for r in result.assertion_results if r.status != STATUS_PASS]
     )
     if not rows:
         return _dim("  (no failures)\n", color)
     buf = StringIO()
     buf.write("\n")
-    buf.write(
-        _bold(
-            f"Attest diagnostic — {len(rows)} of "
-            f"{len(result.assertion_results)} assertions failed:\n",
-            color,
-        )
-    )
+    buf.write(_bold(f"Attest diagnostic — {_header_counts(result)}:\n", color))
     for r in rows:
         buf.write(render_assertion_failure(r, color=color, test_file=test_file))
         buf.write("\n")
     buf.write(_dim(f"  Summary: {render_summary(result, color=color)}\n", color))
     return buf.getvalue()
+
+
+def _header_counts(result: AgentResult) -> str:
+    """``"F of N assertions failed[, K not evaluated]"`` — counts failures, not rows."""
+    total = len(result.assertion_results)
+    not_evaluated = len(result.not_evaluated)
+    if result.fail_count == 0 and not_evaluated:
+        return f"{not_evaluated} of {total} assertions not evaluated"
+    text = f"{result.fail_count} of {total} assertions failed"
+    if not_evaluated:
+        text += f", {not_evaluated} not evaluated"
+    return text

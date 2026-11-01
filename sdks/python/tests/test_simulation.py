@@ -267,7 +267,7 @@ def test_repeat_pass_rate_all_pass() -> None:
 
 def test_repeat_pass_rate_empty() -> None:
     result = RepeatResult(results=[])
-    assert result.pass_rate == 0.0
+    assert result.pass_rate is None
     assert result.all_passed is True  # vacuously true
 
 

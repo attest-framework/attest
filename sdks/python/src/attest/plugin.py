@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import threading
 from collections.abc import Generator
 from typing import Any
@@ -12,9 +13,10 @@ import pytest
 
 from attest.cli.diagnostics import render_diagnostics
 from attest.client import AttestClient
+from attest.config import is_simulation_mode
 from attest.engine_manager import EngineManager
 from attest.expect import ExpectChain
-from attest.result import AgentResult
+from attest.result import OUTCOME_FAIL, OUTCOME_SKIP, AgentResult
 
 logger = logging.getLogger("attest.plugin")
 
@@ -91,6 +93,12 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         help="Print a cost report at the end of the test session",
     )
     group.addoption(
+        "--attest-strict",
+        action="store_true",
+        default=False,
+        help="Fail (instead of skip) tests with assertions that were not evaluated",
+    )
+    group.addoption(
         "--attest-diagnostics",
         action="store_true",
         default=False,
@@ -130,23 +138,31 @@ def pytest_terminal_summary(terminalreporter: Any, exitstatus: int, config: pyte
     diagnostics_opt = config.getoption("--attest-diagnostics", default=False)
     cost_report_opt = config.getoption("--attest-cost-report", default=False)
 
-    if _session_results:
-        if diagnostics_opt:
-            entries = list(_session_results.items())
-        else:
-            entries = [(nid, r) for nid, r in _session_results.items() if not r.passed]
-        if entries:
-            terminalreporter.write_sep("=", "Attest Diagnostics")
-            for nodeid, agent_result in entries:
-                marker = "FAILED" if not agent_result.passed else "PASSED"
-                terminalreporter.write_line(f"{marker} {nodeid}")
-                terminalreporter.write_line(
-                    render_diagnostics(
-                        agent_result,
-                        test_file=nodeid,
-                        include_passing=diagnostics_opt,
-                    )
-                )
+    # Failing and skipped tests carry their diagnostics in pytest's own
+    # report; soft failures in passing tests are summarised here.
+    soft_passes = [
+        nid
+        for nid, r in _session_results.items()
+        if r.soft_failures and r.outcome() not in (OUTCOME_FAIL, OUTCOME_SKIP)
+    ]
+    if soft_passes:
+        terminalreporter.write_sep("=", "Attest soft failures")
+        terminalreporter.write_line(
+            f"{len(soft_passes)} passing test(s) recorded soft failures:", yellow=True
+        )
+        for nid in soft_passes:
+            terminalreporter.write_line(f"  {nid}: {len(_session_results[nid].soft_failures)} soft")
+
+    if diagnostics_opt and _session_results:
+        terminalreporter.write_sep("=", "Attest Diagnostics")
+        for nodeid, agent_result in _session_results.items():
+            marker = {OUTCOME_FAIL: "FAILED", OUTCOME_SKIP: "SKIPPED"}.get(
+                agent_result.outcome(), "PASSED"
+            )
+            terminalreporter.write_line(f"{marker} {nodeid}")
+            terminalreporter.write_line(
+                render_diagnostics(agent_result, test_file=nodeid, include_passing=True)
+            )
 
     if cost_report_opt:
         terminalreporter.write_sep("=", "Attest Cost Report")
@@ -158,16 +174,23 @@ def pytest_terminal_summary(terminalreporter: Any, exitstatus: int, config: pyte
 def pytest_runtest_makereport(
     item: pytest.Item,
     call: pytest.CallInfo[Any],
-) -> Generator[None, None, None]:
-    """Pop the most-recent AgentResult into the per-nodeid registry.
+) -> Generator[None, Any, None]:
+    """Pop the most-recent AgentResult into the per-nodeid registry and
+    attribute ``not evaluated`` skips to the test's own location.
 
     Pytest serialises tests within a worker, so the latest stashed
     AgentResult always corresponds to the call phase that just ran.
     """
     outcome = yield
-    _ = outcome
     if call.when != "call":
         return
+    report: pytest.TestReport = outcome.get_result()
+    if report.skipped and isinstance(report.longrepr, tuple):
+        # Attribute "not evaluated" skips to the test, not to this plugin.
+        reason = report.longrepr[2]
+        if "not evaluated:" in reason:
+            path, lineno, _ = item.location
+            report.longrepr = (str(item.path), (lineno or 0) + 1, reason)
     agent_result = _take_last_result()
     if agent_result is not None:
         _session_results[item.nodeid] = agent_result
@@ -176,9 +199,16 @@ def pytest_runtest_makereport(
 class AttestEngineFixture:
     """Manages engine lifecycle for pytest session."""
 
-    def __init__(self, engine_path: str | None = None, log_level: str = "warn") -> None:
+    def __init__(
+        self,
+        engine_path: str | None = None,
+        log_level: str = "warn",
+        *,
+        strict: bool = False,
+    ) -> None:
         self._engine_path = engine_path
         self._log_level = log_level
+        self._strict = strict
         self._manager: EngineManager | None = None
         self._client: AttestClient | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
@@ -194,11 +224,22 @@ class AttestEngineFixture:
         with the engine via ``asyncio.run_coroutine_threadsafe()``.
         """
         self._loop = asyncio.new_event_loop()
+        simulation = is_simulation_mode()
+        if simulation:
+            # The engine decides simulation at startup from its environment;
+            # this also covers attest.config(simulation=True).
+            os.environ["ATTEST_SIMULATION"] = "1"
         self._manager = EngineManager(
             engine_path=self._engine_path,
             log_level=self._log_level,
         )
-        self._loop.run_until_complete(self._manager.start())
+        init = self._loop.run_until_complete(self._manager.start())
+        if simulation and "simulation_mode" not in init.capabilities:
+            self._loop.run_until_complete(self._manager.stop())
+            raise RuntimeError(
+                f"attest-engine {init.engine_version} does not support simulation mode "
+                "(capability 'simulation_mode'); upgrade the engine to 1.0 or later."
+            )
         self._client = AttestClient(self._manager)
 
         # Run the engine loop in a background thread so callers on any event
@@ -271,16 +312,16 @@ class AttestEngineFixture:
         *,
         budget: float | None = None,
     ) -> AgentResult:
-        """Evaluate collected assertions synchronously.
+        """Evaluate collected assertions and enforce the test outcome.
 
-        Submits the evaluation to the engine's background loop and blocks
-        the calling thread until the result is ready.
+        After the whole batch: any ``hard_fail`` fails the test with
+        rendered diagnostics; otherwise any ``not_evaluated`` assertion
+        skips it with the reasons (fails under ``--attest-strict``);
+        otherwise the test continues, with soft failures summarised at the
+        end of the session. Use ``inspect()`` to get results without
+        enforcement.
         """
-        assert self._client is not None
-        result = self._run_on_engine_loop(
-            self._client.evaluate_batch(chain.trace, chain.assertions)
-        )
-        return self._process_result(chain, result, budget)
+        return self._enforce(self.inspect(chain, budget=budget))
 
     async def evaluate_async(
         self,
@@ -288,7 +329,34 @@ class AttestEngineFixture:
         *,
         budget: float | None = None,
     ) -> AgentResult:
-        """Evaluate collected assertions asynchronously.
+        """Async ``evaluate()``: evaluate and enforce the test outcome."""
+        return self._enforce(await self.inspect_async(chain, budget=budget))
+
+    def inspect(
+        self,
+        chain: ExpectChain,
+        *,
+        budget: float | None = None,
+    ) -> AgentResult:
+        """Evaluate collected assertions without enforcing the outcome.
+
+        Submits the evaluation to the engine's background loop and blocks
+        the calling thread until the result is ready. Use in trial loops
+        (``repeat()``) and enforce only the aggregate verdict.
+        """
+        assert self._client is not None
+        result = self._run_on_engine_loop(
+            self._client.evaluate_batch(chain.trace, chain.assertions)
+        )
+        return self._process_result(chain, result, budget)
+
+    async def inspect_async(
+        self,
+        chain: ExpectChain,
+        *,
+        budget: float | None = None,
+    ) -> AgentResult:
+        """Async ``inspect()``: evaluate without enforcing the outcome.
 
         Submits the evaluation to the engine's background loop and awaits
         the result without blocking the caller's event loop.  Safe to call
@@ -303,6 +371,19 @@ class AttestEngineFixture:
         result = await asyncio.wrap_future(future)
         return self._process_result(chain, result, budget)
 
+    def _enforce(self, agent_result: AgentResult) -> AgentResult:
+        """Fail or skip the running test according to the batch outcome."""
+        outcome = agent_result.outcome(strict=self._strict)
+        if outcome == OUTCOME_FAIL:
+            header = ""
+            if not agent_result.hard_failures:
+                header = f"--attest-strict: {agent_result.skip_reason()}\n"
+            diagnostics = render_diagnostics(agent_result).lstrip("\n")
+            pytest.fail(header + diagnostics, pytrace=False)
+        if outcome == OUTCOME_SKIP:
+            pytest.skip(agent_result.skip_reason())
+        return agent_result
+
 
 @pytest.fixture(scope="session")
 def attest_engine(request: pytest.FixtureRequest) -> Generator[AttestEngineFixture, None, None]:
@@ -310,7 +391,9 @@ def attest_engine(request: pytest.FixtureRequest) -> Generator[AttestEngineFixtu
     engine_path: str | None = request.config.getoption("--attest-engine", default=None)
     log_level: str = request.config.getoption("--attest-log-level", default="warn")
 
-    fixture = AttestEngineFixture(engine_path=engine_path, log_level=log_level)
+    strict: bool = request.config.getoption("--attest-strict", default=False)
+
+    fixture = AttestEngineFixture(engine_path=engine_path, log_level=log_level, strict=strict)
     try:
         fixture.start()
     except FileNotFoundError as exc:

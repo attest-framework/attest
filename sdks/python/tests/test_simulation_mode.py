@@ -1,7 +1,8 @@
 """Tests for simulation mode toggle.
 
-Verifies that when simulation mode is active, evaluate_batch returns
-deterministic results without spawning the engine or making API calls.
+Verifies the simulation toggle and that the client never fabricates
+results: evaluate_batch always goes to the engine, which disables
+layers 5-6 in simulation mode.
 """
 
 from __future__ import annotations
@@ -12,12 +13,12 @@ from unittest.mock import AsyncMock
 import pytest
 
 from attest._proto.types import (
-    STATUS_PASS,
+    STATUS_NOT_EVALUATED,
     Assertion,
     EvaluateBatchResult,
     Trace,
 )
-from attest.client import AttestClient, _simulation_evaluate_batch
+from attest.client import AttestClient
 from attest.config import config, is_simulation_mode, reset
 from attest.trace import TraceBuilder
 
@@ -105,135 +106,49 @@ class TestConfig:
 
 
 # ---------------------------------------------------------------------------
-# _simulation_evaluate_batch tests
+# AttestClient.evaluate_batch: simulation is decided by the engine
 # ---------------------------------------------------------------------------
 
 
-class TestSimulationEvaluateBatch:
-    def test_returns_pass_for_all_assertions(self) -> None:
-        assertions = _make_assertions()
-        result = _simulation_evaluate_batch(assertions)
-
-        assert isinstance(result, EvaluateBatchResult)
-        assert len(result.results) == 2
-
-        for r in result.results:
-            assert r.status == STATUS_PASS
-            assert r.score == 1.0
-            assert r.cost == 0.0
-            assert r.duration_ms == 0
-
-    def test_assertion_ids_preserved(self) -> None:
-        assertions = _make_assertions()
-        result = _simulation_evaluate_batch(assertions)
-
-        assert result.results[0].assertion_id == "assert_001"
-        assert result.results[1].assertion_id == "assert_002"
-
-    def test_explanation_includes_simulation_marker(self) -> None:
-        assertions = _make_assertions()
-        result = _simulation_evaluate_batch(assertions)
-
-        for r in result.results:
-            assert "[simulation]" in r.explanation
-
-    def test_total_cost_is_zero(self) -> None:
-        assertions = _make_assertions()
-        result = _simulation_evaluate_batch(assertions)
-        assert result.total_cost == 0.0
-        assert result.total_duration_ms == 0
-
-    def test_empty_assertions(self) -> None:
-        result = _simulation_evaluate_batch([])
-        assert result.results == []
-        assert result.total_cost == 0.0
-
-    def test_simulated_marker_set(self) -> None:
-        assertions = _make_assertions()
-        result = _simulation_evaluate_batch(assertions)
-        assert result.simulated is True
-
-    def test_simulated_marker_serializes(self) -> None:
-        assertions = _make_assertions()
-        result = _simulation_evaluate_batch(assertions)
-        round_tripped = EvaluateBatchResult.from_dict(result.to_dict())
-        assert round_tripped.simulated is True
-
-    def test_default_marker_false_on_engine_payload(self) -> None:
-        # Engine payloads carry "simulated": false explicitly. Older engines
-        # that omit the field must default to False so SDK callers cannot
-        # mistake a real run for a simulated one.
-        engine_payload = {
-            "results": [],
-            "total_cost": 0.0,
-            "total_duration_ms": 0,
-        }
-        result = EvaluateBatchResult.from_dict(engine_payload)
-        assert result.simulated is False
-
-
-# ---------------------------------------------------------------------------
-# AttestClient.evaluate_batch simulation mode integration
-# ---------------------------------------------------------------------------
+def _engine_payload() -> dict[str, object]:
+    return {
+        "results": [
+            {
+                "assertion_id": "assert_001",
+                "status": "not_evaluated",
+                "reason": "simulation",
+                "score": 0.0,
+                "explanation": "not run: simulation mode",
+            }
+        ],
+        "total_cost": 0.0,
+        "total_duration_ms": 0,
+    }
 
 
 class TestClientSimulationMode:
-    @pytest.mark.asyncio
-    async def test_evaluate_batch_skips_engine_in_simulation(self) -> None:
-        config(simulation=True)
+    def test_engine_payload_without_simulated_marker_defaults_false(self) -> None:
+        # Older engines omit "simulated"; callers must not mistake a real run
+        # for a simulated one.
+        payload = {"results": [], "total_cost": 0.0, "total_duration_ms": 0}
 
-        engine = AsyncMock()
-        client = AttestClient(engine=engine)
+        result = EvaluateBatchResult.from_dict(payload)
 
-        trace = _make_trace()
-        assertions = _make_assertions()
-
-        result = await client.evaluate_batch(trace, assertions)
-
-        assert isinstance(result, EvaluateBatchResult)
-        assert len(result.results) == 2
-        assert all(r.status == STATUS_PASS for r in result.results)
-
-        # Engine send_request should NOT have been called
-        engine.send_request.assert_not_called()
+        assert result.simulated is False
 
     @pytest.mark.asyncio
-    async def test_evaluate_batch_uses_engine_without_simulation(self) -> None:
-        # Simulation off — should call through to engine
-        engine = AsyncMock()
-        engine.send_request.return_value = {
-            "results": [
-                {
-                    "assertion_id": "assert_001",
-                    "status": "pass",
-                    "score": 1.0,
-                    "explanation": "ok",
-                }
-            ],
-            "total_cost": 0.001,
-            "total_duration_ms": 50,
-        }
-
-        client = AttestClient(engine=engine)
-        trace = _make_trace()
-        assertions = [_make_assertions()[0]]
-
-        result = await client.evaluate_batch(trace, assertions)
-
-        assert isinstance(result, EvaluateBatchResult)
-        engine.send_request.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_simulation_via_env_var(self) -> None:
-        os.environ["ATTEST_SIMULATION"] = "1"
-
+    @pytest.mark.parametrize("enable", ["config", "env"])
+    async def test_evaluate_batch_simulation_still_calls_engine(self, enable: str) -> None:
+        if enable == "config":
+            config(simulation=True)
+        else:
+            os.environ["ATTEST_SIMULATION"] = "1"
         engine = AsyncMock()
         client = AttestClient(engine=engine)
+        client.send_request = AsyncMock(return_value=_engine_payload())  # type: ignore[method-assign]
 
-        trace = _make_trace()
-        assertions = _make_assertions()
+        result = await client.evaluate_batch(_make_trace(), [_make_assertions()[0]])
 
-        result = await client.evaluate_batch(trace, assertions)
-
-        assert len(result.results) == 2
-        engine.send_request.assert_not_called()
+        client.send_request.assert_awaited_once()
+        assert result.results[0].status == STATUS_NOT_EVALUATED
+        assert result.results[0].reason == "simulation"
