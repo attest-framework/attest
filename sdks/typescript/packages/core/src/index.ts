@@ -20,7 +20,7 @@ export type {
 export { traceId, assertionId, agentId } from "./proto/types.js";
 export { VERSION, ENGINE_VERSION } from "./version.js";
 export { EngineManager } from "./engine-manager.js";
-export { AttestClient } from "./client.js";
+export { AttestClient, requireSimulationCapability } from "./client.js";
 export type { AttestClientOptions } from "./client.js";
 export { TraceBuilder } from "./trace.js";
 export { AgentResult } from "./result.js";
@@ -36,7 +36,13 @@ export { Agent, agent } from "./agent.js";
 export { delegate } from "./delegate.js";
 export { activeBuilder } from "./context.js";
 export { TIER_1, TIER_2, TIER_3, tier } from "./tier.js";
-export { config, isSimulationMode, getSampleRate, resetConfig } from "./config.js";
+export {
+  config,
+  isSimulationMode,
+  simulationEnvEnabled,
+  getSampleRate,
+  resetConfig,
+} from "./config.js";
 export type { AttestPlugin, PluginResult } from "./plugins.js";
 export { PluginRegistry, executePluginAssertion } from "./plugins.js";
 export { ContinuousEvalRunner, Sampler, AlertDispatcher } from "./continuous.js";

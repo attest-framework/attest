@@ -4,9 +4,11 @@ let _sampleRate = 0;
 /**
  * Configure global SDK options.
  *
- * @param options.simulation - Enable simulation mode. All `evaluateBatch` calls
- *   return deterministic pass results without spawning the engine or calling any
- *   LLM. Equivalent to setting `ATTEST_SIMULATION=1` in the environment.
+ * @param options.simulation - Enable simulation mode: the engine evaluates
+ *   layers 1-4 and reports layers 5-6 as not evaluated (reason "simulation")
+ *   without calling any provider. The engine reads `ATTEST_SIMULATION` when it
+ *   starts; the Vitest fixtures set it from this flag. Equivalent to setting
+ *   `ATTEST_SIMULATION=1` in the environment.
  * @param options.sampleRate - Sampling rate for continuous evaluation (0.0–1.0).
  *   Equivalent to setting `ATTEST_SAMPLE_RATE` in the environment.
  */
@@ -32,8 +34,16 @@ export function config(options: {
  * or the `ATTEST_SIMULATION` environment variable.
  */
 export function isSimulationMode(): boolean {
+  return _simulationMode || simulationEnvEnabled();
+}
+
+/**
+ * True when `ATTEST_SIMULATION` is set for this process (and so for an
+ * engine it spawns): "1", "true" or "yes", trimmed and case-insensitive.
+ */
+export function simulationEnvEnabled(): boolean {
   const env = (process.env["ATTEST_SIMULATION"] ?? "").trim().toLowerCase();
-  return _simulationMode || env === "1" || env === "true" || env === "yes";
+  return env === "1" || env === "true" || env === "yes";
 }
 
 /**

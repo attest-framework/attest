@@ -10,6 +10,16 @@ function makeAssertion(id: string, type = "schema"): Assertion {
   return { assertion_id: id, type, spec: {} };
 }
 
+/** Engine stand-in whose initialize result advertises `capabilities`. */
+function engineWith(capabilities: string[] | null): never {
+  return {
+    initResult:
+      capabilities === null
+        ? null
+        : { engine_version: "1.0.0", compatible: true, capabilities, missing: [] },
+  } as never;
+}
+
 function makeTrace(): Trace {
   return {
     trace_id: "trc_test001",
@@ -181,7 +191,7 @@ describe("AttestClient.evaluateBatch — simulation goes to the engine", () => {
     ["env", () => { process.env["ATTEST_SIMULATION"] = "1"; }],
   ])("sends evaluate_batch to the engine (%s)", async (_name, enable) => {
     const { AttestClient } = await import("../../packages/core/src/client.js");
-    const client = new AttestClient({} as never);
+    const client = new AttestClient(engineWith(["layers_1_4", "simulation_mode"]));
     const engineResult = {
       results: [
         {
@@ -203,5 +213,40 @@ describe("AttestClient.evaluateBatch — simulation goes to the engine", () => {
     expect(send).toHaveBeenCalledOnce();
     expect(result.results[0].status).toBe("not_evaluated");
     expect(result.results[0].reason).toBe("simulation");
+  });
+});
+
+describe("AttestClient.evaluateBatch — simulation needs a simulating engine", () => {
+  afterEach(() => {
+    resetConfig();
+    delete process.env["ATTEST_SIMULATION"];
+  });
+
+  it.each([
+    ["no simulation_mode", ["layers_1_4"]],
+    ["not initialized", null],
+  ])("refuses to send when the engine is %s", async (_name, capabilities) => {
+    const { AttestClient } = await import("../../packages/core/src/client.js");
+    process.env["ATTEST_SIMULATION"] = "1";
+    config({ simulation: true });
+    const client = new AttestClient(engineWith(capabilities));
+    const send = vi.spyOn(client, "sendRequest");
+
+    await expect(
+      client.evaluateBatch(makeTrace(), [makeAssertion("x", "llm_judge")]),
+    ).rejects.toThrow("simulation");
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it("queryDrift in simulation reports zeros, not a perfect score", async () => {
+    const { AttestClient } = await import("../../packages/core/src/client.js");
+    config({ simulation: true });
+    const client = new AttestClient(engineWith(null));
+
+    const report = await client.queryDrift("a1");
+
+    expect(report.mean).toBe(0);
+    expect(report.latest_score).toBe(0);
+    expect(report.status).toBe("no_data");
   });
 });

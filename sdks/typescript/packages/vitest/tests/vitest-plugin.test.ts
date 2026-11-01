@@ -214,7 +214,7 @@ describe("attestGlobalSetup", () => {
     _mockCapabilities = ["layers_1_4"];
     const hooks = attestGlobalSetup();
 
-    await expect(hooks.setup()).rejects.toThrow("does not support simulation mode");
+    await expect(hooks.setup()).rejects.toThrow("was not started in simulation mode");
     expect(globalThis.__attest_engine__).toBeUndefined();
   });
 });
@@ -249,7 +249,7 @@ describe("AttestEngineFixture (simulation mode)", () => {
     _mockCapabilities = ["layers_1_4"];
     const fixture = new AttestEngineFixture();
 
-    await expect(fixture.start()).rejects.toThrow("does not support simulation mode");
+    await expect(fixture.start()).rejects.toThrow("was not started in simulation mode");
   });
 });
 

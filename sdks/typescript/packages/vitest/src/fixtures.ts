@@ -7,6 +7,7 @@ import {
   EngineManager,
   isSimulationMode,
   renderDiagnostics,
+  requireSimulationCapability,
   OUTCOME_FAIL,
   OUTCOME_SKIP,
   STATUS_SOFT_FAIL,
@@ -105,12 +106,13 @@ export class AttestEngineFixture {
       process.env["ATTEST_SIMULATION"] = "1";
     }
     const init = await this.manager.start();
-    if (simulation && !(init.capabilities ?? []).includes("simulation_mode")) {
-      await this.manager.stop();
-      throw new Error(
-        `attest-engine ${init.engine_version} does not support simulation mode ` +
-          "(capability 'simulation_mode'); upgrade the engine to 1.0 or later.",
-      );
+    if (simulation) {
+      try {
+        requireSimulationCapability(init);
+      } catch (err) {
+        await this.manager.stop();
+        throw err;
+      }
     }
     this._client = new AttestClient(this.manager);
   }

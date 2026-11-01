@@ -2,6 +2,7 @@ import {
   EngineManager,
   AttestClient,
   isSimulationMode,
+  requireSimulationCapability,
   type AgentResult,
 } from "@attest-ai/core";
 
@@ -45,13 +46,14 @@ export function attestGlobalSetup(options?: AttestGlobalSetupOptions) {
       });
 
       const init = await engineManager.start();
-      if (isSimulationMode() && !(init.capabilities ?? []).includes("simulation_mode")) {
-        await engineManager.stop();
-        engineManager = undefined;
-        throw new Error(
-          `attest-engine ${init.engine_version} does not support simulation mode ` +
-            "(capability 'simulation_mode'); upgrade the engine to 1.0 or later.",
-        );
+      if (isSimulationMode()) {
+        try {
+          requireSimulationCapability(init);
+        } catch (err) {
+          await engineManager.stop();
+          engineManager = undefined;
+          throw err;
+        }
       }
       attestClient = new AttestClient(engineManager);
 

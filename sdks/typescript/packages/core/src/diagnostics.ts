@@ -3,7 +3,8 @@
  *
  * Mirrors the Python attest.cli.diagnostics module so PR comments,
  * pytest output, and vitest output show the same fields. Use as the
- * message argument to a vitest `expect(result.passed, ...)` so
+ * message argument when asserting the verdict, e.g.
+ * `expect(result.outcome(), renderDiagnostics(result)).not.toBe("fail")`, so
  * reviewers see trace path, expected vs actual, and judge metadata.
  */
 
