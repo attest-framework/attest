@@ -108,3 +108,14 @@ def test_strict_fails_not_evaluated(scratch: pytest.Pytester) -> None:
 
     run.assert_outcomes(failed=1)
     run.stdout.fnmatch_lines(["*--attest-strict: not evaluated: provider_not_configured*"])
+
+
+@pytest.mark.integration
+def test_attest_strict_env_fails_not_evaluated(
+    scratch: pytest.Pytester, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("ATTEST_STRICT", "1")
+
+    run = scratch.runpytest_subprocess("-p", "no:cacheprovider", "-k", "judge")
+
+    run.assert_outcomes(failed=1)

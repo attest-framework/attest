@@ -50,7 +50,7 @@ func loadVerdictFixtures(t *testing.T) []verdictFixture {
 }
 
 // TestVerdictFixtures_WireFormatAndPolicyExit checks each fixture's rows
-// against the C1 wire rules and its policy exit code under policy.yaml.
+// against the not_evaluated wire rules and its policy exit code under policy.yaml.
 func TestVerdictFixtures_WireFormatAndPolicyExit(t *testing.T) {
 	pol, err := policy.Load(filepath.Join(verdictFixtureDir, "policy.yaml"))
 	if err != nil {
@@ -65,7 +65,7 @@ func TestVerdictFixtures_WireFormatAndPolicyExit(t *testing.T) {
 				if r.Status == types.StatusNotEvaluated {
 					seen[r.Reason] = true
 					if !validReasons[r.Reason] {
-						t.Errorf("%s: reason %q is not a C1 reason", r.AssertionID, r.Reason)
+						t.Errorf("%s: reason %q is not a known not_evaluated reason", r.AssertionID, r.Reason)
 					}
 					if r.FailureClass != "" {
 						t.Errorf("%s: failure_class set on not_evaluated", r.AssertionID)

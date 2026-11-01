@@ -166,3 +166,9 @@ async def test_config_simulation_without_env_refuses_to_reach_providers() -> Non
         await client.evaluate_batch(_make_trace(), [_make_assertions()[0]])
 
     client.send_request.assert_not_awaited()
+
+
+def test_env_var_is_case_insensitive() -> None:
+    os.environ["ATTEST_SIMULATION"] = "True"
+
+    assert is_simulation_mode() is True
