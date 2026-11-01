@@ -134,7 +134,7 @@ func buildRegistryOptions(logger *slog.Logger) ([]assertion.RegistryOption, []st
 			} else if judgeCacheMaxMB > 10000 {
 				judgeCacheMaxMB = 10000
 			}
-			c, err := cache.NewJudgeCache(dbPath, judgeCacheMaxMB)
+			c, err := cache.NewJudgeCache(dbPath, judgeCacheMaxMB, provs.judgeConfig.baseURL)
 			if err != nil {
 				logger.Warn("failed to create judge cache", "err", err)
 			} else {

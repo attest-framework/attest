@@ -217,3 +217,18 @@ func TestDiagnose_RejectsSameEnvAsServer(t *testing.T) {
 		})
 	}
 }
+
+func TestResolveJudgeConfig_NormalizesBaseURL(t *testing.T) {
+	withoutProviders(t, "")
+	t.Setenv("ATTEST_JUDGE_BASE_URL", "HTTP://LocalHost:8000/v1/")
+	t.Setenv("ATTEST_JUDGE_API_KEY", "k")
+
+	cfg, err := resolveJudgeConfig()
+
+	if err != nil {
+		t.Fatalf("resolveJudgeConfig: %v", err)
+	}
+	if cfg.baseURL != "http://localhost:8000/v1" {
+		t.Errorf("baseURL = %q, want http://localhost:8000/v1", cfg.baseURL)
+	}
+}

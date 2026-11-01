@@ -83,6 +83,7 @@ func parseJudgeBaseURL(raw string) (string, error) {
 	if u.RawQuery != "" || u.ForceQuery || u.Fragment != "" {
 		return "", fmt.Errorf("ATTEST_JUDGE_BASE_URL must not contain a query or fragment")
 	}
+	u.Host = strings.ToLower(u.Host)
 	return strings.TrimRight(u.String(), "/"), nil
 }
 
