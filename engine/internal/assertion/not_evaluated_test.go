@@ -2,11 +2,13 @@ package assertion
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"testing"
 
 	"github.com/attest-ai/attest/engine/internal/assertion/judge"
+	"github.com/attest-ai/attest/engine/internal/cache"
 	"github.com/attest-ai/attest/engine/internal/llm"
 	"github.com/attest-ai/attest/engine/pkg/types"
 )
@@ -162,6 +164,46 @@ func TestConstraint_UnsetMetadata_ReturnsMissingEvidence(t *testing.T) {
 	got := evalOne(t, p, trace, a)
 
 	assertNotEvaluated(t, got["cost"], types.ReasonMissingEvidence)
+}
+
+// A dynamic threshold must not reclassify a not_evaluated row: with a
+// configured history store it used to become hard_fail/broken_code.
+func TestDynamicThreshold_KeepsNotEvaluated(t *testing.T) {
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	defer db.Close()
+	store, err := cache.NewHistoryStore(db)
+	if err != nil {
+		t.Fatalf("NewHistoryStore: %v", err)
+	}
+	p := NewPipelineWithHistory(NewRegistry(), store)
+	trace := &types.Trace{TraceID: "trc_dyn_missing", Output: json.RawMessage(`{"message":"ok"}`)}
+	a := types.Assertion{
+		AssertionID: "cost",
+		Type:        types.TypeConstraint,
+		Spec:        json.RawMessage(`{"field":"metadata.cost_usd","operator":"lte","value":0.01,"threshold":"dynamic"}`),
+	}
+
+	got := evalOne(t, p, trace, a)["cost"]
+
+	assertNotEvaluated(t, got, types.ReasonMissingEvidence)
+	if got.FailureClass != "" {
+		t.Errorf("failure_class=%q on a not_evaluated row", got.FailureClass)
+	}
+	if got.ThresholdSource != "" {
+		t.Errorf("threshold_source=%q on a not_evaluated row", got.ThresholdSource)
+	}
+}
+
+// Pipelines built by tests must not pick up simulation mode from the shell.
+func TestNewPipeline_IgnoresSimulationEnv(t *testing.T) {
+	t.Setenv("ATTEST_SIMULATION", "1")
+	p := NewPipeline(NewRegistry())
+	if p.simulation {
+		t.Fatal("NewPipeline enabled simulation from ATTEST_SIMULATION; only SetSimulation may")
+	}
 }
 
 func TestSimulationModeFromEnv(t *testing.T) {

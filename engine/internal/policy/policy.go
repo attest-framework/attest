@@ -295,11 +295,12 @@ func Evaluate(p *Policy, results []types.AssertionResult, totalCost float64, bas
 		}
 	}
 
-	// ── Regression block ──
+	// ── Not-evaluated block ──
 	if v, ok := notEvaluatedViolation(results, p.NotEvaluated); ok {
 		out.Violations = append(out.Violations, v)
 	}
 
+	// ── Regression block ──
 	if p.BlockOnRegression != nil && *p.BlockOnRegression && baseline != nil {
 		if ids := baseline.RegressedAssertionIDs(); len(ids) > 0 {
 			out.Violations = append(out.Violations, Violation{

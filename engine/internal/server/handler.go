@@ -48,6 +48,7 @@ func RegisterBuiltinHandlers(s *Server) error {
 	} else {
 		pipeline = assertion.NewPipeline(registry)
 	}
+	pipeline.SetSimulation(assertion.SimulationModeFromEnv())
 
 	concurrency, err := envInt("ATTEST_EVAL_CONCURRENCY", 0)
 	if err != nil {
