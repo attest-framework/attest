@@ -1,13 +1,18 @@
 name: 'Attest PR Annotate'
 description: |
-  Post inline PR review comments for each failed Attest assertion in a
-  JSON v2 report. Uses the GitHub REST API via gh; needs `pull-requests:
-  write` and `contents: read`. Optionally evaluates a policy file and
-  fails the step (exit 1) when a blocking violation occurs.
+  Annotate a pull request with each failed Attest assertion in a report-v2
+  file (pytest --attest-report, Vitest AttestReporter). Each failure is
+  placed at the file and line of the test that requested it: an inline
+  review comment when that line is in the diff, an entry in the review body
+  otherwise, and an ::error workflow annotation either way. Failures without
+  a source location are listed in the review body. Uses the GitHub REST API;
+  needs `pull-requests: write` and `contents: read`. Optionally evaluates a
+  policy file and fails the step (exit 1) on a blocking violation; a warning
+  (exit 2) does not fail it.
 
 inputs:
   report:
-    description: 'Path to JSON v2 report file (engine/internal/report/json.go output).'
+    description: 'Path to the report-v2 file (proto/attest/v1/report-v2.schema.json).'
     required: true
   policy:
     description: 'Optional path to attest.policy.yaml; when set, the step exits with the policy exit code.'

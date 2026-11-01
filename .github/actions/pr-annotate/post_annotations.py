@@ -1,10 +1,15 @@
 #!/usr/bin/env python3
-"""Post inline PR review comments for each failed Attest assertion.
+"""Post PR review comments and workflow annotations for failed Attest assertions.
 
-Reads a JSON v2 report (engine/internal/report/json.go output) and posts
-one comment per failed assertion via the GitHub REST API. The comment
-body surfaces every diagnostic field the engine populates so reviewers
-do not have to follow links to dig into the failure.
+Reads a report-v2 file (proto/attest/v1/report-v2.schema.json) written by
+`pytest --attest-report` or the Vitest AttestReporter. Each failed row
+carries the file and line of the test that requested it: the failure is
+posted as an inline review comment on that line when the line is part of
+the pull request diff, and listed in the review body otherwise. Located
+failures are also emitted as ``::error`` workflow annotations, which GitHub
+shows at the file and line. Rows without a location go into the review
+body; the script never guesses a line. The comment body surfaces every
+diagnostic field the engine populates.
 
 Constraints:
   - Stdlib only — the action runs in vanilla Ubuntu runners with the
@@ -23,6 +28,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 import urllib.error
 import urllib.request
@@ -104,17 +110,19 @@ def _summary_body(report: dict[str, Any], failures: list[dict[str, Any]]) -> str
     return "\n".join(parts)
 
 
-def _api_post(url: str, token: str, payload: dict[str, Any]) -> tuple[int, str]:
-    """Issue a POST against the GitHub REST API with token auth.
+def _api_request(
+    method: str, url: str, token: str, payload: dict[str, Any] | None = None
+) -> tuple[int, str]:
+    """Issue a request against the GitHub REST API with token auth.
 
     Returns (status_code, response_body). Raises urllib.error.URLError on
     network failure (caller decides whether to abort).
     """
-    data = json.dumps(payload).encode("utf-8")
+    data = json.dumps(payload).encode("utf-8") if payload is not None else None
     req = urllib.request.Request(
         url,
         data=data,
-        method="POST",
+        method=method,
         headers={
             "Authorization": f"token {token}",
             "Accept": "application/vnd.github+json",
@@ -129,30 +137,91 @@ def _api_post(url: str, token: str, payload: dict[str, Any]) -> tuple[int, str]:
         return exc.code, exc.read().decode("utf-8") if exc.fp else ""
 
 
-def _resolve_test_file(result: dict[str, Any]) -> tuple[str | None, int | None]:
-    """Best-effort extract of (path, line) for inline placement.
+def _source_location(result: dict[str, Any]) -> tuple[str, int] | None:
+    """Return the (file, line) of the test that requested this assertion.
 
-    The engine doesn't yet emit source-line metadata, so we look for a
-    "source" hint in the explanation (e.g. "tests/test_x.py::test_y" —
-    pytest's default), strip the ::test part, and post the comment on
-    line 1 of the file. Reviewers see the comment threaded against the
-    test file even if not the exact assert line.
+    report-v2 rows written by the SDK test runners carry ``file`` (relative to
+    the runner's root, forward slashes) and ``line`` (1-based line of the test
+    definition). Rows without them, or with an absolute, parent-relative or
+    malformed location, return None: the failure goes into the review summary
+    instead of being pinned to a guessed line.
     """
-    explanation = result.get("explanation", "") or ""
-    suggested = result.get("suggested_action", "") or ""
-    actual = result.get("actual", "") or ""
-    blob = " ".join((explanation, suggested, actual))
-    for token in blob.split():
-        if "::" in token:
-            path = token.split("::", 1)[0]
-            if path.endswith((".py", ".ts", ".js", ".go")):
-                return path, 1
-    return None, None
+    path = result.get("file")
+    line = result.get("line")
+    if not isinstance(path, str) or not path or isinstance(line, bool) or not isinstance(line, int):
+        return None
+    if line < 1 or path.startswith("/") or "\\" in path or ":" in path:
+        return None
+    if any(part in ("", ".", "..") for part in path.split("/")):
+        return None
+    return path, line
+
+
+def _diff_lines(patch: str) -> set[int]:
+    """Right-side (head) line numbers a review comment can attach to in one file's patch."""
+    lines: set[int] = set()
+    right = 0
+    for row in patch.splitlines():
+        if row.startswith("@@"):
+            match = _HUNK.match(row)
+            if match is None:
+                raise ValueError(f"unparseable hunk header: {row!r}")
+            right = int(match.group(1))
+        elif row.startswith("+") or row.startswith(" "):
+            lines.add(right)
+            right += 1
+    return lines
+
+
+_HUNK = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@")
+
+# GitHub returns at most 3000 files for a pull request, 100 per page.
+_MAX_FILE_PAGES = 30
+
+
+def _pull_request_lines(repo: str, pr: int, token: str) -> dict[str, set[int]]:
+    """Map each file in the pull request to the head lines its diff shows."""
+    commentable: dict[str, set[int]] = {}
+    for page in range(1, _MAX_FILE_PAGES + 1):
+        url = f"https://api.github.com/repos/{repo}/pulls/{pr}/files?per_page=100&page={page}"
+        status, body = _api_request("GET", url, token)
+        if status >= 300:
+            raise RuntimeError(f"listing pull request files returned {status}: {body}")
+        files = json.loads(body)
+        for f in files:
+            commentable[f["filename"]] = _diff_lines(f.get("patch") or "")
+        if len(files) < 100:
+            break
+    return commentable
+
+
+def _escape_data(value: str) -> str:
+    return value.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+
+
+def _escape_property(value: str) -> str:
+    return _escape_data(value).replace(":", "%3A").replace(",", "%2C")
+
+
+def _workflow_annotation(path: str, line: int, result: dict[str, Any]) -> str:
+    """A ``::error`` workflow command: GitHub shows it at path:line in the run and the diff."""
+    layer = result.get("layer", 0) or 0
+    title = f"Attest L{layer} {result.get('type') or 'assertion'} failed"
+    message = "; ".join(
+        f"{label}: {result[key]}"
+        for label, key in (("expected", "expected"), ("actual", "actual"), ("detail", "explanation"))
+        if result.get(key)
+    )
+    level = "error" if result.get("status") == "hard_fail" else "warning"
+    return (
+        f"::{level} file={_escape_property(path)},line={line},"
+        f"title={_escape_property(title)}::{_escape_data(_truncate(message, 1000))}"
+    )
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Post Attest PR annotations.")
-    parser.add_argument("--report", required=True, help="Path to JSON v2 report")
+    parser.add_argument("--report", required=True, help="Path to report-v2 JSON file")
     parser.add_argument("--repo", required=True, help="owner/name (e.g. attest-framework/attest)")
     parser.add_argument("--pr", required=True, type=int, help="Pull request number")
     parser.add_argument("--commit", required=True, help="Head commit SHA")
@@ -183,50 +252,68 @@ def main() -> int:
 
     results = report.get("results", [])
     failures = [r for r in results if r.get("status") in ("hard_fail", "soft_fail")]
+    if not failures:
+        print("post_annotations: no failing assertions; nothing to post")
+        return 0
 
-    summary = _summary_body(report, failures)
+    try:
+        commentable = _pull_request_lines(args.repo, args.pr, token)
+    except (RuntimeError, ValueError, json.JSONDecodeError) as exc:
+        print(f"post_annotations: {exc}", file=sys.stderr)
+        return 1
 
-    comments: list[dict[str, Any]] = []
-    summary_only_failures: list[dict[str, Any]] = []
-    for r in failures:
-        path, line = _resolve_test_file(r)
-        if path is None:
-            summary_only_failures.append(r)
-            continue
-        comments.append(
-            {
-                "path": path,
-                "line": line,
-                "side": "RIGHT",
-                "body": _format_failure(r),
-            }
-        )
+    payload, annotations = build_review(report, failures, commentable, args.commit)
+    for annotation in annotations:
+        print(annotation)
 
-    body_parts = [summary]
-    if summary_only_failures:
-        body_parts.append("")
-        body_parts.append("**Failures without source-line hint:**")
-        body_parts.append("")
-        for r in summary_only_failures:
-            body_parts.append(_format_failure(r))
-            body_parts.append("")
-    review_body = "\n".join(body_parts)
-    if len(review_body) > MAX_BODY_CHARS:
-        review_body = review_body[: MAX_BODY_CHARS - 3] + "..."
-
-    payload = {
-        "commit_id": args.commit,
-        "body": review_body,
-        "event": "COMMENT",
-        "comments": comments,
-    }
     url = f"https://api.github.com/repos/{args.repo}/pulls/{args.pr}/reviews"
-    status, body = _api_post(url, token, payload)
+    status, body = _api_request("POST", url, token, payload)
     if status >= 300:
         print(f"post_annotations: GitHub API returned {status}: {body}", file=sys.stderr)
         return 1
-    print(f"post_annotations: posted review with {len(comments)} inline comment(s)")
+    print(f"post_annotations: posted review with {len(payload['comments'])} inline comment(s)")
     return 0
+
+
+def build_review(
+    report: dict[str, Any],
+    failures: list[dict[str, Any]],
+    commentable: dict[str, set[int]],
+    commit: str,
+) -> tuple[dict[str, Any], list[str]]:
+    """Return the review payload and the workflow annotations for ``failures``.
+
+    A failure whose test location is a line of the pull request diff becomes an
+    inline comment there. Every other failure is listed in the review body, with
+    its ``file:line`` when the report has one. Every located failure also gets a
+    workflow annotation, which GitHub shows at that file and line whether or not
+    the line is in the diff.
+    """
+    comments: list[dict[str, Any]] = []
+    annotations: list[str] = []
+    elsewhere: list[str] = []
+    for r in failures:
+        location = _source_location(r)
+        if location is None:
+            elsewhere.append(_format_failure(r))
+            continue
+        path, line = location
+        annotations.append(_workflow_annotation(path, line, r))
+        if line in commentable.get(path, set()):
+            comments.append({"path": path, "line": line, "side": "RIGHT", "body": _format_failure(r)})
+        else:
+            elsewhere.append(f"`{path}:{line}` (not in this diff)\n\n{_format_failure(r)}")
+
+    body_parts = [_summary_body(report, failures)]
+    if elsewhere:
+        body_parts += ["", "**Failures outside this diff or without a source location:**", ""]
+        for block in elsewhere:
+            body_parts += [block, ""]
+    review_body = "\n".join(body_parts)
+    if len(review_body) > MAX_BODY_CHARS:
+        review_body = review_body[: MAX_BODY_CHARS - 3] + "..."
+    payload = {"commit_id": commit, "body": review_body, "event": "COMMENT", "comments": comments}
+    return payload, annotations
 
 
 if __name__ == "__main__":

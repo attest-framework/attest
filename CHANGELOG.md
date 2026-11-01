@@ -17,6 +17,7 @@ All notable changes to Attest are documented in this file. The format follows [K
 
 ### Changed
 
+- The `pr-annotate` action places each failed assertion at the `file` and `line` its report-v2 row carries (the test that requested it): an inline review comment when that line is in the pull request diff, an entry with `file:line` in the review body otherwise, and an `::error` (hard failure) or `::warning` (soft failure) workflow annotation at that file and line either way. It no longer guesses line 1 from test ids in the explanation; rows without a location are listed in the review body. Its unit tests run in GitHub Config CI.
 - **BREAKING:** `ATTEST_BUDGET_MAX_COST` is renamed `ATTEST_MAX_SOFT_FAILURES`; it always counted soft failures in one engine session, not cost. No alias.
 - **BREAKING:** with `ATTEST_JUDGE_BASE_URL` set, only `ATTEST_JUDGE_API_KEY` is sent to the endpoint; `OPENAI_API_KEY` is used only at the default OpenAI endpoint. A base URL without `ATTEST_JUDGE_API_KEY`, with credentials, a query or a fragment, is a startup error.
 - **BREAKING:** `OPENAI_API_KEY` in the engine's environment now enables the OpenAI judge and OpenAI embeddings (previously only `ATTEST_OPENAI_API_KEY` did).
