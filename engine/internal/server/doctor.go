@@ -45,6 +45,9 @@ type EmbedDiagnosis struct {
 // and reports the capabilities `initialize` would advertise. It returns the
 // same configuration errors the server would fail to start with.
 func Diagnose(logger *slog.Logger) (*Diagnosis, error) {
+	if err := validateEngineEnv(); err != nil {
+		return nil, err
+	}
 	provs, err := buildProviders(logger)
 	if err != nil {
 		return nil, err

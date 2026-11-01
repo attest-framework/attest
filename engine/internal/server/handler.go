@@ -34,6 +34,9 @@ const (
 // operator sees broken config at startup rather than after an evaluation runs
 // with silently-defaulted values.
 func RegisterBuiltinHandlers(s *Server) error {
+	if err := validateEngineEnv(); err != nil {
+		return err
+	}
 	opts, caps, judgeProvider, historyStore, err := buildRegistryOptions(s.logger)
 	if err != nil {
 		return err
@@ -228,22 +231,47 @@ func envInt(key string, fallback int) (int, error) {
 	return n, nil
 }
 
-// buildBudgetTracker constructs a BudgetTracker from ATTEST_MAX_SOFT_FAILURES,
-// the maximum number of soft failures allowed in one engine session; the count
-// accumulates across batches. Returns nil when the variable is unset. A value of 0 means no soft failures are permitted.
-// Returns an error when the variable is set but invalid so the operator sees
-// broken config at startup.
-func buildBudgetTracker(logger *slog.Logger) (*assertion.BudgetTracker, error) {
+// validateEngineEnv checks every integer setting the server reads at startup,
+// including those consulted only when a provider is configured, so the server
+// and doctor reject the same broken configuration.
+func validateEngineEnv() error {
+	for _, key := range []string{
+		"ATTEST_EVAL_CONCURRENCY", "ATTEST_EMBEDDING_CACHE_MAX_MB", "ATTEST_JUDGE_CACHE_MAX_MB",
+		"ATTEST_HISTORY_MAX_ROWS", "ATTEST_HISTORY_MAX_AGE_DAYS",
+	} {
+		if _, err := envInt(key, 0); err != nil {
+			return err
+		}
+	}
+	_, _, err := maxSoftFailures()
+	return err
+}
+
+// maxSoftFailures reads ATTEST_MAX_SOFT_FAILURES, the maximum number of soft
+// failures allowed in one engine session; the count accumulates across
+// batches. set is false when the variable is unset. A value of 0 means no
+// soft failures are permitted; negative or non-integer values are errors.
+func maxSoftFailures() (limit int, set bool, err error) {
 	v := os.Getenv("ATTEST_MAX_SOFT_FAILURES")
 	if v == "" {
-		return nil, nil
+		return 0, false, nil
 	}
-	limit, err := strconv.Atoi(v)
+	limit, err = strconv.Atoi(v)
 	if err != nil {
-		return nil, fmt.Errorf("env var ATTEST_MAX_SOFT_FAILURES=%q is not a valid integer: %w", v, err)
+		return 0, false, fmt.Errorf("env var ATTEST_MAX_SOFT_FAILURES=%q is not a valid integer: %w", v, err)
 	}
 	if limit < 0 {
-		return nil, fmt.Errorf("env var ATTEST_MAX_SOFT_FAILURES=%d must be >= 0", limit)
+		return 0, false, fmt.Errorf("env var ATTEST_MAX_SOFT_FAILURES=%d must be >= 0", limit)
+	}
+	return limit, true, nil
+}
+
+// buildBudgetTracker constructs a BudgetTracker from ATTEST_MAX_SOFT_FAILURES.
+// Returns nil when the variable is unset and an error when it is invalid.
+func buildBudgetTracker(logger *slog.Logger) (*assertion.BudgetTracker, error) {
+	limit, set, err := maxSoftFailures()
+	if err != nil || !set {
+		return nil, err
 	}
 	logger.Info("soft-failure limit enabled", "max_soft_failures", limit)
 	return assertion.NewBudgetTracker(limit), nil

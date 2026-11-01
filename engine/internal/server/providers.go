@@ -80,7 +80,7 @@ func parseJudgeBaseURL(raw string) (string, error) {
 	if u.Host == "" {
 		return "", fmt.Errorf("ATTEST_JUDGE_BASE_URL has no host")
 	}
-	if u.RawQuery != "" || u.Fragment != "" {
+	if u.RawQuery != "" || u.ForceQuery || u.Fragment != "" {
 		return "", fmt.Errorf("ATTEST_JUDGE_BASE_URL must not contain a query or fragment")
 	}
 	return strings.TrimRight(u.String(), "/"), nil
@@ -183,12 +183,12 @@ func buildJudgeProvider(logger *slog.Logger, cfg judgeConfig) (llm.Provider, err
 // buildRateLimiterConfig resolves the rate-limiter config for a named provider
 // from ATTEST_RATE_LIMIT_<PROVIDER> and ATTEST_RATE_LIMIT_<PROVIDER>_BURST,
 // defaulting to llm.DefaultRateLimiterConfig. Returns an error when either
-// variable is set to an invalid value.
+// variable is set to a non-integer or a value <= 0.
 func buildRateLimiterConfig(provider string) (llm.RateLimiterConfig, error) {
 	cfg := llm.DefaultRateLimiterConfig
 	upper := strings.ToUpper(provider)
 
-	rpm, err := envInt("ATTEST_RATE_LIMIT_"+upper, 0)
+	rpm, err := positiveEnvInt("ATTEST_RATE_LIMIT_" + upper)
 	if err != nil {
 		return cfg, err
 	}
@@ -196,7 +196,7 @@ func buildRateLimiterConfig(provider string) (llm.RateLimiterConfig, error) {
 		cfg.RequestsPerMinute = float64(rpm)
 	}
 
-	burst, err := envInt("ATTEST_RATE_LIMIT_"+upper+"_BURST", 0)
+	burst, err := positiveEnvInt("ATTEST_RATE_LIMIT_" + upper + "_BURST")
 	if err != nil {
 		return cfg, err
 	}
@@ -204,6 +204,19 @@ func buildRateLimiterConfig(provider string) (llm.RateLimiterConfig, error) {
 		cfg.Burst = burst
 	}
 	return cfg, nil
+}
+
+// positiveEnvInt reads a positive integer from key. Returns 0 when key is
+// unset and an error when it is set to a non-integer or a value <= 0.
+func positiveEnvInt(key string) (int, error) {
+	n, err := envInt(key, 0)
+	if err != nil {
+		return 0, err
+	}
+	if os.Getenv(key) != "" && n <= 0 {
+		return 0, fmt.Errorf("env var %s=%d must be > 0", key, n)
+	}
+	return n, nil
 }
 
 // capabilities returns the capability list `initialize` advertises for these

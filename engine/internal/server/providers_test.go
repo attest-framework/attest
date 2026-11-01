@@ -128,6 +128,7 @@ func TestResolveJudgeConfig_InvalidSettingsError(t *testing.T) {
 		{"credentials with bad scheme", map[string]string{"ATTEST_JUDGE_BASE_URL": "ftp://user:pw@host/v1", "ATTEST_JUDGE_API_KEY": "secret-key"}, "must not contain credentials"},
 		{"credentials with no host", map[string]string{"ATTEST_JUDGE_BASE_URL": "http://user:pw@/v1", "ATTEST_JUDGE_API_KEY": "secret-key"}, "must not contain credentials"},
 		{"malformed URL", map[string]string{"ATTEST_JUDGE_BASE_URL": "http://user:pw@host:bad port/v1", "ATTEST_JUDGE_API_KEY": "secret-key"}, "not a valid URL"},
+		{"empty query", map[string]string{"ATTEST_JUDGE_BASE_URL": "https://host/v1?", "ATTEST_JUDGE_API_KEY": "secret-key"}, "query or fragment"},
 		{"key in query", map[string]string{"ATTEST_JUDGE_BASE_URL": "https://host/v1?api-key=pw", "ATTEST_JUDGE_API_KEY": "secret-key"}, "query or fragment"},
 		{"non-http scheme", map[string]string{"ATTEST_JUDGE_BASE_URL": "ftp://host/v1", "ATTEST_JUDGE_API_KEY": "secret-key"}, "http or https"},
 		{"missing host", map[string]string{"ATTEST_JUDGE_BASE_URL": "http:///v1", "ATTEST_JUDGE_API_KEY": "secret-key"}, "no host"},
@@ -168,5 +169,51 @@ func TestBuildProviders_RejectsUnknownEmbeddingProvider(t *testing.T) {
 
 	if err == nil || !strings.Contains(err.Error(), "ATTEST_EMBEDDING_PROVIDER") {
 		t.Fatalf("err = %v, want ATTEST_EMBEDDING_PROVIDER error", err)
+	}
+}
+
+func TestBuildRateLimiterConfig_RejectsNonPositive(t *testing.T) {
+	for _, key := range []string{"ATTEST_RATE_LIMIT_OPENAI", "ATTEST_RATE_LIMIT_OPENAI_BURST"} {
+		for _, v := range []string{"0", "-1"} {
+			t.Run(key+"="+v, func(t *testing.T) {
+				t.Setenv("ATTEST_RATE_LIMIT_OPENAI", "")
+				t.Setenv("ATTEST_RATE_LIMIT_OPENAI_BURST", "")
+				t.Setenv(key, v)
+
+				_, err := buildRateLimiterConfig("openai")
+
+				if err == nil || !strings.Contains(err.Error(), key) {
+					t.Fatalf("err = %v, want error naming %s", err, key)
+				}
+			})
+		}
+	}
+}
+
+func TestDiagnose_RejectsSameEnvAsServer(t *testing.T) {
+	cases := map[string]string{
+		"ATTEST_EVAL_CONCURRENCY":       "abc",
+		"ATTEST_MAX_SOFT_FAILURES":      "-1",
+		"ATTEST_EMBEDDING_CACHE_MAX_MB": "x",
+		"ATTEST_JUDGE_CACHE_MAX_MB":     "x",
+		"ATTEST_HISTORY_MAX_ROWS":       "x",
+		"ATTEST_HISTORY_MAX_AGE_DAYS":   "x",
+	}
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	for key, v := range cases {
+		t.Run(key, func(t *testing.T) {
+			withoutProviders(t, "")
+			t.Setenv(key, v)
+
+			_, diagErr := Diagnose(logger)
+			regErr := RegisterBuiltinHandlers(New(nil, nil, logger))
+
+			if diagErr == nil || regErr == nil {
+				t.Fatalf("doctor err = %v, server err = %v; want both to reject %s=%s", diagErr, regErr, key, v)
+			}
+			if diagErr.Error() != regErr.Error() {
+				t.Errorf("doctor %q != server %q", diagErr, regErr)
+			}
+		})
 	}
 }
