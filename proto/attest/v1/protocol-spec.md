@@ -135,12 +135,12 @@ Sent by the SDK immediately after spawning the engine. Establishes the session a
 
 #### Capability Identifiers
 
-Capabilities are additive. New capabilities never remove or alter old ones.
+Capabilities are additive. New capabilities never remove or alter old ones, with one exception in v1.0: `embedding` and `llm_judge` used to mean "a provider is configured" and now mean "the assertion type is accepted". From v1.0, L5/L6 assertions are always accepted, and `layers_5_6` signals only that at least one L5/L6 provider is configured. SDKs must not withhold L5/L6 assertions when `layers_5_6` is absent; the engine answers them with `not_evaluated(provider_not_configured)`.
 
 | Capability | Version | Description |
 |------------|---------|-------------|
 | `layers_1_4` | v0.1+ | Deterministic assertion layers: schema, constraint, trace, content |
-| `layers_5_6` | v0.2+ | Embedding similarity (layer 5) and LLM-as-judge (layer 6) |
+| `layers_5_6` | v0.2+ | At least one L5/L6 provider (embedding or judge) is configured. Since v1.0, L5/L6 assertions do not require it |
 | `soft_failures` | v0.2+ | Soft failure classification and per-test-suite budgets |
 | `simulation` | v0.3+ | Simulated users, mock tools, fault injection |
 | `multi_agent` | v0.3+ | Hierarchical trace trees, cross-agent assertions |
@@ -1024,7 +1024,7 @@ All key terms present:
 
 Computes semantic similarity between agent output and a reference text using embedding vectors. Returns a continuous score; fails when below threshold.
 
-**Requires capability:** `layers_5_6`
+**Requires capability:** `embedding` (always advertised since v1.0; without an embedding provider the result is `not_evaluated(provider_not_configured)`)
 
 **Assertion type:** `embedding`
 
@@ -1084,7 +1084,7 @@ Uses a configurable LLM to evaluate agent output against a rubric. Supports buil
 
 **Engine-side provider support:** OpenAI only. Planned v0.4: Anthropic, Gemini, Ollama.
 
-**Requires capability:** `layers_5_6`
+**Requires capability:** `llm_judge` (always advertised since v1.0; without a judge provider the result is `not_evaluated(provider_not_configured)`)
 
 **Assertion type:** `llm_judge`
 

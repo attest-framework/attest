@@ -30,7 +30,8 @@ type Pipeline struct {
 }
 
 // SimulationModeFromEnv reports whether ATTEST_SIMULATION requests
-// simulation mode ("1", "true" or "yes", matching both SDKs).
+// simulation mode: "1", "true" or "yes", case-insensitive, surrounding
+// whitespace ignored.
 func SimulationModeFromEnv() bool {
 	switch strings.TrimSpace(strings.ToLower(os.Getenv("ATTEST_SIMULATION"))) {
 	case "1", "true", "yes":
@@ -39,15 +40,15 @@ func SimulationModeFromEnv() bool {
 	return false
 }
 
-// NewPipeline creates a new assertion evaluation pipeline. Simulation mode
-// follows ATTEST_SIMULATION; override it with SetSimulation.
+// NewPipeline creates a new assertion evaluation pipeline with simulation
+// mode off; the engine server enables it with SetSimulation.
 func NewPipeline(registry *Registry) *Pipeline {
-	return &Pipeline{registry: registry, evalConcurrency: DefaultEvalConcurrency, simulation: SimulationModeFromEnv()}
+	return &Pipeline{registry: registry, evalConcurrency: DefaultEvalConcurrency}
 }
 
 // NewPipelineWithHistory creates a pipeline that uses the history store for dynamic threshold evaluation.
 func NewPipelineWithHistory(registry *Registry, store *cache.HistoryStore) *Pipeline {
-	return &Pipeline{registry: registry, historyStore: store, evalConcurrency: DefaultEvalConcurrency, simulation: SimulationModeFromEnv()}
+	return &Pipeline{registry: registry, historyStore: store, evalConcurrency: DefaultEvalConcurrency}
 }
 
 // SetSimulation enables or disables simulation mode. In simulation mode
@@ -290,8 +291,12 @@ func appendNotEvaluated(out []types.AssertionResult, assertions []types.Assertio
 // can distinguish the three classification regimes. When the historyStore lookup
 // fails, the status keeps its static-fallback value, the source is marked
 // "dynamic_unavailable", a prefix is prepended to Explanation, and a warning is
-// logged.
+// logged. A not_evaluated result is never reclassified: nothing was measured,
+// so it keeps its status and reason and gets no ThresholdSource.
 func (p *Pipeline) applyDynamicThreshold(ar *types.AssertionResult, a *types.Assertion) {
+	if ar.Status == types.StatusNotEvaluated {
+		return
+	}
 	var spec struct {
 		Threshold string `json:"threshold"`
 	}

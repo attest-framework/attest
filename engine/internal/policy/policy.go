@@ -295,11 +295,12 @@ func Evaluate(p *Policy, results []types.AssertionResult, totalCost float64, bas
 		}
 	}
 
-	// ── Regression block ──
+	// ── Not-evaluated block ──
 	if v, ok := notEvaluatedViolation(results, p.NotEvaluated); ok {
 		out.Violations = append(out.Violations, v)
 	}
 
+	// ── Regression block ──
 	if p.BlockOnRegression != nil && *p.BlockOnRegression && baseline != nil {
 		if ids := baseline.RegressedAssertionIDs(); len(ids) > 0 {
 			out.Violations = append(out.Violations, Violation{
@@ -314,14 +315,21 @@ func Evaluate(p *Policy, results []types.AssertionResult, totalCost float64, bas
 }
 
 // notEvaluatedViolation reports a "not_evaluated" violation when any
-// result has status not_evaluated, with per-reason counts in Detail.
+// result has status not_evaluated (or an unknown status), with per-reason
+// counts in Detail.
 // severity is the policy's not_evaluated setting; empty means warn.
 func notEvaluatedViolation(results []types.AssertionResult, severity string) (Violation, bool) {
 	byReason := make(map[string]int)
 	total := 0
 	for _, r := range results {
-		if r.Status == types.StatusNotEvaluated {
+		switch r.Status {
+		case types.StatusPass, types.StatusSoftFail, types.StatusHardFail:
+		case types.StatusNotEvaluated:
 			byReason[r.Reason]++
+			total++
+		default:
+			// An unknown status is never a pass: count it as not evaluated.
+			byReason[fmt.Sprintf("unknown status %q", r.Status)]++
 			total++
 		}
 	}
