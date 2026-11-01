@@ -196,6 +196,8 @@ export interface AssertionResult {
   readonly cost?: number;
   readonly duration_ms?: number;
   readonly request_id?: string;
+  /** Set only when status is "not_evaluated" (REASON_* constants). */
+  readonly reason?: string;
   readonly threshold_source?: string;
   readonly layer?: number;
   readonly type?: string;

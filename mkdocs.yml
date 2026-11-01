@@ -30,6 +30,7 @@ nav:
   - Overview: overview.md
   - Getting Started: getting-started.md
   - Guides:
+    - Verdicts: guides/verdicts.md
     - Multi-Agent Testing: guides/multi-agent.md
     - Simulation: guides/simulation.md
     - Framework Adapters: guides/framework-adapters.md
@@ -45,7 +46,6 @@ nav:
     - From PromptFoo: migration/from-promptfoo.md
   - Tutorials:
     - Writing a Framework Adapter: tutorials/writing-a-framework-adapter.md
-  - Changelog: changelog.md
   - Blog:
     - v0.4.0 Launch: blog/v040-launch.md
 

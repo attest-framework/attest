@@ -267,7 +267,7 @@ def test_repeat_pass_rate_all_pass() -> None:
 
 def test_repeat_pass_rate_empty() -> None:
     result = RepeatResult(results=[])
-    assert result.pass_rate == 0.0
+    assert result.pass_rate is None
     assert result.all_passed is True  # vacuously true
 
 
@@ -403,3 +403,39 @@ def test_active_builder_cleared_after_run() -> None:
     agent.run()
 
     assert _active_builder.get(None) is None
+
+
+def _verdict(status: str) -> AgentResult:
+    from attest._proto.types import AssertionResult, Trace
+
+    reason = "simulation" if status == "not_evaluated" else None
+    row = AssertionResult(assertion_id="a", status=status, score=0.0, explanation="", reason=reason)
+    return AgentResult(trace=Trace(trace_id="t", output={}), assertion_results=[row])
+
+
+def test_repeat_aggregate_excludes_not_evaluated_trials() -> None:
+    result = RepeatResult(
+        results=[_verdict("pass"), _verdict("soft_fail"), _verdict("not_evaluated")]
+    )
+
+    assert result.not_evaluated == 1
+    assert result.pass_rate == 1.0
+    assert result.outcome() == "skip"
+    assert result.outcome(strict=True) == "fail"
+
+
+def test_repeat_aggregate_fails_on_any_failing_trial() -> None:
+    result = RepeatResult(results=[_verdict("pass"), _verdict("hard_fail")])
+
+    assert result.outcome() == "fail"
+    assert result.pass_rate == 0.5
+    assert result.all_passed is False
+
+
+def test_scenario_result_uses_aggregate_outcome() -> None:
+    from attest.simulation.scenario import ScenarioConfig, ScenarioResult
+
+    result = ScenarioResult(config=ScenarioConfig(), results=[_verdict("soft_fail")])
+
+    assert result.outcome() == "pass"
+    assert result.passed is True

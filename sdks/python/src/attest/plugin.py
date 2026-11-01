@@ -4,19 +4,23 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import threading
 from collections.abc import Generator
-from typing import Any
+from typing import Any, TypeVar
 
 import pytest
 
 from attest.cli.diagnostics import render_diagnostics
-from attest.client import AttestClient
+from attest.client import AttestClient, require_simulation_capability
+from attest.config import is_simulation_mode
 from attest.engine_manager import EngineManager
 from attest.expect import ExpectChain
-from attest.result import AgentResult
+from attest.result import OUTCOME_FAIL, OUTCOME_SKIP, AgentResult, Verdict
 
 logger = logging.getLogger("attest.plugin")
+
+V = TypeVar("V", bound=Verdict)
 
 # Session-level cost accumulator — updated by evaluate() calls
 _session_cost: float = 0.0
@@ -24,28 +28,33 @@ _session_soft_failures: int = 0
 # Maps nodeid → AgentResult for tests that produced one. Used by the
 # terminal summary hook to render diagnostic blocks for failed runs.
 _session_results: dict[str, AgentResult] = {}
-# Thread-local-ish slot for the most-recent AgentResult produced inside
-# a test. pytest serialises test execution, so a single slot is safe;
-# the makereport hook below pops it into _session_results keyed on
-# nodeid as soon as the call phase completes.
-_last_result: AgentResult | None = None
-_last_result_lock = threading.Lock()
+# Maps nodeid → pytest's call-phase outcome ("passed" / "failed" /
+# "skipped") for tests that produced an AgentResult.
+_session_outcomes: dict[str, str] = {}
+# Maps nodeid → soft failures across every evaluation in the test (all
+# trials of a repeat or scenario loop, not only the last result).
+_session_soft_counts: dict[str, int] = {}
+# Thread-local-ish slot for the AgentResults produced inside the running
+# test. pytest serialises test execution, so a single slot is safe; the
+# makereport hook below pops it, keyed on nodeid, as soon as the call
+# phase completes.
+_test_results: list[AgentResult] = []
+_test_results_lock = threading.Lock()
 
 
-def _set_last_result(agent_result: AgentResult) -> None:
-    """Stash the most-recent AgentResult so the makereport hook can index
-    it by nodeid when the call phase ends."""
-    global _last_result
-    with _last_result_lock:
-        _last_result = agent_result
+def _record_result(agent_result: AgentResult) -> None:
+    """Stash an AgentResult so the makereport hook can index it by nodeid
+    when the call phase ends."""
+    with _test_results_lock:
+        _test_results.append(agent_result)
 
 
-def _take_last_result() -> AgentResult | None:
-    """Atomically pop and return the most-recent stashed AgentResult."""
-    global _last_result
-    with _last_result_lock:
-        result, _last_result = _last_result, None
-        return result
+def _take_test_results() -> list[AgentResult]:
+    """Atomically pop every AgentResult stashed during the running test."""
+    with _test_results_lock:
+        results = list(_test_results)
+        _test_results.clear()
+        return results
 
 
 def pytest_configure(config: pytest.Config) -> None:
@@ -91,6 +100,13 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         help="Print a cost report at the end of the test session",
     )
     group.addoption(
+        "--attest-strict",
+        action="store_true",
+        default=False,
+        help="Fail (instead of skip) tests with assertions that were not evaluated "
+        "(also enabled by ATTEST_STRICT=1)",
+    )
+    group.addoption(
         "--attest-diagnostics",
         action="store_true",
         default=False,
@@ -130,23 +146,25 @@ def pytest_terminal_summary(terminalreporter: Any, exitstatus: int, config: pyte
     diagnostics_opt = config.getoption("--attest-diagnostics", default=False)
     cost_report_opt = config.getoption("--attest-cost-report", default=False)
 
-    if _session_results:
-        if diagnostics_opt:
-            entries = list(_session_results.items())
-        else:
-            entries = [(nid, r) for nid, r in _session_results.items() if not r.passed]
-        if entries:
-            terminalreporter.write_sep("=", "Attest Diagnostics")
-            for nodeid, agent_result in entries:
-                marker = "FAILED" if not agent_result.passed else "PASSED"
-                terminalreporter.write_line(f"{marker} {nodeid}")
-                terminalreporter.write_line(
-                    render_diagnostics(
-                        agent_result,
-                        test_file=nodeid,
-                        include_passing=diagnostics_opt,
-                    )
-                )
+    soft_lines = soft_failure_lines(_session_soft_counts, _session_outcomes)
+    if soft_lines:
+        terminalreporter.write_sep("=", "Attest soft failures")
+        terminalreporter.write_line(
+            f"{len(soft_lines)} passed or skipped test(s) recorded soft failures:", yellow=True
+        )
+        for line in soft_lines:
+            terminalreporter.write_line(line)
+
+    if diagnostics_opt and _session_results:
+        terminalreporter.write_sep("=", "Attest Diagnostics")
+        for nodeid, agent_result in _session_results.items():
+            marker = {OUTCOME_FAIL: "FAILED", OUTCOME_SKIP: "SKIPPED"}.get(
+                agent_result.outcome(), "PASSED"
+            )
+            terminalreporter.write_line(f"{marker} {nodeid}")
+            terminalreporter.write_line(
+                render_diagnostics(agent_result, test_file=nodeid, include_passing=True)
+            )
 
     if cost_report_opt:
         terminalreporter.write_sep("=", "Attest Cost Report")
@@ -158,27 +176,54 @@ def pytest_terminal_summary(terminalreporter: Any, exitstatus: int, config: pyte
 def pytest_runtest_makereport(
     item: pytest.Item,
     call: pytest.CallInfo[Any],
-) -> Generator[None, None, None]:
-    """Pop the most-recent AgentResult into the per-nodeid registry.
+) -> Generator[None, Any, None]:
+    """Pop the test's AgentResults into the per-nodeid registries (last
+    result for diagnostics, soft failures summed over all of them) and
+    attribute ``not evaluated`` skips to the test's own location.
 
-    Pytest serialises tests within a worker, so the latest stashed
-    AgentResult always corresponds to the call phase that just ran.
+    Pytest serialises tests within a worker, so the stashed AgentResults
+    always belong to the call phase that just ran.
     """
     outcome = yield
-    _ = outcome
     if call.when != "call":
         return
-    agent_result = _take_last_result()
-    if agent_result is not None:
-        _session_results[item.nodeid] = agent_result
+    report: pytest.TestReport = outcome.get_result()
+    if report.skipped and isinstance(report.longrepr, tuple):
+        # Attribute "not evaluated" skips to the test, not to this plugin.
+        path, _, reason = report.longrepr
+        if os.path.abspath(path) == os.path.abspath(__file__) and "not evaluated:" in reason:
+            _, lineno, _ = item.location
+            report.longrepr = (str(item.path), (lineno or 0) + 1, reason)
+    results = _take_test_results()
+    if results:
+        _session_results[item.nodeid] = results[-1]
+        _session_outcomes[item.nodeid] = report.outcome
+        _session_soft_counts[item.nodeid] = sum(len(r.soft_failures) for r in results)
+
+
+def soft_failure_lines(soft_counts: dict[str, int], outcomes: dict[str, str]) -> list[str]:
+    """One line per test with soft failures that pytest did not report as
+    failed (failed tests already show their diagnostics in pytest's report)."""
+    return [
+        f"  {nid}: {n} soft ({outcomes.get(nid, 'passed')})"
+        for nid, n in soft_counts.items()
+        if n and outcomes.get(nid) != "failed"
+    ]
 
 
 class AttestEngineFixture:
     """Manages engine lifecycle for pytest session."""
 
-    def __init__(self, engine_path: str | None = None, log_level: str = "warn") -> None:
+    def __init__(
+        self,
+        engine_path: str | None = None,
+        log_level: str = "warn",
+        *,
+        strict: bool = False,
+    ) -> None:
         self._engine_path = engine_path
         self._log_level = log_level
+        self._strict = strict
         self._manager: EngineManager | None = None
         self._client: AttestClient | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
@@ -194,11 +239,23 @@ class AttestEngineFixture:
         with the engine via ``asyncio.run_coroutine_threadsafe()``.
         """
         self._loop = asyncio.new_event_loop()
+        simulation = is_simulation_mode()
+        if simulation:
+            # The engine decides simulation at startup from its environment;
+            # this also covers attest.config(simulation=True). Simulation is
+            # process-wide for the session: the variable stays set.
+            os.environ["ATTEST_SIMULATION"] = "1"
         self._manager = EngineManager(
             engine_path=self._engine_path,
             log_level=self._log_level,
         )
-        self._loop.run_until_complete(self._manager.start())
+        init = self._loop.run_until_complete(self._manager.start())
+        if simulation:
+            try:
+                require_simulation_capability(init)
+            except RuntimeError:
+                self._loop.run_until_complete(self._manager.stop())
+                raise
         self._client = AttestClient(self._manager)
 
         # Run the engine loop in a background thread so callers on any event
@@ -255,7 +312,7 @@ class AttestEngineFixture:
         from attest._proto.types import STATUS_SOFT_FAIL
 
         _session_soft_failures += sum(1 for r in result.results if r.status == STATUS_SOFT_FAIL)
-        _set_last_result(agent_result)
+        _record_result(agent_result)
 
         if budget is not None and _session_cost > budget:
             pytest.fail(
@@ -271,16 +328,16 @@ class AttestEngineFixture:
         *,
         budget: float | None = None,
     ) -> AgentResult:
-        """Evaluate collected assertions synchronously.
+        """Evaluate collected assertions and enforce the test outcome.
 
-        Submits the evaluation to the engine's background loop and blocks
-        the calling thread until the result is ready.
+        After the whole batch: any ``hard_fail`` fails the test with
+        rendered diagnostics; otherwise any ``not_evaluated`` assertion
+        skips it with the reasons (fails under ``--attest-strict``);
+        otherwise the test continues, with soft failures summarised at the
+        end of the session. Use ``inspect()`` to get results without
+        enforcement.
         """
-        assert self._client is not None
-        result = self._run_on_engine_loop(
-            self._client.evaluate_batch(chain.trace, chain.assertions)
-        )
-        return self._process_result(chain, result, budget)
+        return self.enforce(self.inspect(chain, budget=budget))
 
     async def evaluate_async(
         self,
@@ -288,7 +345,35 @@ class AttestEngineFixture:
         *,
         budget: float | None = None,
     ) -> AgentResult:
-        """Evaluate collected assertions asynchronously.
+        """Async ``evaluate()``: evaluate and enforce the test outcome."""
+        return self.enforce(await self.inspect_async(chain, budget=budget))
+
+    def inspect(
+        self,
+        chain: ExpectChain,
+        *,
+        budget: float | None = None,
+    ) -> AgentResult:
+        """Evaluate collected assertions without enforcing the outcome.
+
+        Submits the evaluation to the engine's background loop and blocks
+        the calling thread until the result is ready. Use in trial loops
+        (``repeat()``) and enforce only the aggregate verdict. ``budget`` is
+        a separate session rule and still fails the test when exceeded.
+        """
+        assert self._client is not None
+        result = self._run_on_engine_loop(
+            self._client.evaluate_batch(chain.trace, chain.assertions)
+        )
+        return self._process_result(chain, result, budget)
+
+    async def inspect_async(
+        self,
+        chain: ExpectChain,
+        *,
+        budget: float | None = None,
+    ) -> AgentResult:
+        """Async ``inspect()``: evaluate without enforcing the outcome.
 
         Submits the evaluation to the engine's background loop and awaits
         the result without blocking the caller's event loop.  Safe to call
@@ -303,6 +388,25 @@ class AttestEngineFixture:
         result = await asyncio.wrap_future(future)
         return self._process_result(chain, result, budget)
 
+    def enforce(self, verdict: V) -> V:
+        """Fail or skip the running test according to ``verdict``'s outcome.
+
+        Accepts an ``AgentResult`` from ``inspect()`` or the aggregate of a
+        trial loop (``RepeatResult``, ``ScenarioResult``). Fails with
+        diagnostics on any failure; otherwise skips with the not-evaluated
+        reasons (fails under ``--attest-strict``); otherwise returns it.
+        """
+        outcome = verdict.outcome(strict=self._strict)
+        if outcome == OUTCOME_FAIL:
+            header = ""
+            if verdict.outcome() != OUTCOME_FAIL:
+                header = f"--attest-strict: {verdict.skip_reason()}\n"
+            diagnostics = verdict.render_diagnostics().lstrip("\n")
+            pytest.fail(header + diagnostics, pytrace=False)
+        if outcome == OUTCOME_SKIP:
+            pytest.skip(verdict.skip_reason())
+        return verdict
+
 
 @pytest.fixture(scope="session")
 def attest_engine(request: pytest.FixtureRequest) -> Generator[AttestEngineFixture, None, None]:
@@ -310,7 +414,11 @@ def attest_engine(request: pytest.FixtureRequest) -> Generator[AttestEngineFixtu
     engine_path: str | None = request.config.getoption("--attest-engine", default=None)
     log_level: str = request.config.getoption("--attest-log-level", default="warn")
 
-    fixture = AttestEngineFixture(engine_path=engine_path, log_level=log_level)
+    strict: bool = request.config.getoption("--attest-strict", default=False) or (
+        os.environ.get("ATTEST_STRICT", "").strip().lower() in ("1", "true", "yes")
+    )
+
+    fixture = AttestEngineFixture(engine_path=engine_path, log_level=log_level, strict=strict)
     try:
         fixture.start()
     except FileNotFoundError as exc:

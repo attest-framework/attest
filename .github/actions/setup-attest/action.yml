@@ -1,32 +1,120 @@
 name: 'Setup Attest'
-description: 'Install Attest engine and Python SDK for CI'
+description: |
+  Install the Attest engine and Python SDK for CI. With `ref` empty the
+  action builds from the calling workspace (an attest checkout). With `ref`
+  set it fetches attest at that branch, tag or commit into a private path,
+  builds the engine, installs the Python SDK and packs the TypeScript SDK
+  tarballs, so any repository can test against unreleased attest.
 
 inputs:
   go-version:
-    description: 'Go version to install'
-    default: '1.24'
+    description: 'Go version to install. Empty uses the version required by the attest engine/go.mod being built.'
+    default: ''
   python-version:
     description: 'Python version to install'
     default: '3.12'
   install-extras:
     description: 'Python SDK extras to install (e.g. dev, test)'
     default: 'dev'
+  ref:
+    description: >-
+      attest branch name, tag name or full 40-character commit SHA to build
+      from. Empty builds from the calling workspace. The action builds and
+      installs that tree and runs its build scripts inside the calling job, so
+      pass only refs you trust. Names are fetched only as refs/heads/<name> or
+      refs/tags/<name>; a SHA is fetched as-is and is not checked to be on an
+      attest branch or tag, so prefer a release tag. Run this in a job whose
+      checkout uses persist-credentials: false and that does not grant
+      id-token: write.
+    default: ''
+  node-version:
+    description: 'Node.js version used to pack the TypeScript SDK when ref is set'
+    default: '22'
+
+outputs:
+  engine-path:
+    description: 'Absolute path to the built attest-engine binary'
+    value: ${{ steps.paths.outputs.engine-path }}
+  source-dir:
+    description: 'Absolute path to the attest source the action built from'
+    value: ${{ steps.paths.outputs.source-dir }}
+  core-tarball:
+    description: 'Path to the packed @attest-ai/core tarball (ref set only); install with `pnpm add <path>`'
+    value: ${{ steps.typescript.outputs.core-tarball }}
+  vitest-tarball:
+    description: 'Path to the packed @attest-ai/vitest tarball (ref set only)'
+    value: ${{ steps.typescript.outputs.vitest-tarball }}
 
 runs:
   using: 'composite'
   steps:
+    - name: Fetch attest source
+      if: inputs.ref != ''
+      shell: bash
+      env:
+        ATTEST_REF: ${{ inputs.ref }}
+      run: |
+        set -euo pipefail
+        url=https://github.com/attest-framework/attest.git
+        if [[ "$ATTEST_REF" =~ ^[0-9a-f]{40}$ ]]; then
+          fetch_ref="$ATTEST_REF"
+        elif [[ "$ATTEST_REF" =~ ^[A-Za-z0-9][A-Za-z0-9._/-]*$ && "$ATTEST_REF" != *..* && "$ATTEST_REF" != refs/* ]]; then
+          if git ls-remote --exit-code -q "$url" "refs/heads/$ATTEST_REF" >/dev/null; then
+            fetch_ref="refs/heads/$ATTEST_REF"
+          elif git ls-remote --exit-code -q "$url" "refs/tags/$ATTEST_REF" >/dev/null; then
+            fetch_ref="refs/tags/$ATTEST_REF"
+          else
+            echo "::error::setup-attest: no attest branch or tag named $ATTEST_REF"
+            exit 1
+          fi
+        else
+          echo "::error::setup-attest: ref must be a plain branch or tag name or a 40-character commit SHA"
+          exit 1
+        fi
+        src="$RUNNER_TEMP/attest-src"
+        rm -rf "$src"
+        git init -q "$src"
+        git -C "$src" fetch -q --depth 1 "$url" -- "$fetch_ref"
+        git -C "$src" checkout -q --detach FETCH_HEAD
+        echo "attest $ATTEST_REF -> $(git -C "$src" rev-parse HEAD)"
+
+    - name: Resolve paths
+      id: paths
+      shell: bash
+      env:
+        ATTEST_REF: ${{ inputs.ref }}
+      run: |
+        set -euo pipefail
+        if [[ -n "$ATTEST_REF" ]]; then
+          src="$RUNNER_TEMP/attest-src"
+          bin="$RUNNER_TEMP/attest-bin"
+        else
+          src="$GITHUB_WORKSPACE"
+          bin="$GITHUB_WORKSPACE/bin"
+        fi
+        echo "source-dir=$src" >> "$GITHUB_OUTPUT"
+        echo "bin-dir=$bin" >> "$GITHUB_OUTPUT"
+        echo "engine-path=$bin/attest-engine" >> "$GITHUB_OUTPUT"
+
     - name: Install Go
       uses: actions/setup-go@v6
       with:
         go-version: ${{ inputs.go-version }}
+        go-version-file: ${{ inputs.go-version == '' && format('{0}/engine/go.mod', steps.paths.outputs.source-dir) || '' }}
+        cache-dependency-path: ${{ steps.paths.outputs.source-dir }}/engine/go.sum
 
     - name: Build engine
       shell: bash
-      run: cd engine && go build -o ../bin/attest-engine ./cmd/attest-engine/
+      working-directory: ${{ steps.paths.outputs.source-dir }}/engine
+      env:
+        ENGINE_PATH: ${{ steps.paths.outputs.engine-path }}
+      run: go build -o "$ENGINE_PATH" ./cmd/attest-engine/
 
     - name: Add engine to PATH
       shell: bash
-      run: echo "${{ github.workspace }}/bin" >> "$GITHUB_PATH"
+      env:
+        BIN_DIR: ${{ steps.paths.outputs.bin-dir }}
+      run: echo "$BIN_DIR" >> "$GITHUB_PATH"
 
     - name: Install Python
       uses: actions/setup-python@v6
@@ -39,4 +127,36 @@ runs:
 
     - name: Install Python SDK
       shell: bash
-      run: cd sdks/python && uv pip install --system -e ".[${{ inputs.install-extras }}]"
+      working-directory: ${{ steps.paths.outputs.source-dir }}/sdks/python
+      env:
+        INSTALL_EXTRAS: ${{ inputs.install-extras }}
+      run: uv pip install --system -e ".[$INSTALL_EXTRAS]"
+
+    - name: Install Node.js
+      if: inputs.ref != ''
+      uses: actions/setup-node@v6
+      with:
+        node-version: ${{ inputs.node-version }}
+
+    - name: Build and pack TypeScript SDK
+      id: typescript
+      if: inputs.ref != ''
+      shell: bash
+      working-directory: ${{ steps.paths.outputs.source-dir }}/sdks/typescript
+      run: |
+        set -euo pipefail
+        package_manager="$(jq -er .packageManager package.json)"
+        if [[ ! "$package_manager" =~ ^pnpm@[0-9.]+(\+sha(256|512)\.[0-9a-f]+)?$ ]]; then
+          echo "::error::setup-attest: unexpected packageManager in sdks/typescript/package.json"
+          exit 1
+        fi
+        npm install -g "${package_manager%%+*}"
+        pnpm install --frozen-lockfile
+        pnpm -r build
+        out="$RUNNER_TEMP/attest-npm"
+        mkdir -p "$out"
+        for pkg in core vitest; do
+          (cd "packages/$pkg" && pnpm pack --pack-destination "$out")
+        done
+        echo "core-tarball=$(ls "$out"/attest-ai-core-*.tgz)" >> "$GITHUB_OUTPUT"
+        echo "vitest-tarball=$(ls "$out"/attest-ai-vitest-*.tgz)" >> "$GITHUB_OUTPUT"

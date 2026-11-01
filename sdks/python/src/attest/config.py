@@ -20,9 +20,11 @@ def config(
     """Configure Attest runtime behavior.
 
     Args:
-        simulation: Enable simulation mode. When active, evaluate_batch
-            returns deterministic results without spawning the engine.
-            Can also be set via ATTEST_SIMULATION=1 environment variable.
+        simulation: Enable simulation mode: the engine evaluates layers 1-4
+            and reports layers 5-6 as not evaluated (reason "simulation").
+            The engine reads ATTEST_SIMULATION when it starts; the pytest
+            plugin sets it from this flag. Can also be set via
+            ATTEST_SIMULATION=1 environment variable.
         sample_rate: Fraction of traces to evaluate (0.0–1.0).
             Can also be set via ATTEST_SAMPLE_RATE environment variable.
         alert_webhook: Webhook URL for drift alerts.
@@ -64,7 +66,13 @@ def is_simulation_mode() -> bool:
     """
     if _simulation_mode:
         return True
-    return os.environ.get("ATTEST_SIMULATION", "").strip() in ("1", "true", "yes")
+    return simulation_env_enabled()
+
+
+def simulation_env_enabled() -> bool:
+    """True when ATTEST_SIMULATION is set for this process (and so for an
+    engine it spawns): ``1``, ``true`` or ``yes``."""
+    return os.environ.get("ATTEST_SIMULATION", "").strip().lower() in ("1", "true", "yes")
 
 
 def get_sample_rate() -> float:

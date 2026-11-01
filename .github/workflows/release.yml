@@ -1,0 +1,674 @@
+name: Release
+
+# Tag push v<VERSION>: build every artifact once, wait for `release`
+# environment approval, publish the GitHub release, PyPI and npm from the
+# stored artifacts, record the result in the release notes, and dispatch the
+# website sync.
+#
+# workflow_dispatch with dry_run (default) and pull_request runs build and
+# verify the same artifacts and publish nothing. Publishing happens only from
+# a v* tag ref: a tag push, or a dispatch on a tag with dry_run=false.
+#
+# Recovery (one version, same artifacts): re-run only the failed publish job
+# from the original run. A version present on a registry is never uploaded
+# again; a re-run skips it only when the registry holds byte-identical files.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Build and verify every artifact without publishing"
+        type: boolean
+        default: true
+      tag:
+        description: "Tag to check against VERSION (default: the tag ref, else v<VERSION>)"
+        type: string
+        default: ""
+  pull_request:
+    paths:
+      - ".github/workflows/release.yml"
+      - "scripts/check-release-tag.sh"
+      - "scripts/release-notes.sh"
+      - "scripts/test-release-scripts.sh"
+      - "CHANGELOG.md"
+      - "VERSION"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  check-tag:
+    name: Check tag against VERSION
+    runs-on: ubuntu-latest
+    outputs:
+      publish: ${{ steps.mode.outputs.publish }}
+      version: ${{ steps.check.outputs.version }}
+      tag: ${{ steps.check.outputs.tag }}
+      prerelease: ${{ steps.check.outputs.prerelease }}
+      npm_dist_tag: ${{ steps.check.outputs.npm_dist_tag }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Resolve mode and tag
+        id: mode
+        env:
+          EVENT: ${{ github.event_name }}
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+          INPUT_DRY_RUN: ${{ inputs.dry_run }}
+          INPUT_TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          version_tag="v$(tr -d '[:space:]' < VERSION)"
+          case "$EVENT" in
+            push)
+              publish=true
+              tag="$REF_NAME"
+              ;;
+            workflow_dispatch)
+              if [[ "$INPUT_DRY_RUN" == "true" ]]; then
+                publish=false
+              elif [[ "$REF_TYPE" == "tag" ]]; then
+                publish=true
+              else
+                echo "::error::dry_run=false publishes and must be dispatched on a v* tag ref, not '$REF_NAME'"
+                exit 1
+              fi
+              if [[ -n "$INPUT_TAG" ]]; then
+                tag="$INPUT_TAG"
+              elif [[ "$REF_TYPE" == "tag" ]]; then
+                tag="$REF_NAME"
+              else
+                tag="$version_tag"
+              fi
+              if [[ "$publish" == "true" && "$tag" != "$REF_NAME" ]]; then
+                echo "::error::the tag input differs from the dispatched tag ref"
+                exit 1
+              fi
+              ;;
+            pull_request)
+              publish=false
+              tag="$version_tag"
+              ;;
+            *)
+              echo "::error::unsupported event '$EVENT'"
+              exit 1
+              ;;
+          esac
+          # Validate before the value reaches $GITHUB_OUTPUT or the log; the
+          # class excludes newlines, so no output injection is possible.
+          if [[ ! "$tag" =~ ^v[0-9A-Za-z.+-]+$ ]]; then
+            echo "::error::tag must match ^v[0-9A-Za-z.+-]+\$ (value not shown)"
+            exit 1
+          fi
+          echo "publish=$publish" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "mode: $([[ $publish == true ]] && echo publish || echo dry run), tag: $tag"
+      - name: Check tag against VERSION
+        id: check
+        env:
+          TAG: ${{ steps.mode.outputs.tag }}
+        run: |
+          set -euo pipefail
+          scripts/check-release-tag.sh "$TAG" | tee -a "$GITHUB_OUTPUT"
+      - name: Require the tagged commit on main
+        if: steps.mode.outputs.publish == 'true'
+        run: |
+          set -euo pipefail
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "::error::tagged commit $GITHUB_SHA is not on main; release only reviewed commits"
+            exit 1
+          fi
+      - name: Extract release notes
+        env:
+          PUBLISH: ${{ steps.mode.outputs.publish }}
+          VERSION: ${{ steps.check.outputs.version }}
+        run: |
+          set -euo pipefail
+          mkdir -p notes
+          if [[ "$PUBLISH" == "true" ]]; then
+            scripts/release-notes.sh "$VERSION" > notes/release-notes.md
+            { echo "### Release notes: [$VERSION]"; echo; cat notes/release-notes.md; } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          # Dry run: show Unreleased and, when release prep already moved it,
+          # the [VERSION] section the tag push will publish. One must exist.
+          found=0
+          for section in Unreleased "$VERSION"; do
+            if scripts/release-notes.sh "$section" > "notes/$section.md" 2> notes/error.txt; then
+              found=1
+              { echo "### Release notes: [$section]"; echo; cat "notes/$section.md"; echo; } >> "$GITHUB_STEP_SUMMARY"
+            else
+              rm -f "notes/$section.md"
+              echo "### Release notes: [$section] — $(cat notes/error.txt)" >> "$GITHUB_STEP_SUMMARY"
+            fi
+          done
+          rm -f notes/error.txt
+          if [[ $found == 0 ]]; then
+            echo "::error::CHANGELOG.md has neither Unreleased entries nor a [$VERSION] section"
+            exit 1
+          fi
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release-notes
+          path: notes/
+          if-no-files-found: error
+
+  release-scripts-test:
+    name: Release script tests (dry run)
+    needs: check-tag
+    if: needs.check-tag.outputs.publish == 'false'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Run release script tests
+        run: bash scripts/test-release-scripts.sh
+      - name: Assert a mismatched tag is rejected
+        run: |
+          set -euo pipefail
+          if scripts/check-release-tag.sh v0.0.0-mismatch 2> mismatch.err; then
+            echo "::error::check-release-tag.sh accepted a tag that differs from VERSION"
+            exit 1
+          fi
+          echo "Mismatched tag rejected as expected: $(cat mismatch.err)" | tee -a "$GITHUB_STEP_SUMMARY"
+
+  build-engine:
+    name: Build engine binaries
+    needs: check-tag
+    runs-on: ubuntu-latest
+    outputs:
+      artifact_id: ${{ steps.upload.outputs.artifact-id }}
+      artifact_digest: ${{ steps.upload.outputs.artifact-digest }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v6
+        with:
+          go-version: "1.25"
+          cache: false
+      - name: Cross-compile six targets
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          for target in darwin/amd64 darwin/arm64 linux/amd64 linux/arm64 windows/amd64 windows/arm64; do
+            os="${target%/*}"
+            arch="${target#*/}"
+            ext=""
+            if [[ "$os" == "windows" ]]; then ext=".exe"; fi
+            (cd engine && CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" \
+              go build -trimpath -ldflags="-s -w" \
+              -o "../dist/attest-engine-$os-$arch$ext" ./cmd/attest-engine/)
+          done
+          (cd dist && sha256sum attest-engine-* > checksums-sha256.txt)
+          cat dist/checksums-sha256.txt
+      - name: Check embedded engine version
+        env:
+          VERSION: ${{ needs.check-tag.outputs.version }}
+        run: |
+          set -euo pipefail
+          actual="$(./dist/attest-engine-linux-amd64 version)"
+          if [[ "$actual" != "attest-engine $VERSION" ]]; then
+            echo "::error::engine reports '$actual', expected 'attest-engine $VERSION'"
+            exit 1
+          fi
+          echo "$actual"
+      - uses: actions/upload-artifact@v7
+        id: upload
+        with:
+          name: engine-binaries
+          path: dist/
+          if-no-files-found: error
+
+  build-python:
+    name: Build Python distributions
+    needs: check-tag
+    runs-on: ubuntu-latest
+    outputs:
+      pep440: ${{ steps.version.outputs.pep440 }}
+      artifact_id: ${{ steps.upload.outputs.artifact-id }}
+      artifact_digest: ${{ steps.upload.outputs.artifact-digest }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
+        with:
+          enable-cache: false
+      - name: Build sdist and wheel
+        run: cd sdks/python && uv build --out-dir "$GITHUB_WORKSPACE/dist"
+      - name: Check normalized version
+        id: version
+        env:
+          VERSION: ${{ needs.check-tag.outputs.version }}
+        run: |
+          set -euo pipefail
+          pep440="$(uv run --no-project --with packaging python -c \
+            'import sys; from packaging.version import Version; print(Version(sys.argv[1]))' "$VERSION")"
+          for f in "dist/attest_ai-$pep440-py3-none-any.whl" "dist/attest_ai-$pep440.tar.gz"; do
+            if [[ ! -f "$f" ]]; then
+              echo "::error::expected $f for VERSION $VERSION; built: $(ls dist)"
+              exit 1
+            fi
+          done
+          echo "pep440=$pep440" >> "$GITHUB_OUTPUT"
+          ls -l dist
+      - uses: actions/upload-artifact@v7
+        id: upload
+        with:
+          name: python-dist
+          path: dist/
+          if-no-files-found: error
+
+  build-npm:
+    name: Build npm tarballs
+    needs: check-tag
+    runs-on: ubuntu-latest
+    outputs:
+      artifact_id: ${{ steps.upload.outputs.artifact-id }}
+      artifact_digest: ${{ steps.upload.outputs.artifact-digest }}
+    defaults:
+      run:
+        working-directory: sdks/typescript
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+        with:
+          package_json_file: sdks/typescript/package.json
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Build
+        run: pnpm -r build
+      - name: Pack tarballs
+        env:
+          VERSION: ${{ needs.check-tag.outputs.version }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$GITHUB_WORKSPACE/dist"
+          for pkg in core vitest; do
+            (cd "packages/$pkg" && pnpm pack --pack-destination "$GITHUB_WORKSPACE/dist")
+            tgz="$GITHUB_WORKSPACE/dist/attest-ai-$pkg-$VERSION.tgz"
+            packed="$(tar -xOzf "$tgz" package/package.json | jq -r .version)"
+            if [[ "$packed" != "$VERSION" ]]; then
+              echo "::error::$tgz has version '$packed', expected '$VERSION'"
+              exit 1
+            fi
+          done
+          ls -l "$GITHUB_WORKSPACE/dist"
+      - uses: actions/upload-artifact@v7
+        id: upload
+        with:
+          name: npm-tarballs
+          path: dist/
+          if-no-files-found: error
+
+  verify-engine:
+    name: Verify engine artifacts
+    needs: [check-tag, build-engine]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: engine-binaries
+          path: dist
+      - name: Verify names and checksums
+        env:
+          ARTIFACT_ID: ${{ needs.build-engine.outputs.artifact_id }}
+          ARTIFACT_DIGEST: ${{ needs.build-engine.outputs.artifact_digest }}
+        run: |
+          set -euo pipefail
+          cd dist
+          expected="$(printf '%s\n' \
+            attest-engine-darwin-amd64 attest-engine-darwin-arm64 \
+            attest-engine-linux-amd64 attest-engine-linux-arm64 \
+            attest-engine-windows-amd64.exe attest-engine-windows-arm64.exe \
+            checksums-sha256.txt)"
+          actual="$(find . -maxdepth 1 -type f -printf '%f\n' | LC_ALL=C sort)"
+          if [[ "$actual" != "$expected" ]]; then
+            echo "::error::release assets differ from the names the SDK downloaders expect:"
+            echo "$actual"
+            exit 1
+          fi
+          sha256sum -c checksums-sha256.txt
+          {
+            echo "### engine-binaries (artifact $ARTIFACT_ID, $ARTIFACT_DIGEST, run attempt $GITHUB_RUN_ATTEMPT)"
+            echo
+            echo '| File | Bytes | sha256 |'
+            echo '|---|---:|---|'
+            for f in *; do echo "| $f | $(stat -c %s "$f") | $(sha256sum "$f" | cut -d' ' -f1) |"; done
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
+  verify-python:
+    name: Verify Python distributions
+    needs: [check-tag, build-python]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: python-dist
+          path: dist
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
+        with:
+          enable-cache: false
+      - name: twine check
+        run: uvx --from 'twine>=6' twine check --strict dist/*
+      - name: Record artifact digests
+        env:
+          ARTIFACT_ID: ${{ needs.build-python.outputs.artifact_id }}
+          ARTIFACT_DIGEST: ${{ needs.build-python.outputs.artifact_digest }}
+        run: |
+          set -euo pipefail
+          {
+            echo "### python-dist (artifact $ARTIFACT_ID, $ARTIFACT_DIGEST, run attempt $GITHUB_RUN_ATTEMPT)"
+            echo
+            echo '| File | Bytes | sha256 |'
+            echo '|---|---:|---|'
+            for f in dist/*; do echo "| ${f#dist/} | $(stat -c %s "$f") | $(sha256sum "$f" | cut -d' ' -f1) |"; done
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
+  verify-npm:
+    name: Verify npm tarballs
+    needs: [check-tag, build-npm]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: npm-tarballs
+          path: dist
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+      - name: Install npm with trusted publishing support
+        run: |
+          npm install -g npm@11.21.1
+          npm --version
+      - name: npm publish --dry-run
+        env:
+          VERSION: ${{ needs.check-tag.outputs.version }}
+          DIST_TAG: ${{ needs.check-tag.outputs.npm_dist_tag }}
+        run: |
+          set -euo pipefail
+          for pkg in core vitest; do
+            npm publish "./dist/attest-ai-$pkg-$VERSION.tgz" --dry-run --access public --tag "$DIST_TAG"
+          done
+      - name: Record artifact digests
+        env:
+          ARTIFACT_ID: ${{ needs.build-npm.outputs.artifact_id }}
+          ARTIFACT_DIGEST: ${{ needs.build-npm.outputs.artifact_digest }}
+        run: |
+          set -euo pipefail
+          {
+            echo "### npm-tarballs (artifact $ARTIFACT_ID, $ARTIFACT_DIGEST, run attempt $GITHUB_RUN_ATTEMPT)"
+            echo
+            echo '| File | Bytes | sha256 |'
+            echo '|---|---:|---|'
+            for f in dist/*; do echo "| ${f#dist/} | $(stat -c %s "$f") | $(sha256sum "$f" | cut -d' ' -f1) |"; done
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
+  publish-github:
+    name: Publish GitHub release and engine binaries
+    needs: [check-tag, verify-engine, verify-python, verify-npm]
+    if: needs.check-tag.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      contents: write
+    outputs:
+      status: ${{ steps.release.outputs.status }}
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: engine-binaries
+          path: dist
+      - uses: actions/download-artifact@v8
+        with:
+          name: release-notes
+          path: notes
+      - name: Create or verify release
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ needs.check-tag.outputs.tag }}
+          VERSION: ${{ needs.check-tag.outputs.version }}
+          PRERELEASE: ${{ needs.check-tag.outputs.prerelease }}
+        run: |
+          set -euo pipefail
+          if existing="$(gh release view "$TAG" --json isDraft,assets 2> /dev/null)"; then
+            if [[ "$GITHUB_RUN_ATTEMPT" == "1" ]]; then
+              echo "::error::release $TAG already exists; a version is never reused"
+              exit 1
+            fi
+            mkdir remote
+            gh release download "$TAG" --pattern checksums-sha256.txt --dir remote
+            if ! cmp -s remote/checksums-sha256.txt dist/checksums-sha256.txt; then
+              echo "::error::release $TAG holds different binaries than this run's stored artifacts"
+              exit 1
+            fi
+            present="$(jq -r '.assets[].name' <<<"$existing")"
+            missing=()
+            for f in dist/*; do
+              grep -qxF "${f#dist/}" <<<"$present" || missing+=("$f")
+            done
+            status="already present (identical checksums)"
+            if [[ ${#missing[@]} -gt 0 ]]; then
+              gh release upload "$TAG" "${missing[@]}"
+              status="published (completed on re-run)"
+            fi
+            if [[ "$(jq -r .isDraft <<<"$existing")" == "true" ]]; then
+              gh release edit "$TAG" --draft=false
+              if [[ "$(gh release view "$TAG" --json isDraft --jq .isDraft)" != "false" ]]; then
+                echo "::error::release $TAG is still a draft after publishing it"
+                exit 1
+              fi
+              status="published (draft completed on re-run)"
+            fi
+            echo "status=$status" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          flags=(--verify-tag --title "v$VERSION")
+          if [[ "$PRERELEASE" == "true" ]]; then flags+=(--prerelease); fi
+          { cat notes/release-notes.md; echo; echo "## Published components"; echo; echo "Publishing in progress."; } > body.md
+          gh release create "$TAG" dist/* "${flags[@]}" --notes-file body.md
+          echo "status=published" >> "$GITHUB_OUTPUT"
+
+  publish-pypi:
+    name: Publish to PyPI
+    needs: [check-tag, build-python, publish-github]
+    if: needs.check-tag.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      id-token: write
+    outputs:
+      status: ${{ steps.done.outputs.status }}
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: python-dist
+          path: dist
+      - name: Check PyPI for this version
+        id: registry
+        env:
+          PEP440: ${{ needs.build-python.outputs.pep440 }}
+        run: |
+          set -euo pipefail
+          code="$(curl -sS -o pypi.json -w '%{http_code}' "https://pypi.org/pypi/attest-ai/$PEP440/json")"
+          if [[ "$code" == "404" ]]; then
+            printf '%s\n' upload=true skip_existing=false result=published >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [[ "$code" != "200" ]]; then
+            echo "::error::PyPI lookup for attest-ai $PEP440 returned HTTP $code"
+            exit 1
+          fi
+          if [[ "$GITHUB_RUN_ATTEMPT" == "1" ]]; then
+            echo "::error::attest-ai $PEP440 is already on PyPI; a version is never reused"
+            exit 1
+          fi
+          missing=0
+          for f in dist/*; do
+            name="${f#dist/}"
+            remote="$(jq -r --arg n "$name" '.urls[] | select(.filename == $n) | .digests.sha256' pypi.json)"
+            if [[ -z "$remote" ]]; then
+              missing=$((missing + 1))
+            elif [[ "$remote" != "$(sha256sum "$f" | cut -d' ' -f1)" ]]; then
+              echo "::error::PyPI holds a different $name than this run's stored artifact"
+              exit 1
+            fi
+          done
+          if [[ $missing -gt 0 ]]; then
+            echo "upload=true" >> "$GITHUB_OUTPUT"
+            echo "result=published (completed on re-run)" >> "$GITHUB_OUTPUT"
+          else
+            echo "upload=false" >> "$GITHUB_OUTPUT"
+            echo "result=already present (identical files)" >> "$GITHUB_OUTPUT"
+          fi
+          echo "skip_existing=true" >> "$GITHUB_OUTPUT"
+      - name: Publish with trusted publishing
+        if: steps.registry.outputs.upload == 'true'
+        uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # v1.14.3
+        with:
+          skip-existing: ${{ steps.registry.outputs.skip_existing == 'true' }}
+      - name: Record status
+        id: done
+        env:
+          RESULT: ${{ steps.registry.outputs.result }}
+        run: echo "status=$RESULT" >> "$GITHUB_OUTPUT"
+
+  publish-npm:
+    name: Publish to npm
+    needs: [check-tag, publish-github]
+    if: needs.check-tag.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      id-token: write
+    outputs:
+      core_status: ${{ steps.publish.outputs.core_status }}
+      vitest_status: ${{ steps.publish.outputs.vitest_status }}
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: npm-tarballs
+          path: dist
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+      - name: Install npm with trusted publishing support
+        run: |
+          npm install -g npm@11.21.1
+          npm --version
+      - name: Publish with trusted publishing and provenance
+        id: publish
+        env:
+          VERSION: ${{ needs.check-tag.outputs.version }}
+          DIST_TAG: ${{ needs.check-tag.outputs.npm_dist_tag }}
+        run: |
+          set -euo pipefail
+          for pkg in core vitest; do
+            tgz="dist/attest-ai-$pkg-$VERSION.tgz"
+            local_integrity="sha512-$(openssl dgst -sha512 -binary "$tgz" | base64 -w0)"
+            code="$(curl -sS -o meta.json -w '%{http_code}' "https://registry.npmjs.org/@attest-ai/$pkg/$VERSION")"
+            if [[ "$code" == "404" ]]; then
+              npm publish "./$tgz" --provenance --access public --tag "$DIST_TAG"
+              echo "${pkg}_status=published" >> "$GITHUB_OUTPUT"
+              continue
+            fi
+            if [[ "$code" != "200" ]]; then
+              echo "::error::npm lookup for @attest-ai/$pkg@$VERSION returned HTTP $code"
+              exit 1
+            fi
+            if [[ "$GITHUB_RUN_ATTEMPT" == "1" ]]; then
+              echo "::error::@attest-ai/$pkg@$VERSION is already on npm; a version is never reused"
+              exit 1
+            fi
+            if [[ "$(jq -r .dist.integrity meta.json)" != "$local_integrity" ]]; then
+              echo "::error::npm holds a different @attest-ai/$pkg@$VERSION than this run's stored artifact"
+              exit 1
+            fi
+            echo "${pkg}_status=already present (identical tarball)" >> "$GITHUB_OUTPUT"
+          done
+
+  finalize-release:
+    name: Record published components
+    needs: [check-tag, build-python, publish-github, publish-pypi, publish-npm]
+    if: always() && needs.check-tag.outputs.publish == 'true' && needs.publish-github.result == 'success'
+    runs-on: ubuntu-latest
+    # DOCS_DEPLOY_TOKEN is an environment secret of website-sync (tags v*, no
+    # reviewers), so workflows on branches cannot read it.
+    environment: website-sync
+    permissions:
+      contents: write
+    env:
+      HAS_TOKEN: ${{ secrets.DOCS_DEPLOY_TOKEN != '' }}
+      ALL_PUBLISHED: ${{ needs.publish-pypi.result == 'success' && needs.publish-npm.result == 'success' }}
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: release-notes
+          path: notes
+      - name: Build dispatch payload
+        id: payload
+        env:
+          TAG: ${{ needs.check-tag.outputs.tag }}
+        run: |
+          echo "json=$(jq -cn --arg tag "$TAG" '{tag: $tag}')" >> "$GITHUB_OUTPUT"
+      - name: Dispatch website sync
+        if: env.ALL_PUBLISHED == 'true' && env.HAS_TOKEN == 'true'
+        uses: peter-evans/repository-dispatch@28959ce8df70de7be546dd1250a005dd32156697 # v4.0.1
+        with:
+          token: ${{ secrets.DOCS_DEPLOY_TOKEN }}
+          repository: attest-framework/attest-website
+          event-type: release-sync
+          client-payload: ${{ steps.payload.outputs.json }}
+      - name: Write published components into the release notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ needs.check-tag.outputs.tag }}
+          VERSION: ${{ needs.check-tag.outputs.version }}
+          PEP440: ${{ needs.build-python.outputs.pep440 }}
+          GITHUB_STATUS: ${{ needs.publish-github.outputs.status }}
+          PYPI_STATUS: ${{ needs.publish-pypi.outputs.status || needs.publish-pypi.result }}
+          CORE_STATUS: ${{ needs.publish-npm.outputs.core_status || needs.publish-npm.result }}
+          VITEST_STATUS: ${{ needs.publish-npm.outputs.vitest_status || needs.publish-npm.result }}
+        run: |
+          set -euo pipefail
+          if [[ "$ALL_PUBLISHED" != "true" ]]; then
+            website="skipped (not every component published)"
+          elif [[ "$HAS_TOKEN" == "true" ]]; then
+            website="dispatched (release-sync to attest-framework/attest-website)"
+          else
+            website="skipped (no DOCS_DEPLOY_TOKEN)"
+          fi
+          {
+            cat notes/release-notes.md
+            echo
+            echo "## Published components"
+            echo
+            echo "| Component | Status |"
+            echo "|---|---|"
+            echo "| Engine binaries and checksums (this release) | $GITHUB_STATUS |"
+            echo "| PyPI \`attest-ai==$PEP440\` | $PYPI_STATUS |"
+            echo "| npm \`@attest-ai/core@$VERSION\` | $CORE_STATUS |"
+            echo "| npm \`@attest-ai/vitest@$VERSION\` | $VITEST_STATUS |"
+            echo "| Website sync | $website |"
+          } > body.md
+          gh release edit "$TAG" --notes-file body.md
+          cat body.md >> "$GITHUB_STEP_SUMMARY"
