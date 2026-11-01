@@ -66,18 +66,57 @@ func TestEnsureONNXRuntime_ExplicitLibMissing_Errors(t *testing.T) {
 	}
 }
 
-func TestFileSHA256_DetectsTamperedCachedModel(t *testing.T) {
+func TestEnsureModelFrom_MismatchedCache_ReplacedByVerifiedDownload(t *testing.T) {
+	genuine := []byte("genuine model")
+	sum := sha256.Sum256(genuine)
+	srv := serveBytes(t, genuine)
 	path := filepath.Join(t.TempDir(), modelFileName)
 	if err := os.WriteFile(path, []byte("planted model"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
-	got, err := fileSHA256(path)
+	got, err := ensureModelFrom(srv.URL, hex.EncodeToString(sum[:]), path)
 
 	if err != nil {
-		t.Fatalf("fileSHA256: %v", err)
+		t.Fatalf("ensureModelFrom: %v", err)
 	}
-	if got == modelSHA256 {
-		t.Fatal("planted file matched the pinned model sha256")
+	data, err := os.ReadFile(got)
+	if err != nil || string(data) != string(genuine) {
+		t.Fatalf("model = %q (err %v), want the verified download", data, err)
+	}
+}
+
+func TestEnsureModelFrom_MatchingCache_SkipsDownload(t *testing.T) {
+	cached := []byte("cached model")
+	sum := sha256.Sum256(cached)
+	path := filepath.Join(t.TempDir(), modelFileName)
+	if err := os.WriteFile(path, cached, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := ensureModelFrom("http://127.0.0.1:1/unreachable", hex.EncodeToString(sum[:]), path); err != nil {
+		t.Fatalf("ensureModelFrom with verified cache: %v", err)
+	}
+}
+
+func TestDownloadFile_Oversize_Rejected(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		chunk := make([]byte, 1<<20)
+		for written := 0; written <= maxDownloadBytes; written += len(chunk) {
+			if _, err := w.Write(chunk); err != nil {
+				return
+			}
+		}
+	}))
+	t.Cleanup(srv.Close)
+	dir := t.TempDir()
+
+	err := downloadFile(srv.URL, filepath.Join(dir, "big.bin"), modelSHA256)
+
+	if err == nil || !strings.Contains(err.Error(), "exceeds") {
+		t.Fatalf("err = %v, want size-cap error", err)
+	}
+	if entries, _ := os.ReadDir(dir); len(entries) != 0 {
+		t.Errorf("files left after oversize download: %v", entries)
 	}
 }

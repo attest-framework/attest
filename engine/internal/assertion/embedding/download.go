@@ -74,11 +74,16 @@ func ensureModel(modelDir string) (string, error) {
 	if modelDir == "" {
 		modelDir = defaultModelDir()
 	}
+	return ensureModelFrom(modelURL, modelSHA256, filepath.Join(modelDir, modelFileName))
+}
 
-	modelPath := filepath.Join(modelDir, modelFileName)
+// ensureModelFrom returns modelPath when its sha256 is wantSHA256, otherwise
+// downloads url into modelPath and verifies it.
+func ensureModelFrom(url, wantSHA256, modelPath string) (string, error) {
+	modelDir := filepath.Dir(modelPath)
 	got, err := fileSHA256(modelPath)
 	switch {
-	case err == nil && got == modelSHA256:
+	case err == nil && got == wantSHA256:
 		return modelPath, nil
 	case err != nil && !os.IsNotExist(err):
 		return "", fmt.Errorf("onnx: read cached model %s: %w", modelPath, err)
@@ -90,7 +95,7 @@ func ensureModel(modelDir string) (string, error) {
 		return "", fmt.Errorf("onnx: create model dir %s: %w", modelDir, err)
 	}
 
-	if err := downloadFile(modelURL, modelPath, modelSHA256); err != nil {
+	if err := downloadFile(url, modelPath, wantSHA256); err != nil {
 		return "", fmt.Errorf("onnx: download model: %w", err)
 	}
 
