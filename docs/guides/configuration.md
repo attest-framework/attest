@@ -11,7 +11,7 @@ attest-engine doctor          # human-readable
 attest-engine doctor --json   # machine-readable, schema: proto/attest/v1/doctor.schema.json
 ```
 
-The output never contains an API key. It shows only which variable the judge key came from. A configuration error exits 1 with the same message the server would fail to start with.
+The output never contains an API key. It shows only which variable the judge key came from. A configuration error exits 1 with the same message the server would fail to start with. In `onnx` builds that select ONNX embeddings, `doctor` constructs the embedder just as the server does, so the first run downloads the model.
 
 `attest-engine --help` lists every command. An unknown command exits 2.
 
@@ -21,9 +21,9 @@ The judge works with OpenAI and with any OpenAI-compatible endpoint (vLLM, Ollam
 
 | Variable | Purpose | Default |
 |---|---|---|
-| `ATTEST_JUDGE_API_KEY` | Judge API key. Takes precedence over `OPENAI_API_KEY`. For an endpoint without authentication, set any non-empty value. | unset |
-| `OPENAI_API_KEY` | Provider's standard key variable. Used for the judge when `ATTEST_JUDGE_API_KEY` is unset, and for OpenAI embeddings. | unset |
-| `ATTEST_JUDGE_BASE_URL` | OpenAI-compatible base URL, e.g. `http://localhost:11434/v1`. Requires a judge API key. Must be `http`/`https` without credentials, query or fragment. | `https://api.openai.com/v1` |
+| `ATTEST_JUDGE_API_KEY` | Judge API key. Takes precedence over `OPENAI_API_KEY`, and is required with `ATTEST_JUDGE_BASE_URL`. For an endpoint without authentication, set any non-empty value. | unset |
+| `OPENAI_API_KEY` | Provider's standard key variable. Used for the judge when `ATTEST_JUDGE_API_KEY` is unset and no `ATTEST_JUDGE_BASE_URL` is set, and for OpenAI embeddings. Never sent to a custom base URL. | unset |
+| `ATTEST_JUDGE_BASE_URL` | OpenAI-compatible base URL, e.g. `http://localhost:11434/v1`. Requires `ATTEST_JUDGE_API_KEY`. Must be `http`/`https` without credentials, query or fragment; use `https` for anything other than a local endpoint, because the key is sent with every request. | `https://api.openai.com/v1` |
 | `ATTEST_JUDGE_MODEL` | Judge model name. | `gpt-4.1` |
 | `ATTEST_JUDGE_PROVIDER` | Judge provider. Only `openai` is implemented; any other value is a startup error. | `openai` |
 | `ATTEST_JUDGE_TIMEOUT_S` | Per-evaluation judge timeout in seconds. | `30` |
@@ -47,7 +47,7 @@ attest-engine doctor
 |---|---|---|
 | `ATTEST_EMBEDDING_PROVIDER` | `auto` (OpenAI when `OPENAI_API_KEY` is set, else ONNX in `onnx` builds), `openai` or `onnx`. Any other value is a startup error. | `auto` |
 | `ATTEST_EMBEDDING_CACHE_MAX_MB` | Embedding cache size. | `500` |
-| `ATTEST_ONNX_MODEL_DIR` | Directory for the all-MiniLM-L6-v2 model. The model is downloaded on first use from a pinned revision and rejected unless its sha256 matches. | `~/.attest/models` |
+| `ATTEST_ONNX_MODEL_DIR` | Directory for the all-MiniLM-L6-v2 model. The model is downloaded on first use from a pinned revision and rejected unless its sha256 matches; a cached file that does not match is replaced. | `~/.attest/models` |
 | `ATTEST_ONNX_RUNTIME_LIB` | Path to the ONNX Runtime 1.26 shared library. When unset, the engine looks in the model directory and standard system library paths. It never downloads the runtime. | unset |
 
 ## Evaluation
