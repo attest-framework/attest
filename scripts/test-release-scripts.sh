@@ -81,6 +81,12 @@ cat > "$work/CHANGELOG.md" <<'EOF'
 
 - Last entry.
 
+## [0.7.0] — 2026-04-29
+
+- See [the spec][1].
+
+[1]: https://example.invalid/spec
+
 [Unreleased]: https://example.invalid/compare
 EOF
 
@@ -100,6 +106,12 @@ if [[ "$("$here/release-notes.sh" 0.8.0 "$work/CHANGELOG.md")" == "- Last entry.
     pass "last section stops at the link-reference block"
 else
     fail "last section stops at the link-reference block"
+fi
+
+if [[ "$("$here/release-notes.sh" 0.7.0 "$work/CHANGELOG.md")" == $'- See [the spec][1].\n\n[1]: https://example.invalid/spec' ]]; then
+    pass "in-section link reference is kept"
+else
+    fail "in-section link reference is kept"
 fi
 
 if "$here/release-notes.sh" 0.9.0 "$work/CHANGELOG.md" 2>/dev/null; then

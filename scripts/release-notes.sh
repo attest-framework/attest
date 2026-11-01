@@ -4,7 +4,8 @@
 # Usage: scripts/release-notes.sh <version|Unreleased> [changelog]
 #
 # Prints the body under "## [<version>]" up to the next "## [" heading or
-# the Keep a Changelog link-reference block, with surrounding blank lines
+# the Keep a Changelog version link-reference block ("[Unreleased]: ..." or
+# "[1.2.3]: ..."), with surrounding blank lines
 # trimmed. Exits 1 when the section is missing or empty.
 set -euo pipefail
 
@@ -25,7 +26,7 @@ fi
 notes="$(
     awk -v want="## [$version]" '
         index($0, want) == 1 { found = 1; next }
-        found && (/^## \[/ || /^\[[^]]+\]: /) { exit }
+        found && (/^## \[/ || /^\[(Unreleased|[0-9]+\.[0-9]+\.[0-9]+[^]]*)\]: /) { exit }
         found { print }
     ' "$changelog" | sed -e '/./,$!d'
 )"
