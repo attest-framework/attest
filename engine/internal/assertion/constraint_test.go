@@ -115,10 +115,10 @@ func TestConstraintEvaluator(t *testing.T) {
 			wantStatus: types.StatusSoftFail,
 		},
 		{
-			name:       "missing metadata field fails",
+			name:       "missing metadata field is not evaluated",
 			trace:      makeTrace(nil, nil),
 			spec:       `{"field":"metadata.cost_usd","operator":"lte","value":0.01}`,
-			wantStatus: types.StatusHardFail,
+			wantStatus: types.StatusNotEvaluated,
 		},
 		{
 			name: "steps.length passes",
