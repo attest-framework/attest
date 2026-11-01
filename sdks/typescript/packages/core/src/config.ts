@@ -32,12 +32,8 @@ export function config(options: {
  * or the `ATTEST_SIMULATION` environment variable.
  */
 export function isSimulationMode(): boolean {
-  return (
-    _simulationMode ||
-    process.env["ATTEST_SIMULATION"] === "1" ||
-    process.env["ATTEST_SIMULATION"] === "true" ||
-    process.env["ATTEST_SIMULATION"] === "yes"
-  );
+  const env = (process.env["ATTEST_SIMULATION"] ?? "").trim().toLowerCase();
+  return _simulationMode || env === "1" || env === "true" || env === "yes";
 }
 
 /**

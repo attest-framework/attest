@@ -1,5 +1,5 @@
 /**
- * Cross-SDK verdict fixtures (protocol-tests/verdicts): C1 aggregation.
+ * Cross-SDK verdict fixtures (protocol-tests/verdicts): outcome aggregation.
  * The same fixtures run in the Python SDK and the Go engine.
  */
 import { readdirSync, readFileSync } from "node:fs";

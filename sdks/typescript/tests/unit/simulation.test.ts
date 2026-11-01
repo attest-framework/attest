@@ -81,6 +81,11 @@ describe("isSimulationMode — env var override", () => {
     expect(isSimulationMode()).toBe(true);
   });
 
+  it("ATTEST_SIMULATION is case-insensitive and trimmed", () => {
+    process.env["ATTEST_SIMULATION"] = " True ";
+    expect(isSimulationMode()).toBe(true);
+  });
+
   it('ATTEST_SIMULATION=0 does not enable simulation mode', () => {
     process.env["ATTEST_SIMULATION"] = "0";
     expect(isSimulationMode()).toBe(false);
