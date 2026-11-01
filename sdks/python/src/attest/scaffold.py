@@ -1,60 +1,179 @@
-"""Scaffolding for ``attest init``."""
+"""Scaffolding for ``attest init``.
+
+``attest init`` writes a sample test that runs with no model, API key or network: the
+agent run is a trace built by hand with ``TraceBuilder`` and every assertion is
+deterministic (layers 1-4). ``attest init --ci github`` also writes a GitHub Actions
+workflow that gates merges on the test run, the report and the policy.
+"""
 
 from __future__ import annotations
 
 import sys
 from pathlib import Path
 
+from attest import __version__
+
+# The line a new user edits to see a failure. README.md and the generated-project
+# tests point at it by this marker.
+DEMO_MARKER = "ATTEST-DEMO"
+
 CONFTEST_TEMPLATE = '''\
-"""Attest test fixtures."""
-import attest
+"""Fixtures for the sample Attest test written by `attest init`.
 
-
-@attest.agent("my-agent")
-def my_agent(builder, **kwargs):
-    # Replace with your agent implementation
-    return {"result": "hello"}
-'''
-
-SAMPLE_TEST_TEMPLATE = '''\
-"""Sample Attest test."""
-from attest import expect
-
-
-def test_my_agent(my_agent_result):
-    expect(my_agent_result).output_contains("hello")
-'''
-
-PYPROJECT_SNIPPET = """\
-[project.optional-dependencies]
-test = [
-    "attest-ai",
-    "pytest",
-]
+`my_agent_result` is the trace of one agent run, built by hand with TraceBuilder,
+so the sample needs no model, API key or network. Replace it with a trace from
+your agent: wrap the agent with @attest.agent or record it with an adapter such
+as attest.OpenAIAdapter.
 """
 
+from __future__ import annotations
 
-def scaffold_project(target_dir: Path) -> None:
-    """Create initial attest project structure.
+import pytest
 
-    Creates tests/ directory, conftest.py, and a sample test file.
-    Does not overwrite existing files.
+from attest import Trace, TraceBuilder
+
+
+@pytest.fixture
+def my_agent_result() -> Trace:
+    return (
+        TraceBuilder(agent_id="refund-agent")
+        .set_input(user_message="Please refund order ORD-1001.")
+        .add_tool_call(
+            "lookup_order",
+            args={"order_id": "ORD-1001"},
+            result={"status": "delivered", "amount": 42.0},
+        )
+        .add_tool_call(
+            "issue_refund",
+            args={"order_id": "ORD-1001", "amount": 42.0},
+            result={"refund_id": "RF-1001"},
+        )
+        .set_output(
+            message="Your refund of $42.00 has been issued.",
+            structured={"refund_id": "RF-1001", "amount": 42.0},
+        )
+        .set_metadata(total_tokens=180, cost_usd=0.002, latency_ms=900)
+        .build()
+    )
+'''
+
+SAMPLE_TEST_TEMPLATE = f'''\
+"""Sample Attest test written by `attest init`. Run it with `pytest`."""
+
+from __future__ import annotations
+
+from attest import Trace, expect
+from attest.plugin import AttestEngineFixture
+
+
+def test_my_agent(attest: AttestEngineFixture, my_agent_result: Trace) -> None:
+    chain = (
+        expect(my_agent_result)
+        .output_matches_schema({{"type": "object", "required": ["refund_id"]}})  # layer 1: schema
+        .cost_under(0.01)  # layer 2: constraint
+        .tools_called_in_order(["lookup_order", "issue_refund"])  # layer 3: trace
+        .output_contains("refund")  # {DEMO_MARKER}: change "refund" to "store credit"
+    )
+    attest.evaluate(chain)
+'''
+
+POLICY_TEMPLATE = """\
+# Merge policy for `attest policy evaluate --report <report> --policy attest.policy.yaml`.
+# Exit 0: pass. Exit 1: a blocking rule failed. Exit 2: warnings only.
+layers:
+  0:  # layer 0 caps every layer together
+    max_hard_fails: 0
+# Assertions that could not run (no judge configured, simulation) warn instead of block.
+not_evaluated: warn
+"""
+
+GITHUB_WORKFLOW_TEMPLATE = f"""\
+# Written by `attest init --ci github`.
+# The test step records its outcome and continues so the report is always uploaded,
+# the policy evaluated and the pull request annotated; the last step fails the job
+# when the tests failed. A policy warning (exit 2) does not fail the job.
+name: attest
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  attest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v7
+      - name: Install dependencies
+        run: uv sync --locked
+      - name: Run tests
+        id: tests
+        continue-on-error: true
+        run: uv run pytest --attest-report=attest-report.json
+      - name: Upload the Attest report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: attest-report
+          path: attest-report.json
+          if-no-files-found: error
+      - name: Evaluate the merge policy
+        if: always()
+        run: |
+          set +e
+          uv run attest policy evaluate --report attest-report.json --policy attest.policy.yaml
+          code=$?
+          if [ "$code" -eq 2 ]; then
+            echo "::warning::attest policy: warnings only (exit 2)"
+            exit 0
+          fi
+          exit "$code"
+      - name: Annotate the pull request
+        if: always() && github.event_name == 'pull_request'
+        uses: attest-framework/attest/.github/actions/pr-annotate@v{__version__}
+        with:
+          report: attest-report.json
+      - name: Fail the job when tests failed
+        if: always() && steps.tests.outcome == 'failure'
+        run: |
+          echo "::error::pytest failed; see the Run tests step"
+          exit 1
+"""
+
+CI_PROVIDERS = ("github",)
+
+
+def _write(path: Path, content: str) -> None:
+    if path.exists():
+        print(f"Skipped (exists): {path}", file=sys.stderr)
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content)
+    print(f"Created: {path}")
+
+
+def scaffold_project(target_dir: Path, *, ci: str | None = None) -> None:
+    """Write the sample test, its fixtures and the merge policy into ``target_dir``.
+
+    ``ci="github"`` also writes ``.github/workflows/attest.yml``. Existing files are
+    never overwritten.
     """
+    if ci is not None and ci not in CI_PROVIDERS:
+        raise ValueError(f"unknown CI provider {ci!r}; supported: {', '.join(CI_PROVIDERS)}")
     tests_dir = target_dir / "tests"
-    conftest_path = tests_dir / "conftest.py"
-    sample_test_path = tests_dir / "test_my_agent.py"
-
-    tests_dir.mkdir(parents=True, exist_ok=True)
-    print(f"Directory: {tests_dir}")
-
-    if conftest_path.exists():
-        print(f"Skipped (exists): {conftest_path}", file=sys.stderr)
-    else:
-        conftest_path.write_text(CONFTEST_TEMPLATE)
-        print(f"Created: {conftest_path}")
-
-    if sample_test_path.exists():
-        print(f"Skipped (exists): {sample_test_path}", file=sys.stderr)
-    else:
-        sample_test_path.write_text(SAMPLE_TEST_TEMPLATE)
-        print(f"Created: {sample_test_path}")
+    _write(tests_dir / "conftest.py", CONFTEST_TEMPLATE)
+    _write(tests_dir / "test_my_agent.py", SAMPLE_TEST_TEMPLATE)
+    _write(target_dir / "attest.policy.yaml", POLICY_TEMPLATE)
+    if ci == "github":
+        _write(target_dir / ".github" / "workflows" / "attest.yml", GITHUB_WORKFLOW_TEMPLATE)
+    print(
+        "\nNext: run `pytest`. Then change the line marked "
+        f"{DEMO_MARKER} in tests/test_my_agent.py and run it again to see a failure."
+    )

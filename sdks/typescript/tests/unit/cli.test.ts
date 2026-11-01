@@ -7,6 +7,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { engineCommands, exitStatus, main } from "../../packages/core/src/cli.js";
 import { ENGINE_VERSION, VERSION } from "../../packages/core/src/version.js";
+import { DEMO_MARKER } from "../../packages/core/src/scaffold.js";
 import {
   forwardedCalls,
   isolateEngineEnv,
@@ -111,26 +112,62 @@ describe("attest init", () => {
     process.chdir(originalCwd);
   });
 
-  it("creates tests directory and sample test file without an engine", async () => {
+  const sample = () => path.join(env.root, "tests", "my-agent.test.ts");
+  const workflow = () => path.join(env.root, ".github", "workflows", "attest.yml");
+
+  it("writes the sample test, Vitest config and policy without an engine", async () => {
     await expect(main(["init"])).resolves.toBe(0);
 
-    const sample = path.join(env.root, "tests", "test_my_agent.test.ts");
-    expect(fs.readFileSync(sample, "utf-8")).toContain("@attest-ai/core");
+    const test = fs.readFileSync(sample(), "utf-8");
+    expect(test).toContain("await evaluate(chain, { context })");
+    expect(test.split("\n").filter((l) => l.includes(DEMO_MARKER))).toEqual([
+      expect.stringContaining('.outputContains("refund");'),
+    ]);
+    expect(fs.readFileSync(path.join(env.root, "vitest.config.ts"), "utf-8")).toContain(
+      'import { AttestReporter } from "@attest-ai/vitest/reporter";',
+    );
+    expect(fs.readFileSync(path.join(env.root, "attest.policy.yaml"), "utf-8")).toContain(
+      "max_hard_fails: 0",
+    );
+    expect(fs.existsSync(workflow())).toBe(false);
   });
 
-  it("does not scaffold when given extra arguments", async () => {
-    await expect(main(["init", "--help"])).resolves.toBe(0);
-    await expect(main(["init", "somedir"])).resolves.toBe(2);
-    expect(fs.existsSync(path.join(env.root, "tests"))).toBe(false);
-  });
+  it.each([[["--ci", "github"]], [["--ci=github"]]])(
+    "writes the merge-gate workflow for %j",
+    async (args) => {
+      await expect(main(["init", ...args])).resolves.toBe(0);
 
-  it("does not overwrite an existing test file", async () => {
-    const sample = path.join(env.root, "tests", "test_my_agent.test.ts");
-    fs.mkdirSync(path.dirname(sample), { recursive: true });
-    fs.writeFileSync(sample, "// custom test\n");
+      const steps = fs.readFileSync(workflow(), "utf-8").split("      - ").slice(1);
+      const byName = new Map(steps.map((s) => [s.split("\n")[0]!.replace(/^name: /, ""), s]));
+      expect(byName.get("Run tests")).toContain("continue-on-error: true");
+      expect(byName.get("Run tests")).toContain("npx vitest run --outputFile.attest=attest-report.json");
+      expect(byName.get("Upload the Attest report")).toContain("if: always()");
+      expect(byName.get("Evaluate the merge policy")).toContain("if: always()");
+      expect(byName.get("Evaluate the merge policy")).toContain('"$code" -eq 2');
+      expect(byName.get("Annotate the pull request")).toContain(`pr-annotate@v${VERSION}`);
+      expect(steps.at(-1)).toContain("if: always() && steps.tests.outcome == 'failure'");
+    },
+  );
 
-    await expect(main(["init"])).resolves.toBe(0);
-    expect(fs.readFileSync(sample, "utf-8")).toBe("// custom test\n");
+  it.each([[["--help"], 0], [["somedir"], 2], [["--ci"], 2], [["--ci", "gitlab"], 2]])(
+    "does not scaffold for %j",
+    async (args, code) => {
+      await expect(main(["init", ...args])).resolves.toBe(code);
+      expect(fs.existsSync(path.join(env.root, "tests"))).toBe(false);
+    },
+  );
+
+  it("does not overwrite existing files", async () => {
+    for (const file of [sample(), path.join(env.root, "vitest.config.ts"), workflow()]) {
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      fs.writeFileSync(file, "// mine\n");
+    }
+
+    await expect(main(["init", "--ci", "github"])).resolves.toBe(0);
+
+    for (const file of [sample(), path.join(env.root, "vitest.config.ts"), workflow()]) {
+      expect(fs.readFileSync(file, "utf-8")).toBe("// mine\n");
+    }
   });
 });
 
