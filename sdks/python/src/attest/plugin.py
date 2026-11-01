@@ -31,28 +31,30 @@ _session_results: dict[str, AgentResult] = {}
 # Maps nodeid → pytest's call-phase outcome ("passed" / "failed" /
 # "skipped") for tests that produced an AgentResult.
 _session_outcomes: dict[str, str] = {}
-# Thread-local-ish slot for the most-recent AgentResult produced inside
-# a test. pytest serialises test execution, so a single slot is safe;
-# the makereport hook below pops it into _session_results keyed on
-# nodeid as soon as the call phase completes.
-_last_result: AgentResult | None = None
-_last_result_lock = threading.Lock()
+# Maps nodeid → soft failures across every evaluation in the test (all
+# trials of a repeat or scenario loop, not only the last result).
+_session_soft_counts: dict[str, int] = {}
+# Thread-local-ish slot for the AgentResults produced inside the running
+# test. pytest serialises test execution, so a single slot is safe; the
+# makereport hook below pops it, keyed on nodeid, as soon as the call
+# phase completes.
+_test_results: list[AgentResult] = []
+_test_results_lock = threading.Lock()
 
 
-def _set_last_result(agent_result: AgentResult) -> None:
-    """Stash the most-recent AgentResult so the makereport hook can index
-    it by nodeid when the call phase ends."""
-    global _last_result
-    with _last_result_lock:
-        _last_result = agent_result
+def _record_result(agent_result: AgentResult) -> None:
+    """Stash an AgentResult so the makereport hook can index it by nodeid
+    when the call phase ends."""
+    with _test_results_lock:
+        _test_results.append(agent_result)
 
 
-def _take_last_result() -> AgentResult | None:
-    """Atomically pop and return the most-recent stashed AgentResult."""
-    global _last_result
-    with _last_result_lock:
-        result, _last_result = _last_result, None
-        return result
+def _take_test_results() -> list[AgentResult]:
+    """Atomically pop every AgentResult stashed during the running test."""
+    with _test_results_lock:
+        results = list(_test_results)
+        _test_results.clear()
+        return results
 
 
 def pytest_configure(config: pytest.Config) -> None:
@@ -144,7 +146,7 @@ def pytest_terminal_summary(terminalreporter: Any, exitstatus: int, config: pyte
     diagnostics_opt = config.getoption("--attest-diagnostics", default=False)
     cost_report_opt = config.getoption("--attest-cost-report", default=False)
 
-    soft_lines = soft_failure_lines(_session_results, _session_outcomes)
+    soft_lines = soft_failure_lines(_session_soft_counts, _session_outcomes)
     if soft_lines:
         terminalreporter.write_sep("=", "Attest soft failures")
         terminalreporter.write_line(
@@ -175,11 +177,12 @@ def pytest_runtest_makereport(
     item: pytest.Item,
     call: pytest.CallInfo[Any],
 ) -> Generator[None, Any, None]:
-    """Pop the most-recent AgentResult into the per-nodeid registry and
+    """Pop the test's AgentResults into the per-nodeid registries (last
+    result for diagnostics, soft failures summed over all of them) and
     attribute ``not evaluated`` skips to the test's own location.
 
-    Pytest serialises tests within a worker, so the latest stashed
-    AgentResult always corresponds to the call phase that just ran.
+    Pytest serialises tests within a worker, so the stashed AgentResults
+    always belong to the call phase that just ran.
     """
     outcome = yield
     if call.when != "call":
@@ -191,19 +194,20 @@ def pytest_runtest_makereport(
         if os.path.abspath(path) == os.path.abspath(__file__) and "not evaluated:" in reason:
             _, lineno, _ = item.location
             report.longrepr = (str(item.path), (lineno or 0) + 1, reason)
-    agent_result = _take_last_result()
-    if agent_result is not None:
-        _session_results[item.nodeid] = agent_result
+    results = _take_test_results()
+    if results:
+        _session_results[item.nodeid] = results[-1]
         _session_outcomes[item.nodeid] = report.outcome
+        _session_soft_counts[item.nodeid] = sum(len(r.soft_failures) for r in results)
 
 
-def soft_failure_lines(results: dict[str, AgentResult], outcomes: dict[str, str]) -> list[str]:
+def soft_failure_lines(soft_counts: dict[str, int], outcomes: dict[str, str]) -> list[str]:
     """One line per test with soft failures that pytest did not report as
     failed (failed tests already show their diagnostics in pytest's report)."""
     return [
-        f"  {nid}: {len(r.soft_failures)} soft ({outcomes.get(nid, 'passed')})"
-        for nid, r in results.items()
-        if r.soft_failures and outcomes.get(nid) != "failed"
+        f"  {nid}: {n} soft ({outcomes.get(nid, 'passed')})"
+        for nid, n in soft_counts.items()
+        if n and outcomes.get(nid) != "failed"
     ]
 
 
@@ -308,7 +312,7 @@ class AttestEngineFixture:
         from attest._proto.types import STATUS_SOFT_FAIL
 
         _session_soft_failures += sum(1 for r in result.results if r.status == STATUS_SOFT_FAIL)
-        _set_last_result(agent_result)
+        _record_result(agent_result)
 
         if budget is not None and _session_cost > budget:
             pytest.fail(

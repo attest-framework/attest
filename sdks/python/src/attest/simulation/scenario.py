@@ -13,6 +13,7 @@ from attest.result import (
     AgentResult,
     aggregate_outcomes,
     trials_diagnostics,
+    trials_not_evaluated_reasons,
     trials_skip_reason,
 )
 from attest.simulation._context import _active_mock_registry
@@ -43,6 +44,11 @@ class ScenarioResult:
         """Aggregate verdict over turns: any failing turn fails; otherwise any
         skipped turn skips (fails when ``strict``); otherwise pass."""
         return aggregate_outcomes([r.outcome(strict=strict) for r in self.results])
+
+    @property
+    def not_evaluated_reasons(self) -> dict[str, int]:
+        """Not-evaluated reasons summed across turns."""
+        return trials_not_evaluated_reasons(self.results)
 
     def skip_reason(self) -> str:
         """Not-evaluated reasons summed across turns."""

@@ -8,9 +8,10 @@ from typing import Any
 from attest.result import (
     OUTCOME_PASS,
     OUTCOME_SKIP,
-    AgentResult,
+    Verdict,
     aggregate_outcomes,
     trials_diagnostics,
+    trials_not_evaluated_reasons,
     trials_skip_reason,
 )
 
@@ -24,7 +25,7 @@ class RepeatResult:
     ``attest.enforce(repeat_result)``.
     """
 
-    results: list[AgentResult] = field(default_factory=list)
+    results: list[Verdict] = field(default_factory=list)
 
     @property
     def count(self) -> int:
@@ -58,6 +59,11 @@ class RepeatResult:
         trial skips (fails when ``strict``); otherwise pass."""
         return aggregate_outcomes([r.outcome(strict=strict) for r in self.results])
 
+    @property
+    def not_evaluated_reasons(self) -> dict[str, int]:
+        """Not-evaluated reasons summed across trials."""
+        return trials_not_evaluated_reasons(self.results)
+
     def skip_reason(self) -> str:
         """Not-evaluated reasons summed across trials."""
         return trials_skip_reason(self.results)
@@ -67,11 +73,14 @@ class RepeatResult:
         return trials_diagnostics(self.results, label="trial", color=color)
 
 
-def repeat(n: int) -> Callable[[Callable[..., AgentResult]], Callable[..., RepeatResult]]:
-    def decorator(fn: Callable[..., AgentResult]) -> Callable[..., RepeatResult]:
+def repeat(n: int) -> Callable[[Callable[..., Verdict]], Callable[..., RepeatResult]]:
+    """Run the wrapped function ``n`` times. It may return any ``Verdict``:
+    an ``AgentResult`` from ``attest.inspect()`` or a ``ScenarioResult``."""
+
+    def decorator(fn: Callable[..., Verdict]) -> Callable[..., RepeatResult]:
         @functools.wraps(fn)
         def wrapper(*args: Any, **kwargs: Any) -> RepeatResult:
-            results: list[AgentResult] = []
+            results: list[Verdict] = []
             for _ in range(n):
                 result = fn(*args, **kwargs)
                 results.append(result)
