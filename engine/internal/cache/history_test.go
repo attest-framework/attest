@@ -142,3 +142,22 @@ func TestHistoryStore_MultipleAssertionIDsIsolated(t *testing.T) {
 		t.Errorf("assert-B scores = %v, want [0.3]", bScores)
 	}
 }
+
+func TestHistoryStore_RecordNotEvaluated_IsNotStored(t *testing.T) {
+	store := newTestHistoryStore(t)
+	if err := store.Record("trace-1", "judge-1", "llm_judge", 0.9, "pass"); err != nil {
+		t.Fatalf("Record pass: %v", err)
+	}
+
+	if err := store.Record("trace-2", "judge-1", "llm_judge", 0, "not_evaluated"); err != nil {
+		t.Fatalf("Record not_evaluated: %v", err)
+	}
+
+	got, err := store.QueryWindow("judge-1", 10)
+	if err != nil {
+		t.Fatalf("QueryWindow: %v", err)
+	}
+	if len(got) != 1 || got[0] != 0.9 {
+		t.Errorf("QueryWindow = %v, want [0.9] (not_evaluated must not be stored)", got)
+	}
+}

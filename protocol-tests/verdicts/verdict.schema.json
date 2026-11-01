@@ -1,0 +1,124 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Attest verdict conformance fixture",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "name",
+    "description",
+    "results",
+    "expected"
+  ],
+  "properties": {
+    "name": {
+      "type": "string"
+    },
+    "description": {
+      "type": "string"
+    },
+    "results": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": [
+          "assertion_id",
+          "status"
+        ],
+        "properties": {
+          "assertion_id": {
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "pass",
+              "soft_fail",
+              "hard_fail",
+              "not_evaluated"
+            ]
+          },
+          "reason": {
+            "enum": [
+              "provider_unavailable",
+              "provider_not_configured",
+              "simulation",
+              "missing_evidence",
+              "short_circuited"
+            ]
+          },
+          "failure_class": {
+            "type": "string"
+          }
+        },
+        "if": {
+          "properties": { "status": { "const": "not_evaluated" } }
+        },
+        "then": {
+          "required": ["reason"],
+          "not": { "required": ["failure_class"] }
+        },
+        "else": {
+          "not": { "required": ["reason"] }
+        }
+      }
+    },
+    "expected": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "outcome",
+        "strictOutcome",
+        "failedAssertionIds",
+        "notEvaluated",
+        "passRate",
+        "softFailWarning",
+        "policyExit"
+      ],
+      "properties": {
+        "outcome": {
+          "enum": [
+            "pass",
+            "fail",
+            "skip"
+          ]
+        },
+        "strictOutcome": {
+          "enum": [
+            "pass",
+            "fail",
+            "skip"
+          ]
+        },
+        "failedAssertionIds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "notEvaluated": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "integer",
+            "minimum": 1
+          }
+        },
+        "passRate": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "softFailWarning": {
+          "type": "boolean"
+        },
+        "policyExit": {
+          "enum": [
+            0,
+            1,
+            2
+          ]
+        }
+      }
+    }
+  }
+}

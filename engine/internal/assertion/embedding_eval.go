@@ -59,12 +59,12 @@ func (e *EmbeddingEvaluator) Evaluate(trace *types.Trace, assertion *types.Asser
 
 	targetVec, err := e.getEmbedding(ctx, targetStr)
 	if err != nil {
-		return failResult(assertion, start, fmt.Sprintf("embed target: %v", err))
+		return notEvaluatedResult(assertion, start, types.ReasonProviderUnavailable, fmt.Sprintf("embedding provider failed on target: %v", err))
 	}
 
 	refVec, err := e.getEmbedding(ctx, spec.Reference)
 	if err != nil {
-		return failResult(assertion, start, fmt.Sprintf("embed reference: %v", err))
+		return notEvaluatedResult(assertion, start, types.ReasonProviderUnavailable, fmt.Sprintf("embedding provider failed on reference: %v", err))
 	}
 
 	sim, err := embedding.CosineSimilarity(targetVec, refVec)

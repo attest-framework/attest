@@ -8,6 +8,8 @@ import (
 	"time"
 
 	_ "modernc.org/sqlite"
+
+	"github.com/attest-ai/attest/engine/pkg/types"
 )
 
 // HistoryStore is a SQLite-backed store for assertion result history.
@@ -67,7 +69,12 @@ func (h *HistoryStore) SetPruneConfig(maxRows, maxAgeDays int) {
 
 // Record inserts a single assertion result row into assertion_history.
 // Every 100th insert triggers a background prune using the configured limits.
+// not_evaluated rows carry no score and are not recorded, so outages and
+// simulation runs never skew drift baselines.
 func (h *HistoryStore) Record(traceID, assertionID, assertionType string, score float64, status string) error {
+	if status == types.StatusNotEvaluated {
+		return nil
+	}
 	_, err := h.db.Exec(
 		`INSERT INTO assertion_history (trace_id, assertion_id, assertion_type, score, status, created_at)
 		 VALUES (?, ?, ?, ?, ?, ?)`,
