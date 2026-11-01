@@ -68,6 +68,10 @@ class TestSourceLocation(unittest.TestCase):
             {"file": "tests/test.py", "line": True},
             {"file": "tests/test.py", "line": "4"},
             {"file": "", "line": 4},
+            {"file": "tests/a\nb.py", "line": 4},
+            {"file": "tests/`x`.py", "line": 4},
+            {"file": "tests/%0A.py", "line": 4},
+            {"file": "tests/\x1b[31m.py", "line": 4},
             {"line": 4},
         ):
             with self.subTest(row=row):
@@ -108,7 +112,7 @@ class TestBuildReview(unittest.TestCase):
         payload, annotations = _pa.build_review(_REPORT, self._failures(), {}, "abc123")
 
         self.assertEqual(payload["comments"], [])
-        self.assertIn("`tests/test_refund.py:4` (not in this diff)", payload["body"])
+        self.assertIn("tests/test_refund.py:4 (not in this diff)", payload["body"])
         self.assertTrue(annotations[0].startswith("::error file=tests/test_refund.py,line=4,"))
 
     def test_failure_without_location_goes_to_the_body_without_annotation(self) -> None:
@@ -129,6 +133,49 @@ class TestBuildReview(unittest.TestCase):
         self.assertTrue(annotations[0].startswith("::warning "))
 
 
+class TestUntrustedMarkdown(unittest.TestCase):
+    def test_report_fields_cannot_mention_link_or_break_out_of_the_comment(self) -> None:
+        out = _pa._format_failure(
+            {
+                "assertion_id": "a`\n# Attest passed",
+                "status": "hard_fail",
+                "score": "high",
+                "type": "x\n\n## fake",
+                "expected": "a\n@org/team @user [x](http://e) <img src=x>",
+            }
+        )
+
+        self.assertNotIn("\n#", out)
+        self.assertNotIn("@org", out)
+        self.assertNotIn("@user", out)
+        self.assertNotIn("[x](", out)
+        self.assertNotIn("<img", out)
+        self.assertEqual(out.count("`"), 0)
+
+    def test_non_numeric_summary_fields_render_as_zero(self) -> None:
+        out = _pa._summary_body({"summary": {"total": "@x"}, "total_cost": "nan"}, [])
+
+        self.assertIn("of 0.", out)
+        self.assertIn("$0.000000", out)
+
+
+class TestMainArguments(unittest.TestCase):
+    def test_bad_repo_or_commit_exits_1_before_any_request(self) -> None:
+        import contextlib
+        import io
+        import sys
+
+        for argv in (
+            ["--repo", "o/r/../x", "--commit", "a" * 40],
+            ["--repo", "o/r", "--commit", "HEAD"],
+        ):
+            with self.subTest(argv=argv):
+                sys.argv = ["post_annotations.py", "--report", "r.json", "--pr", "1", *argv]
+                with contextlib.redirect_stderr(io.StringIO()) as err:
+                    self.assertEqual(_pa.main(), 1)
+                self.assertIn("--repo must be owner/name", err.getvalue())
+
+
 class TestWorkflowAnnotation(unittest.TestCase):
     def test_untrusted_text_cannot_start_a_new_workflow_command(self) -> None:
         row = {
@@ -146,6 +193,14 @@ class TestWorkflowAnnotation(unittest.TestCase):
         self.assertIn("file=tests/a%2Cb%3Ac.py,line=7,", out)
         self.assertIn("x%0A::add-mask::secret", out)
         self.assertIn("50%25%0D%0A::stop-commands::t", out)
+
+    def test_control_characters_are_stripped(self) -> None:
+        row = {"status": "hard_fail", "expected": "a\x1b[31mred\u2028b"}
+
+        out = _pa._workflow_annotation("tests/a.py", 1, row)
+
+        self.assertNotIn("\x1b", out)
+        self.assertNotIn("\u2028", out)
 
 
 class TestFormatFailure(unittest.TestCase):

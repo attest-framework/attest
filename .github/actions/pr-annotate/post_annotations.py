@@ -48,6 +48,23 @@ def _truncate(value: str, limit: int = 280) -> str:
     return value[: limit - 3] + "..."
 
 
+_CONTROL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f\u2028\u2029]")
+
+
+def _md(value: object, limit: int = 280) -> str:
+    """Render an untrusted report field as inert single-line markdown text.
+
+    The report comes from the pull request's own test run. Whitespace runs collapse
+    to one space (no new paragraphs or headings), backticks cannot close a code
+    span, ``@`` cannot mention, and ``<``, ``>``, ``[``, ``]`` cannot form HTML or
+    links.
+    """
+    text = _truncate(" ".join(str(value).split()), limit)
+    text = text.replace("\\", "\\\\").replace("`", "'").replace("@", "@\u200b")
+    text = text.replace("<", "&lt;").replace(">", "&gt;")
+    return re.sub(r"([\[\]])", r"\\\1", text)
+
+
 def _format_failure(result: dict[str, Any]) -> str:
     """Render a single failed assertion as a markdown comment body.
 
@@ -58,43 +75,51 @@ def _format_failure(result: dict[str, Any]) -> str:
     type_name = result.get("type") or "(unknown)"
     status = result.get("status", "unknown")
     score = result.get("score", 0.0)
+    score_text = f"{score:.3f}" if isinstance(score, (int, float)) else _md(score, 20)
 
     lines: list[str] = []
-    lines.append(f"**Attest assertion failed: `{result.get('assertion_id')}`**")
-    lines.append(f"")
-    lines.append(f"- **Layer:** L{layer} {type_name}")
-    lines.append(f"- **Status:** `{status}` (score {score:.3f})")
+    lines.append(f"**Attest assertion failed: {_md(result.get('assertion_id'), 80)}**")
+    lines.append("")
+    lines.append(f"- **Layer:** L{_md(layer, 4)} {_md(type_name, 40)}")
+    lines.append(f"- **Status:** {_md(status, 20)} (score {score_text})")
     if path := result.get("trace_node_path"):
-        lines.append(f"- **Trace path:** `{path}`")
+        lines.append(f"- **Trace path:** {_md(path)}")
     if expected := result.get("expected"):
-        lines.append(f"- **Expected:** {_truncate(expected)}")
+        lines.append(f"- **Expected:** {_md(expected)}")
     if actual := result.get("actual"):
-        lines.append(f"- **Actual:** {_truncate(actual)}")
+        lines.append(f"- **Actual:** {_md(actual)}")
     if explanation := result.get("explanation"):
-        lines.append(f"- **Detail:** {_truncate(explanation)}")
+        lines.append(f"- **Detail:** {_md(explanation)}")
     if cls := result.get("failure_class"):
-        lines.append(f"- **Class:** `{cls}`")
+        lines.append(f"- **Class:** {_md(cls, 40)}")
     if ts := result.get("threshold_source"):
         if ts != "static":
-            lines.append(f"- **Threshold source:** `{ts}`")
+            lines.append(f"- **Threshold source:** {_md(ts, 40)}")
     if hint := result.get("suggested_action"):
-        lines.append(f"- **Hint:** {_truncate(hint)}")
+        lines.append(f"- **Hint:** {_md(hint)}")
     body = "\n".join(lines)
     if len(body) > MAX_BODY_CHARS:
         body = body[: MAX_BODY_CHARS - 3] + "..."
     return body
 
 
+def _number(value: object) -> int | float:
+    """A numeric report field; anything else (untrusted input) renders as 0."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return 0
+    return value
+
+
 def _summary_body(report: dict[str, Any], failures: list[dict[str, Any]]) -> str:
     """Top-level review body posted alongside inline comments."""
     summary = report.get("summary", {})
-    total = summary.get("total", 0)
-    passed = summary.get("passed", 0)
-    soft = summary.get("soft_fail", 0)
-    hard = summary.get("hard_fail", 0)
-    cost = report.get("total_cost", 0.0)
-    p50 = report.get("p50_duration_ms", 0)
-    p95 = report.get("p95_duration_ms", 0)
+    total = _number(summary.get("total", 0))
+    passed = _number(summary.get("passed", 0))
+    soft = _number(summary.get("soft_fail", 0))
+    hard = _number(summary.get("hard_fail", 0))
+    cost = float(_number(report.get("total_cost", 0.0)))
+    p50 = _number(report.get("p50_duration_ms", 0))
+    p95 = _number(report.get("p95_duration_ms", 0))
 
     parts = [
         f"**Attest:** {len(failures)} failing assertion(s) of {total}.",
@@ -102,7 +127,7 @@ def _summary_body(report: dict[str, Any], failures: list[dict[str, Any]]) -> str
         f"Cost ${cost:.6f} · P50 {p50}ms · P95 {p95}ms",
     ]
     if classes := report.get("failure_classes"):
-        items = ", ".join(f"{k}: {v}" for k, v in sorted(classes.items()))
+        items = ", ".join(f"{_md(k, 40)}: {_number(v)}" for k, v in sorted(classes.items()))
         parts.append(f"Failure classes — {items}")
     if simulated := report.get("simulated"):
         if simulated:
@@ -154,6 +179,8 @@ def _source_location(result: dict[str, Any]) -> tuple[str, int] | None:
         return None
     if any(part in ("", ".", "..") for part in path.split("/")):
         return None
+    if _CONTROL.search(path) or any(c in path for c in "`%\n\r\t"):
+        return None
     return path, line
 
 
@@ -172,6 +199,9 @@ def _diff_lines(patch: str) -> set[int]:
             right += 1
     return lines
 
+
+_REPO = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
+_SHA = re.compile(r"^[0-9a-f]{40}$")
 
 _HUNK = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@")
 
@@ -196,7 +226,8 @@ def _pull_request_lines(repo: str, pr: int, token: str) -> dict[str, set[int]]:
 
 
 def _escape_data(value: str) -> str:
-    return value.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+    escaped = value.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+    return _CONTROL.sub("", escaped)
 
 
 def _escape_property(value: str) -> str:
@@ -227,6 +258,10 @@ def main() -> int:
     parser.add_argument("--commit", required=True, help="Head commit SHA")
     args = parser.parse_args()
 
+    if not _REPO.match(args.repo) or not _SHA.match(args.commit):
+        print("post_annotations: --repo must be owner/name and --commit a 40-hex SHA", file=sys.stderr)
+        return 1
+
     token = os.environ.get("GITHUB_TOKEN")
     if not token:
         print("post_annotations: GITHUB_TOKEN not set", file=sys.stderr)
@@ -237,9 +272,12 @@ def main() -> int:
         print(f"post_annotations: report not found: {report_path}", file=sys.stderr)
         return 1
     try:
-        report = json.loads(report_path.read_text())
-    except json.JSONDecodeError as exc:
-        print(f"post_annotations: invalid JSON: {exc}", file=sys.stderr)
+        report = json.loads(report_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        print(f"post_annotations: cannot read report: {exc}", file=sys.stderr)
+        return 1
+    if not isinstance(report, dict) or not isinstance(report.get("results", []), list):
+        print("post_annotations: report must be an object with a results list", file=sys.stderr)
         return 1
 
     if report.get("report_version") != 2:
@@ -251,14 +289,16 @@ def main() -> int:
         return 1
 
     results = report.get("results", [])
-    failures = [r for r in results if r.get("status") in ("hard_fail", "soft_fail")]
+    failures = [
+        r for r in results if isinstance(r, dict) and r.get("status") in ("hard_fail", "soft_fail")
+    ]
     if not failures:
         print("post_annotations: no failing assertions; nothing to post")
         return 0
 
     try:
         commentable = _pull_request_lines(args.repo, args.pr, token)
-    except (RuntimeError, ValueError, json.JSONDecodeError) as exc:
+    except (RuntimeError, ValueError, KeyError, TypeError) as exc:
         print(f"post_annotations: {exc}", file=sys.stderr)
         return 1
 
@@ -302,7 +342,7 @@ def build_review(
         if line in commentable.get(path, set()):
             comments.append({"path": path, "line": line, "side": "RIGHT", "body": _format_failure(r)})
         else:
-            elsewhere.append(f"`{path}:{line}` (not in this diff)\n\n{_format_failure(r)}")
+            elsewhere.append(f"{_md(path, 200)}:{line} (not in this diff)\n\n{_format_failure(r)}")
 
     body_parts = [_summary_body(report, failures)]
     if elsewhere:
