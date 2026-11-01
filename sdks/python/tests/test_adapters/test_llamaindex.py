@@ -86,7 +86,10 @@ class TestLlamaIndexImportGuard:
     def test_raises_import_error_when_llamaindex_missing(self) -> None:
         from attest.adapters.llamaindex import _require_llamaindex
 
-        with pytest.raises(ImportError, match="Install llamaindex extras"):
+        with (
+            patch.dict(sys.modules, {"llama_index.core": None}),
+            pytest.raises(ImportError, match="Install llamaindex extras"),
+        ):
             _require_llamaindex()
 
 

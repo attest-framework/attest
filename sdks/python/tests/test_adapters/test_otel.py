@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 from collections.abc import Generator
 from contextlib import contextmanager
 from unittest.mock import MagicMock, patch
@@ -61,9 +62,10 @@ class TestOTelAdapterImportGuard:
     """Verify ImportError when opentelemetry is not installed."""
 
     def test_raises_import_error_when_otel_missing(self) -> None:
-        # _require_otel is NOT patched here — it will raise ImportError
-        # because opentelemetry-sdk is not installed in the test environment.
-        with pytest.raises(ImportError, match="Install otel extras"):
+        with (
+            patch.dict(sys.modules, {"opentelemetry.sdk.trace": None}),
+            pytest.raises(ImportError, match="Install otel extras"),
+        ):
             OTelAdapter.from_spans([])  # type: ignore[arg-type]
 
 

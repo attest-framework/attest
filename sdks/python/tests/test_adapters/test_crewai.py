@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 from collections.abc import Generator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -65,7 +66,10 @@ def _crewai_available() -> Generator[None, None, None]:
 
 class TestCrewAIAdapterImportGuard:
     def test_raises_import_error_when_crewai_missing(self) -> None:
-        with pytest.raises(ImportError, match="Install CrewAI extras"):
+        with (
+            patch.dict(sys.modules, {"crewai": None}),
+            pytest.raises(ImportError, match="Install CrewAI extras"),
+        ):
             CrewAIAdapter()
 
 
