@@ -1,5 +1,6 @@
 import * as vitest from "vitest";
 import type { TestContext } from "vitest";
+import { getCurrentTest } from "vitest/suite";
 import {
   type ExpectChain,
   AgentResult,
@@ -16,20 +17,40 @@ import {
 export interface InspectOptions {
   /** Throw when the cumulative session cost exceeds this USD amount. */
   budget?: number;
+  /**
+   * The running test's context (`it("…", async (context) => …)`). Used to
+   * attach results to the right test for AttestReporter and to skip it;
+   * required under `test.concurrent` and, for skips, on Vitest before 4.1.
+   */
+  context?: TestContext;
 }
 
 export interface EvaluateOptions extends InspectOptions {
-  /**
-   * The running test's context (`it("…", async (context) => …)`). Used to
-   * skip the right test; required under `test.concurrent` and on Vitest
-   * versions before 4.1.
-   */
-  context?: TestContext;
   /**
    * Fail (instead of skip) when an assertion was not evaluated. Defaults to
    * the ATTEST_STRICT environment variable ("1", "true" or "yes").
    */
   strict?: boolean;
+}
+
+/**
+ * Attach the results to the running test's meta so AttestReporter, in the main
+ * process, can write them with the test's file and line. Outside a test (e.g. in
+ * a beforeAll hook) there is no test to attach them to.
+ */
+function recordOnTest(result: AgentResult, context?: TestContext): void {
+  const test = context?.task ?? getCurrentTest();
+  if (test === undefined) return;
+  if (context === undefined && test.concurrent === true) {
+    throw new Error(
+      "Attest results from a test.concurrent test — pass the test context: " +
+        "inspect(chain, { context }) or evaluate(chain, { context })",
+    );
+  }
+  const meta = (test.meta.attest ??= { results: [], totalCost: 0, totalDurationMs: 0 });
+  meta.results.push(...result.assertionResults);
+  meta.totalCost += result.totalCost;
+  meta.totalDurationMs += result.totalDurationMs;
 }
 
 function strictFromEnv(): boolean {
@@ -158,6 +179,7 @@ export class AttestEngineFixture {
       result.total_cost ?? 0,
       result.total_duration_ms ?? 0,
     );
+    recordOnTest(agentResult, options?.context);
 
     // Track non-passing AgentResults so AttestCostReporter can render the
     // diagnostic block at the end of the run. Bound size because long
