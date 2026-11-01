@@ -56,7 +56,8 @@ def test_judge_only(attest):
 
 _KEYS = (
     "OPENAI_API_KEY",
-    "ATTEST_OPENAI_API_KEY",
+    "ATTEST_JUDGE_API_KEY",
+    "ATTEST_JUDGE_BASE_URL",
     "ANTHROPIC_API_KEY",
     "ATTEST_GEMINI_API_KEY",
     "ATTEST_JUDGE_PROVIDER",
