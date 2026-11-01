@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"sort"
+	"strings"
 	"text/tabwriter"
 )
 
@@ -39,7 +40,7 @@ func dispatch(args []string) bool {
 		printUsage(os.Stdout)
 		os.Exit(0)
 	}
-	if args[0][0] == '-' {
+	if strings.HasPrefix(args[0], "-") {
 		return false
 	}
 	c, ok := commands[args[0]]

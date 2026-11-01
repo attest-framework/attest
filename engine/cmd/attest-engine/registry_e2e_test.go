@@ -24,17 +24,18 @@ func TestHelp_ListsEveryCommand_ExitsZero(t *testing.T) {
 
 func TestUnknownCommand_ExitsTwoWithUsage(t *testing.T) {
 	bin := buildEngineBinary(t)
+	for _, arg := range []string{"frobnicate", ""} {
+		stdout, stderr, code := runEngine(t, bin, t.TempDir(), arg)
 
-	stdout, stderr, code := runEngine(t, bin, t.TempDir(), "frobnicate")
-
-	if code != 2 {
-		t.Fatalf("exit %d, want 2", code)
-	}
-	if stdout != "" {
-		t.Errorf("stdout = %q, want empty", stdout)
-	}
-	if !strings.Contains(stderr, "unknown command: frobnicate") || !strings.Contains(stderr, "commands:") {
-		t.Errorf("stderr lacks error and usage:\n%s", stderr)
+		if code != 2 {
+			t.Fatalf("%q: exit %d, want 2\n%s", arg, code, stderr)
+		}
+		if stdout != "" {
+			t.Errorf("%q: stdout = %q, want empty", arg, stdout)
+		}
+		if !strings.Contains(stderr, "unknown command: "+arg) || !strings.Contains(stderr, "commands:") {
+			t.Errorf("%q: stderr lacks error and usage:\n%s", arg, stderr)
+		}
 	}
 }
 
