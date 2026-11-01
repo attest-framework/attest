@@ -336,7 +336,20 @@ class AttestClient:
         Simulation mode is handled by the engine: started with
         ``ATTEST_SIMULATION`` set, it evaluates layers 1-4 for real and
         returns ``not_evaluated`` (reason ``simulation``) for layers 5-6.
+
+        Raises:
+            RuntimeError: simulation is enabled via ``attest.config()`` but
+                ``ATTEST_SIMULATION`` is not set in the environment the
+                engine inherits, so the engine would call real providers.
         """
+        from attest.config import is_simulation_mode, simulation_env_enabled
+
+        if is_simulation_mode() and not simulation_env_enabled():
+            raise RuntimeError(
+                "attest.config(simulation=True) is set but ATTEST_SIMULATION is not in the "
+                "environment, so the engine would call real providers. Set ATTEST_SIMULATION=1 "
+                "before the engine starts (the pytest plugin does this for you)."
+            )
         params: dict[str, Any] = {
             "trace": trace.to_dict(),
             "assertions": [a.to_dict() for a in assertions],
@@ -389,10 +402,10 @@ class AttestClient:
         if is_simulation_mode():
             return DriftReport(
                 assertion_id=assertion_id,
-                mean=1.0,
+                mean=0.0,
                 stddev=0.0,
                 count=0,
-                latest_score=1.0,
+                latest_score=0.0,
                 deviation=0.0,
                 status="no_data",
             )

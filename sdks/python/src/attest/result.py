@@ -19,6 +19,16 @@ OUTCOME_PASS = "pass"
 OUTCOME_FAIL = "fail"
 OUTCOME_SKIP = "skip"
 
+
+def aggregate_outcomes(outcomes: list[str]) -> str:
+    """Combine per-run outcomes: any fail → fail; else any skip → skip; else pass."""
+    if OUTCOME_FAIL in outcomes:
+        return OUTCOME_FAIL
+    if OUTCOME_SKIP in outcomes:
+        return OUTCOME_SKIP
+    return OUTCOME_PASS
+
+
 if TYPE_CHECKING:
     from attest.trace_tree import TraceTree
 
@@ -34,7 +44,11 @@ class AgentResult:
 
     @property
     def passed(self) -> bool:
-        """True if every assertion has status ``pass``."""
+        """True only if every assertion has status ``pass`` (strict).
+
+        Not the test verdict: soft failures pass a test and not-evaluated
+        assertions skip it. Use ``outcome()`` for the verdict.
+        """
         return all(r.status == STATUS_PASS for r in self.assertion_results)
 
     def outcome(self, *, strict: bool = False) -> str:

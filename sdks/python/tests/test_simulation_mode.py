@@ -141,6 +141,7 @@ class TestClientSimulationMode:
     async def test_evaluate_batch_simulation_still_calls_engine(self, enable: str) -> None:
         if enable == "config":
             config(simulation=True)
+            os.environ["ATTEST_SIMULATION"] = "1"  # the plugin sets this before engine start
         else:
             os.environ["ATTEST_SIMULATION"] = "1"
         engine = AsyncMock()
@@ -152,3 +153,16 @@ class TestClientSimulationMode:
         client.send_request.assert_awaited_once()
         assert result.results[0].status == STATUS_NOT_EVALUATED
         assert result.results[0].reason == "simulation"
+
+
+@pytest.mark.asyncio
+async def test_config_simulation_without_env_refuses_to_reach_providers() -> None:
+    config(simulation=True)
+    os.environ.pop("ATTEST_SIMULATION", None)
+    client = AttestClient(engine=AsyncMock())
+    client.send_request = AsyncMock(return_value=_engine_payload())  # type: ignore[method-assign]
+
+    with pytest.raises(RuntimeError, match="ATTEST_SIMULATION is not in the environment"):
+        await client.evaluate_batch(_make_trace(), [_make_assertions()[0]])
+
+    client.send_request.assert_not_awaited()
