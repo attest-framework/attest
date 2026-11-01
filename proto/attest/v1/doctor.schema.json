@@ -1,0 +1,184 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://attest-framework.github.io/schemas/v1/doctor.schema.json",
+  "title": "attest-engine doctor --json",
+  "description": "The engine's configuration under the current environment. Never contains an API key; api_key_source names the variable the key came from.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "engine_version",
+    "protocol_version",
+    "capabilities",
+    "simulation_mode",
+    "judge",
+    "embedding",
+    "cache_dir"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "engine_version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "protocol_version": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "capabilities": {
+      "description": "Exactly the list `initialize` advertises under the same environment.",
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "simulation_mode": {
+      "type": "boolean"
+    },
+    "judge": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "configured",
+        "provider",
+        "model",
+        "base_url",
+        "api_key_source"
+      ],
+      "properties": {
+        "configured": {
+          "type": "boolean"
+        },
+        "provider": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "model": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "base_url": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "api_key_source": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "if": {
+        "properties": {
+          "configured": {
+            "const": true
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "provider": {
+            "enum": [
+              "openai"
+            ]
+          },
+          "model": {
+            "type": "string",
+            "minLength": 1
+          },
+          "base_url": {
+            "type": "string",
+            "pattern": "^https?://"
+          },
+          "api_key_source": {
+            "enum": [
+              "ATTEST_JUDGE_API_KEY",
+              "OPENAI_API_KEY"
+            ]
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "provider": {
+            "type": "null"
+          },
+          "model": {
+            "type": "null"
+          },
+          "base_url": {
+            "type": "null"
+          },
+          "api_key_source": {
+            "type": "null"
+          }
+        }
+      }
+    },
+    "embedding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "configured",
+        "requested",
+        "provider"
+      ],
+      "properties": {
+        "configured": {
+          "type": "boolean"
+        },
+        "requested": {
+          "enum": [
+            "auto",
+            "openai",
+            "onnx"
+          ]
+        },
+        "provider": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "if": {
+        "properties": {
+          "configured": {
+            "const": true
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "provider": {
+            "enum": [
+              "openai",
+              "onnx"
+            ]
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "provider": {
+            "type": "null"
+          }
+        }
+      }
+    },
+    "cache_dir": {
+      "type": "string",
+      "minLength": 1
+    }
+  }
+}

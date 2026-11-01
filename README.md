@@ -90,7 +90,9 @@ SDK (Python/TS/Go) ──stdin/stdout──▶ Engine Process (Go)
 - **7 TypeScript adapters** — OpenAI, Anthropic, Gemini, Ollama, LangChain.js, OTel, Manual
 - **Soft failure budgets** — scores between 0.5–0.8 warn without blocking CI
 - **Cost as a test metric** — assert on token usage, API cost, and latency
-- **Budget enforcement** — configurable max cost per evaluation batch via `ATTEST_BUDGET_MAX_COST`
+- **Soft-failure limit** — cap soft failures per engine session via `ATTEST_MAX_SOFT_FAILURES`
+- **`attest-engine doctor`** — reports engine version, capabilities and judge/embedding configuration (`--json` for tooling); see [configuration](docs/guides/configuration.md)
+- **OpenAI-compatible judge** — point Layer 6 at any compatible endpoint with `ATTEST_JUDGE_BASE_URL`
 - **Python & TypeScript SDKs** — `attest-ai` (PyPI) + `@attest-ai/core` / `@attest-ai/vitest` (npm)
 - **TypeScript CLI** — `npx @attest-ai/core init`, `validate`, `cache stats/clear`
 - **CJS/ESM dual output** — TypeScript SDK supports both `require()` and `import`, tree-shakeable

@@ -53,3 +53,7 @@ To add a new scenario:
 | `expected.policyExit` | `attest-engine policy evaluate` exit code for these results under `verdicts/policy.yaml`. |
 
 Go checks the wire format and `policyExit` (`engine/internal/policy/verdict_conformance_test.go`); the Python and TypeScript SDKs check the aggregation fields.
+
+## Doctor fixtures
+
+`doctor/` holds examples of `attest-engine doctor --json` output checked against `proto/attest/v1/doctor.schema.json`: every file in `doctor/valid/` must match the schema and every file in `doctor/invalid/` must not. The engine test `engine/cmd/attest-engine/doctor_e2e_test.go` checks the fixtures, validates live `doctor --json` output against the schema and asserts that its `capabilities` equal what `initialize` advertises under the same environment. SDK `attest doctor` commands forward this output unchanged.

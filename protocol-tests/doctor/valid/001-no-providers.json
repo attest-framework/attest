@@ -1,0 +1,10 @@
+{
+  "schema_version": 1,
+  "engine_version": "1.0.0-rc.1",
+  "protocol_version": 1,
+  "capabilities": ["layers_1_4", "trace_tree", "continuous_eval", "plugins", "embedding", "llm_judge"],
+  "simulation_mode": false,
+  "judge": { "configured": false, "provider": null, "model": null, "base_url": null, "api_key_source": null },
+  "embedding": { "configured": false, "requested": "auto", "provider": null },
+  "cache_dir": "/home/dev/.attest/cache"
+}

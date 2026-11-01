@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "engine_version": "1.0.0-rc.1",
+  "protocol_version": 1,
+  "capabilities": ["layers_1_4", "trace_tree", "continuous_eval", "plugins", "llm_judge", "simulation", "layers_5_6", "embedding"],
+  "simulation_mode": false,
+  "judge": {
+    "configured": true,
+    "provider": "openai",
+    "model": "llama3.1",
+    "base_url": "http://localhost:11434/v1",
+    "api_key_source": "ATTEST_JUDGE_API_KEY"
+  },
+  "embedding": { "configured": false, "requested": "auto", "provider": null },
+  "cache_dir": "/tmp/attest-cache"
+}

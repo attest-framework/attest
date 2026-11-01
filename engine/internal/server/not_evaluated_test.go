@@ -13,7 +13,9 @@ import (
 func withoutProviders(t *testing.T, simulation string) {
 	t.Helper()
 	t.Setenv("ATTEST_JUDGE_PROVIDER", "")
-	t.Setenv("ATTEST_OPENAI_API_KEY", "")
+	t.Setenv("ATTEST_JUDGE_API_KEY", "")
+	t.Setenv("ATTEST_JUDGE_BASE_URL", "")
+	t.Setenv("OPENAI_API_KEY", "")
 	t.Setenv("ATTEST_EMBEDDING_PROVIDER", "")
 	t.Setenv("ATTEST_CACHE_DIR", t.TempDir())
 	t.Setenv("ATTEST_SIMULATION", simulation)
