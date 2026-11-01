@@ -115,7 +115,7 @@ describe("attest init", () => {
   const sample = () => path.join(env.root, "tests", "my-agent.test.ts");
   const workflow = () => path.join(env.root, ".github", "workflows", "attest.yml");
 
-  it("writes the sample test, Vitest config and policy without an engine", async () => {
+  it("writes the sample test and policy, and no Vitest config, without an engine", async () => {
     await expect(main(["init"])).resolves.toBe(0);
 
     const test = fs.readFileSync(sample(), "utf-8");
@@ -123,9 +123,7 @@ describe("attest init", () => {
     expect(test.split("\n").filter((l) => l.includes(DEMO_MARKER))).toEqual([
       expect.stringContaining('.outputContains("refund");'),
     ]);
-    expect(fs.readFileSync(path.join(env.root, "vitest.config.ts"), "utf-8")).toContain(
-      'import { AttestReporter } from "@attest-ai/vitest/reporter";',
-    );
+    expect(fs.existsSync(path.join(env.root, "vitest.config.ts"))).toBe(false);
     expect(fs.readFileSync(path.join(env.root, "attest.policy.yaml"), "utf-8")).toContain(
       "max_hard_fails: 0",
     );
@@ -140,7 +138,10 @@ describe("attest init", () => {
       const steps = fs.readFileSync(workflow(), "utf-8").split("      - ").slice(1);
       const byName = new Map(steps.map((s) => [s.split("\n")[0]!.replace(/^name: /, ""), s]));
       expect(byName.get("Run tests")).toContain("continue-on-error: true");
-      expect(byName.get("Run tests")).toContain("npx vitest run --outputFile.attest=attest-report.json");
+      expect(byName.get("Run tests")).toContain(
+        "npx vitest run --reporter=default --reporter=@attest-ai/vitest/reporter " +
+          "--outputFile.attest=attest-report.json",
+      );
       expect(byName.get("Upload the Attest report")).toContain("if: always()");
       expect(byName.get("Evaluate the merge policy")).toContain("if: always()");
       expect(byName.get("Evaluate the merge policy")).toContain('"$code" -eq 2');
@@ -158,14 +159,14 @@ describe("attest init", () => {
   );
 
   it("does not overwrite existing files", async () => {
-    for (const file of [sample(), path.join(env.root, "vitest.config.ts"), workflow()]) {
+    for (const file of [sample(), workflow()]) {
       fs.mkdirSync(path.dirname(file), { recursive: true });
       fs.writeFileSync(file, "// mine\n");
     }
 
     await expect(main(["init", "--ci", "github"])).resolves.toBe(0);
 
-    for (const file of [sample(), path.join(env.root, "vitest.config.ts"), workflow()]) {
+    for (const file of [sample(), workflow()]) {
       expect(fs.readFileSync(file, "utf-8")).toBe("// mine\n");
     }
   });

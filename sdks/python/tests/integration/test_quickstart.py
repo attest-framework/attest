@@ -113,6 +113,20 @@ def test_generated_project_passes_then_fails_with_diagnostic_and_gates_merge(
     assert _run(project, "attest", "policy", "evaluate", *policy_args).returncode == 0
 
 
+@pytest.mark.integration
+def test_generated_test_passes_beside_an_existing_conftest(project: Path) -> None:
+    (project / "tests").mkdir()
+    (project / "tests" / "conftest.py").write_text(
+        "import pytest\n\n\n@pytest.fixture\ndef db():\n    return 1\n"
+    )
+
+    assert _run(project, "attest", "init").returncode == 0
+    run = _run(project, "pytest")
+
+    assert run.returncode == 0, run.stdout + run.stderr
+    assert "1 passed" in run.stdout
+
+
 # --- README snippets ---------------------------------------------------------
 
 

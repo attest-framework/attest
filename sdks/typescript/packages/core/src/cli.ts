@@ -24,7 +24,7 @@ const SDK_USAGE =
   "usage: attest <command> [args]\n" +
   "\n" +
   "SDK commands:\n" +
-  "  init [--ci github]  scaffold a sample test, Vitest config and merge policy here\n" +
+  "  init [--ci github]  scaffold a sample test and merge policy here\n" +
   "                      (--ci github also writes .github/workflows/attest.yml)\n" +
   "\n" +
   "options:\n" +

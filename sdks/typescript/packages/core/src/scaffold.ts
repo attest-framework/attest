@@ -54,17 +54,9 @@ it("my agent issues the refund", async (context) => {
 });
 `;
 
-export const VITEST_CONFIG_TEMPLATE = `import { defineConfig } from "vitest/config";
-import { AttestReporter } from "@attest-ai/vitest/reporter";
-
-export default defineConfig({
-  test: {
-    include: ["tests/**/*.test.ts"],
-    // AttestReporter writes a report-v2 file when run with --outputFile.attest=<path>.
-    reporters: ["default", new AttestReporter()],
-  },
-});
-`;
+/** Vitest arguments that add AttestReporter and write the report-v2 file. */
+export const REPORT_ARGS =
+  "--reporter=default --reporter=@attest-ai/vitest/reporter --outputFile.attest=attest-report.json";
 
 export const POLICY_TEMPLATE = `# Merge policy for \`attest policy evaluate --report <report> --policy attest.policy.yaml\`.
 # Exit 0: pass. Exit 1: a blocking rule failed. Exit 2: warnings only.
@@ -105,7 +97,7 @@ jobs:
       - name: Run tests
         id: tests
         continue-on-error: true
-        run: npx vitest run --outputFile.attest=attest-report.json
+        run: npx vitest run ${REPORT_ARGS}
       - name: Upload the Attest report
         if: always()
         uses: actions/upload-artifact@v7
@@ -147,13 +139,13 @@ function write(file: string, content: string): void {
 }
 
 /**
- * Write the sample test, the Vitest config and the merge policy into `targetDir`;
- * `ci: "github"` also writes `.github/workflows/attest.yml`. Existing files are
- * never overwritten.
+ * Write the sample test and the merge policy into `targetDir`; `ci: "github"` also
+ * writes `.github/workflows/attest.yml`. Existing files are never overwritten. No
+ * Vitest config is written: the workflow adds AttestReporter on the command line
+ * (`REPORT_ARGS`), so an existing config keeps working unchanged.
  */
 export function scaffoldProject(targetDir: string, options: { ci?: CiProvider } = {}): void {
   write(path.join(targetDir, "tests", "my-agent.test.ts"), SAMPLE_TEST_TEMPLATE);
-  write(path.join(targetDir, "vitest.config.ts"), VITEST_CONFIG_TEMPLATE);
   write(path.join(targetDir, "attest.policy.yaml"), POLICY_TEMPLATE);
   if (options.ci === "github") {
     write(path.join(targetDir, ".github", "workflows", "attest.yml"), GITHUB_WORKFLOW_TEMPLATE);

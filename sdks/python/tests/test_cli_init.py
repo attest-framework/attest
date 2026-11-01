@@ -10,7 +10,7 @@ from attest import __version__
 from attest.cli.admin import main
 from attest.scaffold import DEMO_MARKER, scaffold_project
 
-_SAMPLE_FILES = ("tests/conftest.py", "tests/test_my_agent.py", "attest.policy.yaml")
+_SAMPLE_FILES = ("tests/test_my_agent.py", "attest.policy.yaml")
 _WORKFLOW = ".github/workflows/attest.yml"
 
 
@@ -22,14 +22,14 @@ def test_scaffold_project_writes_sample_test_fixture_and_policy(tmp_path: Path) 
     assert not (tmp_path / _WORKFLOW).exists()
 
 
-def test_scaffold_project_conftest_defines_the_fixture_the_test_uses(tmp_path: Path) -> None:
+def test_scaffold_project_sample_test_defines_its_own_fixture(tmp_path: Path) -> None:
     scaffold_project(tmp_path)
 
-    conftest = (tmp_path / "tests" / "conftest.py").read_text()
     sample = (tmp_path / "tests" / "test_my_agent.py").read_text()
-    assert "def my_agent_result(" in conftest
+    assert "def my_agent_result(" in sample
     assert "my_agent_result: Trace" in sample
     assert "attest.evaluate(chain)" in sample
+    assert not (tmp_path / "tests" / "conftest.py").exists()
 
 
 def test_scaffold_project_marks_exactly_one_line_to_edit(tmp_path: Path) -> None:

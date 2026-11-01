@@ -17,20 +17,21 @@ from attest import __version__
 # tests point at it by this marker.
 DEMO_MARKER = "ATTEST-DEMO"
 
-CONFTEST_TEMPLATE = '''\
-"""Fixtures for the sample Attest test written by `attest init`.
+SAMPLE_TEST_TEMPLATE = f'''\
+"""Sample Attest test written by `attest init`. Run it with `pytest`.
 
-`my_agent_result` is the trace of one agent run, built by hand with TraceBuilder,
-so the sample needs no model, API key or network. Replace it with a trace from
-your agent: wrap the agent with @attest.agent or record it with an adapter such
-as attest.OpenAIAdapter.
+`my_agent_result` is the trace of one agent run, built by hand with TraceBuilder, so
+the sample needs no model, API key or network. Replace it with a trace from your
+agent: wrap the agent with @attest.agent or record it with an adapter such as
+attest.OpenAIAdapter.
 """
 
 from __future__ import annotations
 
 import pytest
 
-from attest import Trace, TraceBuilder
+from attest import Trace, TraceBuilder, expect
+from attest.plugin import AttestEngineFixture
 
 
 @pytest.fixture
@@ -40,30 +41,21 @@ def my_agent_result() -> Trace:
         .set_input(user_message="Please refund order ORD-1001.")
         .add_tool_call(
             "lookup_order",
-            args={"order_id": "ORD-1001"},
-            result={"status": "delivered", "amount": 42.0},
+            args={{"order_id": "ORD-1001"}},
+            result={{"status": "delivered", "amount": 42.0}},
         )
         .add_tool_call(
             "issue_refund",
-            args={"order_id": "ORD-1001", "amount": 42.0},
-            result={"refund_id": "RF-1001"},
+            args={{"order_id": "ORD-1001", "amount": 42.0}},
+            result={{"refund_id": "RF-1001"}},
         )
         .set_output(
             message="Your refund of $42.00 has been issued.",
-            structured={"refund_id": "RF-1001", "amount": 42.0},
+            structured={{"refund_id": "RF-1001", "amount": 42.0}},
         )
         .set_metadata(total_tokens=180, cost_usd=0.002, latency_ms=900)
         .build()
     )
-'''
-
-SAMPLE_TEST_TEMPLATE = f'''\
-"""Sample Attest test written by `attest init`. Run it with `pytest`."""
-
-from __future__ import annotations
-
-from attest import Trace, expect
-from attest.plugin import AttestEngineFixture
 
 
 def test_my_agent(attest: AttestEngineFixture, my_agent_result: Trace) -> None:
@@ -160,16 +152,15 @@ def _write(path: Path, content: str) -> None:
 
 
 def scaffold_project(target_dir: Path, *, ci: str | None = None) -> None:
-    """Write the sample test, its fixtures and the merge policy into ``target_dir``.
+    """Write the sample test (with its ``my_agent_result`` fixture) and the merge policy.
 
-    ``ci="github"`` also writes ``.github/workflows/attest.yml``. Existing files are
-    never overwritten.
+    ``ci="github"`` also writes ``.github/workflows/attest.yml``. Files go under
+    ``target_dir``; existing files are never overwritten, and the sample test is
+    self-contained so an existing ``tests/conftest.py`` does not affect it.
     """
     if ci is not None and ci not in CI_PROVIDERS:
         raise ValueError(f"unknown CI provider {ci!r}; supported: {', '.join(CI_PROVIDERS)}")
-    tests_dir = target_dir / "tests"
-    _write(tests_dir / "conftest.py", CONFTEST_TEMPLATE)
-    _write(tests_dir / "test_my_agent.py", SAMPLE_TEST_TEMPLATE)
+    _write(target_dir / "tests" / "test_my_agent.py", SAMPLE_TEST_TEMPLATE)
     _write(target_dir / "attest.policy.yaml", POLICY_TEMPLATE)
     if ci == "github":
         _write(target_dir / ".github" / "workflows" / "attest.yml", GITHUB_WORKFLOW_TEMPLATE)

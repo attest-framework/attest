@@ -73,9 +73,10 @@ export interface AttestReporterOptions {
  * assertion result tagged with the test that requested it. Feed the file to
  * `attest policy evaluate --report` and the pr-annotate action.
  *
- * Writes only when an output file is set: `new AttestReporter({ outputFile })` or
- * `vitest run --outputFile.attest=<path>`, the counterpart of pytest's
- * `--attest-report=<path>`. Turns on `includeTaskLocation` so each test carries its
+ * Writes only when an output file is set: `new AttestReporter({ outputFile })` in the
+ * Vitest config, or on the command line, the counterpart of pytest's
+ * `--attest-report=<path>`:
+ * `vitest run --reporter=default --reporter=@attest-ai/vitest/reporter --outputFile.attest=<path>`. Turns on `includeTaskLocation` so each test carries its
  * line. Requires Vitest 3+.
  */
 export class AttestReporter implements Reporter {
@@ -125,3 +126,6 @@ export class AttestReporter implements Reporter {
     writeFileSync(path, `${JSON.stringify(buildReport(tests, isSimulationMode()), null, 2)}\n`);
   }
 }
+
+/** `vitest run --reporter=@attest-ai/vitest/reporter` loads the default export. */
+export default AttestReporter;

@@ -17,6 +17,7 @@ const coreDir = resolve(pkgDir, "../core");
 const cli = join(coreDir, "dist/esm/cli.js");
 const vitestBin = join(pkgDir, "node_modules/.bin/vitest");
 const MARKER = "ATTEST-DEMO";
+const REPORT = ["--reporter=default", "--reporter=@attest-ai/vitest/reporter", "--outputFile.attest=r.json"];
 
 /** An empty npm project whose node_modules links this workspace's packages. */
 function newProject(): string {
@@ -87,7 +88,7 @@ describe.skipIf(!existsSync(engine) || !existsSync(cli))("TypeScript quickstart 
     expect(npx(project, ["vitest", "run"]).out).toMatch(/Tests\s+1 passed/);
 
     editMarkedLine(project, '"refund"', '"store credit"');
-    const red = npx(project, ["vitest", "run", "--outputFile.attest=r.json"]);
+    const red = npx(project, ["vitest", "run", ...REPORT]);
     expect(red.status, red.out).toBe(1);
     expect(red.out).toMatch(/Tests\s+1 failed/);
     expect(red.out).toContain("L4 content");
@@ -108,9 +109,24 @@ describe.skipIf(!existsSync(engine) || !existsSync(cli))("TypeScript quickstart 
     expect(npx(project, policy).status).toBe(1);
 
     editMarkedLine(project, '"store credit"', '"refund"');
-    expect(npx(project, ["vitest", "run", "--outputFile.attest=r.json"]).status).toBe(0);
+    expect(npx(project, ["vitest", "run", ...REPORT]).status).toBe(0);
     expect(npx(project, policy).status).toBe(0);
   }, 120_000);
+
+  it("writes the report beside an existing Vitest config", () => {
+    const project = newProject();
+    writeFileSync(
+      join(project, "vitest.config.ts"),
+      'import { defineConfig } from "vitest/config";\nexport default defineConfig({ test: { reporters: ["dot"] } });\n',
+    );
+    expect(npx(project, ["attest", "init"]).status).toBe(0);
+
+    const run = npx(project, ["vitest", "run", ...REPORT]);
+
+    expect(run.status, run.out).toBe(0);
+    const report = JSON.parse(readFileSync(join(project, "r.json"), "utf8")) as { tests: unknown[] };
+    expect(report.tests).toHaveLength(1);
+  }, 60_000);
 
   it("fails on a README command it cannot run", () => {
     expect(() => readmeTypeScriptCommands("### TypeScript\n```bash\nyarn attest init\n```\n### Build from source")).toThrow(

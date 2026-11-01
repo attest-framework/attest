@@ -153,13 +153,47 @@ uv run attest init
 uv run pytest
 ```
 
-`pytest` prints `1 passed`. `attest init` wrote three files: `tests/conftest.py` (the `my_agent_result` fixture, a refund agent's run built with `TraceBuilder`), `tests/test_my_agent.py` and `attest.policy.yaml`. The test:
+`pytest` prints `1 passed`. `attest init` wrote `tests/test_my_agent.py` and `attest.policy.yaml`. The test checks a refund agent's run, built by hand with `TraceBuilder` in the `my_agent_result` fixture:
 
 ```python
+"""Sample Attest test written by `attest init`. Run it with `pytest`.
+
+`my_agent_result` is the trace of one agent run, built by hand with TraceBuilder, so
+the sample needs no model, API key or network. Replace it with a trace from your
+agent: wrap the agent with @attest.agent or record it with an adapter such as
+attest.OpenAIAdapter.
+"""
+
 from __future__ import annotations
 
-from attest import Trace, expect
+import pytest
+
+from attest import Trace, TraceBuilder, expect
 from attest.plugin import AttestEngineFixture
+
+
+@pytest.fixture
+def my_agent_result() -> Trace:
+    return (
+        TraceBuilder(agent_id="refund-agent")
+        .set_input(user_message="Please refund order ORD-1001.")
+        .add_tool_call(
+            "lookup_order",
+            args={"order_id": "ORD-1001"},
+            result={"status": "delivered", "amount": 42.0},
+        )
+        .add_tool_call(
+            "issue_refund",
+            args={"order_id": "ORD-1001", "amount": 42.0},
+            result={"refund_id": "RF-1001"},
+        )
+        .set_output(
+            message="Your refund of $42.00 has been issued.",
+            structured={"refund_id": "RF-1001", "amount": 42.0},
+        )
+        .set_metadata(total_tokens=180, cost_usd=0.002, latency_ms=900)
+        .build()
+    )
 
 
 def test_my_agent(attest: AttestEngineFixture, my_agent_result: Trace) -> None:
@@ -193,7 +227,7 @@ uv run attest policy evaluate --report attest-report.json --policy attest.policy
 uv run attest init --ci github
 ```
 
-`attest init --ci github` writes `.github/workflows/attest.yml`: the test step records its outcome and continues, the report upload, policy evaluation and the `pr-annotate` action always run, and a last step fails the job when the tests failed. Review comments land on the failing test's file and line. See the [merge gate guide](docs/guides/merge-gate.md).
+`attest init --ci github` writes `.github/workflows/attest.yml`: the test step records its outcome and continues, the report upload, policy evaluation and the `pr-annotate` action always run, and a last step fails the job when the tests failed. Failures are annotated at the failing test's file and line. See the [merge gate guide](docs/guides/merge-gate.md).
 
 ### TypeScript
 
@@ -204,7 +238,7 @@ npx attest init
 npx vitest run
 ```
 
-`npx attest init` writes `tests/my-agent.test.ts`, `vitest.config.ts` (with `AttestReporter`) and `attest.policy.yaml`; the line marked `ATTEST-DEMO` works the same way. `npx vitest run --outputFile.attest=attest-report.json` writes the report and `npx attest init --ci github` writes the workflow.
+`npx attest init` writes `tests/my-agent.test.ts` and `attest.policy.yaml`; the line marked `ATTEST-DEMO` works the same way. `npx vitest run --reporter=default --reporter=@attest-ai/vitest/reporter --outputFile.attest=attest-report.json` writes the report and `npx attest init --ci github` writes the workflow.
 
 ### Build from source
 

@@ -25,8 +25,7 @@ npx vitest run           # 1 passed
 | File | Python | TypeScript |
 |---|---|---|
 | Sample test | `tests/test_my_agent.py` | `tests/my-agent.test.ts` |
-| Agent run | `tests/conftest.py`: the `my_agent_result` fixture, a trace built with `TraceBuilder` | `myAgentResult()` in the test file |
-| Reporter config | — (built into the pytest plugin) | `vitest.config.ts` with `AttestReporter` |
+| Agent run | the `my_agent_result` fixture in the test file, a trace built with `TraceBuilder` | `myAgentResult()` in the test file |
 | Merge policy | `attest.policy.yaml` | `attest.policy.yaml` |
 
 Replace the hand-built trace with one from your agent: wrap it with `@attest.agent` / `new Agent(...)`, or record it with a provider adapter.
@@ -48,7 +47,7 @@ Attest diagnostic — 1 of 4 assertions failed:
 | Runner | Command |
 |---|---|
 | pytest | `uv run pytest --attest-report=attest-report.json` |
-| Vitest | `npx vitest run --outputFile.attest=attest-report.json` (or `new AttestReporter({ outputFile })`) |
+| Vitest | `npx vitest run --reporter=default --reporter=@attest-ai/vitest/reporter --outputFile.attest=attest-report.json`, or `reporters: ["default", new AttestReporter({ outputFile: "attest-report.json" })]` in the Vitest config |
 
 The report follows `proto/attest/v1/report-v2.schema.json`:
 
@@ -76,7 +75,7 @@ uv run attest policy evaluate --report attest-report.json --policy attest.policy
 
 1. **Run tests** has `continue-on-error: true` and `id: tests`, so a failing test does not stop the job before the report is handled.
 2. **Upload the Attest report**, **Evaluate the merge policy** and **Annotate the pull request** run with `if: always()`. The policy step treats exit 2 as a warning and fails on exit 1.
-3. **Annotate the pull request** uses the `pr-annotate` action at the SDK's release tag; review comments land on each failing test's file and line.
+3. **Annotate the pull request** uses the `pr-annotate` action at the SDK's release tag. Each failure is annotated at its test's file and line: an inline review comment when that line is in the pull request diff (otherwise the review body lists it with `file:line`), and a workflow annotation either way.
 4. **Fail the job when tests failed** checks `steps.tests.outcome == 'failure'` and exits 1, so a red test is never hidden by `continue-on-error`.
 
 The job needs `pull-requests: write` for the review comments; the template sets it.
