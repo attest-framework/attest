@@ -36,3 +36,20 @@ To add a new scenario:
 1. Drop a new `NNN-name.json` file into `fixtures/` matching the schema.
 2. Run the Python and TypeScript suites locally to confirm both observe the expected diagnostic sequence.
 3. Commit the fixture and the (possibly empty) implementation update.
+
+## Verdict fixtures
+
+`verdicts/` holds verdict fixtures: an engine `evaluate_batch` result list and the outcome every implementation must derive from it. They cover `pass`, `soft_fail`, `hard_fail` and `not_evaluated` with each reason (`provider_unavailable`, `provider_not_configured`, `simulation`, `missing_evidence`, `short_circuited`). Each fixture matches `verdicts/verdict.schema.json`:
+
+| Field | Description |
+|---|---|
+| `results` | Assertion results as the engine returns them. |
+| `expected.outcome` | Test outcome under the aggregation rules: `pass`, `fail` or `skip`. |
+| `expected.strictOutcome` | Outcome with strict mode on (`--attest-strict` / `strict: true`): `not_evaluated` fails instead of skipping. |
+| `expected.failedAssertionIds` | `hard_fail` and `soft_fail` rows, in result order. |
+| `expected.notEvaluated` | Count of `not_evaluated` rows per reason. |
+| `expected.passRate` | `pass / (total - not_evaluated)`; `null` when every row is `not_evaluated`. |
+| `expected.softFailWarning` | Whether a soft-failure summary warning is due. |
+| `expected.policyExit` | `attest-engine policy evaluate` exit code for these results under `verdicts/policy.yaml`. |
+
+Go checks the wire format and `policyExit` (`engine/internal/policy/verdict_conformance_test.go`); the Python and TypeScript SDKs check the aggregation fields.

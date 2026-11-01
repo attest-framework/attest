@@ -1,0 +1,38 @@
+{
+  "name": "002-soft-fail-warns",
+  "description": "A soft failure passes the test with a summary warning.",
+  "results": [
+    {
+      "assertion_id": "a1",
+      "status": "pass",
+      "score": 1.0,
+      "explanation": "a1 pass",
+      "cost": 0.0,
+      "duration_ms": 0,
+      "layer": 4,
+      "type": "content"
+    },
+    {
+      "assertion_id": "s1",
+      "status": "soft_fail",
+      "score": 0.6,
+      "explanation": "s1 soft_fail",
+      "cost": 0.0,
+      "duration_ms": 0,
+      "layer": 5,
+      "type": "embedding",
+      "failure_class": "stochastic_variance"
+    }
+  ],
+  "expected": {
+    "outcome": "pass",
+    "strictOutcome": "pass",
+    "failedAssertionIds": [
+      "s1"
+    ],
+    "notEvaluated": {},
+    "passRate": 0.5,
+    "softFailWarning": true,
+    "policyExit": 0
+  }
+}

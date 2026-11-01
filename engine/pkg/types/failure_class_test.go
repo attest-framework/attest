@@ -145,3 +145,13 @@ func TestClassifyFailure_MissingTraceDataBeatsJudgeSignals(t *testing.T) {
 		t.Errorf("dynamic_unavailable should beat flaky_judge: got %q", got)
 	}
 }
+
+func TestClassifyFailure_NotEvaluated_ReturnsEmpty(t *testing.T) {
+	r := &AssertionResult{Status: StatusNotEvaluated, Reason: ReasonProviderUnavailable, Type: TypeLLMJudge, Score: 0.5}
+
+	got := ClassifyFailure(r)
+
+	if got != "" {
+		t.Errorf("ClassifyFailure(not_evaluated) = %q, want empty", got)
+	}
+}

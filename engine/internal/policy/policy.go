@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -56,12 +57,18 @@ const (
 //     soft-fail budgets would otherwise allow them).
 //   - Severity defaults to "block" for individual rules; setting it
 //     to "warn" downgrades the violation to ExitWarn.
+//   - NotEvaluated sets the severity for not_evaluated assertions
+//     (provider outage, missing key, simulation, ...). Default "warn".
 type Policy struct {
 	Layers            map[int]LayerLimit    `yaml:"layers" json:"layers,omitempty"`
 	MaxCostUSD        *float64              `yaml:"max_cost_usd" json:"max_cost_usd,omitempty"`
 	BlockOnRegression *bool                 `yaml:"block_on_regression" json:"block_on_regression,omitempty"`
 	FailureClasses    map[string]ClassLimit `yaml:"failure_classes" json:"failure_classes,omitempty"`
 	Severity          string                `yaml:"severity" json:"severity,omitempty"`
+	// NotEvaluated is the severity applied when any assertion has status
+	// not_evaluated: "warn" (default, exit 2) or "block" (exit 1). It does
+	// not inherit Severity, so an outage never blocks unless asked to.
+	NotEvaluated string `yaml:"not_evaluated" json:"not_evaluated,omitempty"`
 }
 
 // LayerLimit is a per-layer ceiling on hard or soft fails. Both caps
@@ -153,6 +160,9 @@ func Load(path string) (*Policy, error) {
 // severity are rejected so a misspelled "blokc" cannot silently default.
 func (p *Policy) Validate() error {
 	if err := validateSeverity("policy", p.Severity); err != nil {
+		return err
+	}
+	if err := validateSeverity("not_evaluated", p.NotEvaluated); err != nil {
 		return err
 	}
 	for layer, lim := range p.Layers {
@@ -285,6 +295,11 @@ func Evaluate(p *Policy, results []types.AssertionResult, totalCost float64, bas
 		}
 	}
 
+	// ── Not-evaluated block ──
+	if v, ok := notEvaluatedViolation(results, p.NotEvaluated); ok {
+		out.Violations = append(out.Violations, v)
+	}
+
 	// ── Regression block ──
 	if p.BlockOnRegression != nil && *p.BlockOnRegression && baseline != nil {
 		if ids := baseline.RegressedAssertionIDs(); len(ids) > 0 {
@@ -297,4 +312,45 @@ func Evaluate(p *Policy, results []types.AssertionResult, totalCost float64, bas
 	}
 
 	return out
+}
+
+// notEvaluatedViolation reports a "not_evaluated" violation when any
+// result has status not_evaluated (or an unknown status), with per-reason
+// counts in Detail.
+// severity is the policy's not_evaluated setting; empty means warn.
+func notEvaluatedViolation(results []types.AssertionResult, severity string) (Violation, bool) {
+	byReason := make(map[string]int)
+	total := 0
+	for _, r := range results {
+		switch r.Status {
+		case types.StatusPass, types.StatusSoftFail, types.StatusHardFail:
+		case types.StatusNotEvaluated:
+			byReason[r.Reason]++
+			total++
+		default:
+			// An unknown status is never a pass: count it as not evaluated.
+			byReason[fmt.Sprintf("unknown status %q", r.Status)]++
+			total++
+		}
+	}
+	if total == 0 {
+		return Violation{}, false
+	}
+	reasons := make([]string, 0, len(byReason))
+	for reason := range byReason {
+		reasons = append(reasons, reason)
+	}
+	sort.Strings(reasons)
+	parts := make([]string, len(reasons))
+	for i, reason := range reasons {
+		parts[i] = fmt.Sprintf("%s: %d", reason, byReason[reason])
+	}
+	if severity == "" {
+		severity = SeverityWarn
+	}
+	return Violation{
+		Rule:     "not_evaluated",
+		Detail:   fmt.Sprintf("%d assertions not evaluated (%s)", total, strings.Join(parts, ", ")),
+		Severity: severity,
+	}, true
 }
