@@ -17,7 +17,13 @@ inputs:
     description: 'Python SDK extras to install (e.g. dev, test)'
     default: 'dev'
   ref:
-    description: 'attest branch, tag or full 40-character commit SHA to build from. Empty builds from the calling workspace. The action builds and installs that tree, running its build scripts with this job''s token; pass only refs you trust, and prefer a commit SHA over a mutable branch.'
+    description: >-
+      attest branch, tag or full 40-character commit SHA to build from. Empty
+      builds from the calling workspace. The action builds and installs that
+      tree and runs its build scripts inside the calling job, so pass only refs
+      you trust and prefer a commit SHA over a mutable branch. Values starting
+      with "-" and refs/pull/* are rejected. Run this in a job whose checkout
+      uses persist-credentials: false and that does not grant id-token: write.
     default: ''
   node-version:
     description: 'Node.js version used to pack the TypeScript SDK when ref is set'
@@ -47,6 +53,16 @@ runs:
         ATTEST_REF: ${{ inputs.ref }}
       run: |
         set -euo pipefail
+        case "$ATTEST_REF" in
+          -* | refs/pull/*)
+            echo "::error::setup-attest: ref must be a branch, tag or commit SHA, not an option or a pull-request ref"
+            exit 1
+            ;;
+        esac
+        if [[ "$ATTEST_REF" =~ [[:space:]] ]]; then
+          echo "::error::setup-attest: ref must not contain whitespace"
+          exit 1
+        fi
         src="$RUNNER_TEMP/attest-src"
         rm -rf "$src"
         git init -q "$src"
@@ -82,11 +98,15 @@ runs:
     - name: Build engine
       shell: bash
       working-directory: ${{ steps.paths.outputs.source-dir }}/engine
-      run: go build -o "${{ steps.paths.outputs.engine-path }}" ./cmd/attest-engine/
+      env:
+        ENGINE_PATH: ${{ steps.paths.outputs.engine-path }}
+      run: go build -o "$ENGINE_PATH" ./cmd/attest-engine/
 
     - name: Add engine to PATH
       shell: bash
-      run: echo "${{ steps.paths.outputs.bin-dir }}" >> "$GITHUB_PATH"
+      env:
+        BIN_DIR: ${{ steps.paths.outputs.bin-dir }}
+      run: echo "$BIN_DIR" >> "$GITHUB_PATH"
 
     - name: Install Python
       uses: actions/setup-python@v6
@@ -117,7 +137,12 @@ runs:
       working-directory: ${{ steps.paths.outputs.source-dir }}/sdks/typescript
       run: |
         set -euo pipefail
-        npm install -g "$(jq -r .packageManager package.json)"
+        package_manager="$(jq -er .packageManager package.json)"
+        if [[ ! "$package_manager" =~ ^pnpm@[0-9.]+(\+sha(256|512)\.[0-9a-f]+)?$ ]]; then
+          echo "::error::setup-attest: unexpected packageManager in sdks/typescript/package.json"
+          exit 1
+        fi
+        npm install -g "${package_manager%%+*}"
         pnpm install --frozen-lockfile
         pnpm -r build
         out="$RUNNER_TEMP/attest-npm"
