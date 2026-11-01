@@ -6,7 +6,7 @@ All notable changes to Attest are documented in this file. The format follows [K
 
 ### Added
 
-- `release.yml` publishes a release from one tag push: after `release` environment approval it builds the six engine binaries, checksums, the Python distributions and the npm tarballs once, then publishes the GitHub (pre-)release, PyPI (trusted publishing) and npm (trusted publishing with provenance) from those stored artifacts, records which components published in the release notes, and dispatches the website sync. A tag that differs from `VERSION` fails before anything builds. `workflow_dispatch` with `dry_run: true` runs the whole pipeline without publishing.
+- `release.yml` publishes a release from one tag push: it builds the six engine binaries, checksums, the Python distributions and the npm tarballs once, verifies them, and after `release` environment approval publishes the GitHub (pre-)release, then PyPI (trusted publishing) and npm (trusted publishing with provenance) from those stored artifacts, records which components published in the release notes, and dispatches the website sync. A tag that differs from `VERSION` fails before anything builds. `workflow_dispatch` with `dry_run: true` runs the whole pipeline without publishing.
 - `setup-attest` accepts a `ref` input: consumer repositories build the engine and install the Python and TypeScript SDKs from any attest branch, tag or commit.
 - `CHANGELOG.md` is the single changelog; `scripts/release-notes.sh <version>` prints one version's section.
 
@@ -20,9 +20,9 @@ Tagged, not published to registries. Engine binaries are attached to the GitHub 
 
 ### Added
 
-- 8-layer assertion pipeline: schema, constraint, trace, content, embedding, llm_judge, trace_tree, plugin. Layers 1–4 are deterministic and free; layers 5–6 run with a bounded worker pool and per-provider rate limiting.
-- Diagnostic JSON v2 reports: every assertion result carries `layer`, `type`, `trace_node_path`, `expected`, `actual`, `judge_metadata`, `failure_class` and, when applicable, a `baseline` delta block. The Markdown renderer produces PR-comment-ready output.
-- CI workflow commands: `attest-engine baseline pin/list/show/delete` snapshots reference runs; `attest-engine policy evaluate` returns tiered exit codes (0 pass, 1 block, 2 warn); the `.github/actions/pr-annotate` composite action posts inline review comments per failed assertion.
+- `FailureClass` taxonomy on `AssertionResult` (`failure_class`), mirrored in both SDKs.
+- `BaselineStore` for named result snapshots; reports carry a `baseline` delta block and surface the failure class.
+- CI workflow commands: `attest-engine baseline pin/list/show/delete` snapshots reference runs; `attest-engine policy evaluate` reads a merge-blocking policy file and returns tiered exit codes (0 pass, 1 block, 2 warn); the Python SDK ships `attest baseline` / `attest policy` shims; the `.github/actions/pr-annotate` composite action posts inline review comments per failed assertion.
 
 ### Known limitations
 
@@ -65,6 +65,8 @@ Tagged, not published to registries. No GitHub release was created.
 
 - Protocol diagnostic ring buffer and desync rejection in the Python and TypeScript SDKs.
 - Cross-SDK protocol conformance fixture suite under `protocol-tests/`.
+- Per-provider rate-limit configuration with a typed rate-limit error.
+- Results surface dynamic threshold degradation.
 
 ### Changed
 
