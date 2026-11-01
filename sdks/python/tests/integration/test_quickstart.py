@@ -29,7 +29,16 @@ _BROKEN_README = Path(__file__).parent / "data" / "readme_broken_snippet.md"
 _REPORT_SCHEMA: dict[str, Any] = json.loads(
     (_REPO / "proto" / "attest" / "v1" / "report-v2.schema.json").read_text()
 )
-_PROVIDER_KEYS = ("OPENAI_API_KEY", "ATTEST_JUDGE_API_KEY", "ATTEST_JUDGE_BASE_URL")
+_PROVIDER_KEYS = (
+    "OPENAI_API_KEY",
+    "ANTHROPIC_API_KEY",
+    "GEMINI_API_KEY",
+    "GOOGLE_API_KEY",
+    "ATTEST_GEMINI_API_KEY",
+    "ATTEST_JUDGE_API_KEY",
+    "ATTEST_JUDGE_BASE_URL",
+    "ATTEST_JUDGE_PROVIDER",
+)
 
 
 @pytest.fixture
