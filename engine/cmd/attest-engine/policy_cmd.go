@@ -9,6 +9,10 @@ import (
 	"github.com/attest-ai/attest/engine/internal/report"
 )
 
+func init() {
+	register(command{name: "policy", summary: "evaluate a report against a policy (evaluate); exits 0 pass, 1 block, 2 warn", run: handlePolicyCommand})
+}
+
 // handlePolicyCommand dispatches `attest-engine policy <subcommand>`.
 //
 // Currently only one subcommand: `policy evaluate --policy <path>

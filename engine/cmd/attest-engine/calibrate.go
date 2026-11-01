@@ -17,6 +17,10 @@ import (
 	"github.com/attest-ai/attest/engine/internal/cache"
 )
 
+func init() {
+	register(command{name: "calibrate", summary: "measure judge agreement against human labels", run: handleCalibrateCommand})
+}
+
 // handleCalibrateCommand runs `attest-engine calibrate --labels <path>
 // --rubric <name> [--threshold 0.5] [--persist]`. It expects each row in
 // the labels file to already include both human_label and judge_score —
