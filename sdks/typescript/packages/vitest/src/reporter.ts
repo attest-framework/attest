@@ -106,7 +106,9 @@ export class AttestReporter implements Reporter {
         const location = testCase.location;
         if (location === undefined) {
           throw new Error(
-            `AttestReporter: no source location for "${testCase.fullName}"; set test.includeTaskLocation: true`,
+            `AttestReporter: no source location for "${testCase.fullName}". Vitest records ` +
+              "locations only when test.includeTaskLocation is true and the test file path matches " +
+              "the root; set test.root to the real path (no symlinks) if it is set.",
           );
         }
         const state = testCase.result().state;

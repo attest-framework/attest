@@ -235,6 +235,7 @@ def _record_test_phase(item: pytest.Item, report: pytest.TestReport) -> TestReco
     record = _session_tests.get(item.nodeid)
     if record is not None and report.when == "setup":
         record.outcome = "passed"
+        record.duration_ms = 0
         record.agent_results.clear()
     if record is None:
         path, lineno, _ = item.location

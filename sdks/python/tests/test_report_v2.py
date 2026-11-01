@@ -224,3 +224,4 @@ def test_rerun_test_reports_only_the_last_attempt() -> None:
     assert report["tests"][0]["line"] == 3
     assert [r["assertion_id"] for r in report["results"]] == ["second"]
     assert report["summary"]["hard_fail"] == 0
+    assert report["tests"][0]["duration_ms"] == 3  # setup, call, teardown of the last attempt
