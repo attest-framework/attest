@@ -8,7 +8,7 @@ from contextvars import Token
 from dataclasses import dataclass, field
 from typing import Any
 
-from attest.result import AgentResult
+from attest.result import OUTCOME_PASS, AgentResult, aggregate_outcomes
 from attest.simulation._context import _active_mock_registry
 from attest.simulation.personas import Persona
 
@@ -30,7 +30,13 @@ class ScenarioResult:
 
     @property
     def passed(self) -> bool:
-        return all(r.passed for r in self.results)
+        """True when the aggregate ``outcome()`` is pass."""
+        return self.outcome() == OUTCOME_PASS
+
+    def outcome(self, *, strict: bool = False) -> str:
+        """Aggregate verdict over turns: any failing turn fails; otherwise any
+        skipped turn skips (fails when ``strict``); otherwise pass."""
+        return aggregate_outcomes([r.outcome(strict=strict) for r in self.results])
 
 
 def scenario(

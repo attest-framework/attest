@@ -49,6 +49,16 @@
           "failure_class": {
             "type": "string"
           }
+        },
+        "if": {
+          "properties": { "status": { "const": "not_evaluated" } }
+        },
+        "then": {
+          "required": ["reason"],
+          "not": { "required": ["failure_class"] }
+        },
+        "else": {
+          "not": { "required": ["reason"] }
         }
       }
     },

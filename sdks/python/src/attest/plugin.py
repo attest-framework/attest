@@ -187,9 +187,9 @@ def pytest_runtest_makereport(
     report: pytest.TestReport = outcome.get_result()
     if report.skipped and isinstance(report.longrepr, tuple):
         # Attribute "not evaluated" skips to the test, not to this plugin.
-        reason = report.longrepr[2]
-        if "not evaluated:" in reason:
-            path, lineno, _ = item.location
+        path, _, reason = report.longrepr
+        if os.path.abspath(path) == os.path.abspath(__file__) and "not evaluated:" in reason:
+            _, lineno, _ = item.location
             report.longrepr = (str(item.path), (lineno or 0) + 1, reason)
     agent_result = _take_last_result()
     if agent_result is not None:
@@ -227,7 +227,8 @@ class AttestEngineFixture:
         simulation = is_simulation_mode()
         if simulation:
             # The engine decides simulation at startup from its environment;
-            # this also covers attest.config(simulation=True).
+            # this also covers attest.config(simulation=True). Simulation is
+            # process-wide for the session: the variable stays set.
             os.environ["ATTEST_SIMULATION"] = "1"
         self._manager = EngineManager(
             engine_path=self._engine_path,
@@ -342,7 +343,8 @@ class AttestEngineFixture:
 
         Submits the evaluation to the engine's background loop and blocks
         the calling thread until the result is ready. Use in trial loops
-        (``repeat()``) and enforce only the aggregate verdict.
+        (``repeat()``) and enforce only the aggregate verdict. ``budget`` is
+        a separate session rule and still fails the test when exceeded.
         """
         assert self._client is not None
         result = self._run_on_engine_loop(

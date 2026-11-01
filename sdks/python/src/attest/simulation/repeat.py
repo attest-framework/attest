@@ -5,7 +5,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
-from attest.result import OUTCOME_FAIL, OUTCOME_PASS, OUTCOME_SKIP, AgentResult
+from attest.result import OUTCOME_PASS, OUTCOME_SKIP, AgentResult, aggregate_outcomes
 
 
 @dataclass
@@ -48,12 +48,7 @@ class RepeatResult:
     def outcome(self, *, strict: bool = False) -> str:
         """Aggregate verdict: any failing trial fails; otherwise any skipped
         trial skips (fails when ``strict``); otherwise pass."""
-        outcomes = [r.outcome(strict=strict) for r in self.results]
-        if OUTCOME_FAIL in outcomes:
-            return OUTCOME_FAIL
-        if OUTCOME_SKIP in outcomes:
-            return OUTCOME_SKIP
-        return OUTCOME_PASS
+        return aggregate_outcomes([r.outcome(strict=strict) for r in self.results])
 
 
 def repeat(n: int) -> Callable[[Callable[..., AgentResult]], Callable[..., RepeatResult]]:
