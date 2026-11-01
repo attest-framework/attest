@@ -17,7 +17,7 @@ inputs:
     description: 'Python SDK extras to install (e.g. dev, test)'
     default: 'dev'
   ref:
-    description: 'attest branch, tag or commit SHA to build from. Empty builds from the calling workspace.'
+    description: 'attest branch, tag or full 40-character commit SHA to build from. Empty builds from the calling workspace. The action builds and installs that tree, running its build scripts with this job''s token; pass only refs you trust, and prefer a commit SHA over a mutable branch.'
     default: ''
   node-version:
     description: 'Node.js version used to pack the TypeScript SDK when ref is set'
@@ -50,7 +50,7 @@ runs:
         src="$RUNNER_TEMP/attest-src"
         rm -rf "$src"
         git init -q "$src"
-        git -C "$src" fetch -q --depth 1 https://github.com/attest-framework/attest.git "$ATTEST_REF"
+        git -C "$src" fetch -q --depth 1 https://github.com/attest-framework/attest.git -- "$ATTEST_REF"
         git -C "$src" checkout -q --detach FETCH_HEAD
         echo "attest $ATTEST_REF -> $(git -C "$src" rev-parse HEAD)"
 
@@ -100,7 +100,9 @@ runs:
     - name: Install Python SDK
       shell: bash
       working-directory: ${{ steps.paths.outputs.source-dir }}/sdks/python
-      run: uv pip install --system -e ".[${{ inputs.install-extras }}]"
+      env:
+        INSTALL_EXTRAS: ${{ inputs.install-extras }}
+      run: uv pip install --system -e ".[$INSTALL_EXTRAS]"
 
     - name: Install Node.js
       if: inputs.ref != ''
