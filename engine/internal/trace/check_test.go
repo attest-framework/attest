@@ -386,3 +386,49 @@ func TestCheck_OrphanToolIsReportedOnce(t *testing.T) {
 		t.Errorf("errors = %+v, want only orphan_span", errs)
 	}
 }
+
+// slowPairingInput is the runner security-review repro: one model span with
+// just under 1 MiB of recorded output messages followed by tools parentless
+// tool spans. Pairing must parse the messages once, not once per tool span.
+func slowPairingInput(tools, textBytes int) []byte {
+	msgs, _ := json.Marshal([]map[string]any{{"role": "assistant", "parts": []map[string]any{{"type": "text", "content": strings.Repeat("x", textBytes)}}}})
+	quoted, _ := json.Marshal(string(msgs))
+	spans := []string{`{"traceId":"4bf92f3577b34da6a3ce929d0e0e4736","spanId":"a000000000000001","name":"chat","startTimeUnixNano":"1","endTimeUnixNano":"2","attributes":[` +
+		`{"key":"gen_ai.operation.name","value":{"stringValue":"chat"}},{"key":"gen_ai.output.messages","value":{"stringValue":` + string(quoted) + `}}]}`}
+	for i := 0; i < tools; i++ {
+		spans = append(spans, fmt.Sprintf(`{"traceId":"4bf92f3577b34da6a3ce929d0e0e4736","spanId":"%016x","name":"tool","startTimeUnixNano":"%d","endTimeUnixNano":"%d","attributes":[{"key":"gen_ai.operation.name","value":{"stringValue":"execute_tool"}}]}`, uint64(0xb000000000000000)+uint64(i), 10+i, 11+i))
+	}
+	return otlpDoc(spans...)
+}
+
+func TestCheck_RecordedOutputIsParsedOncePerModelCall(t *testing.T) {
+	data := slowPairingInput(MaxOTLPSpans-1, MaxStepPayload-200)
+	spans, err := ParseOTLP(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	start := time.Now()
+	r := Check(spans)
+	// Parsing per tool span took ~30 s; once is milliseconds. 5 s leaves
+	// room for -race and slow CI machines.
+	if elapsed := time.Since(start); elapsed > 5*time.Second {
+		t.Fatalf("check took %s", elapsed)
+	}
+	if findIssue(r, IssueUnpairedToolResult, "") != nil {
+		t.Errorf("tool spans without call ids after a recorded model call are paired: %+v", r.Errors())
+	}
+}
+
+func TestCheck_ContentAboveTraceLimitIsNotDecoded(t *testing.T) {
+	big := strings.Repeat("x", MaxStepPayload-10)
+	var spans []string
+	for i := 1; i <= MaxTraceSize/MaxStepPayload+1; i++ {
+		spans = append(spans, spanJSON(t, fmt.Sprintf("a%015x", i), "", "chat", i, i+1,
+			map[string]any{"gen_ai.operation.name": "chat", "gen_ai.output.messages": `["` + big + `"]`}))
+	}
+	r := checkData(t, otlpDoc(spans...))
+	is := findIssue(r, IssueConversion, "")
+	if is == nil || !strings.Contains(is.Message, "recorded content") {
+		t.Errorf("want conversion_failed for recorded content, got %+v", r.Issues)
+	}
+}

@@ -107,7 +107,11 @@ func Check(spans []Span) *CheckReport {
 		c.add(SeverityError, IssueMultipleTraces, "", fmt.Sprintf("input holds %d traces (%s); check one trace per file", len(ids), strings.Join(ids, ", ")))
 	}
 	c.checkParentage()
-	c.checkToolPairing()
+	// Pairing decodes recorded content; above the trace size limit the
+	// conversion below reports the error, so do not decode it here.
+	if contentBytes(spans) <= MaxTraceSize {
+		c.checkToolPairing()
+	}
 	c.coverage()
 
 	if t, err := FromSpans(spans, ConvertOptions{}); err != nil {
@@ -151,7 +155,7 @@ func (c *checker) checkParentage() {
 		}
 		seen[s.SpanID] = true
 		if s.EndNs < s.StartNs {
-			c.add(SeverityWarning, IssueEndBeforeStart, s.SpanID, fmt.Sprintf("span %q ends before it starts", s.Name))
+			c.add(SeverityWarning, IssueEndBeforeStart, s.SpanID, fmt.Sprintf("span %s ends before it starts", quoteShort(s.Name)))
 		}
 		if s.ParentSpanID == "" {
 			roots = append(roots, s.SpanID)
@@ -160,19 +164,19 @@ func (c *checker) checkParentage() {
 		p := c.x.parentOf[i]
 		if p < 0 {
 			if c.x.remoteRoot {
-				c.add(SeverityWarning, IssueRemoteParent, s.SpanID, fmt.Sprintf("span %q is a local root; its parent %s is outside this export", s.Name, s.ParentSpanID))
+				c.add(SeverityWarning, IssueRemoteParent, s.SpanID, fmt.Sprintf("span %s is a local root; its parent %s is outside this export", quoteShort(s.Name), s.ParentSpanID))
 				continue
 			}
-			c.add(SeverityError, IssueOrphanSpan, s.SpanID, fmt.Sprintf("span %q names parent %s, which is not in the trace", s.Name, s.ParentSpanID))
+			c.add(SeverityError, IssueOrphanSpan, s.SpanID, fmt.Sprintf("span %s names parent %s, which is not in the trace", quoteShort(s.Name), s.ParentSpanID))
 			continue
 		}
 		if c.x.cyclic[i] {
-			c.add(SeverityError, IssueParentCycle, s.SpanID, fmt.Sprintf("span %q is its own ancestor", s.Name))
+			c.add(SeverityError, IssueParentCycle, s.SpanID, fmt.Sprintf("span %s is its own ancestor", quoteShort(s.Name)))
 			continue
 		}
 		ps := &c.x.spans[p]
 		if s.StartNs < ps.StartNs || s.EndNs > ps.EndNs {
-			c.add(SeverityWarning, IssueOutsideParent, s.SpanID, fmt.Sprintf("span %q runs outside its parent %s (%q)", s.Name, ps.SpanID, ps.Name))
+			c.add(SeverityWarning, IssueOutsideParent, s.SpanID, fmt.Sprintf("span %s runs outside its parent %s (%s)", quoteShort(s.Name), ps.SpanID, quoteShort(ps.Name)))
 		}
 	}
 	switch {
@@ -219,7 +223,7 @@ func (c *checker) checkToolPairing() {
 	sort.Strings(ids)
 	for _, id := range ids {
 		if !executed[id] {
-			c.add(SeverityError, IssueUnpairedToolCall, requested[id], fmt.Sprintf("model requested tool call id %q, but no tool span records it", id))
+			c.add(SeverityError, IssueUnpairedToolCall, requested[id], fmt.Sprintf("model requested tool call id %s, but no tool span records it", quoteShort(id)))
 		}
 	}
 }
@@ -227,13 +231,16 @@ func (c *checker) checkToolPairing() {
 func (c *checker) pairScope(members []int, requested map[string]string, executed map[string]bool) {
 	pending := -1 // model call awaiting a tool execution (no recorded content)
 	lastModel := -1
+	lastRecorded := false        // lastModel recorded output messages (parsed once, here)
 	var scopeIDs map[string]bool // ids requested by recorded model calls in scope
 	for _, i := range members {
 		s := &c.x.spans[i]
 		if c.x.kinds[i] != types.StepTypeToolCall {
 			c.flushPending(pending)
 			pending, lastModel = -1, i
-			if ids, recorded := recordedToolCallIDs(s); recorded {
+			ids, recorded := recordedToolCallIDs(s)
+			lastRecorded = recorded
+			if recorded {
 				if scopeIDs == nil {
 					scopeIDs = map[string]bool{}
 				}
@@ -255,15 +262,15 @@ func (c *checker) pairScope(members []int, requested map[string]string, executed
 		}
 		switch {
 		case lastModel < 0:
-			c.add(SeverityError, IssueUnpairedToolResult, s.SpanID, fmt.Sprintf("tool span %q has no model call before it in its agent scope", s.Name))
-		case hasRecordedOutput(&c.x.spans[lastModel]):
+			c.add(SeverityError, IssueUnpairedToolResult, s.SpanID, fmt.Sprintf("tool span %s has no model call before it in its agent scope", quoteShort(s.Name)))
+		case lastRecorded:
 			if id != "" && !scopeIDs[id] {
-				c.add(SeverityError, IssueUnpairedToolResult, s.SpanID, fmt.Sprintf("tool call id %q was not requested by any recorded model output", id))
+				c.add(SeverityError, IssueUnpairedToolResult, s.SpanID, fmt.Sprintf("tool call id %s was not requested by any recorded model output", quoteShort(id)))
 			}
 		case c.x.parentOf[i] == lastModel:
 			// A tool span nested under the model call is its execution.
 		case knownNonToolFinish(&c.x.spans[lastModel]):
-			c.add(SeverityWarning, IssueUnrequestedTool, s.SpanID, fmt.Sprintf("tool span %q follows model call %s, whose finish reasons do not request tools", s.Name, c.x.spans[lastModel].SpanID))
+			c.add(SeverityWarning, IssueUnrequestedTool, s.SpanID, fmt.Sprintf("tool span %s follows model call %s, whose finish reasons do not request tools", quoteShort(s.Name), c.x.spans[lastModel].SpanID))
 		}
 	}
 	c.flushPending(pending)
@@ -274,12 +281,7 @@ func (c *checker) flushPending(i int) {
 		return
 	}
 	s := &c.x.spans[i]
-	c.add(SeverityError, IssueUnpairedToolCall, s.SpanID, fmt.Sprintf("model span %q finished with a tool request but no tool span executes it", s.Name))
-}
-
-func hasRecordedOutput(s *Span) bool {
-	_, ok := decodeJSONText(s.Attributes[attrOutputMessages]).([]any)
-	return ok
+	c.add(SeverityError, IssueUnpairedToolCall, s.SpanID, fmt.Sprintf("model span %s finished with a tool request but no tool span executes it", quoteShort(s.Name)))
 }
 
 // recordedToolCallIDs returns the tool call ids in a model span's recorded
