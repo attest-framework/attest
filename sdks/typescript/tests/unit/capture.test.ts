@@ -1,9 +1,10 @@
-import { mkdtempSync, mkdirSync, copyFileSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
+  CaptureError,
   attestExpect,
   dslCall,
   emitVitest,
@@ -159,5 +160,54 @@ describe("captureWritesFixture", () => {
     [["-check-redaction=f.json"], false],
   ])("%j → %s", (args, writes) => {
     expect(captureWritesFixture(args)).toBe(writes);
+  });
+});
+
+describe("loadFixture validation", () => {
+  interface Doc extends Record<string, unknown> {
+    verification: Record<string, unknown>;
+    contracts: Array<Record<string, unknown>>;
+  }
+  const cases: Array<[string, (d: Doc) => void]> = [
+    ["docstring-style name", (d) => (d["name"] = 'x"""\nimport os')],
+    ["newline + require name", (d) => (d["name"] = "a\nrequire('fs')")],
+    ["no verification", (d) => delete d["verification"]],
+    ["no world", (d) => delete d["world"]],
+    ["contract without spec", (d) => delete d.contracts[0]?.["spec"]],
+    ["results not an array", (d) => (d.verification["results"] = "nope")],
+  ];
+  it.each(cases)("rejects a fixture with %s", (_name, mutate) => {
+    const doc = JSON.parse(readFileSync(incident, "utf8")) as Doc;
+    mutate(doc);
+    const path = join(mkdtempSync(join(tmpdir(), "attest-fixture-")), "f.attest.json");
+    writeFileSync(path, JSON.stringify(doc));
+
+    expect(() => loadFixture(path)).toThrow(CaptureError);
+  });
+
+  it("keeps a hostile name inside the header comment", () => {
+    const fixture = loadFixture(incident);
+    fixture.name = "x\nrequire('child_process').execSync('true')";
+
+    const source = renderVitest(fixture, "/r/fixtures/f.attest.json", "/r/f.test.ts");
+
+    expect(source.split("\n").filter((l) => l.startsWith("require("))).toEqual([]);
+    expect(source.split("\n")[0]).toContain('fixture "x\\nrequire(');
+  });
+});
+
+describe("emitVitest with a symbolic link at the target", () => {
+  it.each([true, false])("refuses and writes nothing (dangling: %s)", (dangling) => {
+    const dir = mkdtempSync(join(tmpdir(), "attest-emit-"));
+    const fixture = join(dir, "tests", "attest", "fixtures", "inc-1042.attest.json");
+    mkdirSync(dirname(fixture), { recursive: true });
+    copyFileSync(incident, fixture);
+    const victim = join(dir, "victim.txt");
+    if (!dangling) writeFileSync(victim, "keep");
+    symlinkSync(victim, join(dir, "tests", "attest", "inc-1042.test.ts"));
+
+    expect(() => emitVitest(fixture)).toThrow(/symbolic link/);
+    expect(existsSync(victim)).toBe(!dangling);
+    if (!dangling) expect(readFileSync(victim, "utf8")).toBe("keep");
   });
 });

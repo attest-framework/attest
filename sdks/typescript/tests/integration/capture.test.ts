@@ -30,10 +30,10 @@ async function post(url: string, body: unknown, headers: Record<string, string> 
 }
 
 /** One model call and an INC-1042-shaped trace, configured from the environment. */
-async function scriptedAgent(refunds: number): Promise<void> {
+async function scriptedAgent(refunds: number, note = ""): Promise<void> {
   await post(
     `${process.env["OPENAI_BASE_URL"]}/chat/completions`,
-    { model: "gpt-test", messages: [{ role: "user", content: `refund O-5 for ${PLANTED_EMAIL}` }] },
+    { model: "gpt-test", messages: [{ role: "user", content: `refund O-5 for ${PLANTED_EMAIL}${note}` }] },
     { Authorization: `Bearer ${process.env["OPENAI_API_KEY"]}` },
   );
   const traceId = hex(16);
@@ -159,6 +159,25 @@ describe.skipIf(!existsSync(engine))("record() (real engine)", () => {
     expect((err as CaptureError).message).toMatch(/is not verified; no test drafted/);
     expect(loadFixture(join(dir, "fixtures", "inc-5.attest.json")).verification.verified).toBe(false);
     expect(existsSync(join(dir, "inc-5.test.ts"))).toBe(false);
+  }, 30_000);
+
+  it("redacts a secret the callback loads into its environment", async () => {
+    const late = "late-loaded-value-9d2f7a";
+    const dir = mkdtempSync(join(tmpdir(), "attest-record-"));
+
+    const result = await record(
+      "late",
+      async () => {
+        process.env["DOTENV_SERVICE_TOKEN"] = late; // as a dotenv loader would
+        await scriptedAgent(2, ` token ${late}`);
+      },
+      { outDir: dir, expectFail: true, emitTest: false },
+    );
+    delete process.env["DOTENV_SERVICE_TOKEN"];
+
+    const data = readFileSync(result.fixture, "utf8");
+    expect(data).not.toContain(late);
+    expect(data).toContain("token [redacted]");
   }, 30_000);
 
   it("abandons the capture and restores the environment when the callback throws", async () => {

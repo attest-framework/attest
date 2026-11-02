@@ -73,11 +73,56 @@ function toPath(p: string | URL): string {
 /** Read a capture fixture written by `attest capture` or `record()`. */
 export function loadFixture(file: string | URL): Fixture {
   const p = toPath(file);
-  const doc = JSON.parse(fs.readFileSync(p, "utf8")) as Partial<Fixture> & { fixture_version?: unknown };
-  if (doc === null || typeof doc !== "object" || doc.fixture_version !== FIXTURE_VERSION) {
+  const doc = JSON.parse(fs.readFileSync(p, "utf8")) as unknown;
+  if (!isObject(doc) || doc["fixture_version"] !== FIXTURE_VERSION) {
     throw new CaptureError(`${p}: not a fixture_version ${FIXTURE_VERSION} capture fixture`);
   }
-  return doc as Fixture;
+  validate(p, doc);
+  return doc as unknown as Fixture;
+}
+
+/** Fixture names, as the engine accepts them (they become file names). */
+export const NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
+
+type Kind = "string" | "boolean" | "object" | "array";
+
+function isObject(v: unknown): v is Record<string, unknown> {
+  return typeof v === "object" && v !== null && !Array.isArray(v);
+}
+
+function kindOf(v: unknown): Kind | "other" {
+  if (Array.isArray(v)) return "array";
+  if (isObject(v)) return "object";
+  if (typeof v === "string" || typeof v === "boolean") return typeof v as Kind;
+  return "other";
+}
+
+/** Check the fixture-v1 fields this module reads before using any of them. */
+function validate(p: string, doc: Record<string, unknown>): void {
+  const need = (where: string, obj: unknown, fields: Record<string, Kind>): Record<string, unknown> => {
+    if (!isObject(obj)) throw new CaptureError(`${p}: ${where} is not an object`);
+    for (const [key, kind] of Object.entries(fields)) {
+      if (kindOf(obj[key]) !== kind) throw new CaptureError(`${p}: ${where}.${key} is missing or not a ${kind}`);
+    }
+    return obj;
+  };
+  need("fixture", doc, { name: "string", source: "object", trace: "object", exchanges: "array", contracts: "array", verification: "object" });
+  if (!("world" in doc)) throw new CaptureError(`${p}: fixture.world is missing`);
+  if (!NAME_PATTERN.test(doc["name"] as string)) {
+    throw new CaptureError(`${p}: fixture name ${JSON.stringify(doc["name"])} is not a valid fixture name`);
+  }
+  const v = need("fixture.verification", doc["verification"], {
+    verified: "boolean",
+    expect_fail: "boolean",
+    results: "array",
+    expected_failures: "array",
+  });
+  (doc["contracts"] as unknown[]).forEach((c, i) =>
+    need(`fixture.contracts[${i}]`, c, { id: "string", kind: "string", description: "string", type: "string", spec: "object" }),
+  );
+  (v["results"] as unknown[]).forEach((r, i) =>
+    need(`fixture.verification.results[${i}]`, r, { contract: "string", status: "string", explanation: "string" }),
+  );
 }
 
 // ---------------------------------------------------------------------------- emitter
@@ -201,7 +246,7 @@ export function renderVitest(fixture: Fixture, fixturePath: string, testPath: st
   const expectFail = fixture.verification.expect_fail;
 
   const lines = [
-    `// Contracts drafted by \`attest capture\` from fixture ${fixture.name}.`,
+    `// Contracts drafted by \`attest capture\` from fixture ${comment(ts(fixture.name))}.`,
     "//",
     "// Review and edit before committing: they check the captured trace without running",
     "// the agent. Re-capturing does not overwrite this file.",
@@ -256,10 +301,23 @@ export function renderVitest(fixture: Fixture, fixturePath: string, testPath: st
  */
 export function emitVitest(fixturePath: string): string | null {
   const testPath = testPathFor(fixturePath);
-  if (fs.existsSync(testPath)) return null;
+  const existing = fs.lstatSync(testPath, { throwIfNoEntry: false });
+  if (existing?.isSymbolicLink()) {
+    throw new CaptureError(`${testPath} is a symbolic link; refusing to draft a test through it`);
+  }
+  if (existing !== undefined) return null;
   const source = renderVitest(loadFixture(fixturePath), fixturePath, testPath);
   fs.mkdirSync(path.dirname(testPath), { recursive: true });
-  fs.writeFileSync(testPath, source, "utf8");
+  // Create exclusively: "wx" fails on any existing path, a link planted after
+  // the check included, and never writes through it.
+  try {
+    fs.writeFileSync(testPath, source, { encoding: "utf8", flag: "wx" });
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "EEXIST") {
+      throw new CaptureError(`${testPath} appeared while drafting; left unchanged`);
+    }
+    throw err;
+  }
   return testPath;
 }
 
@@ -341,7 +399,12 @@ function serve(engine: string, args: string[]): ServeProcess {
   return {
     ready,
     async finish(finalize) {
-      if (finalize) child.stdin.write("finalize\n");
+      // The environment as it is now: secrets the callback loaded (a dotenv
+      // file, for example) are redacted too.
+      if (finalize) {
+        const environ = Object.entries(process.env).flatMap(([k, v]) => (v === undefined ? [] : [`${k}=${v}`]));
+        child.stdin.write(`${JSON.stringify({ finalize: true, environ })}\n`);
+      }
       child.stdin.end();
       const { code, signal } = await exited;
       return { code, signal, stdout, stderr };
