@@ -121,7 +121,7 @@ func TestResolveJudgeConfig_InvalidSettingsError(t *testing.T) {
 		env      map[string]string
 		wantPart string
 	}{
-		{"unknown provider", map[string]string{"ATTEST_JUDGE_PROVIDER": "bogus"}, "supported: openai, anthropic, gemini"},
+		{"unknown provider", map[string]string{"ATTEST_JUDGE_PROVIDER": "bogus"}, "supported: openai, anthropic, gemini, acp"},
 		{"anthropic without model", map[string]string{"ATTEST_JUDGE_PROVIDER": "anthropic", "ANTHROPIC_API_KEY": "secret-key"}, "requires ATTEST_JUDGE_MODEL"},
 		{"gemini without model", map[string]string{"ATTEST_JUDGE_PROVIDER": "gemini", "GEMINI_API_KEY": "secret-key"}, "requires ATTEST_JUDGE_MODEL"},
 		{"base URL with only anthropic key", map[string]string{"ATTEST_JUDGE_PROVIDER": "anthropic", "ATTEST_JUDGE_BASE_URL": "https://other.example", "ANTHROPIC_API_KEY": "secret-key"}, "ANTHROPIC_API_KEY is not sent"},

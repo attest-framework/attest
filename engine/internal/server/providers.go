@@ -6,8 +6,10 @@ import (
 	"net"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 
+	"github.com/attest-ai/attest/engine/internal/assertion"
 	"github.com/attest-ai/attest/engine/internal/assertion/embedding"
 	"github.com/attest-ai/attest/engine/internal/llm"
 	llmproviders "github.com/attest-ai/attest/engine/internal/llm/providers"
@@ -15,18 +17,24 @@ import (
 
 // judgeConfig is the Layer 6 judge configuration resolved from the environment.
 type judgeConfig struct {
-	provider  string // openai, anthropic or gemini; empty when no API key is set
+	provider  string // openai, anthropic, gemini or acp; empty when no judge is configured
 	model     string // ATTEST_JUDGE_MODEL; empty selects the provider default (openai only)
 	baseURL   string // provider API root, without trailing slash
 	apiKey    string
 	keySource string // name of the variable apiKey came from
 	insecure  bool   // plain http to a non-loopback host: the key travels in cleartext
+	// acpCommand is ATTEST_JUDGE_ACP_COMMAND, set only for provider acp,
+	// which uses no base URL or API key.
+	acpCommand string
 }
 
 // cacheEndpoint scopes judge cache entries by provider and base URL, so two
 // providers behind the same gateway with the same model name never share
-// scores.
+// scores; the acp judge is scoped by its agent command (never printed).
 func (c judgeConfig) cacheEndpoint() string {
+	if c.provider == "acp" {
+		return "acp:" + c.acpCommand
+	}
 	return c.provider + "|" + c.baseURL
 }
 
@@ -46,13 +54,13 @@ var judgeBackends = map[string]judgeBackend{
 }
 
 // supportedJudgeProviders is the ATTEST_JUDGE_PROVIDER list shown in errors.
-const supportedJudgeProviders = "openai, anthropic, gemini"
+const supportedJudgeProviders = "openai, anthropic, gemini, acp"
 
 // IsJudgeProvider reports whether name is a supported ATTEST_JUDGE_PROVIDER
 // value. calibrate uses it so stored labels match judge_metadata.provider.
 func IsJudgeProvider(name string) bool {
 	_, ok := judgeBackends[name]
-	return ok
+	return ok || name == "acp"
 }
 
 // SupportedJudgeProviders returns the supported provider names for messages.
@@ -73,6 +81,9 @@ func resolveJudgeConfig() (judgeConfig, error) {
 	name := os.Getenv("ATTEST_JUDGE_PROVIDER")
 	if name == "" {
 		name = "openai"
+	}
+	if name == "acp" {
+		return resolveACPJudgeConfig()
 	}
 	backend, ok := judgeBackends[name]
 	if !ok {
@@ -111,6 +122,31 @@ func resolveJudgeConfig() (judgeConfig, error) {
 	}
 	cfg.provider = name
 	return cfg, nil
+}
+
+// acpCommandName is the base name of the agent executable: the only part of
+// ATTEST_JUDGE_ACP_COMMAND that is ever logged, because its arguments may
+// be sensitive.
+func (c judgeConfig) acpCommandName() string {
+	fields := strings.Fields(c.acpCommand)
+	if len(fields) == 0 {
+		return ""
+	}
+	return filepath.Base(fields[0])
+}
+
+// resolveACPJudgeConfig configures the local ACP judge. It takes no key and
+// no base URL; the command, and the refusal under CI, are checked when the
+// provider is built.
+func resolveACPJudgeConfig() (judgeConfig, error) {
+	if os.Getenv("ATTEST_JUDGE_BASE_URL") != "" {
+		return judgeConfig{}, fmt.Errorf("ATTEST_JUDGE_BASE_URL does not apply to ATTEST_JUDGE_PROVIDER=acp; unset it")
+	}
+	return judgeConfig{
+		provider:   "acp",
+		model:      os.Getenv("ATTEST_JUDGE_MODEL"),
+		acpCommand: os.Getenv("ATTEST_JUDGE_ACP_COMMAND"),
+	}, nil
 }
 
 // parseJudgeBaseURL validates an OpenAI-compatible base URL such as
@@ -194,6 +230,11 @@ func buildProviders(logger *slog.Logger) (providers, error) {
 			return p, err
 		}
 		p.judge = judge
+		if cfg.provider == "acp" {
+			logger.Warn("acp judge: the agent is not sandboxed; it runs as you with your network access and its own "+
+				"configuration, so tools it may use without asking can act on untrusted agent output in judge prompts",
+				"command", cfg.acpCommandName())
+		}
 		if cfg.insecure {
 			logger.Warn("insecure judge endpoint: plain http to a non-loopback host sends ATTEST_JUDGE_API_KEY in cleartext",
 				"base_url", cfg.baseURL)
@@ -245,6 +286,8 @@ func buildJudgeProvider(logger *slog.Logger, cfg judgeConfig) (llm.Provider, err
 		p, err = llmproviders.NewAnthropic(cfg.apiKey, cfg.model, cfg.baseURL)
 	case "gemini":
 		p, err = llmproviders.NewGemini(cfg.apiKey, cfg.model, cfg.baseURL)
+	case "acp":
+		p, err = llmproviders.NewACP(cfg.acpCommand, cfg.model, assertion.JudgeTimeout())
 	default:
 		return nil, fmt.Errorf("judge provider %q has no constructor", cfg.provider)
 	}
