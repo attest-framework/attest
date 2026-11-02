@@ -148,7 +148,7 @@ No API key, model or network access is needed: the sample test checks a recorded
 
 ```bash
 uv init --bare my-agent-tests && cd my-agent-tests
-uv add attest-ai pytest
+uv add "attest-ai>=1.0.0rc1" pytest
 uv run attest init
 uv run pytest
 ```
@@ -232,13 +232,13 @@ uv run attest init --ci github
 ### TypeScript
 
 ```bash
-npm init -y && npm pkg set type=module
-npm install -D @attest-ai/core @attest-ai/vitest vitest
-npx attest init
-npx vitest run
+pnpm init && pnpm pkg set type=module
+pnpm add -D "@attest-ai/core@>=1.0.0-rc.1" "@attest-ai/vitest@>=1.0.0-rc.1" vitest
+pnpm exec attest init
+pnpm exec vitest run
 ```
 
-`npx attest init` writes `tests/my-agent.test.ts` and `attest.policy.yaml`; the line marked `ATTEST-DEMO` works the same way. `npx vitest run --reporter=default --reporter=@attest-ai/vitest/reporter --outputFile.attest=attest-report.json` writes the report and `npx attest init --ci github` writes the workflow.
+`pnpm exec attest init` writes `tests/my-agent.test.ts` and `attest.policy.yaml`; the line marked `ATTEST-DEMO` works the same way. `pnpm exec vitest run --reporter=default --reporter=@attest-ai/vitest/reporter --outputFile.attest=attest-report.json` writes the report and `pnpm exec attest init --ci github` writes the workflow.
 
 ### Build from source
 

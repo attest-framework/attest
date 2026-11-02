@@ -7,7 +7,7 @@ This guide takes a project from no tests to a GitHub Actions job that blocks mer
 Python:
 
 ```bash
-uv add attest-ai pytest
+uv add "attest-ai>=1.0.0rc1" pytest
 uv run attest init
 uv run pytest            # 1 passed
 ```
@@ -15,9 +15,9 @@ uv run pytest            # 1 passed
 TypeScript:
 
 ```bash
-npm install -D @attest-ai/core @attest-ai/vitest vitest
-npx attest init
-npx vitest run           # 1 passed
+pnpm add -D "@attest-ai/core@>=1.0.0-rc.1" "@attest-ai/vitest@>=1.0.0-rc.1" vitest
+pnpm exec attest init
+pnpm exec vitest run     # 1 passed
 ```
 
 `attest init` never overwrites a file that exists. It writes:
@@ -47,7 +47,7 @@ Attest diagnostic — 1 of 4 assertions failed:
 | Runner | Command |
 |---|---|
 | pytest | `uv run pytest --attest-report=attest-report.json` |
-| Vitest | `npx vitest run --reporter=default --reporter=@attest-ai/vitest/reporter --outputFile.attest=attest-report.json`, or `reporters: ["default", new AttestReporter({ outputFile: "attest-report.json" })]` in the Vitest config |
+| Vitest | `pnpm exec vitest run --reporter=default --reporter=@attest-ai/vitest/reporter --outputFile.attest=attest-report.json`, or `reporters: ["default", new AttestReporter({ outputFile: "attest-report.json" })]` in the Vitest config |
 
 The report follows `proto/attest/v1/report-v2.schema.json`:
 

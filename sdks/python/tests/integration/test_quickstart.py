@@ -156,7 +156,7 @@ _NOT_RUN_HERE = frozenset({"text", "ts"})
 # Shell lines the test environment provides instead of running: project creation and
 # package installation (the SDK under test is already installed) and the TypeScript
 # quickstart, which the TypeScript README test runs.
-_PROVIDED = re.compile(r"^(uv init|uv add|cd|npm|npx)\b")
+_PROVIDED = re.compile(r"^(uv init|uv add|cd|pnpm)\b")
 
 
 def readme_blocks(text: str) -> list[Block]:
