@@ -29,6 +29,7 @@ from attest._proto.diagnostics import (
 )
 from attest._proto.types import (
     Assertion,
+    BatchBudget,
     ConversationMessage,
     DriftReport,
     EvaluateBatchResult,
@@ -331,8 +332,14 @@ class AttestClient:
         self,
         trace: Trace,
         assertions: list[Assertion],
+        *,
+        budget: BatchBudget | None = None,
     ) -> EvaluateBatchResult:
         """Send evaluate_batch request and return parsed results.
+
+        ``budget`` limits this batch on top of the session budget (the pytest
+        plugin sends the remainder of a per-test ``attest_budget`` marker);
+        ``None`` omits the param.
 
         Simulation mode is handled by the engine: started with
         ``ATTEST_SIMULATION`` set, it evaluates layers 1-4 for real and
@@ -352,6 +359,8 @@ class AttestClient:
             "trace": trace.to_dict(),
             "assertions": [a.to_dict() for a in assertions],
         }
+        if budget is not None:
+            params["budget"] = budget.to_dict()
         raw = await self.send_request("evaluate_batch", params)
         return EvaluateBatchResult.from_dict(raw)
 

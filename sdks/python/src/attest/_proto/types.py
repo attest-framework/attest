@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -30,6 +31,8 @@ REASON_PROVIDER_NOT_CONFIGURED: str = "provider_not_configured"
 REASON_SIMULATION: str = "simulation"
 REASON_MISSING_EVIDENCE: str = "missing_evidence"
 REASON_SHORT_CIRCUITED: str = "short_circuited"
+REASON_BUDGET_EXHAUSTED: str = "budget_exhausted"
+REASON_JUDGE_ABSTAINED: str = "judge_abstained"
 
 # ---------------------------------------------------------------------------
 # Assertion type constants
@@ -509,6 +512,8 @@ class AssertionResult:
     suggested_action: str | None = None
     judge_metadata: JudgeMetadata | None = None
     failure_class: str | None = None
+    # 1-based trial index, set by the SDK when the test ran as fixed-N trials.
+    trial: int | None = None
 
     def to_dict(self) -> dict[str, Any]:
         d: dict[str, Any] = {
@@ -541,6 +546,8 @@ class AssertionResult:
             d["judge_metadata"] = self.judge_metadata.to_dict()
         if self.failure_class is not None:
             d["failure_class"] = self.failure_class
+        if self.trial is not None:
+            d["trial"] = self.trial
         return d
 
     @classmethod
@@ -571,6 +578,7 @@ class AssertionResult:
             suggested_action=data.get("suggested_action"),
             judge_metadata=judge,
             failure_class=data.get("failure_class"),
+            trial=data.get("trial"),
         )
 
 
@@ -644,9 +652,121 @@ class EvaluateBatchParams:
         }
 
 
+USAGE_FIELDS: tuple[str, ...] = (
+    "model_calls",
+    "judge_calls",
+    "input_tokens",
+    "output_tokens",
+    "cached_tokens",
+    "cost_usd",
+    "retry_cost_usd",
+    "unpriced_calls",
+    "budget_refused",
+)
+
+
+@dataclass(frozen=True)
+class Usage:
+    """Attest-initiated model usage of one or more ``evaluate_batch`` calls.
+
+    Counts L5 embeddings, L6 judges, judge repeats, bias probes and
+    simulated-user messages; agent calls not routed through attest are not
+    counted. ``judge_calls`` is the judge-provider part of ``model_calls``.
+    ``retry_cost_usd`` is the part of ``cost_usd`` spent on retried calls;
+    ``unpriced_calls`` counts calls whose model has no price (``cost_usd``
+    understates the spend when it is non-zero); ``budget_refused`` counts
+    calls not sent because no budget remained.
+    """
+
+    model_calls: int = 0
+    judge_calls: int = 0
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cached_tokens: int = 0
+    cost_usd: float = 0.0
+    retry_cost_usd: float = 0.0
+    unpriced_calls: int = 0
+    budget_refused: int = 0
+
+    def __add__(self, other: Usage) -> Usage:
+        return Usage(
+            model_calls=self.model_calls + other.model_calls,
+            judge_calls=self.judge_calls + other.judge_calls,
+            input_tokens=self.input_tokens + other.input_tokens,
+            output_tokens=self.output_tokens + other.output_tokens,
+            cached_tokens=self.cached_tokens + other.cached_tokens,
+            cost_usd=self.cost_usd + other.cost_usd,
+            retry_cost_usd=self.retry_cost_usd + other.retry_cost_usd,
+            unpriced_calls=self.unpriced_calls + other.unpriced_calls,
+            budget_refused=self.budget_refused + other.budget_refused,
+        )
+
+    @classmethod
+    def total(cls, usages: Iterable[Usage]) -> Usage:
+        """Sum of ``usages`` (all-zero when empty)."""
+        acc = cls()
+        for u in usages:
+            acc = acc + u
+        return acc
+
+    def format(self) -> str:
+        """The run-summary text, identical to the engine's ``report.FormatUsage``:
+        model calls · tokens (cached) · $ · retry cost, with refused and unpriced
+        calls appended when present."""
+        line = (
+            f"{self.model_calls} model calls · {self.input_tokens + self.output_tokens} tokens "
+            f"({self.cached_tokens} cached) · ${self.cost_usd:.4f} · "
+            f"retry cost ${self.retry_cost_usd:.4f}"
+        )
+        if self.budget_refused > 0:
+            line += f" · {self.budget_refused} calls refused by budget"
+        if self.unpriced_calls > 0:
+            line += f" · {self.unpriced_calls} unpriced calls not in $"
+        return line
+
+    def to_dict(self) -> dict[str, Any]:
+        return {name: getattr(self, name) for name in USAGE_FIELDS}
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> Usage:
+        """Parse a wire ``usage`` object; every field is required."""
+        missing = [name for name in USAGE_FIELDS if name not in data]
+        if missing:
+            raise ValueError(f"usage is missing required fields: {', '.join(missing)}")
+        return cls(
+            model_calls=int(data["model_calls"]),
+            judge_calls=int(data["judge_calls"]),
+            input_tokens=int(data["input_tokens"]),
+            output_tokens=int(data["output_tokens"]),
+            cached_tokens=int(data["cached_tokens"]),
+            cost_usd=float(data["cost_usd"]),
+            retry_cost_usd=float(data["retry_cost_usd"]),
+            unpriced_calls=int(data["unpriced_calls"]),
+            budget_refused=int(data["budget_refused"]),
+        )
+
+
+@dataclass(frozen=True)
+class BatchBudget:
+    """``evaluate_batch`` ``budget`` param: limits for one batch on top of the
+    session budget. ``None`` means no limit for that field."""
+
+    max_judge_calls: int | None = None
+    max_cost_usd: float | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        d: dict[str, Any] = {}
+        if self.max_judge_calls is not None:
+            d["max_judge_calls"] = self.max_judge_calls
+        if self.max_cost_usd is not None:
+            d["max_cost_usd"] = self.max_cost_usd
+        return d
+
+
 @dataclass
 class EvaluateBatchResult:
     results: list[AssertionResult]
+    usage: Usage
     total_cost: float = 0.0
     total_duration_ms: int = 0
     simulated: bool = False
@@ -654,6 +774,7 @@ class EvaluateBatchResult:
     def to_dict(self) -> dict[str, Any]:
         return {
             "results": [r.to_dict() for r in self.results],
+            "usage": self.usage.to_dict(),
             "total_cost": self.total_cost,
             "total_duration_ms": self.total_duration_ms,
             "simulated": self.simulated,
@@ -662,8 +783,11 @@ class EvaluateBatchResult:
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> EvaluateBatchResult:
         results = [AssertionResult.from_dict(r) for r in data.get("results", [])]
+        if "usage" not in data:
+            raise ValueError("evaluate_batch result is missing required field 'usage'")
         return cls(
             results=results,
+            usage=Usage.from_dict(data["usage"]),
             total_cost=data.get("total_cost", 0.0),
             total_duration_ms=data.get("total_duration_ms", 0),
             simulated=data.get("simulated", False),
