@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import json
 import shutil
 import sys
 import threading
@@ -261,3 +262,67 @@ def test_record_malformed_ready_line_raises_and_reaps_engine(
     with pytest.raises(CaptureError, match="did not start: old engine"):
         with record("x", engine_path=str(engine)):
             pass
+
+
+def _fixture_doc() -> dict[str, object]:
+    doc: dict[str, object] = json.loads(_INCIDENT.read_text())
+    return doc
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        lambda d: d.update(name='x"""\nimport os'),
+        lambda d: d.update(name="a\nrequire('fs')"),
+        lambda d: d.pop("verification"),
+        lambda d: d.pop("world"),
+        lambda d: d["contracts"][0].pop("spec"),
+        lambda d: d["verification"].update(results="nope"),
+    ],
+    ids=[
+        "docstring-name",
+        "newline-name",
+        "no-verification",
+        "no-world",
+        "contract-no-spec",
+        "bad-results",
+    ],
+)
+def test_load_fixture_invalid_fixture_raises_capture_error(mutate, tmp_path: Path) -> None:  # type: ignore[no-untyped-def]
+    doc = _fixture_doc()
+    mutate(doc)
+    path = tmp_path / "f.attest.json"
+    path.write_text(json.dumps(doc))
+
+    with pytest.raises(CaptureError):
+        load_fixture(path)
+
+
+def test_render_pytest_hostile_name_stays_in_docstring(tmp_path: Path) -> None:
+    fixture = load_fixture(_INCIDENT)
+    hostile = type(fixture)(**{**fixture.__dict__, "name": 'x"""\nimport os\n"""'})
+
+    source = render_pytest(hostile, tmp_path / "fixtures/f.attest.json", tmp_path / "test_f.py")
+
+    tree = ast.parse(source)
+    assert not [n for n in ast.walk(tree) if isinstance(n, ast.Import) and n.names[0].name == "os"]
+
+
+@pytest.mark.parametrize("dangling", [True, False])
+def test_emit_pytest_symlink_at_target_raises_and_writes_nothing(
+    tmp_path: Path, dangling: bool
+) -> None:
+    fixture_path = tmp_path / "tests" / "attest" / "fixtures" / "inc-1042.attest.json"
+    fixture_path.parent.mkdir(parents=True)
+    shutil.copy(_INCIDENT, fixture_path)
+    victim = tmp_path / "victim.txt"
+    if not dangling:
+        victim.write_text("keep")
+    link = tmp_path / "tests" / "attest" / "test_inc_1042.py"
+    link.symlink_to(victim)
+
+    with pytest.raises(CaptureError, match="symbolic link"):
+        emit_pytest(fixture_path)
+
+    assert victim.exists() is not dangling
+    assert dangling or victim.read_text() == "keep"

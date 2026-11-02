@@ -91,13 +91,13 @@ def _post(url: str, body: dict[str, object], headers: dict[str, str]) -> None:
         resp.read()
 
 
-def _scripted_agent(refunds: int) -> None:
+def _scripted_agent(refunds: int, note: str = "") -> None:
     """One model call and an INC-1042-shaped trace, configured from the environment."""
     _post(
         os.environ["OPENAI_BASE_URL"] + "/chat/completions",
         {
             "model": "gpt-test",
-            "messages": [{"role": "user", "content": f"refund O-9 for {_PLANTED_EMAIL}"}],
+            "messages": [{"role": "user", "content": f"refund O-9 for {_PLANTED_EMAIL}{note}"}],
         },
         {"Authorization": f"Bearer {os.environ['OPENAI_API_KEY']}"},
     )
@@ -308,3 +308,18 @@ def test_attest_capture_cli_unverified_drafts_no_test(engine_env: str, tmp_path:
     assert proc.returncode == 1
     assert "test: none drafted for unverified" in proc.stderr
     assert not (tmp_path / "tests" / "attest" / "test_healthy.py").exists()
+
+
+@pytest.mark.integration
+def test_record_secret_loaded_inside_block_redacted(engine_env: str, tmp_path: Path) -> None:
+    late = "late-loaded-value-4c1e8b"
+    out_dir = tmp_path / "fixtures"
+
+    with record("late", out_dir=out_dir, expect_fail=True):
+        os.environ["DOTENV_SERVICE_TOKEN"] = late  # as a dotenv loader would
+        _scripted_agent(refunds=2, note=f" token {late}")
+    del os.environ["DOTENV_SERVICE_TOKEN"]
+
+    data = (out_dir / "late.attest.json").read_text()
+    assert late not in data
+    assert "token [redacted]" in data

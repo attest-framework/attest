@@ -88,6 +88,7 @@ def load_fixture(path: str | os.PathLike[str]) -> Fixture:
     doc = json.loads(p.read_text(encoding="utf-8"))
     if not isinstance(doc, dict) or doc.get("fixture_version") != FIXTURE_VERSION:
         raise CaptureError(f"{p}: not a fixture_version {FIXTURE_VERSION} capture fixture")
+    _validate(p, doc)
     verification = doc["verification"]
     return Fixture(
         name=doc["name"],
@@ -108,6 +109,55 @@ def load_fixture(path: str | os.PathLike[str]) -> Fixture:
         world=doc["world"],
         path=p,
     )
+
+
+#: Fixture names, as the engine accepts them (they become file names).
+NAME_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+
+_REQUIRED: dict[str, type] = {
+    "name": str,
+    "source": dict,
+    "trace": dict,
+    "exchanges": list,
+    "contracts": list,
+    "verification": dict,
+}
+_CONTRACT_FIELDS: dict[str, type] = {
+    "id": str,
+    "kind": str,
+    "description": str,
+    "type": str,
+    "spec": dict,
+}
+_RESULT_FIELDS: dict[str, type] = {"contract": str, "status": str, "explanation": str}
+_VERIFICATION_FIELDS: dict[str, type] = {
+    "verified": bool,
+    "expect_fail": bool,
+    "results": list,
+    "expected_failures": list,
+}
+
+
+def _validate(p: Path, doc: dict[str, Any]) -> None:
+    """Check the fixture-v1 fields this module reads before using any of them."""
+
+    def need(where: str, obj: Any, fields: dict[str, type]) -> None:
+        if not isinstance(obj, dict):
+            raise CaptureError(f"{p}: {where} is not an object")
+        for key, typ in fields.items():
+            if not isinstance(obj.get(key), typ):
+                raise CaptureError(f"{p}: {where}.{key} is missing or not a {typ.__name__}")
+
+    need("fixture", doc, _REQUIRED)
+    if "world" not in doc:
+        raise CaptureError(f"{p}: fixture.world is missing")
+    if not NAME_PATTERN.match(doc["name"]):
+        raise CaptureError(f"{p}: fixture name {doc['name']!r} is not a valid fixture name")
+    need("fixture.verification", doc["verification"], _VERIFICATION_FIELDS)
+    for i, c in enumerate(doc["contracts"]):
+        need(f"fixture.contracts[{i}]", c, _CONTRACT_FIELDS)
+    for i, r in enumerate(doc["verification"]["results"]):
+        need(f"fixture.verification.results[{i}]", r, _RESULT_FIELDS)
 
 
 # --------------------------------------------------------------------------- emitter
@@ -213,7 +263,7 @@ def render_pytest(fixture: Fixture, fixture_path: Path, test_path: Path) -> str:
     status = {r.contract: r.status for r in fixture.results}
 
     lines = [
-        f'"""Contracts drafted by `attest capture` from fixture {fixture.name}.',
+        f'"""Contracts drafted by `attest capture` from fixture {_py(fixture.name)}.',
         "",
         "Review and edit before committing: they check the captured trace without running",
         "the agent. Re-capturing does not overwrite this file.",
@@ -274,11 +324,21 @@ def emit_pytest(fixture_path: str | os.PathLike[str]) -> Path | None:
     """
     fp = Path(fixture_path)
     test_path = test_path_for(fp)
+    if test_path.is_symlink():
+        raise CaptureError(f"{test_path} is a symbolic link; refusing to draft a test through it")
     if test_path.exists():
         return None
     source = render_pytest(load_fixture(fp), fp, test_path)
     test_path.parent.mkdir(parents=True, exist_ok=True)
-    test_path.write_text(source, encoding="utf-8")
+    # Create exclusively and never through a link planted after the check.
+    # Windows has no O_NOFOLLOW; O_EXCL there fails on any existing path.
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        fd = os.open(test_path, flags, 0o644)
+    except FileExistsError:
+        raise CaptureError(f"{test_path} appeared while drafting; left unchanged") from None
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        f.write(source)
     return test_path
 
 
@@ -444,7 +504,10 @@ def _finish(proc: subprocess.Popen[str], *, finalize: bool) -> tuple[str, str]:
     assert stdin is not None
     try:
         if finalize:
-            stdin.write("finalize\n")
+            # The environment as it is now: secrets the block loaded (a dotenv
+            # file, for example) are redacted too.
+            environ = [f"{k}={v}" for k, v in os.environ.items()]
+            stdin.write(json.dumps({"finalize": True, "environ": environ}) + "\n")
         stdin.close()
     except BrokenPipeError:
         pass
