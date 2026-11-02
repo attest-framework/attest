@@ -31,8 +31,44 @@ func contractIDs(cs []Contract) string {
 	return strings.Join(ids, " ")
 }
 
-func TestDraft_Incident_ToolsOrderAndPerIDCardinality(t *testing.T) {
-	cs, err := Draft(incidentTrace(t))
+func cardinalitySpecs(cs []Contract) map[string]string {
+	out := map[string]string{}
+	for _, c := range cs {
+		if c.Kind == KindCardinality {
+			out[c.ID] = string(c.Spec)
+		}
+	}
+	return out
+}
+
+func draftAndVerify(t *testing.T, tr *types.Trace, expectFail bool) ([]Contract, Verification) {
+	t.Helper()
+	cs, err := Draft(tr, expectFail)
+	if err != nil {
+		t.Fatal(err)
+	}
+	v, err := Verify(tr, cs, expectFail, TraceCheckResult{OK: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return cs, v
+}
+
+// toolTrace is a trace whose top-level tool calls are the given (name, order_id)
+// pairs, in order.
+func toolTrace(calls ...[2]string) *types.Trace {
+	tr := &types.Trace{SchemaVersion: 2, TraceID: "t", Output: json.RawMessage(`{"message":"ok"}`)}
+	for _, c := range calls {
+		tr.Steps = append(tr.Steps, types.Step{
+			Type: types.StepTypeToolCall, Name: c[0],
+			Args: json.RawMessage(`{"order_id":"` + c[1] + `"}`), Result: json.RawMessage(`{}`),
+		})
+	}
+	return tr
+}
+
+func TestDraft_Incident_ToolsOrderAndCardinalityIDs(t *testing.T) {
+	cs, err := Draft(incidentTrace(t), true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -42,24 +78,79 @@ func TestDraft_Incident_ToolsOrderAndPerIDCardinality(t *testing.T) {
 	if got := contractIDs(cs); got != want {
 		t.Fatalf("contracts\n got %s\nwant %s", got, want)
 	}
-	if got := string(cs[4].Spec); got != `{"check":"tool_cardinality","max":1,"per":"order_id","soft":false,"tool":"issue_refund"}` {
-		t.Fatalf("cardinality spec %s", got)
+}
+
+// (a) A healthy run that reads the same id twice drafts the observed maximum
+// and verifies.
+func TestDraft_HealthyRunRepeatedRead_ObservedMaxAndVerified(t *testing.T) {
+	tr := toolTrace([2]string{"lookup_order", "O-1"}, [2]string{"issue_refund", "O-1"},
+		[2]string{"lookup_order", "O-1"}, [2]string{"notify_customer", "O-1"})
+
+	cs, v := draftAndVerify(t, tr, false)
+
+	got := cardinalitySpecs(cs)["cardinality-lookup_order-per-order_id"]
+	if got != `{"check":"tool_cardinality","max":2,"per":"order_id","soft":false,"tool":"lookup_order"}` {
+		t.Fatalf("lookup_order spec %s", got)
+	}
+	if !v.Verified || len(v.ExpectedFailures) != 0 {
+		t.Fatalf("verification %+v", v)
 	}
 }
 
-func TestVerify_Incident_FailsWithoutExpectFail_VerifiedWithIt(t *testing.T) {
-	tr := incidentTrace(t)
-	cs, err := Draft(tr)
-	if err != nil {
-		t.Fatal(err)
-	}
-	ok := TraceCheckResult{OK: true}
+// (b) --expect-fail on the INC-1042 shape allows one call per id: only the
+// repeated issue_refund fails, and it is the one expected failure.
+func TestDraft_ExpectFailIncidentShape_OnlyIssueRefundExpectedFailure(t *testing.T) {
+	tr := toolTrace([2]string{"lookup_order", "O-1042"}, [2]string{"issue_refund", "O-1042"},
+		[2]string{"issue_refund", "O-1042"}, [2]string{"notify_customer", "O-1042"})
 
-	plain, err := Verify(tr, cs, false, ok)
+	cs, v := draftAndVerify(t, tr, true)
+
+	for id, spec := range cardinalitySpecs(cs) {
+		if !strings.Contains(spec, `"max":1,`) {
+			t.Errorf("%s: %s; want max 1", id, spec)
+		}
+	}
+	if !v.Verified || strings.Join(v.ExpectedFailures, ",") != "cardinality-issue_refund-per-order_id" {
+		t.Fatalf("verification %+v", v)
+	}
+}
+
+// (c) A normal capture of the INC-1042 shape does not know it is an incident:
+// issue_refund is drafted at its observed maximum of 2 and the run verifies.
+func TestDraft_NormalCaptureIncidentShape_IssueRefundMax2Verified(t *testing.T) {
+	tr := toolTrace([2]string{"lookup_order", "O-1042"}, [2]string{"issue_refund", "O-1042"},
+		[2]string{"issue_refund", "O-1042"}, [2]string{"notify_customer", "O-1042"})
+
+	cs, v := draftAndVerify(t, tr, false)
+
+	got := cardinalitySpecs(cs)["cardinality-issue_refund-per-order_id"]
+	if got != `{"check":"tool_cardinality","max":2,"per":"order_id","soft":false,"tool":"issue_refund"}` {
+		t.Fatalf("issue_refund spec %s", got)
+	}
+	if !v.Verified {
+		t.Fatalf("verification %+v", v)
+	}
+}
+
+func TestDraft_ObservedMaxIsPerValue(t *testing.T) {
+	tr := toolTrace([2]string{"lookup_order", "O-1"}, [2]string{"lookup_order", "O-2"},
+		[2]string{"lookup_order", "O-2"}, [2]string{"lookup_order", "O-3"})
+
+	cs, _ := draftAndVerify(t, tr, false)
+
+	if got := cardinalitySpecs(cs)["cardinality-lookup_order-per-order_id"]; !strings.Contains(got, `"max":2,`) {
+		t.Fatalf("spec %s; want max 2 (O-2 twice), not 4 calls", got)
+	}
+}
+
+func TestVerify_IncidentTrace_ExpectFailRecordsOnlyIssueRefund_TraceCheckGates(t *testing.T) {
+	tr := incidentTrace(t)
+	cs, err := Draft(tr, true)
 	if err != nil {
 		t.Fatal(err)
 	}
-	incident, err := Verify(tr, cs, true, ok)
+
+	incident, err := Verify(tr, cs, true, TraceCheckResult{OK: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -67,15 +158,19 @@ func TestVerify_Incident_FailsWithoutExpectFail_VerifiedWithIt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-
-	if plain.Verified || len(plain.ExpectedFailures) != 0 {
-		t.Errorf("plain = %+v", plain)
+	plain, err := Verify(tr, cs, false, TraceCheckResult{OK: true})
+	if err != nil {
+		t.Fatal(err)
 	}
+
 	if !incident.Verified || strings.Join(incident.ExpectedFailures, ",") != "cardinality-issue_refund-per-order_id" {
 		t.Errorf("incident = %+v", incident)
 	}
 	if badTrace.Verified {
 		t.Errorf("verified a trace that failed trace check")
+	}
+	if plain.Verified || len(plain.ExpectedFailures) != 0 {
+		t.Errorf("incident-mode contracts verified without --expect-fail: %+v", plain)
 	}
 }
 
@@ -88,7 +183,7 @@ func TestDraft_StructuredOutputAndCost_DraftedAndPass(t *testing.T) {
 		Metadata: &types.TraceMetadata{CostUSD: &cost},
 	}
 
-	cs, err := Draft(tr)
+	cs, err := Draft(tr, false)
 	if err != nil {
 		t.Fatal(err)
 	}

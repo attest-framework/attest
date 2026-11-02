@@ -23,12 +23,17 @@ const (
 // CostHeadroom multiplies the observed cost into the drafted cost ceiling.
 const CostHeadroom = 1.5
 
-// Draft proposes deterministic contracts from a captured trace: the tools it
-// called, the order of their first calls, at most one call per identifier
-// argument for each tool called with one, the shape of its structured output
-// and a cost ceiling with headroom. Cardinality is drafted from the argument
-// names, not the observed counts, so a captured duplicate call fails it.
-func Draft(t *types.Trace) ([]Contract, error) {
+// Draft proposes deterministic contracts from a captured trace, encoding the
+// observed behavior as ceilings: the tools it called, the order of their
+// first calls, per-id cardinality for each tool called with an identifier
+// argument (id or *_id), the shape of its structured output and a cost
+// ceiling with headroom.
+//
+// Cardinality depends on the capture mode. A normal capture allows the
+// observed per-id maximum, so a healthy run that reads the same id twice
+// still verifies. An incident capture (expectFail) allows one call per id,
+// so the calls the run repeated become its expected failures.
+func Draft(t *types.Trace, expectFail bool) ([]Contract, error) {
 	var out []Contract
 	add := func(id, kind, typ, desc string, spec any) error {
 		raw, err := canonical(spec)
@@ -56,9 +61,13 @@ func Draft(t *types.Trace) ([]Contract, error) {
 	}
 	for _, tool := range tools {
 		for _, arg := range idArgs[tool] {
-			spec := map[string]any{"check": "tool_cardinality", "tool": tool, "per": arg, "max": 1, "soft": false}
-			id := fmt.Sprintf("cardinality-%s-per-%s", tool, arg)
-			if err := add(id, KindCardinality, types.TypeTrace, tool+" at most once per "+arg, spec); err != nil {
+			bound := arg.observedMax
+			if expectFail {
+				bound = 1
+			}
+			spec := map[string]any{"check": "tool_cardinality", "tool": tool, "per": arg.name, "max": bound, "soft": false}
+			id := fmt.Sprintf("cardinality-%s-per-%s", tool, arg.name)
+			if err := add(id, KindCardinality, types.TypeTrace, cardinalityText(tool, arg.name, bound), spec); err != nil {
 				return nil, err
 			}
 		}
@@ -80,39 +89,70 @@ func Draft(t *types.Trace) ([]Contract, error) {
 	return out, nil
 }
 
+// idArg is an identifier argument of one tool and the most calls that tool
+// made with any one value of it.
+type idArg struct {
+	name        string
+	observedMax int
+}
+
+func cardinalityText(tool, arg string, bound int) string {
+	if bound == 1 {
+		return tool + " at most once per " + arg
+	}
+	return fmt.Sprintf("%s at most %d× per %s (observed maximum)", tool, bound, arg)
+}
+
 // toolUsage returns the distinct tools in order of first call and, per tool,
-// its sorted identifier argument names (id or *_id) across all its calls.
-// Only top-level steps count, as in the trace contract checks.
-func toolUsage(t *types.Trace) ([]string, map[string][]string) {
+// its identifier arguments (id or *_id) sorted by name with the observed
+// per-value maximum. Only top-level steps count, as in the trace contract
+// checks; values are compared as canonical JSON.
+func toolUsage(t *types.Trace) ([]string, map[string][]idArg) {
 	var tools []string
-	ids := map[string]map[string]bool{}
+	counts := map[string]map[string]map[string]int{} // tool → arg → value → calls
 	for i := range t.Steps {
 		s := &t.Steps[i]
 		if s.Type != types.StepTypeToolCall || s.Name == "" {
 			continue
 		}
-		if ids[s.Name] == nil {
-			ids[s.Name] = map[string]bool{}
+		if counts[s.Name] == nil {
+			counts[s.Name] = map[string]map[string]int{}
 			tools = append(tools, s.Name)
 		}
 		var args map[string]json.RawMessage
 		if json.Unmarshal(s.Args, &args) != nil {
 			continue
 		}
-		for name := range args {
-			if name == "id" || strings.HasSuffix(name, "_id") {
-				ids[s.Name][name] = true
+		for name, raw := range args {
+			if name != "id" && !strings.HasSuffix(name, "_id") {
+				continue
 			}
+			v, err := decodeJSON(raw)
+			if err != nil {
+				continue
+			}
+			key, err := canonical(v)
+			if err != nil {
+				continue
+			}
+			if counts[s.Name][name] == nil {
+				counts[s.Name][name] = map[string]int{}
+			}
+			counts[s.Name][name][string(key)]++
 		}
 	}
-	out := make(map[string][]string, len(ids))
-	for tool, set := range ids {
-		names := make([]string, 0, len(set))
-		for n := range set {
-			names = append(names, n)
+	out := make(map[string][]idArg, len(counts))
+	for tool, byArg := range counts {
+		args := make([]idArg, 0, len(byArg))
+		for name, byValue := range byArg {
+			most := 0
+			for _, n := range byValue {
+				most = max(most, n)
+			}
+			args = append(args, idArg{name: name, observedMax: most})
 		}
-		sort.Strings(names)
-		out[tool] = names
+		sort.Slice(args, func(i, j int) bool { return args[i].name < args[j].name })
+		out[tool] = args
 	}
 	return tools, out
 }

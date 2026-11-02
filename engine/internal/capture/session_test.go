@@ -96,14 +96,14 @@ func TestCapture_EveryAPIStreamedAndNot_RecordedWithDecodedBodies(t *testing.T) 
 	}
 }
 
-func TestCapture_DoubleRefund_DraftedCardinalityFails(t *testing.T) {
+func TestCapture_DoubleRefund_ExpectFailRecordsIt_NormalCaptureAllowsObserved(t *testing.T) {
 	up := newFakeUpstream(t)
 
 	plain, _ := captureRun(t, up, 2, false)
 	incident, _ := captureRun(t, up, 2, true)
 
-	if plain.Verification.Verified {
-		t.Fatalf("double refund verified without --expect-fail: %s", describe(plain))
+	if !plain.Verification.Verified || !strings.Contains(cardinalitySpecs(plain.Contracts)["cardinality-issue_refund-per-order_id"], `"max":2,`) {
+		t.Fatalf("normal capture should draft the observed maximum and verify: %s", describe(plain))
 	}
 	if !incident.Verification.Verified {
 		t.Fatalf("incident not verified with --expect-fail: %s", describe(incident))

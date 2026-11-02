@@ -158,7 +158,7 @@ func BuildFixture(in BuildInput) (*Fixture, error) {
 		}
 		f.Exchanges = append(f.Exchanges, ex)
 	}
-	if f.Contracts, err = Draft(f.Trace); err != nil {
+	if f.Contracts, err = Draft(f.Trace, in.ExpectFail); err != nil {
 		return nil, err
 	}
 	if f.Contracts == nil {

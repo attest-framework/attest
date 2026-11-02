@@ -109,7 +109,7 @@ func TestFixtureV1_ValidFixtures_ContractsMatchDrafter(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		drafted, err := Draft(f.Trace)
+		drafted, err := Draft(f.Trace, f.Verification.ExpectFail)
 		if err != nil {
 			t.Fatal(err)
 		}

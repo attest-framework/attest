@@ -78,7 +78,10 @@ func runScriptedAgent(openaiBase, tracesEndpoint, apiKey string) error {
 		spanJSON(randomHex(8), root, "chat gpt-test", 1, attr("gen_ai.operation.name", "chat"), attr("gen_ai.request.model", "gpt-test")),
 		tool("lookup_order", `{"order_id":"O-7"}`, 3),
 		tool("issue_refund", `{"order_id":"O-7","note":"key `+apiKey+` for `+e2ePlantedEmail+`"}`, 5),
-		tool("issue_refund", `{"order_id":"O-7"}`, 7),
+	}
+	// ATTEST_CAPTURE_HELPER_REFUNDS=1 plays a healthy run with one refund.
+	if os.Getenv("ATTEST_CAPTURE_HELPER_REFUNDS") != "1" {
+		spans = append(spans, tool("issue_refund", `{"order_id":"O-7"}`, 7))
 	}
 	doc := `{"resourceSpans":[{"scopeSpans":[{"spans":[` + strings.Join(spans, ",") + `]}]}]}`
 	resp, err = http.Post(tracesEndpoint, "application/json", strings.NewReader(doc))
@@ -188,12 +191,30 @@ func TestCaptureCommand_IncidentTwice_ByteIdenticalRedactedVerified(t *testing.T
 	}
 }
 
-func TestCaptureCommand_IncidentWithoutExpectFail_ExitsOneNamingContract(t *testing.T) {
+// Without --expect-fail the drafter does not know the run is an incident: it
+// drafts the observed per-id maximum, so the double refund verifies.
+func TestCaptureCommand_IncidentWithoutExpectFail_DraftsObservedMaxAndVerifies(t *testing.T) {
 	bin := buildEngineBinary(t)
 
 	r := runCaptureCommand(t, bin, fakeModel(t), t.TempDir())
 
-	if r.code != 1 || !strings.Contains(r.stderr, "not verified: failing cardinality-issue_refund-per-order_id") {
+	if r.code != 0 || !strings.Contains(r.stderr, "verified: every drafted contract passes") {
+		t.Fatalf("exit %d\n%s", r.code, r.stderr)
+	}
+	if !bytes.Contains(r.fixture, []byte(`"description": "issue_refund at most 2× per order_id (observed maximum)"`)) {
+		t.Fatalf("issue_refund not drafted at its observed maximum:\n%s", r.fixture)
+	}
+}
+
+// --expect-fail on a run where the incident did not happen leaves the fixture
+// unverified and exits 1.
+func TestCaptureCommand_ExpectFailWithoutIncident_ExitsOneUnverified(t *testing.T) {
+	bin := buildEngineBinary(t)
+	t.Setenv("ATTEST_CAPTURE_HELPER_REFUNDS", "1")
+
+	r := runCaptureCommand(t, bin, fakeModel(t), t.TempDir(), "--expect-fail")
+
+	if r.code != 1 || !strings.Contains(r.stderr, "not verified: --expect-fail given but every drafted contract passes") {
 		t.Fatalf("exit %d\n%s", r.code, r.stderr)
 	}
 	if !bytes.Contains(r.fixture, []byte(`"verified": false`)) {
