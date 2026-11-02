@@ -60,8 +60,9 @@ export class OTelAdapter {
    * @throws OTLPConversionError when the engine rejects the export (malformed JSON, invalid
    *   ids or timestamps, more than one trace, non-numeric token counts, ...).
    * @throws RangeError when a parsed export holds a non-finite number.
-   * @throws Error from `spawnSync` when the engine cannot start, times out or overflows its
-   *   output buffer.
+   * @throws OTLPConversionError when the engine times out, overflows the output buffer or
+   *   prints no trace.
+   * @throws Error from `spawnSync` when the engine cannot start.
    */
   static async fromOtlp(otlp: OTLPInput, agentId?: string): Promise<Trace> {
     const payload =
@@ -81,14 +82,33 @@ export class OTelAdapter {
       timeout: CONVERT_TIMEOUT_MS,
       maxBuffer: MAX_TRACE_OUTPUT_BYTES,
     });
-    if (proc.error) throw proc.error;
+    if (proc.error) {
+      const code = (proc.error as NodeJS.ErrnoException).code;
+      if (code === "ETIMEDOUT") {
+        throw new OTLPConversionError(
+          `attest-engine trace convert timed out after ${CONVERT_TIMEOUT_MS / 1000}s`,
+        );
+      }
+      if (code === "ENOBUFS") {
+        throw new OTLPConversionError(
+          `attest-engine trace convert printed more than ${MAX_TRACE_OUTPUT_BYTES} bytes`,
+        );
+      }
+      throw proc.error;
+    }
     if (proc.status !== 0) {
       const message = proc.stderr.toString("utf8").trim();
       throw new OTLPConversionError(
         message || `attest-engine trace convert exited ${String(proc.status ?? proc.signal)}`,
       );
     }
-    return JSON.parse(proc.stdout.toString("utf8")) as Trace;
+    try {
+      return JSON.parse(proc.stdout.toString("utf8")) as Trace;
+    } catch (err) {
+      throw new OTLPConversionError(
+        `attest-engine trace convert printed output that is not JSON: ${String(err)}`,
+      );
+    }
   }
 }
 

@@ -167,6 +167,12 @@ describe("OTelAdapter engine call", () => {
     await expect(OTelAdapter.fromOtlp({ x: Number.NaN })).rejects.toThrow(RangeError);
   });
 
+  it("raises OTLPConversionError when the engine prints no trace", async () => {
+    scriptEngine("not json");
+
+    await expect(OTelAdapter.fromOtlp("{}")).rejects.toThrow(/not JSON/);
+  });
+
   it("raises OTLPConversionError with the engine's message on rejection", async () => {
     scriptEngine("", 1, "trace convert: traceId is not hex");
 
