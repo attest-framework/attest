@@ -16,6 +16,7 @@ All notable changes to Attest are documented in this file. The format follows [K
 - **BREAKING:** `attest calibrate --persist` requires `--judge-provider` and `--judge-model`. The calibration table in `$ATTEST_CACHE_DIR/attest.db` gains `judge_provider` and `judge_model` columns on first use; labels stored before have neither and are not counted for any provider.
 - Cached judge scores are scoped by judge provider as well as endpoint, rubric and model, so two providers behind the same gateway with the same model name never share a score. Entries cached by earlier versions are misses and are judged again.
 - Judge provider error messages have any echoed API key replaced by `[redacted]` and control and Unicode format characters (bidi overrides, zero-width) removed before they reach results and reports.
+- The documentation website moved to `https://attest-framework.github.io/` (repository `attest-framework/attest-framework.github.io`, formerly `attest-website`). The release and SDK CI website dispatches target the renamed repository, and `https://attest-framework.github.io/attest/` redirects to the new root. The old `/attest-website/` path no longer resolves.
 
 ### Removed
 

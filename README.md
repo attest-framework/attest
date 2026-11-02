@@ -1,4 +1,4 @@
-[![Attest](assets/banner.png)](https://attest-framework.github.io/attest-website/)
+[![Attest](assets/banner.png)](https://attest-framework.github.io/)
 
 ---
 
@@ -6,7 +6,7 @@
 
 **Test your AI agents like you test your code.**
 
-[Documentation](https://attest-framework.github.io/attest-website/) | [Examples](https://github.com/attest-framework/attest-examples) | [Contributing](CONTRIBUTING.md)
+[Documentation](https://attest-framework.github.io/) | [Examples](https://github.com/attest-framework/attest-examples) | [Contributing](CONTRIBUTING.md)
 
 Attest is an open-source testing framework purpose-built for AI agents and LLM-powered systems. It treats deterministic assertions as first-class citizens alongside probabilistic evaluation — because 70% of your agent's testable surface is deterministic.
 
