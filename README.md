@@ -1,4 +1,4 @@
-[![Attest](assets/banner.png)](https://attest-framework.github.io/attest/)
+[![Attest](assets/banner.png)](https://attest-framework.github.io/attest-website/)
 
 ---
 

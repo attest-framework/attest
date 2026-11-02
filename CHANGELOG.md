@@ -17,6 +17,10 @@ All notable changes to Attest are documented in this file. The format follows [K
 - Cached judge scores are scoped by judge provider as well as endpoint, rubric and model, so two providers behind the same gateway with the same model name never share a score. Entries cached by earlier versions are misses and are judged again.
 - Judge provider error messages have any echoed API key replaced by `[redacted]` and control and Unicode format characters (bidi overrides, zero-width) removed before they reach results and reports.
 
+### Removed
+
+- The MkDocs site configuration (`mkdocs.yml`) and the pages it built outside `docs/guides/`. `https://attest-framework.github.io/attest/` already redirects to the documentation website, which syncs `docs/guides/*.md` at each release.
+
 ## [1.0.0-rc.1] — 2026-11-02
 
 First release candidate, themed "Trust": a red result means a real failure, the SDKs run only an engine of their own version, and `attest init` goes from an empty project to a CI merge gate without an API key.
