@@ -50,8 +50,12 @@ def _truncate(value: str, limit: int = 280) -> str:
     return value[: limit - 3] + "..."
 
 
-# Control, line/paragraph separator, bidi override/isolate and zero-width space.
-_CONTROL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f\u200b\u2028\u2029\u202a-\u202e\u2066-\u2069]")
+# Control, line/paragraph separator, bidi mark/override/isolate, zero-width
+# space/joiners, word joiner and byte-order mark.
+_CONTROL = re.compile(
+    r"[\x00-\x08\x0b-\x1f\x7f\u061c\u200b-\u200f\u2028\u2029\u202a-\u202e"
+    r"\u2060\u2066-\u2069\ufeff]"
+)
 
 
 def _text(value: object, limit: int) -> str:

@@ -324,12 +324,16 @@ class TestWorkflowAnnotation(unittest.TestCase):
         self.assertIn("50%25 ::stop-commands::t", out)
 
     def test_control_bidi_and_invisible_characters_are_stripped(self) -> None:
-        row = {"status": "hard_fail", "expected": "a\x1b[31mred\u2028b\u202ec\u2066d\u200be"}
+        invisible = "\u200c\u200d\u200e\u200f\u2060\ufeff\u061c"
+        row = {
+            "status": "hard_fail",
+            "expected": "a\x1b[31mred\u2028b\u202ec\u2066d\u200be" + invisible + "f",
+        }
 
         out = _pa._workflow_annotation("tests/a.py", 1, row)
         md = _pa._format_failure(row)
 
-        for char in ("\x1b", "\u2028", "\u202e", "\u2066", "\u200b"):
+        for char in ("\x1b", "\u2028", "\u202e", "\u2066", "\u200b", *invisible):
             self.assertNotIn(char, out)
             self.assertNotIn(char, md)
 
