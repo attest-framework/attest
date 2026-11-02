@@ -5,10 +5,12 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
 
+	"github.com/attest-ai/attest/engine/internal/cache"
 	"github.com/attest-ai/attest/engine/pkg/types"
 )
 
@@ -280,5 +282,38 @@ func TestResolveJudgeConfig_NativeProviderStandardKeys(t *testing.T) {
 				t.Errorf("baseURL = %q, want %q", cfg.baseURL, tc.wantBaseURL)
 			}
 		})
+	}
+}
+
+// TestJudgeCache_SameGatewayAndModel_NotSharedAcrossProviders opens the
+// judge cache the way the handler does for two providers configured with
+// the same base URL and model name: a score cached by one is a miss for
+// the other.
+func TestJudgeCache_SameGatewayAndModel_NotSharedAcrossProviders(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "attest.db")
+	anthropicCfg := judgeConfig{provider: "anthropic", baseURL: "https://gateway.example", model: "shared-model"}
+	geminiCfg := judgeConfig{provider: "gemini", baseURL: "https://gateway.example", model: "shared-model"}
+	anthropicCache, err := cache.NewJudgeCache(dbPath, 10, anthropicCfg.cacheEndpoint())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer anthropicCache.Close()
+	if err := anthropicCache.Put("content", "default", "shared-model", &cache.JudgeCacheEntry{Score: 0.9}); err != nil {
+		t.Fatal(err)
+	}
+	geminiCache, err := cache.NewJudgeCache(dbPath, 10, geminiCfg.cacheEndpoint())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer geminiCache.Close()
+
+	got, err := geminiCache.Get("content", "default", "shared-model")
+	again, _ := anthropicCache.Get("content", "default", "shared-model")
+
+	if err != nil || got != nil {
+		t.Errorf("gemini read anthropic's cached score: %+v (err %v)", got, err)
+	}
+	if again == nil || again.Score != 0.9 {
+		t.Errorf("anthropic lost its own cached score: %+v", again)
 	}
 }

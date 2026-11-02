@@ -23,6 +23,13 @@ type judgeConfig struct {
 	insecure  bool   // plain http to a non-loopback host: the key travels in cleartext
 }
 
+// cacheEndpoint scopes judge cache entries by provider and base URL, so two
+// providers behind the same gateway with the same model name never share
+// scores.
+func (c judgeConfig) cacheEndpoint() string {
+	return c.provider + "|" + c.baseURL
+}
+
 // judgeBackend describes one native judge provider family.
 type judgeBackend struct {
 	defaultBaseURL string
