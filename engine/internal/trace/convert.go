@@ -86,6 +86,10 @@ type spanIndex struct {
 	cyclic   []bool   // span lies on a parent cycle
 	agentOf  []int    // nearest invoke_agent ancestor, -1 for none
 	topAgent []int    // outermost invoke_agent ancestor-or-self, -1 for none
+	// root is the earliest span without a parent id, or else the only span
+	// whose parent is outside the export (a remote parent); -1 for none.
+	root       int
+	remoteRoot bool
 }
 
 // operation returns the normalized gen_ai.operation.name of a span.
@@ -107,6 +111,9 @@ func classify(s *Span) string {
 	if _, ok := a[attrToolName]; ok {
 		return types.StepTypeToolCall
 	}
+	if hasAny(a, attrCompletion, attrPrompt, attrInputMessages, attrOutputMessages) {
+		return types.StepTypeLLMCall
+	}
 	if hasAny(a, attrAgentName, attrAgentID) {
 		return types.StepTypeAgentCall
 	}
@@ -114,9 +121,6 @@ func classify(s *Span) string {
 		if strings.HasPrefix(k, "gen_ai.retrieval.") {
 			return types.StepTypeRetrieval
 		}
-	}
-	if hasAny(a, attrCompletion, attrPrompt, attrInputMessages, attrOutputMessages) {
-		return types.StepTypeLLMCall
 	}
 	if fields := strings.Fields(s.Name); len(fields) > 0 {
 		return operationStep[strings.ToLower(fields[0])]
@@ -171,7 +175,27 @@ func newSpanIndex(in []Span) *spanIndex {
 		}
 	}
 	idx.resolveAncestry()
+	idx.root = -1
+	var missing []int
+	for i := range spans {
+		if spans[i].ParentSpanID == "" {
+			idx.root = i
+			break
+		}
+		if idx.parentOf[i] < 0 {
+			missing = append(missing, i)
+		}
+	}
+	if idx.root < 0 && len(missing) == 1 {
+		idx.root, idx.remoteRoot = missing[0], true
+	}
 	return idx
+}
+
+// isChatModel reports whether span i is a model call that can request tools
+// (any LLM operation except embeddings).
+func (x *spanIndex) isChatModel(i int) bool {
+	return x.kinds[i] == types.StepTypeLLMCall && x.ops[i] != "embeddings"
 }
 
 func (x *spanIndex) isInvokeAgent(i int) bool {
@@ -246,8 +270,11 @@ func FromSpans(spans []Span, opts ConvertOptions) (*types.Trace, error) {
 	if ids := traceIDs(spans); len(ids) > 1 {
 		return nil, fmt.Errorf("input holds %d traces (%s); convert one trace per file", len(ids), strings.Join(ids, ", "))
 	}
+	if n := contentBytes(spans); n > MaxTraceSize {
+		return nil, fmt.Errorf("recorded content is %d bytes; a trace holds at most %d", n, MaxTraceSize)
+	}
 	x := newSpanIndex(spans)
-	c := converter{x: x, stepOf: make(map[int]int)}
+	c := converter{x: x, stepOf: make(map[int]int), texts: make(map[int]string)}
 	if err := c.buildSteps(); err != nil {
 		return nil, err
 	}
@@ -272,7 +299,7 @@ func FromSpans(spans []Span, opts ConvertOptions) (*types.Trace, error) {
 			t.Input = mustJSON(map[string]any{"messages": decodeJSONText(msgs)})
 		}
 	}
-	t.Output = mustJSON(map[string]any{"message": c.lastText})
+	t.Output = mustJSON(map[string]any{"message": c.outputText()})
 	for i := range x.spans {
 		if id, ok := x.spans[i].Attributes[attrConversationID].(string); ok && id != "" {
 			t.ConversationID = id
@@ -307,7 +334,7 @@ type converter struct {
 	turns     []types.Turn
 	handoffs  []types.Handoff
 
-	lastText    string
+	texts       map[int]string // span index → model output text
 	totalTokens *int
 	costUSD     *float64
 	model       *string
@@ -327,7 +354,7 @@ func (c *converter) buildSteps() error {
 		step, err := c.buildStep(i, kind)
 		if err != nil {
 			s := &c.x.spans[i]
-			return fmt.Errorf("span %s (%s): %w", s.SpanID, s.Name, err)
+			return fmt.Errorf("span %s (%q): %w", s.SpanID, s.Name, err)
 		}
 		c.stepOf[i] = len(c.steps)
 		c.stepSpan = append(c.stepSpan, i)
@@ -372,7 +399,7 @@ func (c *converter) buildStep(i int, kind string) (types.Step, error) {
 	var err error
 	switch kind {
 	case types.StepTypeLLMCall:
-		args, result, err = c.llmStep(&step, a)
+		args, result, err = c.llmStep(i, &step, a)
 	case types.StepTypeToolCall:
 		if name, ok := a[attrToolName].(string); ok && name != "" {
 			step.Name = name
@@ -396,7 +423,7 @@ func (c *converter) buildStep(i int, kind string) (types.Step, error) {
 	return step, nil
 }
 
-func (c *converter) llmStep(step *types.Step, a map[string]any) (args, result map[string]any, err error) {
+func (c *converter) llmStep(i int, step *types.Step, a map[string]any) (args, result map[string]any, err error) {
 	args = pick(a, map[string]string{attrRequestModel: "model", attrSystem: "system", attrProvider: "provider", attrPrompt: "prompt"})
 	if op, _ := a[attrOperation].(string); op != "" {
 		args["operation"] = strings.ToLower(strings.TrimSpace(op))
@@ -446,7 +473,7 @@ func (c *converter) llmStep(step *types.Step, a map[string]any) (args, result ma
 		}
 	}
 	if text := llmText(a); text != "" {
-		c.lastText = text
+		c.texts[i] = text
 	}
 	inMsgs, hasIn := a[attrInputMessages]
 	outMsgs, hasOut := a[attrOutputMessages]
@@ -502,45 +529,101 @@ func (c *converter) buildHandoffs() {
 		if from < 0 {
 			continue
 		}
+		fromName := agentName(&c.x.spans[from], c.x.spans[from].SpanID)
+		toName := agentName(&c.x.spans[si], c.x.spans[si].SpanID)
+		if fromName == toName {
+			continue
+		}
 		c.handoffs = append(c.handoffs, types.Handoff{
-			FromAgent: agentName(&c.x.spans[from], c.x.spans[from].SpanID),
-			ToAgent:   agentName(&c.x.spans[si], c.x.spans[si].SpanID),
+			FromAgent: fromName,
+			ToAgent:   toName,
 			StepIndex: stepIdx,
 		})
 	}
 }
 
-// markRetries sets retry_of on a step that repeats a failed sibling: a tool
-// call with the same tool name and arguments as an earlier failed call under
-// the same parent, or a model call directly after a failed model call under
-// the same parent.
+// markRetries sets retry_of on a step that repeats a failed sibling under the
+// same parent: a tool call with the same tool name and arguments as an
+// earlier failed call, or a model call with the same name and request model
+// directly after a failed model call. Each step is matched in constant time.
 func (c *converter) markRetries() {
-	byParent := map[string][]int{} // parent span id → earlier steps
+	type toolKey struct{ parent, name, args string }
+	failedTool := map[toolKey]int{} // latest failed tool call per key
+	lastModel := map[string]int{}   // latest model call per parent
 	for i := range c.steps {
 		cur := &c.steps[i]
-		siblings := byParent[cur.ParentSpanID]
-		for k := len(siblings) - 1; k >= 0; k-- {
-			j := siblings[k]
-			prev := &c.steps[j]
-			if prev.Type != cur.Type {
-				continue
+		switch cur.Type {
+		case types.StepTypeToolCall:
+			key := toolKey{cur.ParentSpanID, cur.Name, string(cur.Args)}
+			if j, ok := failedTool[key]; ok {
+				prev := j
+				cur.RetryOf = &prev
 			}
-			if cur.Type == types.StepTypeLLMCall {
-				if prev.Error != nil {
+			if cur.Error != nil {
+				failedTool[key] = i
+			} else {
+				delete(failedTool, key)
+			}
+		case types.StepTypeLLMCall:
+			if j, ok := lastModel[cur.ParentSpanID]; ok {
+				prev := &c.steps[j]
+				if prev.Error != nil && prev.Name == cur.Name && requestModel(prev) == requestModel(cur) {
 					prevIdx := j
 					cur.RetryOf = &prevIdx
 				}
-				break
 			}
-			if cur.Type == types.StepTypeToolCall && prev.Error != nil &&
-				prev.Name == cur.Name && string(prev.Args) == string(cur.Args) {
-				prevIdx := j
-				cur.RetryOf = &prevIdx
-				break
-			}
+			lastModel[cur.ParentSpanID] = i
 		}
-		byParent[cur.ParentSpanID] = append(siblings, i)
 	}
+}
+
+// requestModel is the gen_ai.request.model recorded in a model step's args.
+func requestModel(s *types.Step) string {
+	var args struct {
+		Model string `json:"model"`
+	}
+	if err := json.Unmarshal(s.Args, &args); err != nil {
+		return ""
+	}
+	return args.Model
+}
+
+// outputText is the trace's final answer: the text of the last turn's
+// recorded output messages, else the text of the model call that ended last
+// directly inside a top-level agent (or anywhere, when no model call is).
+func (c *converter) outputText() string {
+	if n := len(c.turnSpans); n > 0 {
+		if text := messagesText(c.x.spans[c.turnSpans[n-1]].Attributes[attrOutputMessages]); text != "" {
+			return text
+		}
+	}
+	best, bestOuter := -1, false
+	for i, text := range c.texts {
+		if text == "" {
+			continue
+		}
+		outer := c.x.agentOf[i] == c.x.topAgent[i]
+		switch {
+		case best < 0, outer && !bestOuter:
+		case outer == bestOuter && c.endsAfter(i, best):
+		default:
+			continue
+		}
+		best, bestOuter = i, outer
+	}
+	if best < 0 {
+		return ""
+	}
+	return c.texts[best]
+}
+
+// endsAfter orders spans by end time, then by start order.
+func (c *converter) endsAfter(i, j int) bool {
+	a, b := &c.x.spans[i], &c.x.spans[j]
+	if a.EndNs != b.EndNs {
+		return a.EndNs > b.EndNs
+	}
+	return i > j
 }
 
 func (c *converter) metadata() *types.TraceMetadata {
@@ -560,12 +643,7 @@ func (c *converter) metadata() *types.TraceMetadata {
 
 // rootSpan is the earliest span without a parent, or -1.
 func (c *converter) rootSpan() int {
-	for i := range c.x.spans {
-		if c.x.spans[i].ParentSpanID == "" {
-			return i
-		}
-	}
-	return -1
+	return c.x.root
 }
 
 func agentName(s *Span, fallback string) string {
@@ -608,7 +686,7 @@ func objectOf(a map[string]any, attr, wrapKey string) map[string]any {
 // that are not JSON, are returned unchanged.
 func decodeJSONText(v any) any {
 	s, ok := v.(string)
-	if !ok {
+	if !ok || len(s) > MaxStepPayload {
 		return v
 	}
 	trimmed := strings.TrimSpace(s)
@@ -622,13 +700,37 @@ func decodeJSONText(v any) any {
 	return out
 }
 
+// contentAttributes are the attributes whose JSON text is decoded into the
+// trace.
+var contentAttributes = []string{attrInputMessages, attrOutputMessages, attrSystemInstr, attrToolArguments, attrToolResult}
+
+// contentBytes is the total length of recorded content strings, which bounds
+// the size of the converted trace before any of it is decoded.
+func contentBytes(spans []Span) int {
+	n := 0
+	for i := range spans {
+		for _, k := range contentAttributes {
+			if s, ok := spans[i].Attributes[k].(string); ok {
+				n += len(s)
+			}
+		}
+	}
+	return n
+}
+
 // llmText is the model's text output: gen_ai.completion, else the text
 // parts of the last gen_ai.output.messages entry.
 func llmText(a map[string]any) string {
 	if s, ok := a[attrCompletion].(string); ok && s != "" {
 		return s
 	}
-	msgs, ok := decodeJSONText(a[attrOutputMessages]).([]any)
+	return messagesText(a[attrOutputMessages])
+}
+
+// messagesText joins the text parts of the last GenAI message in v (a JSON
+// string or decoded list).
+func messagesText(v any) string {
+	msgs, ok := decodeJSONText(v).([]any)
 	if !ok || len(msgs) == 0 {
 		return ""
 	}

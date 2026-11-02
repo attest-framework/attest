@@ -24,11 +24,23 @@ const (
 	IssueUnpairedToolCall   = "unpaired_tool_call"
 	IssueUnpairedToolResult = "unpaired_tool_result"
 	IssueConversion         = "conversion_failed"
+	IssueRemoteParent       = "remote_parent"
+	IssueUnrequestedTool    = "unrequested_tool"
 	IssueEndBeforeStart     = "end_before_start"
 	IssueOutsideParent      = "outside_parent"
 	IssueMultipleRoots      = "multiple_roots"
+	IssueNoRoot             = "no_root"
 	IssueNoGenAISpans       = "no_genai_spans"
 )
+
+// toolRequestReasons are finish reasons with which providers end a model
+// call that requests tools (OpenAI, Anthropic and Bedrock, legacy OpenAI).
+var toolRequestReasons = map[string]bool{
+	"tool_calls":    true,
+	"tool_call":     true,
+	"tool_use":      true,
+	"function_call": true,
+}
 
 // Issue is one structural finding about a span.
 type Issue struct {
@@ -89,7 +101,9 @@ func Check(spans []Span) *CheckReport {
 	r.TraceID = spans[0].TraceID
 	x := newSpanIndex(spans)
 	c := checker{x: x, r: r}
-	if ids := traceIDs(spans); len(ids) > 1 {
+	multiple := len(traceIDs(spans)) > 1
+	if multiple {
+		ids := traceIDs(spans)
 		c.add(SeverityError, IssueMultipleTraces, "", fmt.Sprintf("input holds %d traces (%s); check one trace per file", len(ids), strings.Join(ids, ", ")))
 	}
 	c.checkParentage()
@@ -97,7 +111,7 @@ func Check(spans []Span) *CheckReport {
 	c.coverage()
 
 	if t, err := FromSpans(spans, ConvertOptions{}); err != nil {
-		if len(traceIDs(spans)) == 1 {
+		if !multiple {
 			c.add(SeverityError, IssueConversion, "", err.Error())
 		}
 	} else {
@@ -118,10 +132,8 @@ func Check(spans []Span) *CheckReport {
 }
 
 type checker struct {
-	x           *spanIndex
-	r           *CheckReport
-	toolParents map[string]bool // span ids with a tool span child
-	hasModel    *bool
+	x *spanIndex
+	r *CheckReport
 }
 
 func (c *checker) add(severity, code, spanID, msg string) {
@@ -145,12 +157,16 @@ func (c *checker) checkParentage() {
 			roots = append(roots, s.SpanID)
 			continue
 		}
-		p, ok := c.x.byID[s.ParentSpanID]
-		if !ok {
+		p := c.x.parentOf[i]
+		if p < 0 {
+			if c.x.remoteRoot && c.x.root == i {
+				c.add(SeverityWarning, IssueRemoteParent, s.SpanID, fmt.Sprintf("span %q is the local root; its parent %s is outside this export", s.Name, s.ParentSpanID))
+				continue
+			}
 			c.add(SeverityError, IssueOrphanSpan, s.SpanID, fmt.Sprintf("span %q names parent %s, which is not in the trace", s.Name, s.ParentSpanID))
 			continue
 		}
-		if c.inCycle(i) {
+		if c.x.cyclic[i] {
 			c.add(SeverityError, IssueParentCycle, s.SpanID, fmt.Sprintf("span %q is its own ancestor", s.Name))
 			continue
 		}
@@ -159,62 +175,93 @@ func (c *checker) checkParentage() {
 			c.add(SeverityWarning, IssueOutsideParent, s.SpanID, fmt.Sprintf("span %q runs outside its parent %s (%q)", s.Name, ps.SpanID, ps.Name))
 		}
 	}
-	if len(roots) > 1 {
+	switch {
+	case len(roots) > 1:
 		c.add(SeverityWarning, IssueMultipleRoots, "", fmt.Sprintf("trace has %d root spans (%s)", len(roots), strings.Join(roots, ", ")))
-	}
-	if len(roots) == 0 {
-		c.add(SeverityWarning, IssueMultipleRoots, "", "trace has no root span")
+	case len(roots) == 0 && !c.x.remoteRoot:
+		c.add(SeverityWarning, IssueNoRoot, "", "trace has no root span")
 	}
 }
 
-// inCycle reports whether span i lies on a parent cycle.
-func (c *checker) inCycle(i int) bool {
-	return c.x.cyclic[i]
-}
-
-// checkToolPairing pairs model tool requests with tool executions.
+// checkToolPairing pairs model tool requests with tool executions inside
+// each agent scope (the spans under one invoke_agent span, or the spans under
+// no agent), in start order, so tools may be siblings of the model call,
+// its children, or under separate framework node spans.
 //
-// Without recorded content, a model span whose finish reasons include
-// "tool_calls" must be followed by at least one tool span (a later sibling
-// before the next model span, or a child), and every tool span must follow
-// such a model span. With recorded output messages, each requested tool
-// call id must match a tool span's gen_ai.tool.call.id and vice versa.
+// Without recorded content a model call that finished with a tool request
+// must be followed by a tool span before the next model call in its scope,
+// and a tool span must follow some model call in its scope. Where the
+// requesting model call recorded gen_ai.output.messages, tool call ids are
+// matched exactly instead.
 func (c *checker) checkToolPairing() {
-	groups := map[string][]int{} // parent span id → children in start order
-	var order []string
-	c.toolParents = map[string]bool{}
+	scopes := map[int][]int{} // nearest invoke_agent span (-1 for none) → spans
+	var order []int
 	for i := range c.x.spans {
-		pid := c.x.spans[i].ParentSpanID
-		if _, ok := groups[pid]; !ok {
-			order = append(order, pid)
+		k := c.x.kinds[i]
+		if k != types.StepTypeToolCall && !c.x.isChatModel(i) {
+			continue
 		}
-		groups[pid] = append(groups[pid], i)
-		if c.x.kinds[i] == types.StepTypeToolCall {
-			c.toolParents[pid] = true
+		scope := c.x.agentOf[i]
+		if _, ok := scopes[scope]; !ok {
+			order = append(order, scope)
+		}
+		scopes[scope] = append(scopes[scope], i)
+	}
+	requested := map[string]string{} // recorded tool call id → model span id
+	executed := map[string]bool{}    // tool call ids on tool spans
+	for _, scope := range order {
+		c.pairScope(scopes[scope], requested, executed)
+	}
+	ids := make([]string, 0, len(requested))
+	for id := range requested {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	for _, id := range ids {
+		if !executed[id] {
+			c.add(SeverityError, IssueUnpairedToolCall, requested[id], fmt.Sprintf("model requested tool call id %q, but no tool span records it", id))
 		}
 	}
-	for _, pid := range order {
-		c.pairSiblings(groups[pid])
-	}
-	c.pairByCallID()
 }
 
-func (c *checker) pairSiblings(members []int) {
-	pending := -1 // model span awaiting a tool execution
+func (c *checker) pairScope(members []int, requested map[string]string, executed map[string]bool) {
+	pending := -1 // model call awaiting a tool execution (no recorded content)
+	lastModel := -1
+	var scopeIDs map[string]bool // ids requested by recorded model calls in scope
 	for _, i := range members {
-		switch c.x.kinds[i] {
-		case types.StepTypeLLMCall:
+		s := &c.x.spans[i]
+		if c.x.kinds[i] != types.StepTypeToolCall {
 			c.flushPending(pending)
-			pending = -1
-			if requestsTools(&c.x.spans[i]) && !c.hasToolChild(i) {
-				pending = i
-			}
-		case types.StepTypeToolCall:
-			if pending >= 0 {
-				pending = -1
+			pending, lastModel = -1, i
+			if ids, recorded := recordedToolCallIDs(s); recorded {
+				if scopeIDs == nil {
+					scopeIDs = map[string]bool{}
+				}
+				for _, id := range ids {
+					requested[id] = s.SpanID
+					scopeIDs[id] = true
+				}
 				continue
 			}
-			c.checkToolHasRequest(i, members)
+			if requestsTools(s) {
+				pending = i
+			}
+			continue
+		}
+		pending = -1
+		id, _ := s.Attributes[attrToolCallID].(string)
+		if id != "" {
+			executed[id] = true
+		}
+		switch {
+		case lastModel < 0:
+			c.add(SeverityError, IssueUnpairedToolResult, s.SpanID, fmt.Sprintf("tool span %q has no model call before it in its agent scope", s.Name))
+		case hasRecordedOutput(&c.x.spans[lastModel]):
+			if id != "" && !scopeIDs[id] {
+				c.add(SeverityError, IssueUnpairedToolResult, s.SpanID, fmt.Sprintf("tool call id %q was not requested by any recorded model output", id))
+			}
+		case knownNonToolFinish(&c.x.spans[lastModel]):
+			c.add(SeverityWarning, IssueUnrequestedTool, s.SpanID, fmt.Sprintf("tool span %q follows model call %s, whose finish reasons do not request tools", s.Name, c.x.spans[lastModel].SpanID))
 		}
 	}
 	c.flushPending(pending)
@@ -225,104 +272,21 @@ func (c *checker) flushPending(i int) {
 		return
 	}
 	s := &c.x.spans[i]
-	c.add(SeverityError, IssueUnpairedToolCall, s.SpanID, fmt.Sprintf("model span %q finished with tool_calls but no tool span executes the call", s.Name))
+	c.add(SeverityError, IssueUnpairedToolCall, s.SpanID, fmt.Sprintf("model span %q finished with a tool request but no tool span executes it", s.Name))
 }
 
-// checkToolHasRequest flags a tool span whose preceding model span (its
-// parent, or the latest earlier model sibling) did not request tools.
-func (c *checker) checkToolHasRequest(i int, siblings []int) {
-	s := &c.x.spans[i]
-	if p := c.x.parent(i); p >= 0 && c.x.kinds[p] == types.StepTypeLLMCall {
-		return
-	}
-	prev := -1
-	for _, j := range siblings {
-		if j == i {
-			break
-		}
-		if c.x.kinds[j] == types.StepTypeLLMCall {
-			prev = j
-		}
-	}
-	if prev < 0 {
-		if c.anyModelSpan() {
-			c.add(SeverityError, IssueUnpairedToolResult, s.SpanID, fmt.Sprintf("tool span %q has no preceding model span that requested it", s.Name))
-		}
-		return
-	}
-	if _, known := c.x.spans[prev].Attributes[attrFinishReasons]; known && !requestsTools(&c.x.spans[prev]) {
-		c.add(SeverityError, IssueUnpairedToolResult, s.SpanID, fmt.Sprintf("tool span %q follows model span %s, which did not finish with tool_calls", s.Name, c.x.spans[prev].SpanID))
-	}
+func hasRecordedOutput(s *Span) bool {
+	_, ok := decodeJSONText(s.Attributes[attrOutputMessages]).([]any)
+	return ok
 }
 
-func (c *checker) anyModelSpan() bool {
-	if c.hasModel == nil {
-		found := false
-		for _, k := range c.x.kinds {
-			if k == types.StepTypeLLMCall {
-				found = true
-				break
-			}
-		}
-		c.hasModel = &found
+// recordedToolCallIDs returns the tool call ids in a model span's recorded
+// output messages, and whether output messages were recorded.
+func recordedToolCallIDs(s *Span) ([]string, bool) {
+	msgs, ok := decodeJSONText(s.Attributes[attrOutputMessages]).([]any)
+	if !ok {
+		return nil, false
 	}
-	return *c.hasModel
-}
-
-func (c *checker) hasToolChild(i int) bool {
-	return c.toolParents[c.x.spans[i].SpanID]
-}
-
-// pairByCallID matches tool call ids requested in recorded output messages
-// with tool spans' gen_ai.tool.call.id. It runs only when some model span
-// records output messages.
-func (c *checker) pairByCallID() {
-	requested := map[string]string{} // call id → model span id
-	recorded := false
-	for i := range c.x.spans {
-		if c.x.kinds[i] != types.StepTypeLLMCall {
-			continue
-		}
-		msgs, ok := decodeJSONText(c.x.spans[i].Attributes[attrOutputMessages]).([]any)
-		if !ok {
-			continue
-		}
-		recorded = true
-		for _, id := range toolCallIDs(msgs) {
-			requested[id] = c.x.spans[i].SpanID
-		}
-	}
-	if !recorded {
-		return
-	}
-	executed := map[string]bool{}
-	for i := range c.x.spans {
-		if c.x.kinds[i] != types.StepTypeToolCall {
-			continue
-		}
-		id, _ := c.x.spans[i].Attributes[attrToolCallID].(string)
-		if id == "" {
-			continue
-		}
-		executed[id] = true
-		if _, ok := requested[id]; !ok {
-			c.add(SeverityError, IssueUnpairedToolResult, c.x.spans[i].SpanID, fmt.Sprintf("tool call id %s was not requested by any recorded model output", id))
-		}
-	}
-	ids := make([]string, 0, len(requested))
-	for id := range requested {
-		ids = append(ids, id)
-	}
-	sort.Strings(ids)
-	for _, id := range ids {
-		if !executed[id] {
-			c.add(SeverityError, IssueUnpairedToolCall, requested[id], fmt.Sprintf("model requested tool call id %s, but no tool span records it", id))
-		}
-	}
-}
-
-// toolCallIDs returns the ids of tool_call parts in GenAI output messages.
-func toolCallIDs(msgs []any) []string {
 	var ids []string
 	for _, m := range msgs {
 		msg, ok := m.(map[string]any)
@@ -340,22 +304,38 @@ func toolCallIDs(msgs []any) []string {
 			}
 		}
 	}
-	return ids
+	return ids, true
+}
+
+func finishReasons(s *Span) []string {
+	var out []string
+	switch v := s.Attributes[attrFinishReasons].(type) {
+	case string:
+		out = append(out, v)
+	case []any:
+		for _, r := range v {
+			if str, ok := r.(string); ok {
+				out = append(out, str)
+			}
+		}
+	}
+	return out
 }
 
 func requestsTools(s *Span) bool {
-	reasons, ok := s.Attributes[attrFinishReasons].([]any)
-	if !ok {
-		if one, isStr := s.Attributes[attrFinishReasons].(string); isStr {
-			reasons = []any{one}
-		}
-	}
-	for _, r := range reasons {
-		if r == "tool_calls" || r == "tool_call" {
+	for _, r := range finishReasons(s) {
+		if toolRequestReasons[strings.ToLower(r)] {
 			return true
 		}
 	}
 	return false
+}
+
+// knownNonToolFinish reports a model call whose finish reasons are recorded
+// and none of them requests tools. Some providers (Gemini) finish tool
+// requests with "STOP", so this is only a warning.
+func knownNonToolFinish(s *Span) bool {
+	return len(finishReasons(s)) > 0 && !requestsTools(s)
 }
 
 // coverageRule names evidence a span kind should record.

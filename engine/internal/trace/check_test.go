@@ -142,10 +142,11 @@ func TestCheck_StructuralErrors(t *testing.T) {
 			span("a000000000000002", "a000000000000003", "", 1, 2),
 			span("a000000000000003", "a000000000000002", "", 1, 2),
 		}, IssueParentCycle, "a000000000000002"},
-		{"tool result without request", []string{
+		{"tool span with no model call in scope", []string{
 			span("a000000000000001", "", "", 0, 10),
-			span("a000000000000002", "a000000000000001", op("chat")+","+finish("stop"), 1, 2),
 			span("a000000000000003", "a000000000000001", op("execute_tool"), 3, 4),
+			span("a000000000000002", "a000000000000001", op("chat")+","+finish("tool_calls"), 5, 6),
+			span("a000000000000004", "a000000000000001", op("execute_tool"), 7, 8),
 		}, IssueUnpairedToolResult, "a000000000000003"},
 		{"requested call id never executed", []string{
 			span("a000000000000001", "", "", 0, 10),
@@ -239,5 +240,117 @@ func TestCheck_LongParentChainStaysLinear(t *testing.T) {
 	}
 	if !r.OK || r.Handoffs != n-1 || r.Turns != 1 {
 		t.Errorf("ok=%v turns=%d handoffs=%d issues=%+v", r.OK, r.Turns, r.Handoffs, r.Issues)
+	}
+}
+
+// Real-world export shapes that are structurally sound must not report
+// integrity errors.
+func TestCheck_RealWorldShapesHaveNoErrors(t *testing.T) {
+	const tid = "4bf92f3577b34da6a3ce929d0e0e4736"
+	type sp struct {
+		id, parent string
+		attrs      map[string]any
+		start, end int
+	}
+	chat := func(reason string) map[string]any {
+		return map[string]any{"gen_ai.operation.name": "chat", "gen_ai.response.finish_reasons": reason}
+	}
+	tool := func(id string) map[string]any {
+		a := map[string]any{"gen_ai.operation.name": "execute_tool", "gen_ai.tool.name": "lookup"}
+		if id != "" {
+			a["gen_ai.tool.call.id"] = id
+		}
+		return a
+	}
+	recorded := func(ids ...string) map[string]any {
+		a := chat("tool_calls")
+		var parts []string
+		for _, id := range ids {
+			parts = append(parts, fmt.Sprintf(`{"type":"tool_call","id":%q,"name":"lookup"}`, id))
+		}
+		a["gen_ai.output.messages"] = fmt.Sprintf(`[{"role":"assistant","parts":[%s]}]`, strings.Join(parts, ","))
+		return a
+	}
+	node := map[string]any{"langgraph.node": "agent"}
+	cases := map[string][]sp{
+		"anthropic tool_use": {
+			{"a000000000000001", "", map[string]any{"gen_ai.operation.name": "invoke_agent", "gen_ai.agent.name": "a"}, 0, 100},
+			{"a000000000000002", "a000000000000001", chat("tool_use"), 1, 2},
+			{"a000000000000003", "a000000000000001", tool("toolu_1"), 3, 4},
+			{"a000000000000004", "a000000000000001", chat("end_turn"), 5, 6},
+		},
+		"tools under separate framework node spans": {
+			{"a000000000000001", "", map[string]any{"gen_ai.operation.name": "invoke_agent", "gen_ai.agent.name": "graph"}, 0, 100},
+			{"a000000000000002", "a000000000000001", node, 1, 10},
+			{"a000000000000003", "a000000000000002", chat("tool_calls"), 2, 9},
+			{"a000000000000004", "a000000000000001", map[string]any{"langgraph.node": "tools"}, 11, 20},
+			{"a000000000000005", "a000000000000004", tool("call_1"), 12, 19},
+		},
+		"tool nested under the model span": {
+			{"a000000000000001", "", nil, 0, 100},
+			{"a000000000000002", "a000000000000001", chat("tool_calls"), 1, 50},
+			{"a000000000000003", "a000000000000002", tool(""), 10, 20},
+		},
+		"parallel tool calls": {
+			{"a000000000000001", "", nil, 0, 100},
+			{"a000000000000002", "a000000000000001", chat("tool_calls"), 1, 2},
+			{"a000000000000003", "a000000000000001", tool("call_1"), 3, 9},
+			{"a000000000000004", "a000000000000001", tool("call_2"), 3, 8},
+			{"a000000000000005", "a000000000000001", chat("stop"), 10, 11},
+		},
+		"embeddings between request and tool": {
+			{"a000000000000001", "", nil, 0, 100},
+			{"a000000000000002", "a000000000000001", chat("tool_calls"), 1, 2},
+			{"a000000000000003", "a000000000000001", map[string]any{"gen_ai.operation.name": "embeddings"}, 3, 4},
+			{"a000000000000004", "a000000000000001", tool(""), 5, 6},
+		},
+		"remote parent of the local root": {
+			{"a000000000000001", "ffffffffffffffff", nil, 0, 100},
+			{"a000000000000002", "a000000000000001", chat("stop"), 1, 2},
+		},
+		"partial content capture": {
+			{"a000000000000001", "", nil, 0, 100},
+			{"a000000000000002", "a000000000000001", recorded("call_1"), 1, 2},
+			{"a000000000000003", "a000000000000001", tool("call_1"), 3, 4},
+			{"a000000000000004", "a000000000000001", chat("tool_calls"), 5, 6},
+			{"a000000000000005", "a000000000000001", tool("call_2"), 7, 8},
+		},
+		"gemini STOP before a tool": {
+			{"a000000000000001", "", nil, 0, 100},
+			{"a000000000000002", "a000000000000001", chat("STOP"), 1, 2},
+			{"a000000000000003", "a000000000000001", tool(""), 3, 4},
+		},
+	}
+	for name, spans := range cases {
+		t.Run(name, func(t *testing.T) {
+			var encoded []string
+			for _, s := range spans {
+				parent := ""
+				if s.parent != "" {
+					parent = fmt.Sprintf(`"parentSpanId":%q,`, s.parent)
+				}
+				encoded = append(encoded, fmt.Sprintf(`{"traceId":%q,"spanId":%q,%s"name":"s","startTimeUnixNano":"%d","endTimeUnixNano":"%d","attributes":[%s]}`,
+					tid, s.id, parent, s.start, s.end, otlpAttrs(t, s.attrs)))
+			}
+			r := checkData(t, otlpDoc(encoded...))
+			if !r.OK {
+				t.Errorf("integrity errors on a sound trace: %+v", r.Errors())
+			}
+		})
+	}
+}
+
+func TestCheck_RemoteParentIsTheRoot(t *testing.T) {
+	data := otlpDoc(`{"traceId":"4bf92f3577b34da6a3ce929d0e0e4736","spanId":"a000000000000001","parentSpanId":"ffffffffffffffff","name":"invoke_agent a","startTimeUnixNano":"0","endTimeUnixNano":"5000000","attributes":[{"key":"gen_ai.operation.name","value":{"stringValue":"invoke_agent"}}]}`)
+	r := checkData(t, data)
+	if is := findIssue(r, IssueRemoteParent, "a000000000000001"); is == nil || is.Severity != SeverityWarning {
+		t.Errorf("want remote_parent warning, got %+v", r.Issues)
+	}
+	tr, err := ConvertOTLP(data, ConvertOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tr.Metadata == nil || tr.Metadata.LatencyMS == nil || *tr.Metadata.LatencyMS != 5 {
+		t.Errorf("latency from the remote-parented root = %+v, want 5ms", tr.Metadata)
 	}
 }

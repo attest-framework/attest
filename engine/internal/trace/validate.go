@@ -41,7 +41,7 @@ func validateAtDepth(t *types.Trace, depth int, traceSize int) *types.RPCError {
 			fmt.Sprintf("unsupported schema_version %d; engine supports versions %d to %d", t.SchemaVersion, MinSchemaVersion, CurrentSchemaVersion),
 			types.ErrTypeInvalidTrace,
 			false,
-			fmt.Sprintf("Set schema_version to %d (current) or %d (previous, deprecated). Version %d is not supported.", CurrentSchemaVersion, MinSchemaVersion, t.SchemaVersion),
+			fmt.Sprintf("Set schema_version to a version from %d to %d (%d is current). Version %d is not supported.", MinSchemaVersion, CurrentSchemaVersion, CurrentSchemaVersion, t.SchemaVersion),
 		)
 	}
 

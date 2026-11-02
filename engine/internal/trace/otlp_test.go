@@ -2,6 +2,7 @@ package trace
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -226,5 +227,112 @@ func TestValidate_StepReferences(t *testing.T) {
 	ok.Turns = []types.Turn{{StepIndices: []int{0, 1}}}
 	if err := Validate(ok, 0); err != nil {
 		t.Errorf("valid references rejected: %s", err.Message)
+	}
+}
+
+// spanJSON encodes one span of the shared test trace id.
+func spanJSON(t *testing.T, id, parent, name string, start, end int, attrs map[string]any) string {
+	t.Helper()
+	p := ""
+	if parent != "" {
+		p = `"parentSpanId":"` + parent + `",`
+	}
+	return `{"traceId":"4bf92f3577b34da6a3ce929d0e0e4736","spanId":"` + id + `",` + p +
+		`"name":"` + name + `","startTimeUnixNano":"` + fmt.Sprint(start) + `","endTimeUnixNano":"` + fmt.Sprint(end) +
+		`","attributes":[` + otlpAttrs(t, attrs) + `]}`
+}
+
+func TestConvert_AgentNameOnChatSpanStaysAModelCall(t *testing.T) {
+	tr, err := ConvertOTLP(otlpDoc(
+		spanJSON(t, "a000000000000001", "", "invoke_agent x", 0, 100, map[string]any{"gen_ai.operation.name": "invoke_agent", "gen_ai.agent.name": "x"}),
+		spanJSON(t, "a000000000000002", "a000000000000001", "chat", 1, 2, map[string]any{"gen_ai.agent.name": "x", "gen_ai.completion": "hi"}),
+	), ConvertOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tr.Steps) != 1 || tr.Steps[0].Type != types.StepTypeLLMCall || len(tr.Handoffs) != 0 {
+		t.Errorf("steps=%+v handoffs=%+v, want one llm_call and no handoff", tr.Steps, tr.Handoffs)
+	}
+}
+
+func TestConvert_ModelRetryNeedsSameNameAndModel(t *testing.T) {
+	failed := map[string]any{"gen_ai.operation.name": "chat", "gen_ai.request.model": "m1"}
+	tr, err := ConvertOTLP(otlpDoc(
+		spanJSON(t, "a000000000000001", "", "root", 0, 100, nil),
+		strings.Replace(spanJSON(t, "a000000000000002", "a000000000000001", "chat m1", 1, 2, failed), `"attributes"`, `"status":{"code":2},"attributes"`, 1),
+		spanJSON(t, "a000000000000003", "a000000000000001", "chat m2", 3, 4, map[string]any{"gen_ai.operation.name": "chat", "gen_ai.request.model": "m2"}),
+		strings.Replace(spanJSON(t, "a000000000000004", "a000000000000001", "chat m2", 5, 6, map[string]any{"gen_ai.operation.name": "chat", "gen_ai.request.model": "m2"}), `"attributes"`, `"status":{"code":2},"attributes"`, 1),
+		spanJSON(t, "a000000000000005", "a000000000000001", "chat m2", 7, 8, map[string]any{"gen_ai.operation.name": "chat", "gen_ai.request.model": "m2"}),
+	), ConvertOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tr.Steps[1].RetryOf != nil {
+		t.Errorf("a different model after a failure was marked a retry of %d", *tr.Steps[1].RetryOf)
+	}
+	if tr.Steps[3].RetryOf == nil || *tr.Steps[3].RetryOf != 2 {
+		t.Errorf("retry_of = %v, want 2", tr.Steps[3].RetryOf)
+	}
+}
+
+func TestConvert_OutputIsTheTopLevelAnswer(t *testing.T) {
+	agent := func(name string) map[string]any {
+		return map[string]any{"gen_ai.operation.name": "invoke_agent", "gen_ai.agent.name": name}
+	}
+	text := func(s string) map[string]any {
+		return map[string]any{"gen_ai.operation.name": "chat", "gen_ai.completion": s}
+	}
+	spans := []string{
+		spanJSON(t, "a000000000000001", "", "invoke_agent main", 0, 100, agent("main")),
+		spanJSON(t, "a000000000000002", "a000000000000001", "chat", 1, 10, text("final answer")),
+		spanJSON(t, "a000000000000003", "a000000000000001", "invoke_agent helper", 11, 30, agent("helper")),
+		spanJSON(t, "a000000000000004", "a000000000000003", "chat", 12, 29, text("helper scratch")),
+	}
+	tr, err := ConvertOTLP(otlpDoc(spans...), ConvertOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := string(tr.Output); got != `{"message":"final answer"}` {
+		t.Errorf("output = %s, want the top-level agent's answer", got)
+	}
+
+	withTurnOutput := map[string]any{"gen_ai.operation.name": "invoke_agent", "gen_ai.agent.name": "main",
+		"gen_ai.output.messages": `[{"role":"assistant","parts":[{"type":"text","content":"from turn"}]}]`}
+	spans[0] = spanJSON(t, "a000000000000001", "", "invoke_agent main", 0, 100, withTurnOutput)
+	tr, err = ConvertOTLP(otlpDoc(spans...), ConvertOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := string(tr.Output); got != `{"message":"from turn"}` {
+		t.Errorf("output = %s, want the turn's recorded output", got)
+	}
+}
+
+func TestConvert_RecordedContentAboveTraceLimitRejected(t *testing.T) {
+	big := `"` + strings.Repeat("a", MaxStepPayload-10) + `"`
+	var spans []string
+	for i := 1; i <= MaxTraceSize/MaxStepPayload+1; i++ {
+		spans = append(spans, spanJSON(t, fmt.Sprintf("a%015x", i), "", "execute_tool t", i, i+1,
+			map[string]any{"gen_ai.operation.name": "execute_tool", "gen_ai.tool.call.arguments": big}))
+	}
+	_, err := ConvertOTLP(otlpDoc(spans...), ConvertOptions{})
+	if err == nil || !strings.Contains(err.Error(), "recorded content") {
+		t.Fatalf("err = %v, want recorded content limit", err)
+	}
+}
+
+func TestParseOTLP_FloodsRejectedWhileStreaming(t *testing.T) {
+	const validSpan = `{"traceId":"4bf92f3577b34da6a3ce929d0e0e4736","spanId":"a000000000000001","startTimeUnixNano":"1","endTimeUnixNano":"2"}`
+	values := `{"key":"a","value":{"arrayValue":{"values":[` + strings.Repeat(`{},`, MaxOTLPValues) + `{}]}}}`
+	cases := map[string][]byte{
+		"spans":           otlpDoc(strings.Repeat(validSpan+`,`, MaxOTLPSpans) + validSpan),
+		"values":          otlpDoc(`{"traceId":"4bf92f3577b34da6a3ce929d0e0e4736","spanId":"a000000000000001","startTimeUnixNano":"1","endTimeUnixNano":"2","attributes":[` + values + `]}`),
+		"attributes":      otlpDoc(`{"attributes":[` + strings.Repeat(`{"key":"k","value":{}},`, maxAttrsPerSpan) + `{"key":"k","value":{}}]}`),
+		"skipped nesting": []byte(`{"resource":` + strings.Repeat(`[`, maxSkipDepth+1) + strings.Repeat(`]`, maxSkipDepth+1) + `,"resourceSpans":[]}`),
+	}
+	for name, data := range cases {
+		if _, err := ParseOTLP(data); err == nil || !strings.Contains(err.Error(), "more than") && !strings.Contains(err.Error(), "deeper") {
+			t.Errorf("%s: err = %v, want a limit error", name, err)
+		}
 	}
 }

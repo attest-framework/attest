@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 	"text/tabwriter"
+	"unicode"
 
 	"github.com/attest-ai/attest/engine/internal/trace"
 )
@@ -82,16 +83,16 @@ func runTraceConvert(args []string, stdout, stderr io.Writer) int {
 	}
 	data, err := readOTLPInput(path)
 	if err != nil {
-		fmt.Fprintf(stderr, "trace convert: %v\n", err)
+		fmt.Fprintf(stderr, "trace convert: %s\n", terminalSafe(err.Error()))
 		return 1
 	}
 	t, err := trace.ConvertOTLP(data, trace.ConvertOptions{AgentID: *agentID})
 	if err != nil {
-		fmt.Fprintf(stderr, "trace convert: %v\n", err)
+		fmt.Fprintf(stderr, "trace convert: %s\n", terminalSafe(err.Error()))
 		return 1
 	}
 	if err := writeJSON(stdout, t); err != nil {
-		fmt.Fprintf(stderr, "trace convert: %v\n", err)
+		fmt.Fprintf(stderr, "trace convert: %s\n", terminalSafe(err.Error()))
 		return 1
 	}
 	return 0
@@ -107,12 +108,12 @@ func runTraceCheck(args []string, stdout, stderr io.Writer) int {
 	}
 	data, err := readOTLPInput(path)
 	if err != nil {
-		fmt.Fprintf(stderr, "trace check: %v\n", err)
+		fmt.Fprintf(stderr, "trace check: %s\n", terminalSafe(err.Error()))
 		return 1
 	}
 	spans, err := trace.ParseOTLP(data)
 	if err != nil {
-		fmt.Fprintf(stderr, "trace check: %v\n", err)
+		fmt.Fprintf(stderr, "trace check: %s\n", terminalSafe(err.Error()))
 		return 1
 	}
 	report := trace.Check(spans)
@@ -122,7 +123,7 @@ func runTraceCheck(args []string, stdout, stderr io.Writer) int {
 	}
 	if *asJSON {
 		if err := writeJSON(stdout, report); err != nil {
-			fmt.Fprintf(stderr, "trace check: %v\n", err)
+			fmt.Fprintf(stderr, "trace check: %s\n", terminalSafe(err.Error()))
 			return 1
 		}
 		return exit
@@ -132,7 +133,7 @@ func runTraceCheck(args []string, stdout, stderr io.Writer) int {
 }
 
 func writeCheckText(w io.Writer, path string, r *trace.CheckReport) {
-	fmt.Fprintf(w, "trace check %s\n", path)
+	fmt.Fprintf(w, "trace check %s\n", terminalSafe(path))
 	fmt.Fprintf(w, "trace %s: %d spans, attest trace schema v%d\n", r.TraceID, r.Spans, r.SchemaVersion)
 	fmt.Fprintf(w, "steps: %s; %s, %s, %s\n", stepSummary(r.Steps),
 		count(r.Turns, "turn", "turns"), count(r.Handoffs, "handoff", "handoffs"), count(r.Retries, "retry", "retries"))
@@ -149,7 +150,7 @@ func writeCheckText(w io.Writer, path string, r *trace.CheckReport) {
 		if span == "" {
 			span = "-"
 		}
-		fmt.Fprintf(tw, "  %s\t%s\tspan %s\t%s\n", is.Severity, is.Code, span, is.Message)
+		fmt.Fprintf(tw, "  %s\t%s\tspan %s\t%s\n", is.Severity, is.Code, span, terminalSafe(is.Message))
 	}
 	tw.Flush()
 
@@ -196,4 +197,19 @@ func writeJSON(w io.Writer, v any) error {
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
 	return enc.Encode(v)
+}
+
+// terminalSafe escapes control and format characters (ANSI escapes, newlines,
+// bidi overrides) in text that comes from the checked file, so a crafted
+// export cannot rewrite the terminal or forge report lines.
+func terminalSafe(s string) string {
+	var b strings.Builder
+	for _, r := range s {
+		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) {
+			fmt.Fprintf(&b, "\\u%04x", r)
+			continue
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
 }

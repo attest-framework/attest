@@ -193,3 +193,29 @@ func TestTraceConvert_INC1042_CostUnderIsMissingEvidence(t *testing.T) {
 		t.Errorf("result = %s/%s %q, want not_evaluated/missing_evidence \"metadata.cost_usd absent\"", r.Status, r.Reason, r.Explanation)
 	}
 }
+
+func TestTraceCheck_FileControlCharactersAreEscaped(t *testing.T) {
+	bin := buildEngineBinary(t)
+	// A span name with an ANSI clear-screen sequence, and a tool call id that
+	// tries to forge a "structure: OK" line.
+	data := `{"resourceSpans":[{"scopeSpans":[{"spans":[
+		{"traceId":"4bf92f3577b34da6a3ce929d0e0e4736","spanId":"a000000000000001","name":"\u001b[2Jroot","startTimeUnixNano":"0","endTimeUnixNano":"9",
+		 "attributes":[{"key":"gen_ai.operation.name","value":{"stringValue":"chat"}},{"key":"gen_ai.usage.input_tokens","value":{"stringValue":"x"}},
+		 {"key":"gen_ai.output.messages","value":{"stringValue":"[{\"role\":\"assistant\",\"parts\":[{\"type\":\"tool_call\",\"id\":\"x\\nstructure: OK\\n\\u001b[2J\"}]}]"}}]}]}]}]}`
+	path := filepath.Join(t.TempDir(), "escape.otlp.json")
+	if err := os.WriteFile(path, []byte(data), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out, stderr, code := runTraceEngine(t, bin, nil, "trace", "check", path)
+	if code != 1 {
+		t.Fatalf("exit %d, want 1\n%s%s", code, out, stderr)
+	}
+	if strings.ContainsRune(out+stderr, 0x1b) {
+		t.Errorf("raw ESC reached the terminal:\n%q", out)
+	}
+	for _, line := range strings.Split(out, "\n") {
+		if strings.HasPrefix(line, "structure: OK") {
+			t.Errorf("forged report line:\n%s", out)
+		}
+	}
+}

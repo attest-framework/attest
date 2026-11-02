@@ -34,15 +34,17 @@ Each error names the span id it concerns.
 
 | Code | Meaning |
 | --- | --- |
-| `orphan_span` | The span's `parentSpanId` is not in the trace. |
+| `orphan_span` | The span's `parentSpanId` is not in the trace. (When the export has no root and exactly one span's parent is missing, that span is the local root of a distributed trace: a `remote_parent` warning, not an error.) |
 | `parent_cycle` | Following parents from the span leads back to it. |
 | `duplicate_span_id` | Two spans share an id. |
-| `unpaired_tool_call` | A model span finished with `tool_calls` (`gen_ai.response.finish_reasons`) but no tool span executes the call, or a tool call id requested in `gen_ai.output.messages` has no tool span with that `gen_ai.tool.call.id`. |
-| `unpaired_tool_result` | A tool span follows a model span that did not request tools, or carries a `gen_ai.tool.call.id` that no recorded model output requested. |
+| `unpaired_tool_call` | A model call finished with a tool request (`gen_ai.response.finish_reasons` contains `tool_calls`, `tool_call`, `tool_use` or `function_call`) but no tool span follows it before the next model call in the same agent, or a tool call id requested in its recorded `gen_ai.output.messages` has no tool span with that `gen_ai.tool.call.id`. |
+| `unpaired_tool_result` | A tool span has no model call before it in the same agent, or follows a model call with recorded output messages that did not request its `gen_ai.tool.call.id`. |
 | `multiple_traces` | The file holds more than one trace id; check one trace per file. |
 | `conversion_failed` | The spans cannot become an Attest trace, for example a non-numeric `gen_ai.usage.input_tokens`. |
 
-Warnings flag suspicious parentage without failing: `outside_parent` (a span runs outside its parent's time range), `end_before_start`, `multiple_roots`, and `no_genai_spans` (no span carries GenAI attributes).
+Tool calls are paired within each agent (the spans under one `invoke_agent` span, or under none) in start order, so a tool span may be a sibling of the model call, its child, or under a separate framework node span. Embeddings calls do not take part. Where the requesting model call recorded output messages, tool call ids are matched exactly; otherwise the finish reasons are used.
+
+Warnings flag suspicious structure without failing: `outside_parent` (a span runs outside its parent's time range), `end_before_start`, `multiple_roots`, `no_root`, `remote_parent`, `unrequested_tool` (a tool span follows a model call whose finish reasons do not request tools; Gemini reports `STOP` for tool requests), and `no_genai_spans` (no span carries GenAI attributes).
 
 ## Coverage
 
@@ -70,13 +72,13 @@ The engine maps spans by `gen_ai.operation.name` (`chat`, `text_completion`, `ge
 | Field | Source |
 | --- | --- |
 | `turns` | One turn per top-level `invoke_agent` span, with its input and output messages and the indices of its steps. |
-| `handoffs` | An `invoke_agent` span nested under another agent: `from_agent`, `to_agent` and the `agent_call` step. |
-| `steps[].retry_of` | The index of the failed step this one repeats: the same tool with the same arguments after a failed call, or a model call directly after a failed model call, under the same parent. |
+| `handoffs` | An `invoke_agent` span nested under a different agent: `from_agent`, `to_agent` and the `agent_call` step. Agents that run as siblings under a non-GenAI workflow span (for example the OpenAI Agents SDK) appear as separate turns without a handoff. |
+| `steps[].retry_of` | The index of the failed step this one repeats, under the same parent: the same tool with the same arguments after a failed call, or a model call with the same name and request model directly after a failed one. |
 | `steps[].error` | The span's error status with `error.type` and the status message. |
 | `steps[].exchange` | The recorded model request and response (`gen_ai.input.messages`, `gen_ai.output.messages`, models, finish reasons) when both sides were captured. |
 | `steps[].span_id`, `parent_span_id`, `tool_call_id` | Provenance from the export. |
 | `conversation_id` | `gen_ai.conversation.id`. |
 
-Tool steps take their `args` and `result` from the JSON in `gen_ai.tool.call.arguments` and `gen_ai.tool.call.result`. `metadata.total_tokens` and `metadata.cost_usd` sum the model spans that record them and stay unset when none do; `metadata.latency_ms` is the root span's duration. The schema is `proto/attest/v1/trace-v2.schema.json`.
+Tool steps take their `args` and `result` from the JSON in `gen_ai.tool.call.arguments` and `gen_ai.tool.call.result` (a value that is not a JSON object is kept under `arguments` or `result`). `output.message` is the text of the last turn's recorded output messages, else of the model call that ended last directly inside a top-level agent. `metadata.total_tokens` and `metadata.cost_usd` sum the model spans that record them and stay unset when none do; `metadata.latency_ms` is the root span's duration. The schema is `proto/attest/v1/trace-v2.schema.json`.
 
-Input limits: 32 MiB, 20,000 spans, attribute values nested at most 32 levels. Malformed input (invalid ids or timestamps, non-finite numbers, invalid base64, trailing data) is an error naming the span.
+Input limits, enforced while reading: 32 MiB, 20,000 spans, 1,024 attributes per span, 1,000,000 attribute values in total, values nested at most 32 levels, and at most 10 MB of recorded message and tool content. Malformed input (invalid ids or timestamps, non-finite numbers, invalid base64, trailing data) is an error naming the span. Text from the file is printed with control characters escaped.
