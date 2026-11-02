@@ -1,0 +1,17 @@
+{
+  "report_version": 2,
+  "timestamp": "2026-11-02T10:00:00Z",
+  "simulated": false,
+  "summary": { "total": 1, "passed": 1, "soft_fail": 0, "hard_fail": 0, "not_evaluated": 0 },
+  "layers": [
+    { "layer": 4, "name": "content", "total": 1, "passed": 1, "soft_fail": 0, "hard_fail": 0, "assertion_ids": ["a1"] }
+  ],
+  "results": [
+    { "assertion_id": "a1", "status": "pass", "score": 1, "explanation": "", "cost": 0, "duration_ms": 3, "layer": 4, "type": "content" }
+  ],
+  "tests": [],
+  "total_cost": 0,
+  "total_duration_ms": 3,
+  "p50_duration_ms": 3,
+  "p95_duration_ms": 3
+}

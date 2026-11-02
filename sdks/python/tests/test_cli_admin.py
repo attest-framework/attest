@@ -96,7 +96,7 @@ def test_main_init_scaffolds_without_engine(
     monkeypatch.chdir(project)
 
     assert main(["init"]) == 0
-    assert (project / "tests" / "conftest.py").is_file()
+    assert (project / "tests" / "test_my_agent.py").is_file()
 
 
 def test_main_policy_forwards_args_and_exit_code(

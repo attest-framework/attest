@@ -16,20 +16,59 @@ import {
 export interface InspectOptions {
   /** Throw when the cumulative session cost exceeds this USD amount. */
   budget?: number;
+  /**
+   * The running test's context (`it("…", async (context) => …)`). Used to
+   * attach results to the right test for AttestReporter and to skip it;
+   * required under `test.concurrent` and, for skips, on Vitest before 4.1.
+   */
+  context?: TestContext;
 }
 
 export interface EvaluateOptions extends InspectOptions {
-  /**
-   * The running test's context (`it("…", async (context) => …)`). Used to
-   * skip the right test; required under `test.concurrent` and on Vitest
-   * versions before 4.1.
-   */
-  context?: TestContext;
   /**
    * Fail (instead of skip) when an assertion was not evaluated. Defaults to
    * the ATTEST_STRICT environment variable ("1", "true" or "yes").
    */
   strict?: boolean;
+}
+
+type RunningTest = NonNullable<TestContext["task"]>;
+
+/**
+ * The running test: `TestRunner.getCurrentTest()` on Vitest 4.1+, `vitest/suite`
+ * before that (loaded only there, because Vitest 4.1 warns when it is imported).
+ */
+async function runningTest(): Promise<RunningTest | undefined> {
+  const runner = (vitest as Partial<typeof vitest>).TestRunner;
+  if (runner !== undefined) return runner.getCurrentTest();
+  const suite = await import("vitest/suite");
+  return suite.getCurrentTest();
+}
+
+/**
+ * Attach the results to the running test's meta so AttestReporter, in the main
+ * process, can write them with the test's file and line. Results from an earlier
+ * attempt of a retried test are dropped, so the report matches the outcome Vitest
+ * reports. Outside a test (e.g. in a beforeAll hook) there is no test to attach to.
+ */
+async function recordOnTest(result: AgentResult, context?: TestContext): Promise<void> {
+  const test = context?.task ?? (await runningTest());
+  if (test === undefined) return;
+  if (context === undefined && test.concurrent === true) {
+    throw new Error(
+      "Attest results from a test.concurrent test — pass the test context: " +
+        "inspect(chain, { context }) or evaluate(chain, { context })",
+    );
+  }
+  const attempt = test.result?.retryCount ?? 0;
+  let meta = test.meta.attest;
+  if (meta === undefined || meta.attempt !== attempt) {
+    meta = { attempt, results: [], totalCost: 0, totalDurationMs: 0 };
+    test.meta.attest = meta;
+  }
+  meta.results.push(...result.assertionResults);
+  meta.totalCost += result.totalCost;
+  meta.totalDurationMs += result.totalDurationMs;
 }
 
 function strictFromEnv(): boolean {
@@ -158,6 +197,7 @@ export class AttestEngineFixture {
       result.total_cost ?? 0,
       result.total_duration_ms ?? 0,
     );
+    await recordOnTest(agentResult, options?.context);
 
     // Track non-passing AgentResults so AttestCostReporter can render the
     // diagnostic block at the end of the run. Bound size because long

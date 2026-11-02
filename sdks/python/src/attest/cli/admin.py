@@ -28,7 +28,8 @@ _SDK_USAGE = (
     "usage: attest <command> [args]\n"
     "\n"
     "SDK commands:\n"
-    "  init  scaffold an attest test project in the current directory\n"
+    "  init [--ci github]  scaffold a sample test and merge policy in the current directory\n"
+    "                      (--ci github also writes .github/workflows/attest.yml)\n"
     "\n"
     "options:\n"
     "  --version  print the SDK version and the engine version it requires\n"
@@ -121,6 +122,26 @@ def forward(argv: Sequence[str]) -> int:
     return exit_status(subprocess.run([engine, *argv], check=False).returncode)
 
 
+_INIT_USAGE = "usage: attest init [--ci github]  (scaffolds into the current directory)"
+
+
+def init(args: Sequence[str]) -> int:
+    """Run ``attest init [--ci github]`` in the current directory."""
+    if any(a in _HELP_FLAGS for a in args):
+        print(_INIT_USAGE)
+        return 0
+    ci: str | None = None
+    if list(args) == ["--ci", "github"] or list(args) == ["--ci=github"]:
+        ci = "github"
+    elif args:
+        print(_INIT_USAGE, file=sys.stderr)
+        return 2
+    from attest.scaffold import scaffold_project
+
+    scaffold_project(Path.cwd(), ci=ci)
+    return 0
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Dispatch ``attest`` arguments and return the process exit code."""
     args = list(sys.argv[1:] if argv is None else argv)
@@ -131,13 +152,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"attest {__version__} (requires attest-engine {ENGINE_VERSION})")
         return 0
     if args[0] == "init":
-        if len(args) > 1:
-            print("usage: attest init  (scaffolds into the current directory)", file=sys.stderr)
-            return 0 if args[1] in _HELP_FLAGS else 2
-        from attest.scaffold import scaffold_project
-
-        scaffold_project(Path.cwd())
-        return 0
+        return init(args[1:])
     if args[0].startswith("-"):
         print(f"attest: unknown option {args[0]}\n", file=sys.stderr)
         print(_SDK_USAGE, file=sys.stderr)

@@ -30,6 +30,7 @@ nav:
   - Overview: overview.md
   - Getting Started: getting-started.md
   - Guides:
+    - From First Test to Merge Gate: guides/merge-gate.md
     - Verdicts: guides/verdicts.md
     - Multi-Agent Testing: guides/multi-agent.md
     - Simulation: guides/simulation.md

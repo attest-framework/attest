@@ -57,3 +57,7 @@ Go checks the wire format and `policyExit` (`engine/internal/policy/verdict_conf
 ## Doctor fixtures
 
 `doctor/` holds examples of `attest-engine doctor --json` output checked against `proto/attest/v1/doctor.schema.json`: every file in `doctor/valid/` must match the schema and every file in `doctor/invalid/` must not. The engine test `engine/cmd/attest-engine/doctor_e2e_test.go` checks the fixtures, validates live `doctor --json` output against the schema and asserts that its `capabilities` equal what `initialize` advertises under the same environment. SDK `attest doctor` commands forward this output unchanged.
+
+## Report fixtures
+
+`report-v2/` holds examples of the report-v2 file (`proto/attest/v1/report-v2.schema.json`) that `pytest --attest-report`, the Vitest `AttestReporter` and the engine report generator write and that `attest policy evaluate` and the pr-annotate action read: every file in `report-v2/valid/` must match the schema and every file in `report-v2/invalid/` must not. Go (`engine/internal/report/report_v2_schema_test.go`, which also validates `GenerateJSONReport` output), Python (`tests/test_report_v2.py`) and TypeScript (`tests/conformance/report-v2-conformance.test.ts`) check them; the SDK tests also validate the reports their test runners write.
