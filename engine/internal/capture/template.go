@@ -3,7 +3,6 @@ package capture
 import (
 	"encoding/json"
 	"fmt"
-	"math/big"
 	"regexp"
 	"sort"
 	"strings"
@@ -24,8 +23,11 @@ var (
 	spanIDKeys  = map[string]bool{"span_id": true, "parent_span_id": true, "spanId": true, "parentSpanId": true}
 )
 
-// timestampKeys hold numeric points in time. They become order-preserving
-// ordinals: the distinct values sorted ascending map to 1, 2, 3, ...
+// timestampKeys hold numeric points in time. Each occurrence becomes its
+// sequence number in document order (1, 2, 3, ...). Timestamps are not
+// identities: two runs of one scenario can put two calls in the same second
+// in one run and in different seconds in the next, so equal values are not
+// merged and the numbering depends only on the document's shape.
 var timestampKeys = map[string]bool{
 	"started_at_ms": true, "ended_at_ms": true, "timestamp": true, "timestamp_ms": true,
 	"created": true, "created_at": true, "completed_at": true,
@@ -53,11 +55,10 @@ var (
 
 // templater holds the value → placeholder maps for one fixture.
 type templater struct {
-	traceIDs   map[string]string
-	spanIDs    map[string]string
-	timestamps map[string]string // decimal value → ordinal
-	strs       map[string]string // provider id, email, ISO time → placeholder
-	counts     map[string]int
+	traceIDs map[string]string
+	spanIDs  map[string]string
+	strs     map[string]string // provider id, email, ISO time → placeholder
+	counts   map[string]int
 }
 
 // Template rewrites doc (decoded with json.Decoder.UseNumber) in place and
@@ -65,29 +66,25 @@ type templater struct {
 // numbering depends only on the document's content.
 func Template(doc any) any {
 	t := &templater{
-		traceIDs:   map[string]string{},
-		spanIDs:    map[string]string{},
-		timestamps: map[string]string{},
-		strs:       map[string]string{},
-		counts:     map[string]int{},
+		traceIDs: map[string]string{},
+		spanIDs:  map[string]string{},
+		strs:     map[string]string{},
+		counts:   map[string]int{},
 	}
-	var stamps []string
-	t.collect(doc, "", &stamps)
-	t.rankTimestamps(stamps)
+	t.collect(doc, "")
 	return t.rewrite(doc, "")
 }
 
-// collect assigns trace and span id placeholders in visit order and gathers
-// every timestamp value.
-func (t *templater) collect(v any, key string, stamps *[]string) {
+// collect assigns trace and span id placeholders in visit order.
+func (t *templater) collect(v any, key string) {
 	switch x := v.(type) {
 	case map[string]any:
 		for _, k := range sortedKeys(x) {
-			t.collect(x[k], k, stamps)
+			t.collect(x[k], k)
 		}
 	case []any:
 		for _, e := range x {
-			t.collect(e, key, stamps)
+			t.collect(e, key)
 		}
 	case string:
 		switch {
@@ -95,16 +92,6 @@ func (t *templater) collect(v any, key string, stamps *[]string) {
 			t.idFor(t.traceIDs, x, "trace", 32)
 		case spanIDKeys[key] && x != "":
 			t.idFor(t.spanIDs, x, "span", 16)
-		case timestampKeys[key] && isDigits(x):
-			*stamps = append(*stamps, x)
-		default:
-			for _, m := range sseTimestampPattern.FindAllStringSubmatch(x, -1) {
-				*stamps = append(*stamps, m[2])
-			}
-		}
-	case json.Number:
-		if timestampKeys[key] {
-			*stamps = append(*stamps, x.String())
 		}
 	}
 }
@@ -129,32 +116,10 @@ func (t *templater) idFor(m map[string]string, v, kind string, width int) string
 // prefixedHexID splits an id into an optional word prefix and a hex tail.
 var prefixedHexID = regexp.MustCompile(`^([A-Za-z]+_)?([0-9a-f]{8,})$`)
 
-// rankTimestamps maps each distinct timestamp to its 1-based rank in
-// ascending numeric order.
-func (t *templater) rankTimestamps(stamps []string) {
-	distinct := map[string]*big.Rat{}
-	for _, s := range stamps {
-		if _, ok := distinct[s]; ok {
-			continue
-		}
-		r, ok := new(big.Rat).SetString(s)
-		if ok {
-			distinct[s] = r
-		}
-	}
-	keys := make([]string, 0, len(distinct))
-	for k := range distinct {
-		keys = append(keys, k)
-	}
-	sort.Slice(keys, func(i, j int) bool {
-		if c := distinct[keys[i]].Cmp(distinct[keys[j]]); c != 0 {
-			return c < 0
-		}
-		return keys[i] < keys[j]
-	})
-	for i, k := range keys {
-		t.timestamps[k] = fmt.Sprint(i + 1)
-	}
+// nextTimestamp returns the next timestamp sequence number.
+func (t *templater) nextTimestamp() string {
+	t.counts["timestamp_seq"]++
+	return fmt.Sprint(t.counts["timestamp_seq"])
 }
 
 func (t *templater) rewrite(v any, key string) any {
@@ -174,9 +139,7 @@ func (t *templater) rewrite(v any, key string) any {
 		case durationKeys[key]:
 			return json.Number("0")
 		case timestampKeys[key]:
-			if p, ok := t.timestamps[x.String()]; ok {
-				return json.Number(p)
-			}
+			return json.Number(t.nextTimestamp())
 		}
 		return x
 	case string:
@@ -197,9 +160,7 @@ func (t *templater) rewriteString(s, key string) string {
 			return p
 		}
 	case timestampKeys[key] && isDigits(s):
-		if p, ok := t.timestamps[s]; ok {
-			return p
-		}
+		return t.nextTimestamp()
 	}
 	s = providerIDPattern.ReplaceAllStringFunc(s, func(m string) string {
 		sub := providerIDPattern.FindStringSubmatch(m)
@@ -212,10 +173,7 @@ func (t *templater) rewriteString(s, key string) string {
 	s = isoTimePattern.ReplaceAllStringFunc(s, func(m string) string { return t.placeholder("timestamp", m) })
 	s = sseTimestampPattern.ReplaceAllStringFunc(s, func(m string) string {
 		sub := sseTimestampPattern.FindStringSubmatch(m)
-		if p, ok := t.timestamps[sub[2]]; ok {
-			return `"` + sub[1] + `":` + p
-		}
-		return m
+		return `"` + sub[1] + `":` + t.nextTimestamp()
 	})
 	return s
 }

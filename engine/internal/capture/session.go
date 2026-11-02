@@ -125,7 +125,10 @@ func BuildFixture(in BuildInput) (*Fixture, error) {
 	for i, a := range in.Source.Command {
 		command[i] = a
 	}
-	doc := redactTree(map[string]any{"trace": traceDoc, "exchanges": exDocs, "command": command}, in.Redactor)
+	doc, err := redactTree(map[string]any{"trace": traceDoc, "exchanges": exDocs, "command": command}, in.Redactor)
+	if err != nil {
+		return nil, err
+	}
 	doc = Template(doc)
 	m := doc.(map[string]any)
 

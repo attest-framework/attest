@@ -46,18 +46,32 @@ func TestTemplate_ProviderIDsAndEmails_SamePlaceholderEverywhere(t *testing.T) {
 	}
 }
 
-func TestTemplate_TimestampsBecomeOrderedOrdinals_DurationsZero(t *testing.T) {
-	got := templated(t, `{"x":{"created":1700000300,"latency_ms":812},
-		"steps":[{"started_at_ms":1700000000500,"ended_at_ms":1700000000900},{"started_at_ms":1700000000900}],
-		"sse":"data: {\"created\": 1700000300, \"n\":1}\n\n","when":"2026-11-03T10:00:00Z"}`)
+func TestTemplate_TimestampsBecomeSequenceNumbers_DurationsZero(t *testing.T) {
+	got := templated(t, `{"a":{"created":1700000300,"latency_ms":812},
+		"b":[{"started_at_ms":1700000000500,"ended_at_ms":1700000000900},{"started_at_ms":1700000000900}],
+		"c":"data: {\"created\": 1700000300, \"n\":1}\n\n","d":"2026-11-03T10:00:00Z"}`)
 
 	for _, want := range []string{
-		`"created":1`, `"latency_ms":0`, `"started_at_ms":2`, `"ended_at_ms":3`, `{"started_at_ms":3}`,
-		`data: {\"created\":1, \"n\":1}`, `"when":"{{timestamp_1}}"`,
+		`"created":1`, `"latency_ms":0`, `"ended_at_ms":2`, `"started_at_ms":3`, `{"started_at_ms":4}`,
+		`data: {\"created\":5, \"n\":1}`, `"d":"{{timestamp_1}}"`,
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("missing %s in %s", want, got)
 		}
+	}
+}
+
+// Two runs of one scenario can put two responses in the same second, or a
+// span end and the next start in the same millisecond, in one run and not in
+// the next. The output must not depend on which.
+func TestTemplate_CoincidentTimestamps_SameOutputAsDistinct(t *testing.T) {
+	same := templated(t, `{"x":{"created":1700000000},"y":{"created":1700000000},
+		"z":[{"started_at_ms":1700000000100,"ended_at_ms":1700000000200},{"started_at_ms":1700000000200}]}`)
+	distinct := templated(t, `{"x":{"created":1700000000},"y":{"created":1700000001},
+		"z":[{"started_at_ms":1700000000100,"ended_at_ms":1700000000200},{"started_at_ms":1700000000201}]}`)
+
+	if same != distinct {
+		t.Fatalf("same     %s\ndistinct %s", same, distinct)
 	}
 }
 

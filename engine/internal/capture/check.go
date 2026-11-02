@@ -40,8 +40,13 @@ func CheckRedaction(data []byte, r *redact.Redactor) ([]RedactionHit, error) {
 				keys = append(keys, k)
 			}
 			sort.Strings(keys)
-			for _, k := range keys {
-				child := path + "." + k
+			for i, k := range keys {
+				// A key holding a secret must not reach the printed path.
+				segment := k
+				if len(r.Scan(k)) > 0 {
+					segment = fmt.Sprintf("<redacted key #%d>", i)
+				}
+				child := path + "." + segment
 				scan(k, child+" (key)")
 				walk(x[k], child)
 			}

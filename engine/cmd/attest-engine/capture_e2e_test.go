@@ -14,6 +14,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -290,5 +291,34 @@ func TestCaptureFrom_IncidentOTLP_TraceOnlyFixture(t *testing.T) {
 	data, _ := os.ReadFile(filepath.Join(dir, "inc-1042.attest.json"))
 	if !bytes.Contains(data, []byte(`"kind": "otlp_file"`)) || !bytes.Contains(data, []byte(`"replay_capable": false`)) {
 		t.Fatalf("fixture source:\n%s", data)
+	}
+}
+
+func TestCaptureCommand_SIGTERM_ForwardedToChild(t *testing.T) {
+	bin := buildEngineBinary(t)
+	cmd := exec.Command(bin, "capture", "--name", "x", "--out-dir", t.TempDir(), "--",
+		"sh", "-c", `trap 'exit 7' TERM; echo ready; while :; do sleep 0.1; done`)
+	stdout, _ := cmd.StdoutPipe()
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	if !bufio.NewScanner(stdout).Scan() {
+		t.Fatal("child never started")
+	}
+
+	cmd.Process.Signal(syscall.SIGTERM)
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		cmd.Process.Kill()
+		t.Fatal("engine did not finish after SIGTERM")
+	}
+	if !strings.Contains(stderr.String(), "command exited 7") {
+		t.Fatalf("child did not get SIGTERM:\n%s", stderr.String())
 	}
 }

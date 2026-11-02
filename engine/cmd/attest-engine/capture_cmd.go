@@ -159,12 +159,29 @@ func captureCommand(argv []string, environ []string, in *capture.BuildInput, std
 	cmd := exec.Command(argv[0], argv[1:]...)
 	cmd.Env = withEnv(environ, s.Env())
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
-	// The terminal delivers interrupts to the whole process group; the
-	// child decides how to stop, and the capture finishes afterwards.
-	signals := make(chan os.Signal, 1)
+	if err := cmd.Start(); err != nil {
+		s.Close()
+		return fmt.Errorf("running %s: %w", argv[0], err)
+	}
+	// Interrupts and terminations go to the child, which decides how to
+	// stop; the capture finishes after it exits. A terminal interrupt
+	// reaches the child directly as well, which is harmless.
+	signals := make(chan os.Signal, 2)
 	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
-	defer signal.Stop(signals)
-	runErr := cmd.Run()
+	stopForward := make(chan struct{})
+	go func() {
+		for {
+			select {
+			case sig := <-signals:
+				_ = cmd.Process.Signal(sig)
+			case <-stopForward:
+				return
+			}
+		}
+	}()
+	runErr := cmd.Wait()
+	signal.Stop(signals)
+	close(stopForward)
 	closeErr := s.Close()
 	code := 0
 	var exitErr *exec.ExitError
@@ -179,8 +196,8 @@ func captureCommand(argv []string, environ []string, in *capture.BuildInput, std
 		return closeErr
 	}
 	spans, exchanges, incomplete := s.Recorded()
-	if incomplete > 0 {
-		fmt.Fprintf(stderr, "capture: %d model %s never finished; left out of the fixture\n", incomplete, plural(incomplete, "response", "responses"))
+	if err := requireComplete(incomplete); err != nil {
+		return err
 	}
 	in.Spans, in.Exchanges = spans, exchanges
 	in.Source = capture.Source{Kind: capture.SourceCommand, ReplayCapable: true, Command: argv, ExitCode: &code}
@@ -213,10 +230,24 @@ func captureServe(environ []string, in *capture.BuildInput, stdin io.Reader, std
 	if !finalize {
 		return errors.New("aborted: input closed before finalize; no fixture written")
 	}
-	spans, exchanges, _ := s.Recorded()
+	spans, exchanges, incomplete := s.Recorded()
+	if err := requireComplete(incomplete); err != nil {
+		return err
+	}
 	in.Spans, in.Exchanges = spans, exchanges
 	in.Source = capture.Source{Kind: capture.SourceInProcess, ReplayCapable: true}
 	return nil
+}
+
+// requireComplete refuses a capture with model calls whose response the
+// agent never finished reading (or cancelled): a fixture without them could
+// not replay the run.
+func requireComplete(incomplete int) error {
+	if incomplete == 0 {
+		return nil
+	}
+	return fmt.Errorf("%d model %s never completed (the client cancelled or did not read to the end); no fixture written",
+		incomplete, plural(incomplete, "call", "calls"))
 }
 
 func finishCapture(o *captureOptions, in capture.BuildInput, stdout, stderr io.Writer) int {

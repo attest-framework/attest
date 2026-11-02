@@ -139,7 +139,7 @@
         "stream": true
       },
       "response": {
-        "body": "event: response.created\ndata: {\"response\":{\"created_at\":2,\"id\":\"resp_{{id_2}}\"},\"type\":\"response.created\"}\n\nevent: response.output_text.delta\ndata: {\"delta\":\"hello \",\"item_id\":\"msg_{{id_3}}\",\"type\":\"response.output_text.delta\"}\n\nevent: response.output_text.delta\ndata: {\"delta\":\"from \",\"item_id\":\"msg_{{id_3}}\",\"type\":\"response.output_text.delta\"}\n\nevent: response.output_text.delta\ndata: {\"delta\":\"responses\",\"item_id\":\"msg_{{id_3}}\",\"type\":\"response.output_text.delta\"}\n\nevent: response.completed\ndata: {\"response\":{\"created_at\":2,\"id\":\"resp_{{id_2}}\",\"model\":\"gpt-test\",\"object\":\"response\",\"output\":[{\"content\":[{\"text\":\"hello from responses\",\"type\":\"output_text\"}],\"id\":\"msg_{{id_3}}\",\"role\":\"assistant\",\"type\":\"message\"}],\"status\":\"completed\"},\"type\":\"response.completed\"}\n\n",
+        "body": "event: response.created\ndata: {\"response\":{\"created_at\":2,\"id\":\"resp_{{id_2}}\"},\"type\":\"response.created\"}\n\nevent: response.output_text.delta\ndata: {\"delta\":\"hello \",\"item_id\":\"msg_{{id_3}}\",\"type\":\"response.output_text.delta\"}\n\nevent: response.output_text.delta\ndata: {\"delta\":\"from \",\"item_id\":\"msg_{{id_3}}\",\"type\":\"response.output_text.delta\"}\n\nevent: response.output_text.delta\ndata: {\"delta\":\"responses\",\"item_id\":\"msg_{{id_3}}\",\"type\":\"response.output_text.delta\"}\n\nevent: response.completed\ndata: {\"response\":{\"created_at\":3,\"id\":\"resp_{{id_2}}\",\"model\":\"gpt-test\",\"object\":\"response\",\"output\":[{\"content\":[{\"text\":\"hello from responses\",\"type\":\"output_text\"}],\"id\":\"msg_{{id_3}}\",\"role\":\"assistant\",\"type\":\"message\"}],\"status\":\"completed\"},\"type\":\"response.completed\"}\n\n",
         "content_type": "text/event-stream",
         "status": 200
       },
@@ -215,7 +215,7 @@
         "parent_span_id": "0000000000000001",
         "result": {},
         "span_id": "0000000000000002",
-        "started_at_ms": 3,
+        "started_at_ms": 5,
         "type": "llm_call"
       },
       {
@@ -232,7 +232,7 @@
           "ok": true
         },
         "span_id": "0000000000000003",
-        "started_at_ms": 5,
+        "started_at_ms": 7,
         "tool_call_id": "call_{{id_5}}",
         "type": "tool_call"
       },
@@ -251,7 +251,7 @@
           "ok": true
         },
         "span_id": "0000000000000004",
-        "started_at_ms": 7,
+        "started_at_ms": 9,
         "tool_call_id": "call_{{id_6}}",
         "type": "tool_call"
       },
@@ -270,7 +270,7 @@
           "ok": true
         },
         "span_id": "0000000000000005",
-        "started_at_ms": 9,
+        "started_at_ms": 11,
         "tool_call_id": "call_{{id_7}}",
         "type": "tool_call"
       }

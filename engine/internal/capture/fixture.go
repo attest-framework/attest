@@ -269,24 +269,38 @@ func hashOf(v any) (string, error) {
 	return "sha256:" + hex.EncodeToString(sum[:]), nil
 }
 
-// redactTree replaces secrets in every string and object key of v.
-func redactTree(v any, r *redact.Redactor) any {
+// redactTree replaces secrets in every string and object key of v. Two keys
+// that redact to the same text are an error: keeping either would drop the
+// other's value depending on map order.
+func redactTree(v any, r *redact.Redactor) (any, error) {
 	switch x := v.(type) {
 	case map[string]any:
 		out := make(map[string]any, len(x))
 		for k, e := range x {
-			out[r.String(k)] = redactTree(e, r)
+			rk := r.String(k)
+			if _, dup := out[rk]; dup {
+				return nil, fmt.Errorf("two object keys redact to %q; rename the keys that hold secrets", rk)
+			}
+			re, err := redactTree(e, r)
+			if err != nil {
+				return nil, err
+			}
+			out[rk] = re
 		}
-		return out
+		return out, nil
 	case []any:
 		for i, e := range x {
-			x[i] = redactTree(e, r)
+			re, err := redactTree(e, r)
+			if err != nil {
+				return nil, err
+			}
+			x[i] = re
 		}
-		return x
+		return x, nil
 	case string:
-		return r.String(x)
+		return r.String(x), nil
 	default:
-		return v
+		return v, nil
 	}
 }
 

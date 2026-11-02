@@ -1,7 +1,9 @@
 package capture
 
 import (
+	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"strings"
@@ -223,5 +225,58 @@ func TestValidateName(t *testing.T) {
 		if ValidateName(bad) == nil {
 			t.Errorf("%q: want error", bad)
 		}
+	}
+}
+
+func TestSession_ClientCancelsStream_ExchangeIncomplete(t *testing.T) {
+	up := newFakeUpstream(t)
+	s, err := Start(Upstreams{OpenAI: up.OpenAIBase(), Anthropic: up.AnthropicBase()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, s.Env()["OPENAI_BASE_URL"]+"/chat/completions",
+		strings.NewReader(`{"model":"m","stream":true,"messages":[]}`))
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := readEvent(bufio.NewReader(resp.Body)); err != nil {
+		t.Fatal(err)
+	}
+
+	cancel()
+	resp.Body.Close()
+	up.release <- struct{}{}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	_, exchanges, incomplete := s.Recorded()
+
+	if incomplete != 1 || len(exchanges) != 0 {
+		t.Fatalf("incomplete %d exchanges %+v; want the cancelled stream incomplete", incomplete, exchanges)
+	}
+}
+
+func TestRedactTree_KeysRedactingToSameText_Error(t *testing.T) {
+	doc := map[string]any{"sk-proj-aaaaaaaaaaaaaaaaaaaa": 1, "sk-proj-bbbbbbbbbbbbbbbbbbbb": 2}
+
+	_, err := redactTree(doc, redact.New())
+
+	if err == nil || !strings.Contains(err.Error(), "two object keys redact") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestCheckRedaction_SecretInKey_PathHidesIt(t *testing.T) {
+	secret := "sk-proj-abcdefghijklmnop1234"
+
+	hits, err := CheckRedaction([]byte(`{"a":{"`+secret+`":{"b":"x"}}}`), redact.New())
+
+	if err != nil || len(hits) != 1 {
+		t.Fatalf("hits %+v err %v", hits, err)
+	}
+	if strings.Contains(hits[0].Path, secret) || !strings.Contains(hits[0].Path, "<redacted key #0>") {
+		t.Fatalf("path %q", hits[0].Path)
 	}
 }

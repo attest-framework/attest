@@ -3,6 +3,7 @@ package capture
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -146,6 +147,12 @@ func (p *Proxy) forward(r route) http.Handler {
 			return nil
 		},
 		ErrorHandler: func(w http.ResponseWriter, req *http.Request, err error) {
+			if errors.Is(err, context.Canceled) {
+				// The client gave up; the exchange stays incomplete and
+				// the capture refuses to build a fixture without it.
+				w.WriteHeader(http.StatusBadGateway)
+				return
+			}
 			ex := exchangeOf(req.Context())
 			body := fmt.Sprintf(`{"error":{"type":"attest_capture_proxy","message":%q}}`, "upstream request failed: "+err.Error())
 			p.finish(ex, http.StatusBadGateway, "application/json", []byte(body), false)
@@ -210,7 +217,7 @@ func (p *Proxy) Exchanges() ([]rawExchange, int) {
 }
 
 // teeBody records a response body as the client reads it, so streamed events
-// pass through unbuffered. The exchange is complete at EOF or Close.
+// pass through unbuffered. The exchange is complete at EOF.
 type teeBody struct {
 	rc          io.ReadCloser
 	ex          *rawExchange
@@ -232,21 +239,22 @@ func (t *teeBody) Read(b []byte) (int, error) {
 		}
 	}
 	if err == io.EOF {
-		t.complete(false)
+		t.complete()
 	}
 	return n, err
 }
 
+// Close ends the body. A body closed before EOF was cut short (the client
+// gave up or the upstream failed mid-stream): the exchange stays incomplete,
+// and the capture refuses to build a fixture that could not replay it.
 func (t *teeBody) Close() error {
-	err := t.rc.Close()
-	// A body closed before EOF was cut short (client gave up or the
-	// upstream failed mid-stream).
-	t.complete(true)
-	return err
+	return t.rc.Close()
 }
 
-func (t *teeBody) complete(early bool) {
-	t.p.finish(t.ex, t.status, t.contentType, bytes.Clone(t.buf.Bytes()), t.truncated || early)
+// complete records the exchange. truncated is set only when the response
+// exceeded MaxResponseBytes; the client still received all of it.
+func (t *teeBody) complete() {
+	t.p.finish(t.ex, t.status, t.contentType, bytes.Clone(t.buf.Bytes()), t.truncated)
 }
 
 // loopbackOnly rejects requests whose Host is not a loopback name, so a web

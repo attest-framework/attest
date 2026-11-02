@@ -95,3 +95,36 @@ func TestFixtureV1Schema_FreshCapture_Valid(t *testing.T) {
 		t.Fatalf("fresh capture fails the schema: %v", err)
 	}
 }
+
+// The valid fixtures' contracts are exactly what the drafter writes for their
+// traces, so the SDK emitter tests that read them cover every drafted kind.
+func TestFixtureV1_ValidFixtures_ContractsMatchDrafter(t *testing.T) {
+	kinds := map[string]bool{}
+	for _, p := range fixtureFiles(t, "valid") {
+		data, err := os.ReadFile(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		f, err := Unmarshal(data)
+		if err != nil {
+			t.Fatal(err)
+		}
+		drafted, err := Draft(f.Trace)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got, _ := Marshal(&Fixture{Contracts: f.Contracts})
+		want, _ := Marshal(&Fixture{Contracts: drafted})
+		if !bytes.Equal(got, want) {
+			t.Errorf("%s: contracts differ from Draft", filepath.Base(p))
+		}
+		for _, c := range f.Contracts {
+			kinds[c.Kind] = true
+		}
+	}
+	for _, k := range []string{KindTools, KindOrder, KindCardinality, KindOutputSchema, KindCost} {
+		if !kinds[k] {
+			t.Errorf("no valid fixture has a %s contract", k)
+		}
+	}
+}
