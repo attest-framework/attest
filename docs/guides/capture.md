@@ -54,13 +54,13 @@ Capture drafts these contracts from the run:
 | --- | --- |
 | `tools-called` | every tool the run called is called (`trajectory(..., mode="superset")`) |
 | `order-<a>-before-<b>` | each tool's first call keeps its order (`tool_called_before`) |
-| `cardinality-<tool>-per-<arg>` | each tool called with an `id` or `*_id` argument is called at most once per value of it (`tool_cardinality(tool, per=arg, at_most=1)`) |
+| `cardinality-<tool>-per-<arg>` | each tool called with an `id` or `*_id` argument is called at most N times per value of it (`tool_cardinality(tool, per=arg, at_most=N)`; N below) |
 | `output-schema` | the structured output keeps its keys and their JSON types (`output_matches_schema`) |
 | `cost-ceiling` | the run costs at most 1.5× the observed `metadata.cost_usd` (`cost_under`) |
 
-Cardinality is drafted from the argument names, not from the counts the run produced, so a run that refunded the same order twice fails it. That is how a capture of INC-1042 reproduces the incident.
+Cardinality depends on the capture mode. A normal capture sets N to the most calls the run made with any one value, so a healthy agent that reads an order twice still verifies. With `--expect-fail`, N is 1 for every such tool, so the calls the incident repeated fail: capturing INC-1042 that way fails only `cardinality-issue_refund-per-order_id` (it refunded order O-1042 twice) and records it as the expected failure. A normal capture of the same run drafts `issue_refund` at 2 and verifies, since without `--expect-fail` capture cannot know the run is an incident.
 
-- Without `--expect-fail`, the fixture is **verified** when every drafted contract passes. A failing contract leaves it unverified and `attest capture` exits 1, naming the contract. Edit the drafted contracts, or capture again with `--expect-fail`.
+- Without `--expect-fail`, the fixture is **verified** when every drafted contract passes and the captured trace passes trace check; otherwise it is unverified and `attest capture` exits 1, naming the reason.
 - With `--expect-fail`, the fixture is an **incident reproduction**: verified when at least one drafted contract fails and the rest pass. The failing contracts are recorded as `expected_failures`.
 
 ## The drafted test

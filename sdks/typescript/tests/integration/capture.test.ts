@@ -138,10 +138,22 @@ describe.skipIf(!existsSync(engine))("record() (real engine)", () => {
     expect(fixture.exchanges.map((e) => e["api"])).toEqual(["chat_completions"]);
   }, 30_000);
 
-  it("throws CaptureError and keeps the unverified fixture without expectFail", async () => {
+  it("drafts the observed per-id maximum and verifies a double refund without expectFail", async () => {
     const dir = mkdtempSync(join(tmpdir(), "attest-record-"));
 
-    const err = await record("inc-5", () => scriptedAgent(2), { outDir: join(dir, "fixtures") }).catch((e: unknown) => e);
+    const result = await record("inc-5", () => scriptedAgent(2), { outDir: join(dir, "fixtures") });
+
+    const refund = loadFixture(result.fixture).contracts.find((c) => c.id === "cardinality-issue_refund-per-order_id");
+    expect(result.verified).toBe(true);
+    expect(refund?.spec["max"]).toBe(2);
+  }, 30_000);
+
+  it("throws CaptureError and drafts no test when expectFail finds no incident", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "attest-record-"));
+
+    const err = await record("inc-5", () => scriptedAgent(1), { outDir: join(dir, "fixtures"), expectFail: true }).catch(
+      (e: unknown) => e,
+    );
 
     expect(err).toBeInstanceOf(CaptureError);
     expect((err as CaptureError).message).toMatch(/is not verified; no test drafted/);
