@@ -1390,8 +1390,9 @@ The engine validates all traces before evaluation. Invalid traces return an `INV
 
 | schema_version | Status |
 |----------------|--------|
-| Current (1) | Fully supported |
-| Previous (0) | Supported with deprecation warning in engine logs |
+| Current (2) | Fully supported (trace v2: turns, handoffs, retries, recorded exchanges) |
+| 1 | Fully supported; v2 fields are optional, so a v1 trace is unchanged |
+| 0 | Supported with deprecation warning in engine logs |
 | Older | Rejected with `INVALID_TRACE` and migration message |
 
 ### Actionable Error Messages
@@ -1420,7 +1421,8 @@ The engine validates in this order and stops at the first failure:
 4. Size and count limits
 5. Field type and format validation
 6. Step-level validation (type, name, payload size)
-7. Sub-trace depth check
+7. Step references (`retry_of`, `turns[].step_indices`, `handoffs[].step_index` index existing steps; `retry_of` an earlier one)
+8. Sub-trace depth check
 
 This order ensures the most actionable error is surfaced first.
 
