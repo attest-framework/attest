@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"github.com/segmentio/encoding/json"
 	"log/slog"
@@ -734,6 +735,15 @@ func handleGenerateUserMessage(provider llm.Provider) Handler {
 		}
 
 		msg, err := user.GenerateMessage(context.Background(), messages)
+		if errors.Is(err, llm.ErrBudgetExhausted) {
+			return nil, types.NewRPCError(
+				types.ErrEngineError,
+				fmt.Sprintf("generate_user_message not sent: %v", err),
+				types.ErrTypeEngineError,
+				false,
+				"the session budget (ATTEST_MAX_JUDGE_CALLS, ATTEST_BUDGET_USD) is spent; raise it or shorten the conversation",
+			)
+		}
 		if err != nil {
 			return nil, types.NewRPCError(
 				types.ErrEngineError,

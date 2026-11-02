@@ -121,7 +121,16 @@ type BudgetScope struct {
 type budgetTally struct {
 	calls       int
 	reservedUSD float64
-	usage       types.Usage
+	// heldUSD is the reservation of calls that failed after being sent:
+	// the provider may have billed them, so they stay charged against the
+	// limit although usage reports no cost for them.
+	heldUSD float64
+	usage   types.Usage
+}
+
+// committed is the spend counted against a USD limit.
+func (t *budgetTally) committed() float64 {
+	return t.usage.CostUSD + t.heldUSD + t.reservedUSD
 }
 
 // fits reports whether one more call costing usd fits limits; reason is
@@ -132,11 +141,11 @@ func (t *budgetTally) fits(l BudgetLimits, judgeCall bool, usd float64, priced b
 	}
 	if l.MaxCostUSD != nil {
 		if !priced {
-			return false, "the model has no price; set ATTEST_JUDGE_PRICE_IN and ATTEST_JUDGE_PRICE_OUT"
+			return false, "the model has no price, so a USD budget cannot cover it"
 		}
-		if t.usage.CostUSD+t.reservedUSD+usd > *l.MaxCostUSD {
-			return false, fmt.Sprintf("max_cost_usd=%g cannot cover $%.6f (spent $%.6f, in flight $%.6f)",
-				*l.MaxCostUSD, usd, t.usage.CostUSD, t.reservedUSD)
+		if t.committed()+usd > *l.MaxCostUSD {
+			return false, fmt.Sprintf("max_cost_usd=%g cannot cover $%.6f (spent $%.6f, held $%.6f, in flight $%.6f)",
+				*l.MaxCostUSD, usd, t.usage.CostUSD, t.heldUSD, t.reservedUSD)
 		}
 	}
 	return true, ""
@@ -219,8 +228,6 @@ func (l *Ledger) tallies(scope *BudgetScope) []*budgetTally {
 }
 
 // settle releases the reservation and records the call's actual usage.
-// A failed call keeps its call count (the request was sent) and records
-// zero tokens.
 func (r *reservation) settle(u types.Usage) {
 	r.ledger.mu.Lock()
 	defer r.ledger.mu.Unlock()
@@ -229,6 +236,23 @@ func (r *reservation) settle(u types.Usage) {
 		t.usage.Add(u)
 	}
 }
+
+// fail settles a call that returned an error after being sent. It keeps
+// its call count and records zero tokens, and its reservation stays held
+// against the USD limit because the provider may have billed it.
+func (r *reservation) fail(u types.Usage) {
+	r.ledger.mu.Lock()
+	defer r.ledger.mu.Unlock()
+	for _, t := range r.ledger.tallies(r.scope) {
+		t.reservedUSD -= r.usd
+		t.heldUSD += r.usd
+		t.usage.Add(u)
+	}
+}
+
+// defaultMaxOutputTokens caps a request that sets no output limit, so its
+// reservation is bounded; providers omit an unset limit from the request.
+const defaultMaxOutputTokens = 1024
 
 type budgetScopeKey struct{}
 
@@ -293,6 +317,11 @@ func (b *BudgetedProvider) Complete(ctx context.Context, req *llm.CompletionRequ
 	if model == "" {
 		model = b.inner.DefaultModel()
 	}
+	if req.MaxTokens <= 0 {
+		capped := *req
+		capped.MaxTokens = defaultMaxOutputTokens
+		req = &capped
+	}
 	price, priced := b.PriceFor(model)
 	maxOut := req.MaxTokens
 	if ol, ok := b.inner.(llm.OutputLimiter); ok {
@@ -313,7 +342,7 @@ func (b *BudgetedProvider) Complete(ctx context.Context, req *llm.CompletionRequ
 		u.UnpricedCalls = 1
 	}
 	if err != nil {
-		res.settle(u)
+		res.fail(u)
 		return nil, err
 	}
 	if priced {
@@ -371,12 +400,14 @@ func (b *BudgetedEmbedder) Embed(ctx context.Context, text string) ([]float32, e
 	if !priced {
 		u.UnpricedCalls = 1
 	}
-	if err == nil {
-		u.InputTokens = int64(tokens)
-		if priced {
-			u.CostUSD = price.Cost(tokens, 0)
-		}
+	if err != nil {
+		res.fail(u)
+		return nil, err
+	}
+	u.InputTokens = int64(tokens)
+	if priced {
+		u.CostUSD = price.Cost(tokens, 0)
 	}
 	res.settle(u)
-	return vec, err
+	return vec, nil
 }

@@ -160,6 +160,7 @@ func runBiasProbes(
 			continue
 		}
 		if sr.Abstain {
+			addedCost += resp.Cost
 			slog.Warn("bias probe judge abstained", "probe", name, "model", model, "reason", sr.Reason)
 			continue
 		}

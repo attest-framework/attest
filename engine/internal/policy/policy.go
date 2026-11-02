@@ -343,8 +343,11 @@ func Evaluate(p *Policy, results []types.AssertionResult, totalCost float64, bas
 	}
 
 	// ── Regression block ──
+	// With a regression rule, assertions run as trials are judged by the
+	// statistical comparison alone: their folded worst status would call
+	// one failing trial in twenty a regression.
 	if p.BlockOnRegression != nil && *p.BlockOnRegression && baseline != nil {
-		if ids := baseline.RegressedAssertionIDs(); len(ids) > 0 {
+		if ids := statusRegressions(p, baseline, results); len(ids) > 0 {
 			out.Violations = append(out.Violations, Violation{
 				Rule:     "block_on_regression",
 				Detail:   fmt.Sprintf("regressions vs %s: %s", baseline.BaselineTag, strings.Join(ids, ", ")),
@@ -354,6 +357,14 @@ func Evaluate(p *Policy, results []types.AssertionResult, totalCost float64, bas
 	}
 
 	// ── Statistical regression (fixed-N trials) ──
+	if p.Regression != nil && baseline == nil {
+		out.Verdict = report.TrialInconclusive
+		out.Violations = append(out.Violations, Violation{
+			Rule:     "regression.inconclusive",
+			Detail:   "the policy has a regression rule but no baseline was given; pass --baseline <tag>",
+			Severity: SeverityWarn,
+		})
+	}
 	if p.Regression != nil && baseline != nil {
 		out.Trials = report.CompareTrials(report.CountPasses(results), baseline.BaselineCounts, p.Regression.resolved())
 		out.Verdict = report.OverallTrialVerdict(out.Trials)
@@ -443,4 +454,26 @@ func notEvaluatedViolation(results []types.AssertionResult, severity string) (Vi
 		Detail:   fmt.Sprintf("%d assertions not evaluated (%s)", total, strings.Join(parts, ", ")),
 		Severity: severity,
 	}, true
+}
+
+// statusRegressions returns the baseline status regressions, leaving out
+// assertions run as trials when the policy has a regression rule.
+func statusRegressions(p *Policy, baseline *report.BaselineDelta, results []types.AssertionResult) []string {
+	ids := baseline.RegressedAssertionIDs()
+	if p.Regression == nil {
+		return ids
+	}
+	trialed := make(map[string]bool)
+	for _, r := range results {
+		if r.Trial > 0 {
+			trialed[r.AssertionID] = true
+		}
+	}
+	out := ids[:0]
+	for _, id := range ids {
+		if !trialed[id] {
+			out = append(out, id)
+		}
+	}
+	return out
 }

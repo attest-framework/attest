@@ -239,3 +239,40 @@ func TestPipeline_BudgetScopeInContext_ReachesJudge(t *testing.T) {
 		t.Errorf("refused=%d calls=%d scope usage=%+v, want 1/1/1", refused, mock.CallCount, scope.Usage())
 	}
 }
+
+func TestBudgetedProvider_NoOutputLimit_SendsAndReservesDefaultCap(t *testing.T) {
+	ledger := NewLedger(BudgetLimits{})
+	mock := llm.NewMockProvider([]*llm.CompletionResponse{scoreReply()}, nil)
+	p := NewBudgetedProvider(mock, ledger, &llm.Price{InPer1M: 1, OutPer1M: 1})
+
+	if _, err := p.Complete(context.Background(), &llm.CompletionRequest{}); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := mock.LastRequest.MaxTokens; got != defaultMaxOutputTokens {
+		t.Errorf("sent MaxTokens = %d, want the default cap %d", got, defaultMaxOutputTokens)
+	}
+}
+
+func TestBudgetedProvider_FailedCall_KeepsReservationAgainstUSDLimit(t *testing.T) {
+	// Arrange: the limit covers one reservation (~$0.000290), not two.
+	ledger := NewLedger(BudgetLimits{MaxCostUSD: floatPtr(0.0005)})
+	mock := llm.NewMockProvider(nil, []error{errors.New("timeout after the provider billed")})
+	p := NewBudgetedProvider(mock, ledger, &llm.Price{InPer1M: 1, OutPer1M: 1})
+	req := &llm.CompletionRequest{MaxTokens: 256, Messages: []llm.Message{{Role: "user", Content: "x"}}}
+
+	// Act
+	_, first := p.Complete(context.Background(), req)
+	_, second := p.Complete(context.Background(), req)
+
+	// Assert
+	if first == nil || errors.Is(first, llm.ErrBudgetExhausted) {
+		t.Fatalf("first call err = %v, want the provider failure", first)
+	}
+	if !errors.Is(second, llm.ErrBudgetExhausted) {
+		t.Fatalf("second call err = %v, want refusal: the failed call's reservation is held", second)
+	}
+	if u := ledger.Usage(); u.CostUSD != 0 || u.ModelCalls != 1 {
+		t.Errorf("usage = %+v, want 1 call reported at $0", u)
+	}
+}

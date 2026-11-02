@@ -437,8 +437,9 @@ func (e *JudgeEvaluator) evaluateRepeated(
 
 	durationMS := time.Since(start).Milliseconds()
 
-	// Cache the median result
-	if e.cache != nil {
+	// Cache the median result only when every run scored: a partial
+	// sample must not stand in for N runs later.
+	if e.cache != nil && miss.total() == 0 {
 		contentHash := cache.JudgeContentHash(targetStr)
 		if putErr := e.cache.Put(contentHash, rubricName, model, &cache.JudgeCacheEntry{
 			Score:       medianScore,

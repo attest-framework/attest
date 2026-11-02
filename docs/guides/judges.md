@@ -61,7 +61,7 @@ Built-in rubrics (version `v2`) tell the judge to answer `{"abstain": true, "rea
 
 ## Budgets
 
-`ATTEST_MAX_JUDGE_CALLS` caps judge requests per engine session and `ATTEST_BUDGET_USD` caps the spend of judge and embedding calls. Every call reserves one request and its worst-case cost before it is sent, so concurrent assertions, `repeat` runs, bias probes and retries can never exceed the budget; a call that cannot reserve is not sent and its assertion is `not_evaluated: budget_exhausted`. Costs come from a built-in price table (`gpt-4.1`, `gpt-4.1-mini`, `gpt-4.1-nano`, `text-embedding-3-small`, `text-embedding-3-large`) or `ATTEST_JUDGE_PRICE_IN` / `ATTEST_JUDGE_PRICE_OUT` (USD per 1M tokens), and are reconciled to the token usage each provider reports. See [configuration](configuration.md#evaluation).
+`ATTEST_MAX_JUDGE_CALLS` caps judge requests per engine session and `ATTEST_BUDGET_USD` caps the spend of judge and embedding calls. Every call reserves one request and its worst-case cost before it is sent, so concurrent assertions, `repeat` runs, bias probes and retries cannot exceed the budget (a call that fails after it was sent keeps its reservation, and a request without an output limit is capped at 1024 tokens); a call that cannot reserve is not sent and its assertion is `not_evaluated: budget_exhausted`. Costs come from a built-in price table (`gpt-4.1`, `gpt-4.1-mini`, `gpt-4.1-nano`, `text-embedding-3-small`, `text-embedding-3-large`) or `ATTEST_JUDGE_PRICE_IN` / `ATTEST_JUDGE_PRICE_OUT` (USD per 1M tokens), and are reconciled to the token usage each provider reports. See [configuration](configuration.md#evaluation).
 
 ## What a result records
 

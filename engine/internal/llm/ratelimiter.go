@@ -103,6 +103,9 @@ func (r *RateLimitedProvider) Complete(ctx context.Context, req *CompletionReque
 			return resp, nil
 		}
 		if errors.Is(err, ErrBudgetExhausted) {
+			if lastErr != nil {
+				return nil, fmt.Errorf("%w; previous attempt: %v", err, lastErr)
+			}
 			return nil, err
 		}
 		lastErr = err

@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/attest-ai/attest/engine/internal/cache"
 	"github.com/attest-ai/attest/engine/internal/policy"
 	"github.com/attest-ai/attest/engine/internal/report"
 	"github.com/attest-ai/attest/engine/pkg/types"
@@ -416,5 +417,37 @@ func TestEvaluate_RegressionSeverityWarn_RegressedExitsTwo(t *testing.T) {
 
 	if got.Verdict != report.TrialRegressed || got.ExitCode() != policy.ExitWarn {
 		t.Errorf("verdict=%q exit=%d, want regressed downgraded to exit 2", got.Verdict, got.ExitCode())
+	}
+}
+
+func TestEvaluate_RegressionRuleWithoutBaseline_WarnsInconclusive(t *testing.T) {
+	p := &policy.Policy{Regression: &policy.RegressionRule{}}
+
+	got := policy.Evaluate(p, []types.AssertionResult{{AssertionID: "a", Status: types.StatusPass}}, 0, nil)
+
+	if got.Verdict != report.TrialInconclusive || got.ExitCode() != policy.ExitWarn {
+		t.Errorf("verdict=%q exit=%d, want inconclusive and exit 2", got.Verdict, got.ExitCode())
+	}
+}
+
+func TestEvaluate_BlockOnRegressionWithRegressionRule_IgnoresTrialRows(t *testing.T) {
+	// 19 of 20 trials pass against a 20/20 baseline: the folded worst status
+	// is hard_fail, but the statistical rule decides trial assertions.
+	p := &policy.Policy{BlockOnRegression: ptr(true), Regression: &policy.RegressionRule{Tolerance: ptr(0.3)}}
+	var results []types.AssertionResult
+	for i := range 20 {
+		status := types.StatusPass
+		if i == 0 {
+			status = types.StatusHardFail
+		}
+		results = append(results, types.AssertionResult{AssertionID: "a", Status: status, Trial: i + 1})
+	}
+	baseline := []cache.BaselineEntry{{AssertionID: "a", Status: types.StatusPass, Passes: 20, Evaluated: 20}}
+	delta := report.ComputeBaselineDelta("base", baseline, results)
+
+	got := policy.Evaluate(p, results, 0, &delta)
+
+	if got.Verdict != report.TrialPass || got.ExitCode() != policy.ExitPass {
+		t.Errorf("verdict=%q exit=%d violations=%+v, want pass and exit 0", got.Verdict, got.ExitCode(), got.Violations)
 	}
 }
