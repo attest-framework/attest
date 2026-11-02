@@ -152,6 +152,7 @@ export interface Assertion {
  * reviewers need to triage a judge failure.
  */
 export interface JudgeMetadata {
+  readonly provider?: string;
   readonly model?: string;
   readonly rubric_name?: string;
   readonly rubric_version?: string;

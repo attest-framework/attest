@@ -149,7 +149,8 @@ def _render_judge_meta(buf: StringIO, meta: JudgeMetadata) -> None:
         rubric = meta.rubric_name or "default"
         if meta.rubric_version:
             rubric = f"{rubric} @ {meta.rubric_version}"
-        buf.write(f"      judge:      {meta.model} / {rubric}\n")
+        judge = f"{meta.provider}/{meta.model}" if meta.provider else meta.model
+        buf.write(f"      judge:      {judge} / {rubric}\n")
     if meta.prompt_hash:
         buf.write(f"      prompt:     #{meta.prompt_hash}\n")
     if len(meta.sample_scores) > 1:

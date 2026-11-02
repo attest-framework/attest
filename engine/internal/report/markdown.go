@@ -264,6 +264,9 @@ func writeFailureBlock(sw *stickyWriter, r *types.AssertionResult) {
 }
 
 func writeJudgeMetadata(sw *stickyWriter, m *types.JudgeMetadata) {
+	if m.Provider != "" {
+		sw.printf("- **Judge provider:** `%s`\n", m.Provider)
+	}
 	if m.Model != "" {
 		sw.printf("- **Judge model:** `%s`\n", m.Model)
 	}
