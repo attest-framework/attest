@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"strings"
 	"sync"
 	"testing"
@@ -274,5 +275,88 @@ func TestBudgetedProvider_FailedCall_KeepsReservationAgainstUSDLimit(t *testing.
 	}
 	if u := ledger.Usage(); u.CostUSD != 0 || u.ModelCalls != 1 {
 		t.Errorf("usage = %+v, want 1 call reported at $0", u)
+	}
+}
+
+func TestMedian_EvenCount_AveragesMiddleScores(t *testing.T) {
+	cases := []struct {
+		scores []float64
+		want   float64
+	}{
+		{[]float64{0.2, 0.3, 0.8, 0.9}, 0.55},
+		{[]float64{0.2, 0.3, 0.6, 0.9}, 0.45},
+		{[]float64{0.1, 0.5, 0.9}, 0.5},
+	}
+	for _, c := range cases {
+		if got := median(c.scores); math.Abs(got-c.want) > 1e-9 {
+			t.Errorf("median(%v) = %v, want %v", c.scores, got, c.want)
+		}
+	}
+}
+
+func TestJudgeEvaluator_EvenRepeats_ThresholdOnMeanOfMiddle(t *testing.T) {
+	cases := []struct {
+		scores []string
+		want   string
+	}{
+		{[]string{"0.2", "0.3", "0.8", "0.9"}, types.StatusPass},
+		{[]string{"0.2", "0.3", "0.6", "0.9"}, types.StatusHardFail},
+	}
+	for _, c := range cases {
+		var replies []*llm.CompletionResponse
+		for _, s := range c.scores {
+			replies = append(replies, &llm.CompletionResponse{Content: `{"score": ` + s + `, "explanation": "x"}`})
+		}
+		mock := llm.NewReplayProvider(replies)
+		e := NewJudgeEvaluator(mock, judge.NewRubricRegistry(), nil)
+
+		r := e.Evaluate(budgetJudgeTrace(), budgetJudgeAssertion("j", `{"target":"output","repeat":4,"threshold":0.5}`))
+
+		if r.Status != c.want {
+			t.Errorf("scores %v: status %s (score %v), want %s", c.scores, r.Status, r.Score, c.want)
+		}
+	}
+}
+
+type acpNamed struct{ *llm.MockProvider }
+
+func (acpNamed) Name() string { return "acp" }
+
+func TestBudgetedProvider_ACPWithBatchUSDLimit_Refused(t *testing.T) {
+	ledger := NewLedger(BudgetLimits{})
+	mock := llm.NewMockProvider([]*llm.CompletionResponse{scoreReply()}, nil)
+	p := NewBudgetedProvider(acpNamed{mock}, ledger, &llm.Price{})
+	ctx := WithBudgetScope(context.Background(), ledger.NewScope(&types.BatchBudget{MaxCostUSD: floatPtr(1)}))
+
+	_, err := p.Complete(ctx, &llm.CompletionRequest{MaxTokens: 10})
+
+	if !errors.Is(err, llm.ErrBudgetExhausted) || !strings.Contains(err.Error(), "acp") || mock.CallCount != 0 {
+		t.Fatalf("err = %v, calls = %d; want an acp USD refusal and no call", err, mock.CallCount)
+	}
+	if _, err := p.Complete(WithBudgetScope(context.Background(), ledger.NewScope(&types.BatchBudget{MaxJudgeCalls: intPtr(1)})), &llm.CompletionRequest{MaxTokens: 10}); err != nil {
+		t.Errorf("call budget only: err = %v, want the call sent", err)
+	}
+}
+
+func TestBudgetedProvider_NegativeTokens_ClampedToZero(t *testing.T) {
+	ledger := NewLedger(BudgetLimits{})
+	mock := llm.NewMockProvider([]*llm.CompletionResponse{{Content: "{}", InputTokens: -500, OutputTokens: -10, CachedInputTokens: -3}}, nil)
+	p := NewBudgetedProvider(mock, ledger, &llm.Price{InPer1M: 1, OutPer1M: 1})
+
+	resp, err := p.Complete(context.Background(), &llm.CompletionRequest{MaxTokens: 10})
+
+	if err != nil {
+		t.Fatal(err)
+	}
+	if u := ledger.Usage(); u.InputTokens != 0 || u.OutputTokens != 0 || u.CachedTokens != 0 || u.CostUSD != 0 || resp.Cost != 0 {
+		t.Errorf("usage = %+v, cost %v; want zeros", u, resp.Cost)
+	}
+}
+
+func TestAbstainExplanation_StripsControlAndTruncates(t *testing.T) {
+	got := abstainExplanation("\x1b[31mevil‮ " + strings.Repeat("x", 5000))
+
+	if strings.ContainsAny(got, "\x1b‮") || len(got) > maxDiagnosticBytes {
+		t.Errorf("explanation not sanitized: len %d, %q...", len(got), got[:40])
 	}
 }

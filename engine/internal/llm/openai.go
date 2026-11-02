@@ -127,7 +127,7 @@ func (p *OpenAIProvider) Complete(ctx context.Context, req *CompletionRequest) (
 	defer httpResp.Body.Close()
 	durationMS := time.Since(start).Milliseconds()
 
-	raw, err := io.ReadAll(httpResp.Body)
+	raw, err := io.ReadAll(io.LimitReader(httpResp.Body, MaxResponseBytes))
 	if err != nil {
 		return nil, fmt.Errorf("openai complete: read body: %w", err)
 	}

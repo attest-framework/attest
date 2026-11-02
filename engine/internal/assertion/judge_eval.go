@@ -421,7 +421,7 @@ func (e *JudgeEvaluator) evaluateRepeated(
 
 	// Sort and take median
 	sort.Float64s(scores)
-	medianScore := scores[len(scores)/2]
+	medianScore := median(scores)
 
 	// Calculate variance (spread)
 	spread := scores[len(scores)-1] - scores[0]
@@ -479,11 +479,14 @@ func judgeCallFailed(assertion *types.Assertion, start time.Time, err error) *ty
 	return notEvaluatedResult(assertion, start, types.ReasonProviderUnavailable, fmt.Sprintf("judge provider call failed: %v", err))
 }
 
+// abstainExplanation renders the judge's abstain reason, which is model
+// output, with control and format characters removed and its length cut.
 func abstainExplanation(reason string) string {
+	reason = strings.TrimSpace(llm.StripControl(reason))
 	if reason == "" {
 		return "judge abstained without giving a reason"
 	}
-	return "judge abstained: " + reason
+	return truncate("judge abstained: " + reason)
 }
 
 // unscoredRuns counts repeated judge runs that produced no score, by cause.
@@ -535,10 +538,20 @@ func (u *unscoredRuns) summary() string {
 		parts = append(parts, fmt.Sprintf("%d failed (%v)", u.failed, u.firstErr))
 	}
 	if u.abstained > 0 {
-		parts = append(parts, fmt.Sprintf("%d abstained (%s)", u.abstained, u.firstAbstain))
+		parts = append(parts, fmt.Sprintf("%d abstained (%s)", u.abstained, truncate(llm.StripControl(u.firstAbstain))))
 	}
 	if u.refused > 0 {
 		parts = append(parts, fmt.Sprintf("%d not sent: budget exhausted", u.refused))
 	}
 	return strings.Join(parts, ", ")
+}
+
+// median returns the median of sorted scores: the middle score, or the
+// mean of the two middle scores for an even count.
+func median(sorted []float64) float64 {
+	n := len(sorted)
+	if n%2 == 1 {
+		return sorted[n/2]
+	}
+	return (sorted[n/2-1] + sorted[n/2]) / 2
 }

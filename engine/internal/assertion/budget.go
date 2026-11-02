@@ -166,6 +166,11 @@ func (l *Ledger) Usage() types.Usage {
 	return l.tally.usage
 }
 
+// usdLimited reports whether a USD limit applies to a call under scope.
+func (l *Ledger) usdLimited(scope *BudgetScope) bool {
+	return l.limits.MaxCostUSD != nil || (scope != nil && scope.ledger == l && scope.limits.MaxCostUSD != nil)
+}
+
 // NewScope returns a child budget limited by b (nil: no extra limit).
 func (l *Ledger) NewScope(b *types.BatchBudget) *BudgetScope {
 	s := &BudgetScope{ledger: l}
@@ -331,12 +336,20 @@ func (b *BudgetedProvider) Complete(ctx context.Context, req *llm.CompletionRequ
 	if priced {
 		reserveUSD = price.Cost(inputTokenBound(req), maxOut)
 	}
-	res, err := b.ledger.reserve(budgetScopeFromContext(ctx), true, reserveUSD, priced, model)
+	scope := budgetScopeFromContext(ctx)
+	if b.inner.Name() == "acp" && b.ledger.usdLimited(scope) {
+		return nil, fmt.Errorf("%w: the acp judge reports no token usage, so a USD budget (max_cost_usd) cannot cover it; "+
+			"limit acp calls with max_judge_calls", llm.ErrBudgetExhausted)
+	}
+	res, err := b.ledger.reserve(scope, true, reserveUSD, priced, model)
 	if err != nil {
 		return nil, err
 	}
 
 	resp, err := b.inner.Complete(ctx, req)
+	if err == nil {
+		resp = clampUsage(resp)
+	}
 	u := types.Usage{ModelCalls: 1, JudgeCalls: 1}
 	if !priced {
 		u.UnpricedCalls = 1
@@ -353,7 +366,7 @@ func (b *BudgetedProvider) Complete(ctx context.Context, req *llm.CompletionRequ
 	}
 	u.InputTokens = int64(resp.InputTokens)
 	u.OutputTokens = int64(resp.OutputTokens)
-	u.CachedTokens = int64(resp.CachedInputTokens)
+	u.CachedTokens = int64(min(resp.CachedInputTokens, resp.InputTokens))
 	u.CostUSD = resp.Cost
 	if llm.AttemptFromContext(ctx) > 0 {
 		u.RetryCostUSD = resp.Cost
@@ -404,10 +417,21 @@ func (b *BudgetedEmbedder) Embed(ctx context.Context, text string) ([]float32, e
 		res.fail(u)
 		return nil, err
 	}
-	u.InputTokens = int64(tokens)
+	u.InputTokens = int64(max(tokens, 0))
 	if priced {
-		u.CostUSD = price.Cost(tokens, 0)
+		u.CostUSD = price.Cost(max(tokens, 0), 0)
 	}
 	res.settle(u)
 	return vec, nil
+}
+
+// clampUsage returns resp with negative token counts reported by a
+// provider raised to 0, so a malformed reply cannot credit the budget.
+func clampUsage(resp *llm.CompletionResponse) *llm.CompletionResponse {
+	if resp.InputTokens >= 0 && resp.OutputTokens >= 0 && resp.CachedInputTokens >= 0 {
+		return resp
+	}
+	c := *resp
+	c.InputTokens, c.OutputTokens, c.CachedInputTokens = max(c.InputTokens, 0), max(c.OutputTokens, 0), max(c.CachedInputTokens, 0)
+	return &c
 }

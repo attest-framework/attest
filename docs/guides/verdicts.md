@@ -92,7 +92,7 @@ regression:
   tolerance: 0.05    # allowed drop below the baseline pass rate (default)
 ```
 
-An assertion regresses when the interval's upper bound is below the baseline pass rate minus the tolerance, passes when its lower bound is at or above that line, and is inconclusive when the interval straddles it. Pass rates exclude `not_evaluated` runs. `attest baseline pin` stores each assertion's passes and evaluated runs, folding the rows of fixed-N trials into one entry; baselines pinned by earlier versions count as one run each.
+An assertion regresses when the interval's upper bound is below the baseline pass rate minus the tolerance, passes when its lower bound is at or above that line, and is inconclusive when the interval straddles it. Pass rates exclude `not_evaluated` runs. The rule applies only to assertions with at least 2 runs in both the report and the baseline; single runs keep the status comparison of `block_on_regression`. An assertion run as trials that cannot be compared (baseline pinned from one run, or never evaluated on one side) is reported `inconclusive` and stays under `block_on_regression`. `attest baseline pin` stores each assertion's passes and evaluated runs, folding the rows of fixed-N trials into one entry; baselines pinned by earlier versions count as one run each.
 
 ## Simulation mode
 
