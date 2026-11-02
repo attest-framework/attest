@@ -97,3 +97,57 @@ func TestTruncate_DoesNotSplitUTF8(t *testing.T) {
 		t.Errorf("truncate = %q, want %q", got, "a…")
 	}
 }
+
+func TestComplete_GatewayEchoesKey_KeyRedactedFromError(t *testing.T) {
+	bodies := map[string]string{
+		"error.message": `{"error":{"type":"authentication_error","status":"UNAUTHENTICATED","message":"bad key secret-key for x-api-key"}}`,
+		"raw body":      `upstream rejected headers: x-api-key=secret-key x-goog-api-key=secret-key`,
+	}
+	for shape, body := range bodies {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusUnauthorized)
+			_, _ = w.Write([]byte(body))
+		}))
+		for name, p := range newTestProviders(t, srv.URL) {
+			t.Run(shape+"/"+name, func(t *testing.T) {
+				_, err := p.Complete(context.Background(), judgeRequest())
+
+				if err == nil || strings.Contains(err.Error(), "secret-key") || !strings.Contains(err.Error(), "[redacted]") {
+					t.Errorf("err = %v, want the key replaced by [redacted]", err)
+				}
+			})
+		}
+		srv.Close()
+	}
+}
+
+func TestStripControl_DropsBidiAndZeroWidthFormatCharacters(t *testing.T) {
+	in := "PA\u202eSS\u202a\u202b\u202c\u202d\u2066\u2067\u2068\u2069\u200b\u200d\ufeff\x1b[0m!"
+
+	got := stripControl(in)
+
+	if got != "PASS[0m!" {
+		t.Errorf("stripControl = %q, want %q", got, "PASS[0m!")
+	}
+}
+
+func TestGemini_NoTextCandidate_FinishReasonBoundedAndSanitized(t *testing.T) {
+	reason := "\u202e\x1b]0;" + strings.Repeat("R", 4*maxErrorDetail)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"candidates":[{"content":{"parts":[]},"finishReason":` + strconv.Quote(reason) + `}]}`))
+	}))
+	defer srv.Close()
+	p, err := NewGemini("secret-key", "judge-model", srv.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = p.Complete(context.Background(), judgeRequest())
+
+	if err == nil {
+		t.Fatal("Complete succeeded without text")
+	}
+	if len(err.Error()) > 2*maxErrorDetail || strings.ContainsAny(err.Error(), "\u202e\x1b") {
+		t.Errorf("error is unbounded or unsanitized (%d bytes)", len(err.Error()))
+	}
+}

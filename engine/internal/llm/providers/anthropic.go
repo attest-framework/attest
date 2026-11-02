@@ -113,10 +113,17 @@ func (p *Anthropic) Complete(ctx context.Context, req *llm.CompletionRequest) (*
 	}
 
 	start := time.Now()
-	raw, err := postJSON(ctx, p.client, "anthropic", p.baseURL+"/v1/messages", map[string]string{
-		"x-api-key":         p.apiKey,
-		"anthropic-version": anthropicVersion,
-	}, body, anthropicErrorMessage)
+	raw, err := postJSON(ctx, p.client, postRequest{
+		provider: "anthropic",
+		url:      p.baseURL + "/v1/messages",
+		apiKey:   p.apiKey,
+		headers: map[string]string{
+			"x-api-key":         p.apiKey,
+			"anthropic-version": anthropicVersion,
+		},
+		body:       body,
+		errMessage: anthropicErrorMessage,
+	})
 	if err != nil {
 		return nil, err
 	}
