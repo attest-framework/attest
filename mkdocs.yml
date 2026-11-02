@@ -35,6 +35,7 @@ nav:
     - Multi-Agent Testing: guides/multi-agent.md
     - Simulation: guides/simulation.md
     - Framework Adapters: guides/framework-adapters.md
+    - Judges: guides/judges.md
     - Engine Configuration: guides/configuration.md
   - Reference:
     - Python SDK:
