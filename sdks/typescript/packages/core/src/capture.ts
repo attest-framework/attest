@@ -82,6 +82,20 @@ export function loadFixture(file: string | URL): Fixture {
 
 // ---------------------------------------------------------------------------- emitter
 
+/**
+ * An object-literal key for `k`. `__proto__` must be a computed key: written plain or
+ * quoted it sets the object's prototype instead of a property.
+ */
+function objectKey(k: string): string {
+  if (k === "__proto__") return `[${JSON.stringify(k)}]`;
+  return /^[A-Za-z_$][\w$]*$/.test(k) ? k : JSON.stringify(k);
+}
+
+/** Make captured text safe inside a `//` comment: one line, no control characters. */
+function comment(text: string): string {
+  return text.replace(/[\p{Cc}\p{Zl}\p{Zp}]/gu, " ");
+}
+
 /** Render a JSON value as a TypeScript literal. */
 function ts(value: unknown): string {
   if (value === null || typeof value === "boolean" || typeof value === "number") {
@@ -91,7 +105,7 @@ function ts(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(ts).join(", ")}]`;
   if (typeof value === "object") {
     const entries = Object.entries(value as Record<string, unknown>).map(
-      ([k, v]) => `${/^[A-Za-z_$][\w$]*$/.test(k) ? k : JSON.stringify(k)}: ${ts(v)}`,
+      ([k, v]) => `${objectKey(k)}: ${ts(v)}`,
     );
     return entries.length === 0 ? "{}" : `{ ${entries.join(", ")} }`;
   }
@@ -199,11 +213,11 @@ export function renderVitest(fixture: Fixture, fixturePath: string, testPath: st
   ];
   if (skipped.length > 0) {
     lines.push("", "// Drafted contracts without a TypeScript DSL call (left out):");
-    for (const s of skipped) lines.push(`// - ${s}`);
+    for (const s of skipped) lines.push(`// - ${comment(s)}`);
   }
   lines.push("", "function contracts(): ExpectChain {", "  return attestExpect(FIXTURE.trace)");
   for (const [c, dsl] of calls) {
-    lines.push(`    // ${c.id}: ${c.description}`, `    ${dsl}`);
+    lines.push(`    // ${comment(`${c.id}: ${c.description}`)}`, `    ${dsl}`);
   }
   lines[lines.length - 1] += ";";
   lines.push("}");
@@ -283,9 +297,16 @@ export interface RecordResult<T> {
   testFile: string | null;
 }
 
+interface ServeExit {
+  code: number | null;
+  signal: NodeJS.Signals | null;
+  stdout: string;
+  stderr: string;
+}
+
 interface ServeProcess {
   ready: Promise<string | null>;
-  finish(finalize: boolean): Promise<{ code: number | null; stdout: string; stderr: string }>;
+  finish(finalize: boolean): Promise<ServeExit>;
 }
 
 function serve(engine: string, args: string[]): ServeProcess {
@@ -296,15 +317,15 @@ function serve(engine: string, args: string[]): ServeProcess {
   const ready = new Promise<string | null>((resolve) => {
     resolveReady = resolve;
   });
-  const exited = new Promise<number | null>((resolve) => {
-    child.on("close", (code) => {
+  const exited = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve) => {
+    child.on("close", (code, signal) => {
       resolveReady(null);
-      resolve(code);
+      resolve({ code, signal });
     });
     child.on("error", (err) => {
       stderr += err.message;
       resolveReady(null);
-      resolve(null);
+      resolve({ code: null, signal: null });
     });
   });
   child.stdout.setEncoding("utf8").on("data", (chunk: string) => {
@@ -315,15 +336,38 @@ function serve(engine: string, args: string[]): ServeProcess {
   child.stderr.setEncoding("utf8").on("data", (chunk: string) => {
     stderr += chunk;
   });
+  // An engine that already exited cannot take "finalize"; its exit still says why.
+  child.stdin.on("error", () => undefined);
   return {
     ready,
     async finish(finalize) {
       if (finalize) child.stdin.write("finalize\n");
       child.stdin.end();
-      const code = await exited;
-      return { code, stdout, stderr };
+      const { code, signal } = await exited;
+      return { code, signal, stdout, stderr };
     },
   };
+}
+
+function readyEnv(line: string | null): Record<string, string> | null {
+  if (line === null) return null;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(line);
+  } catch {
+    return null;
+  }
+  const env = (parsed as { env?: unknown } | null)?.env;
+  if (typeof env !== "object" || env === null) return null;
+  const entries = Object.entries(env);
+  if (!entries.every(([, v]) => typeof v === "string")) return null;
+  return Object.fromEntries(entries) as Record<string, string>;
+}
+
+function exitDetail(exit: ServeExit): string {
+  const how = exit.signal !== null ? `killed by ${exit.signal}` : `exit ${String(exit.code)}`;
+  const err = exit.stderr.trim();
+  return err ? `${how}: ${err}` : how;
 }
 
 function restore(saved: Map<string, string | undefined>): void {
@@ -333,6 +377,10 @@ function restore(saved: Map<string, string | undefined>): void {
   }
 }
 
+// record() sets process-wide environment variables, so a second concurrent capture
+// would save and later restore the first one's values.
+let recording = false;
+
 /**
  * Capture `fn` as fixture `<outDir>/<name>.attest.json`.
  *
@@ -341,29 +389,43 @@ function restore(saved: Map<string, string | undefined>): void {
  * `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` while `fn` runs. Model clients and the
  * OpenTelemetry exporter read these when they are constructed, so construct them inside
  * `fn`, and pass the tracer provider's `forceFlush` as `flush`. Afterwards the variables
- * are restored and the engine writes the fixture; with `emitTest` the drafted Vitest file
- * is written unless one exists. If `fn` throws, the capture is abandoned and no fixture is
- * written.
+ * are restored and the engine writes the fixture; for a verified fixture with `emitTest`
+ * the drafted Vitest file is written unless one exists. If `fn` throws, the capture is
+ * abandoned and no fixture is written. Captures cannot overlap.
  *
- * @throws CaptureError when the engine writes no fixture, or the fixture is not verified
- *   (its drafted contracts did not hold; the fixture is still written).
+ * @throws CaptureError when another capture is running, the engine writes no fixture,
+ *   or the fixture is not verified (its drafted contracts did not hold; the fixture is
+ *   still written and no test is drafted).
  */
 export async function record<T>(
   name: string,
   fn: (capture: Capture) => T | Promise<T>,
   opts: RecordOptions = {},
 ): Promise<RecordResult<T>> {
+  if (recording) throw new CaptureError("record() is already running; captures cannot overlap");
+  recording = true;
+  try {
+    return await recordExclusive(name, fn, opts);
+  } finally {
+    recording = false;
+  }
+}
+
+async function recordExclusive<T>(
+  name: string,
+  fn: (capture: Capture) => T | Promise<T>,
+  opts: RecordOptions,
+): Promise<RecordResult<T>> {
   const engine = await resolveEngine(opts.enginePath);
   const args = ["capture", "--serve", "--name", name, "--out-dir", opts.outDir ?? DEFAULT_FIXTURE_DIR];
   if (opts.expectFail) args.push("--expect-fail");
   if (opts.agentId !== undefined) args.push("--agent-id", opts.agentId);
   const proc = serve(engine, args);
-  const ready = await proc.ready;
-  if (ready === null) {
-    const { stderr } = await proc.finish(false);
-    throw new CaptureError(`attest-engine capture --serve did not start: ${stderr.trim()}`);
+  const env = readyEnv(await proc.ready);
+  if (env === null) {
+    const exit = await proc.finish(false);
+    throw new CaptureError(`attest-engine capture --serve did not start (${exitDetail(exit)})`);
   }
-  const env = (JSON.parse(ready) as { env: Record<string, string> }).env;
   const saved = new Map(Object.keys(env).map((k) => [k, process.env[k]]));
   Object.assign(process.env, env);
   let value: T;
@@ -376,16 +438,16 @@ export async function record<T>(
     throw err;
   }
   restore(saved);
-  const { code, stdout, stderr } = await proc.finish(true);
-  process.stderr.write(stderr);
-  const lines = stdout.trim().split("\n");
+  const exit = await proc.finish(true);
+  process.stderr.write(exit.stderr);
+  const lines = exit.stdout.trim().split("\n");
   if (lines.length < 2) {
-    throw new CaptureError(`capture ${name} wrote no fixture: ${stderr.trim()}`);
+    throw new CaptureError(`capture ${name} wrote no fixture (${exitDetail(exit)})`);
   }
   const outcome = JSON.parse(lines[lines.length - 1] ?? "") as { fixture: string; verified: boolean };
-  const testFile = opts.emitTest === false ? null : emitVitest(outcome.fixture);
-  if (code !== 0) {
-    throw new CaptureError(`capture ${name}: fixture ${outcome.fixture} is not verified`, outcome.fixture);
+  if (exit.code !== 0 || !outcome.verified) {
+    throw new CaptureError(`capture ${name}: fixture ${outcome.fixture} is not verified; no test drafted`, outcome.fixture);
   }
-  return { value, fixture: outcome.fixture, verified: outcome.verified, testFile };
+  const testFile = opts.emitTest === false ? null : emitVitest(outcome.fixture);
+  return { value, fixture: outcome.fixture, verified: true, testFile };
 }

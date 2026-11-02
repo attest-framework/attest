@@ -32,8 +32,8 @@ const SDK_USAGE =
   "  init [--ci github]  scaffold a sample test and merge policy here\n" +
   "                      (--ci github also writes .github/workflows/attest.yml)\n" +
   "\n" +
-  "`attest capture` (engine) also drafts tests/attest/<name>.test.ts from the fixture\n" +
-  "it writes, unless that file exists.\n" +
+  "`attest capture` (engine) also drafts tests/attest/<name>.test.ts from a verified\n" +
+  "fixture, unless that file exists.\n" +
   "\n" +
   "options:\n" +
   "  --version  print the SDK version and the engine version it requires\n" +
@@ -153,32 +153,59 @@ async function forward(args: string[]): Promise<number> {
   return exitStatus(proc.status, proc.signal);
 }
 
-// Engine capture modes that do not write a fixture.
-const CAPTURE_NO_FIXTURE = new Set(["--check-redaction", "--serve", "-h", "--help", "-help"]);
+// Engine capture modes the CLI drafts no test for: help, --check-redaction (writes no
+// fixture) and --serve (used by record(), which drafts its own). Go flags accept one or
+// two dashes.
+const CAPTURE_NO_TEST = new Set(["check-redaction", "serve", "h", "help"]);
 
-/** True unless `attest capture` args select a mode that writes no fixture. */
+function flagName(arg: string): string | null {
+  if (!arg.startsWith("-") || arg === "-" || arg === "--") return null;
+  return arg.replace(/^-+/, "").split("=", 1)[0] ?? null;
+}
+
+/** True when `attest capture` args select a mode whose fixture the CLI drafts a test for. */
 export function captureWritesFixture(args: string[]): boolean {
   for (const a of args) {
     if (a === "--") break;
-    if (CAPTURE_NO_FIXTURE.has(a.split("=", 1)[0] ?? a)) return false;
+    const name = flagName(a);
+    if (name !== null && CAPTURE_NO_TEST.has(name)) return false;
   }
   return true;
 }
 
+function userResultFile(args: string[]): boolean {
+  for (const a of args) {
+    if (a === "--") break;
+    if (flagName(a) === "result-file") return true;
+  }
+  return false;
+}
+
 /** Run `attest-engine capture` and draft the Vitest file for the fixture it wrote. */
 function captureAndEmit(engine: string, args: string[]): number {
+  if (userResultFile(args)) {
+    process.stderr.write(
+      "attest: capture --result-file is set by the attest CLI; run attest-engine capture directly to choose it\n",
+    );
+    return 2;
+  }
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "attest-capture-"));
   const resultFile = path.join(tmp, "result.json");
-  let fixture: string;
+  let result: { fixture: string; verified: boolean };
   let code: number;
   try {
     const proc = spawnSync(engine, ["capture", "--result-file", resultFile, ...args], { stdio: "inherit" });
     if (proc.error) throw proc.error;
     code = exitStatus(proc.status, proc.signal);
     if (!fs.existsSync(resultFile)) return code;
-    fixture = (JSON.parse(fs.readFileSync(resultFile, "utf8")) as { fixture: string }).fixture;
+    result = JSON.parse(fs.readFileSync(resultFile, "utf8")) as { fixture: string; verified: boolean };
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
+  }
+  const fixture = result.fixture;
+  if (!result.verified) {
+    process.stderr.write(`  test: none drafted for unverified ${fixture}\n`);
+    return code;
   }
   const written = emitVitest(fixture);
   process.stderr.write(

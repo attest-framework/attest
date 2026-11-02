@@ -36,7 +36,7 @@ The engine opens one listener on `127.0.0.1` (an ephemeral port) and runs the co
 
 The proxy forwards each model call to the upstream named by the same variable in the environment you ran `attest capture` from (default `https://api.openai.com/v1` and `https://api.anthropic.com`), so a capture against a local or scripted model server works by setting `OPENAI_BASE_URL` before the command. Streaming and non-streaming calls are both recorded; streamed events reach your agent as the upstream sends them. Your API key passes through to the upstream and is never written down.
 
-The listener closes when the command exits. A command that exits non-zero still produces a fixture; its exit code is recorded.
+The listener closes when the command exits. A command that exits non-zero still produces a fixture; its exit code is recorded. `SIGINT` and `SIGTERM` sent to `attest capture` are passed to the command. A model call the agent cancels or does not read to the end fails the capture with no fixture written, since the fixture could not replay it.
 
 ### What the agent must do
 
@@ -65,7 +65,7 @@ Cardinality is drafted from the argument names, not from the counts the run prod
 
 ## The drafted test
 
-`attest capture` writes `tests/attest/test_<name>.py` (Python) or `tests/attest/<name>.test.ts` (TypeScript) next to the fixture directory, unless that file already exists: re-capturing never overwrites a test you edited. The test loads the fixture and runs the contracts against its trace without running the agent:
+For a verified fixture, `attest capture` writes `tests/attest/test_<name>.py` (Python; the name lowercased, other characters as `_`) or `tests/attest/<name>.test.ts` (TypeScript) next to the fixture directory, unless that file already exists: re-capturing never overwrites a test you edited. An unverified fixture gets no test, so capturing again with `--expect-fail` (or after editing the agent) still drafts one. The test loads the fixture and runs the contracts against its trace without running the agent:
 
 ```python
 FIXTURE = load_fixture(Path(__file__).parent / "fixtures/inc-1042.attest.json")
@@ -118,9 +118,9 @@ const result = await record(
 
 `record()` starts `attest-engine capture --serve`, sets the three variables in the process environment for the block, restores them afterwards, and writes the fixture and the drafted test. Model clients and OTLP exporters read the variables when they are constructed, so build them inside the block. Python flushes the global OpenTelemetry tracer provider on exit when the application loaded one; in TypeScript pass the provider's `forceFlush` as `flush`. Child processes started inside the block inherit the variables; `capture.env` holds them for a subprocess started with an explicit environment.
 
-If the block raises, the capture is abandoned and no fixture is written. A fixture that is not verified raises `attest.CaptureError` (TypeScript: `CaptureError`) after it is written.
+If the block raises, the capture is abandoned and no fixture is written. A fixture that is not verified raises `attest.CaptureError` (TypeScript: `CaptureError`) after it is written, and no test is drafted.
 
-Options: `out_dir` / `outDir` (default `tests/attest/fixtures`), `expect_fail` / `expectFail`, `agent_id` / `agentId`, `emit_test` / `emitTest` (default true), `engine_path` / `enginePath`.
+Options: `out_dir` / `outDir` (default `tests/attest/fixtures`), `expect_fail` / `expectFail`, `agent_id` / `agentId`, `emit_test` / `emitTest` (default true), `engine_path` / `enginePath`, and in TypeScript `flush`. `record()` sets process-wide variables, so captures cannot overlap; a second `record()` while one runs raises `CaptureError`.
 
 ## Capture from an export
 
@@ -158,7 +158,7 @@ Check a fixture before committing it, for example in CI with the same secrets in
 uv run attest capture --check-redaction tests/attest/fixtures/inc-1042.attest.json
 ```
 
-It prints the JSON path of each hit (never the secret) and exits 1 when there is one.
+It prints the JSON path of each hit (never the secret; an object key holding one is shown as `<redacted key #N>`) and exits 1 when there is one.
 
 ### Templating
 
@@ -170,7 +170,7 @@ Values that differ between two runs of the same scenario become stable placehold
 | provider response, item and tool-call ids (`chatcmpl-`, `resp_`, `msg_`, `call_`, `toolu_`, `fc_`, `rs_`, with a digit after the prefix) | the prefix plus `{{id_N}}` |
 | emails | `{{email_N}}` |
 | ISO-8601 timestamps in text | `{{timestamp_N}}` |
-| numeric timestamps (`started_at_ms`, `created`, `created_at`, …) | their rank among the fixture's timestamps, 1, 2, 3, … (order is kept) |
+| numeric timestamps (`started_at_ms`, `created`, `created_at`, …) | sequence numbers in document order, 1, 2, 3, … (two calls in the same second in one run and different seconds in the next give the same output) |
 | durations (`latency_ms`, `duration_ms`, …) | `0` |
 
 Keys are sorted and indentation is fixed, so capturing the same scripted run twice writes byte-identical fixtures, and a re-capture diff shows only what the agent did differently.
@@ -180,7 +180,7 @@ Keys are sorted and indentation is fixed, so capturing the same scripted run twi
 | Exit | Meaning |
 | --- | --- |
 | 0 | The fixture is verified (`--check-redaction`: no secret found). |
-| 1 | The fixture is not verified (it is still written), no fixture could be built (no spans, a malformed export), or `--check-redaction` found a secret. |
+| 1 | The fixture is not verified (it is still written), no fixture could be built (no spans, an unfinished model call, a malformed export), or `--check-redaction` found a secret. |
 | 2 | Usage error. |
 
 `attest trace check <fixture>` checks a fixture: it decodes, its trace passes the engine's trace validation, and its capture-time trace check was clean; an unverified fixture is a warning.

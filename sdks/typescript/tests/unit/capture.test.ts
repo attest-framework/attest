@@ -1,4 +1,4 @@
-import { mkdtempSync, mkdirSync, copyFileSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, copyFileSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -16,7 +16,9 @@ import {
 import { captureWritesFixture } from "../../packages/core/src/cli.js";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../../../..");
-const incident = join(root, "protocol-tests", "fixture-v1", "valid", "002-otlp-file-trace-only.attest.json");
+const validDir = join(root, "protocol-tests", "fixture-v1", "valid");
+const validFixtures = readdirSync(validDir).filter((f) => f.endsWith(".attest.json")).sort();
+const incident = join(validDir, "002-otlp-file-trace-only.attest.json");
 
 const contract = (type: string, spec: Record<string, unknown>): Contract => ({
   id: "c",
@@ -56,8 +58,8 @@ describe("dslCall", () => {
     expect(() => dslCall(contract(type, spec))).toThrow(/contract c/);
   });
 
-  it("renders calls that emit the drafted specs", () => {
-    const fixture = loadFixture(incident);
+  it.each(validFixtures)("renders calls that emit the drafted specs of %s", (file) => {
+    const fixture = loadFixture(join(validDir, file));
     let chain: ExpectChain = attestExpect(fixture.trace);
     for (const c of fixture.contracts) {
       chain = new Function("chain", `return chain${dslCall(c)};`)(chain) as ExpectChain;
@@ -92,6 +94,36 @@ describe("renderVitest", () => {
   });
 });
 
+describe("renderVitest with hostile captured text", () => {
+  it("keeps a newline in a description inside the comment", () => {
+    const fixture = loadFixture(incident);
+    fixture.contracts = [
+      {
+        id: "tools-called",
+        kind: "tools",
+        description: "calls x\nprocess.exit(1)",
+        type: "trace",
+        spec: { check: "trajectory", mode: "superset", tools: ["x"], soft: false },
+      },
+    ];
+
+    const source = renderVitest(fixture, "/r/fixtures/f.attest.json", "/r/f.test.ts");
+
+    expect(source).toContain("// tools-called: calls x process.exit(1)");
+    expect(source.split("\n").filter((l) => l.trim().startsWith("process.exit"))).toEqual([]);
+  });
+
+  it("emits a schema property named __proto__ as a computed key", () => {
+    const call = dslCall(
+      contract("schema", { target: "output.structured", schema: JSON.parse('{"properties":{"__proto__":{"type":"string"}}}') }),
+    );
+    const chain = new Function("chain", `return chain${call};`)(attestExpect({ trace_id: "t", output: {}, steps: [] } as never)) as ExpectChain;
+
+    expect(call).toContain('["__proto__"]: { type: "string" }');
+    expect(Object.keys((chain.assertions[0]?.spec as { schema: { properties: object } }).schema.properties)).toEqual(["__proto__"]);
+  });
+});
+
 describe("emitVitest", () => {
   it("writes the test once and leaves an edited test unchanged", () => {
     const dir = mkdtempSync(join(tmpdir(), "attest-emit-"));
@@ -123,6 +155,8 @@ describe("captureWritesFixture", () => {
     [["--check-redaction=f.json"], false],
     [["--name", "x", "--serve"], false],
     [["--help"], false],
+    [["-serve"], false],
+    [["-check-redaction=f.json"], false],
   ])("%j → %s", (args, writes) => {
     expect(captureWritesFixture(args)).toBe(writes);
   });

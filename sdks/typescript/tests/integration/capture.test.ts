@@ -141,11 +141,12 @@ describe.skipIf(!existsSync(engine))("record() (real engine)", () => {
   it("throws CaptureError and keeps the unverified fixture without expectFail", async () => {
     const dir = mkdtempSync(join(tmpdir(), "attest-record-"));
 
-    const err = await record("inc-5", () => scriptedAgent(2), { outDir: dir, emitTest: false }).catch((e: unknown) => e);
+    const err = await record("inc-5", () => scriptedAgent(2), { outDir: join(dir, "fixtures") }).catch((e: unknown) => e);
 
     expect(err).toBeInstanceOf(CaptureError);
-    expect((err as CaptureError).message).toMatch(/is not verified/);
-    expect(loadFixture(join(dir, "inc-5.attest.json")).verification.verified).toBe(false);
+    expect((err as CaptureError).message).toMatch(/is not verified; no test drafted/);
+    expect(loadFixture(join(dir, "fixtures", "inc-5.attest.json")).verification.verified).toBe(false);
+    expect(existsSync(join(dir, "inc-5.test.ts"))).toBe(false);
   }, 30_000);
 
   it("abandons the capture and restores the environment when the callback throws", async () => {
