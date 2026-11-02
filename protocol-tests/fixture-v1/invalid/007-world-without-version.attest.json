@@ -1,0 +1,374 @@
+{
+  "contracts": [
+    {
+      "description": "calls lookup_order, issue_refund, notify_customer",
+      "id": "tools-called",
+      "kind": "tools",
+      "spec": {
+        "check": "trajectory",
+        "mode": "superset",
+        "soft": false,
+        "tools": [
+          "lookup_order",
+          "issue_refund",
+          "notify_customer"
+        ]
+      },
+      "type": "trace"
+    },
+    {
+      "description": "lookup_order is called before issue_refund",
+      "id": "order-lookup_order-before-issue_refund",
+      "kind": "order",
+      "spec": {
+        "after": "issue_refund",
+        "before": "lookup_order",
+        "check": "tool_order",
+        "soft": false
+      },
+      "type": "trace"
+    },
+    {
+      "description": "issue_refund is called before notify_customer",
+      "id": "order-issue_refund-before-notify_customer",
+      "kind": "order",
+      "spec": {
+        "after": "notify_customer",
+        "before": "issue_refund",
+        "check": "tool_order",
+        "soft": false
+      },
+      "type": "trace"
+    },
+    {
+      "description": "lookup_order at most once per order_id",
+      "id": "cardinality-lookup_order-per-order_id",
+      "kind": "cardinality",
+      "spec": {
+        "check": "tool_cardinality",
+        "max": 1,
+        "per": "order_id",
+        "soft": false,
+        "tool": "lookup_order"
+      },
+      "type": "trace"
+    },
+    {
+      "description": "issue_refund at most once per order_id",
+      "id": "cardinality-issue_refund-per-order_id",
+      "kind": "cardinality",
+      "spec": {
+        "check": "tool_cardinality",
+        "max": 1,
+        "per": "order_id",
+        "soft": false,
+        "tool": "issue_refund"
+      },
+      "type": "trace"
+    },
+    {
+      "description": "notify_customer at most once per order_id",
+      "id": "cardinality-notify_customer-per-order_id",
+      "kind": "cardinality",
+      "spec": {
+        "check": "tool_cardinality",
+        "max": 1,
+        "per": "order_id",
+        "soft": false,
+        "tool": "notify_customer"
+      },
+      "type": "trace"
+    }
+  ],
+  "exchanges": [],
+  "fixture_version": 1,
+  "name": "inc-1042",
+  "source": {
+    "kind": "otlp_file",
+    "replay_capable": false
+  },
+  "trace": {
+    "agent_id": "refund-desk",
+    "input": {},
+    "metadata": {
+      "latency_ms": 0,
+      "model": "refund-desk-scripted",
+      "total_tokens": 1545
+    },
+    "output": {
+      "message": ""
+    },
+    "schema_version": 2,
+    "steps": [
+      {
+        "args": {
+          "model": "refund-desk-scripted",
+          "operation": "chat"
+        },
+        "ended_at_ms": 2,
+        "metadata": {
+          "duration_ms": 0
+        },
+        "name": "chat refund-desk-scripted",
+        "parent_span_id": "0000000000000001",
+        "result": {
+          "finish_reasons": [
+            "tool_calls"
+          ],
+          "input_tokens": 86,
+          "model": "refund-desk-scripted",
+          "output_tokens": 43
+        },
+        "span_id": "0000000000000002",
+        "started_at_ms": 1,
+        "type": "llm_call"
+      },
+      {
+        "args": {
+          "order_id": "O-1042"
+        },
+        "ended_at_ms": 3,
+        "metadata": {
+          "duration_ms": 0
+        },
+        "name": "lookup_order",
+        "parent_span_id": "0000000000000001",
+        "result": {
+          "amount_cents": 8400,
+          "currency": "USD",
+          "order_id": "O-1042",
+          "status": "delivered"
+        },
+        "span_id": "0000000000000003",
+        "started_at_ms": 2,
+        "tool_call_id": "call_1",
+        "type": "tool_call"
+      },
+      {
+        "args": {
+          "model": "refund-desk-scripted",
+          "operation": "chat"
+        },
+        "ended_at_ms": 4,
+        "metadata": {
+          "duration_ms": 0
+        },
+        "name": "chat refund-desk-scripted",
+        "parent_span_id": "0000000000000001",
+        "result": {
+          "finish_reasons": [
+            "tool_calls"
+          ],
+          "input_tokens": 168,
+          "model": "refund-desk-scripted",
+          "output_tokens": 58
+        },
+        "span_id": "0000000000000004",
+        "started_at_ms": 3,
+        "type": "llm_call"
+      },
+      {
+        "args": {
+          "amount_cents": 8400,
+          "order_id": "O-1042",
+          "reason": "item arrived damaged"
+        },
+        "ended_at_ms": 5,
+        "error": {
+          "type": "payments_timeout"
+        },
+        "metadata": {
+          "duration_ms": 0
+        },
+        "name": "issue_refund",
+        "parent_span_id": "0000000000000001",
+        "result": {
+          "error": "payments_timeout",
+          "order_id": "O-1042"
+        },
+        "span_id": "0000000000000005",
+        "started_at_ms": 4,
+        "tool_call_id": "call_2",
+        "type": "tool_call"
+      },
+      {
+        "args": {
+          "model": "refund-desk-scripted",
+          "operation": "chat"
+        },
+        "ended_at_ms": 6,
+        "metadata": {
+          "duration_ms": 0
+        },
+        "name": "chat refund-desk-scripted",
+        "parent_span_id": "0000000000000001",
+        "result": {
+          "finish_reasons": [
+            "tool_calls"
+          ],
+          "input_tokens": 255,
+          "model": "refund-desk-scripted",
+          "output_tokens": 58
+        },
+        "span_id": "0000000000000006",
+        "started_at_ms": 5,
+        "type": "llm_call"
+      },
+      {
+        "args": {
+          "amount_cents": 8400,
+          "order_id": "O-1042",
+          "reason": "item arrived damaged"
+        },
+        "ended_at_ms": 7,
+        "metadata": {
+          "duration_ms": 0
+        },
+        "name": "issue_refund",
+        "parent_span_id": "0000000000000001",
+        "result": {
+          "amount_cents": 8400,
+          "order_id": "O-1042",
+          "refund_id": "R-0002",
+          "status": "committed"
+        },
+        "retry_of": 3,
+        "span_id": "0000000000000007",
+        "started_at_ms": 6,
+        "tool_call_id": "call_3",
+        "type": "tool_call"
+      },
+      {
+        "args": {
+          "model": "refund-desk-scripted",
+          "operation": "chat"
+        },
+        "ended_at_ms": 8,
+        "metadata": {
+          "duration_ms": 0
+        },
+        "name": "chat refund-desk-scripted",
+        "parent_span_id": "0000000000000001",
+        "result": {
+          "finish_reasons": [
+            "tool_calls"
+          ],
+          "input_tokens": 352,
+          "model": "refund-desk-scripted",
+          "output_tokens": 63
+        },
+        "span_id": "0000000000000008",
+        "started_at_ms": 7,
+        "type": "llm_call"
+      },
+      {
+        "args": {
+          "message": "Your refund of $84.00 for order O-1042 has been processed.",
+          "order_id": "O-1042"
+        },
+        "ended_at_ms": 9,
+        "metadata": {
+          "duration_ms": 0
+        },
+        "name": "notify_customer",
+        "parent_span_id": "0000000000000001",
+        "result": {
+          "notification_id": "N-0001",
+          "status": "sent"
+        },
+        "span_id": "0000000000000009",
+        "started_at_ms": 8,
+        "tool_call_id": "call_4",
+        "type": "tool_call"
+      },
+      {
+        "args": {
+          "model": "refund-desk-scripted",
+          "operation": "chat"
+        },
+        "ended_at_ms": 10,
+        "metadata": {
+          "duration_ms": 0
+        },
+        "name": "chat refund-desk-scripted",
+        "parent_span_id": "0000000000000001",
+        "result": {
+          "finish_reasons": [
+            "stop"
+          ],
+          "input_tokens": 442,
+          "model": "refund-desk-scripted",
+          "output_tokens": 20
+        },
+        "span_id": "000000000000000a",
+        "started_at_ms": 9,
+        "type": "llm_call"
+      }
+    ],
+    "trace_id": "otel_0000000000000001",
+    "turns": [
+      {
+        "index": 0,
+        "span_id": "0000000000000001",
+        "step_indices": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8
+        ]
+      }
+    ]
+  },
+  "verification": {
+    "expect_fail": true,
+    "expected_failures": [
+      "cardinality-issue_refund-per-order_id"
+    ],
+    "results": [
+      {
+        "contract": "tools-called",
+        "explanation": "trajectory (superset) matches [lookup_order issue_refund notify_customer]",
+        "status": "pass"
+      },
+      {
+        "contract": "order-lookup_order-before-issue_refund",
+        "explanation": "lookup_order (step 1) precedes issue_refund (step 3)",
+        "status": "pass"
+      },
+      {
+        "contract": "order-issue_refund-before-notify_customer",
+        "explanation": "issue_refund (step 3) precedes notify_customer (step 7)",
+        "status": "pass"
+      },
+      {
+        "contract": "cardinality-lookup_order-per-order_id",
+        "explanation": "lookup_order within max 1 for each of 1 order_id value(s)",
+        "status": "pass"
+      },
+      {
+        "contract": "cardinality-issue_refund-per-order_id",
+        "explanation": "issue_refund called 2× for order_id=O-1042 (max 1)",
+        "status": "hard_fail"
+      },
+      {
+        "contract": "cardinality-notify_customer-per-order_id",
+        "explanation": "notify_customer within max 1 for each of 1 order_id value(s)",
+        "status": "pass"
+      }
+    ],
+    "trace_check": {
+      "errors": 0,
+      "ok": true,
+      "warnings": 0
+    },
+    "verified": true
+  },
+  "world": {
+    "state": {}
+  }
+}
