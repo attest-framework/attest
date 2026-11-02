@@ -5,6 +5,7 @@ import {
   requireSimulationCapability,
   type AgentResult,
 } from "@attest-ai/core";
+import { MIN_PASS_RATE_ENV, validateMinPassRate } from "./trials.js";
 
 let engineManager: EngineManager | undefined;
 let attestClient: AttestClient | undefined;
@@ -12,6 +13,12 @@ let attestClient: AttestClient | undefined;
 export interface AttestGlobalSetupOptions {
   enginePath?: string;
   logLevel?: string;
+  /**
+   * Minimum passed / evaluated trials for every trials() test of the run (0..1,
+   * default 1.0); trials(body, { minPassRate }) overrides it per test. Reaches
+   * the workers as the ATTEST_MIN_PASS_RATE environment variable.
+   */
+  minPassRate?: number;
 }
 
 declare global {
@@ -28,8 +35,13 @@ declare global {
 }
 
 export function attestGlobalSetup(options?: AttestGlobalSetupOptions) {
+  const minPassRate =
+    options?.minPassRate === undefined
+      ? undefined
+      : validateMinPassRate(options.minPassRate, `minPassRate=${options.minPassRate}`);
   return {
     async setup() {
+      if (minPassRate !== undefined) process.env[MIN_PASS_RATE_ENV] = String(minPassRate);
       globalThis.__attest_session_cost__ = 0;
       globalThis.__attest_session_soft_failures__ = 0;
       globalThis.__attest_session_failures__ = [];

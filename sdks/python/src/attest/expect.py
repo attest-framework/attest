@@ -18,6 +18,7 @@ from attest._proto.types import (
     Trace,
 )
 from attest.result import AgentResult
+from attest.trials import current_run
 
 
 class ExpectChain:
@@ -38,10 +39,19 @@ class ExpectChain:
         return self._result.trace
 
     def _add(self, assertion_type: str, spec: dict[str, Any]) -> ExpectChain:
-        """Add an assertion to the collection."""
+        """Add an assertion to the collection.
+
+        Inside a test using the ``attest`` fixture the ID is deterministic
+        (``attest.trials.assertion_id_for``), so trials and baselines match
+        rows by ``assertion_id``; elsewhere it is random.
+        """
+        run = current_run()
+        assertion_id = (
+            run.next_assertion_id() if run is not None else f"assert_{uuid.uuid4().hex[:8]}"
+        )
         self._assertions.append(
             Assertion(
-                assertion_id=f"assert_{uuid.uuid4().hex[:8]}",
+                assertion_id=assertion_id,
                 type=assertion_type,
                 spec=spec,
             )

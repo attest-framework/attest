@@ -17,6 +17,8 @@ type MarkdownReport struct {
 	Results    []types.AssertionResult
 	TotalCost  float64
 	DurationMS int64
+	// Usage, when non-nil, adds the model-usage line to the summary.
+	Usage *types.Usage
 	// Simulated marks the report as produced from an SDK simulation shim
 	// rather than from real engine evaluation. Renders a "[SIMULATED]"
 	// banner so reviewers do not mistake the run for a real evaluation.
@@ -81,6 +83,9 @@ func GenerateMarkdown(w io.Writer, r *MarkdownReport) error {
 	}
 
 	writeSummaryBlock(sw, computeReportStats(r.Results, r.TotalCost, r.DurationMS))
+	if r.Usage != nil {
+		sw.printf("**Model usage:** %s\n\n", FormatUsage(*r.Usage))
+	}
 
 	if r.Baseline != nil {
 		writeBaselineSection(sw, r.Baseline)
@@ -443,4 +448,19 @@ func renderCell(s string) string {
 		return "—"
 	}
 	return escapeMarkdownInline(s)
+}
+
+// FormatUsage renders usage as the run-summary line
+// "model calls · tokens (cached) · $ · retry cost", with refused and
+// unpriced calls appended when present.
+func FormatUsage(u types.Usage) string {
+	line := fmt.Sprintf("%d model calls · %d tokens (%d cached) · $%.4f · retry cost $%.4f",
+		u.ModelCalls, u.InputTokens+u.OutputTokens, u.CachedTokens, u.CostUSD, u.RetryCostUSD)
+	if u.BudgetRefused > 0 {
+		line += fmt.Sprintf(" · %d calls refused by budget", u.BudgetRefused)
+	}
+	if u.UnpricedCalls > 0 {
+		line += fmt.Sprintf(" · %d unpriced calls not in $", u.UnpricedCalls)
+	}
+	return line
 }

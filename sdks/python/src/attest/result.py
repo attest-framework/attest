@@ -13,6 +13,7 @@ from attest._proto.types import (
     STATUS_SOFT_FAIL,
     AssertionResult,
     Trace,
+    Usage,
 )
 
 #: Test outcomes derived from a batch of assertion results (``AgentResult.outcome``).
@@ -87,6 +88,8 @@ class AgentResult:
     assertion_results: list[AssertionResult] = field(default_factory=list)
     total_cost: float = 0.0
     total_duration_ms: int = 0
+    #: Attest-initiated model usage of the ``evaluate_batch`` call.
+    usage: Usage = field(default_factory=Usage)
 
     @property
     def passed(self) -> bool:

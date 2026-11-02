@@ -15,6 +15,7 @@ from attest._proto.types import (
     Step,
     Trace,
     TraceMetadata,
+    Usage,
 )
 from attest.adapters._base import BaseAdapter, BaseProviderAdapter
 from attest.adapters.anthropic import AnthropicAdapter
@@ -51,6 +52,7 @@ __all__ = [
     "Step",
     "Trace",
     "TraceMetadata",
+    "Usage",
     # Configuration
     "config",
     # Agent
