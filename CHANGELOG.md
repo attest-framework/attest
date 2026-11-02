@@ -24,7 +24,7 @@ All notable changes to Attest are documented in this file. The format follows [K
 
 ### Fixed
 
-- Install instructions in the README, `docs/guides/merge-gate.md`, `docs/guides/framework-adapters.md` and the Python SDK README (the PyPI page) use `uv add "attest-ai>=1.0.0rc1"` and `pnpm add -D "@attest-ai/core@>=1.0.0-rc.1" "@attest-ai/vitest@>=1.0.0-rc.1"` with `pnpm exec`. A bare `pip install attest-ai`, `uv add attest-ai` or `npm install @attest-ai/core` installs 0.9.0, the newest stable release, until 1.0.0 is published.
+- Install instructions in the README, `docs/guides/merge-gate.md`, `docs/guides/framework-adapters.md` and the Python SDK README (the PyPI page) use `uv add "attest-ai>=1.0.0rc1"` instead of `pip install`, and `npm install -D "@attest-ai/core@>=1.0.0-rc.1" "@attest-ai/vitest@>=1.0.0-rc.1"`. A bare `pip install attest-ai`, `uv add attest-ai` or `npm install @attest-ai/core` installs 0.9.0, the newest stable release, until 1.0.0 is published.
 
 ## [1.0.0-rc.1] — 2026-11-02
 

@@ -232,13 +232,13 @@ uv run attest init --ci github
 ### TypeScript
 
 ```bash
-pnpm init && pnpm pkg set type=module
-pnpm add -D "@attest-ai/core@>=1.0.0-rc.1" "@attest-ai/vitest@>=1.0.0-rc.1" vitest
-pnpm exec attest init
-pnpm exec vitest run
+npm init -y && npm pkg set type=module
+npm install -D "@attest-ai/core@>=1.0.0-rc.1" "@attest-ai/vitest@>=1.0.0-rc.1" vitest
+npx attest init
+npx vitest run
 ```
 
-`pnpm exec attest init` writes `tests/my-agent.test.ts` and `attest.policy.yaml`; the line marked `ATTEST-DEMO` works the same way. `pnpm exec vitest run --reporter=default --reporter=@attest-ai/vitest/reporter --outputFile.attest=attest-report.json` writes the report and `pnpm exec attest init --ci github` writes the workflow.
+`npx attest init` writes `tests/my-agent.test.ts` and `attest.policy.yaml`; the line marked `ATTEST-DEMO` works the same way. `npx vitest run --reporter=default --reporter=@attest-ai/vitest/reporter --outputFile.attest=attest-report.json` writes the report and `npx attest init --ci github` writes the workflow, which installs with `npm ci` from the `package-lock.json` that `npm install` writes.
 
 ### Build from source
 

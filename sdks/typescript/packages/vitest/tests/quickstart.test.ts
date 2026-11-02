@@ -1,5 +1,5 @@
 /**
- * The TypeScript quickstart as a user runs it: the README's `pnpm exec` commands and the
+ * The TypeScript quickstart as a user runs it: the README's `npx` commands and the
  * project `attest init` generates, in a fresh directory with HOME redirected and no
  * provider keys. The project's node_modules links the built workspace packages, so
  * run `pnpm build` first. Skipped when the engine has not been built (`make engine`).
@@ -30,7 +30,7 @@ function newProject(): string {
   return dir;
 }
 
-/** Run a README `pnpm exec <argv>` command the way the quickstart does. */
+/** Run `npx <argv>` the way the quickstart does. */
 function npx(project: string, argv: string[]) {
   const [tool, ...rest] = argv;
   const command: Record<string, string[]> = {
@@ -53,7 +53,7 @@ function npx(project: string, argv: string[]) {
   return { status: proc.status, out: `${proc.stdout}${proc.stderr}` };
 }
 
-/** Shell lines of the README's TypeScript quickstart, run here; project setup and installs are provided. */
+/** Shell lines of the README's TypeScript quickstart, run here; npm lines are provided. */
 function readmeTypeScriptCommands(readme: string): string[][] {
   const section = readme.slice(readme.indexOf("### TypeScript"), readme.indexOf("### Build from source"));
   const blocks = [...section.matchAll(/^```bash\n([\s\S]*?)^```$/gm)].map((m) => m[1] ?? "");
@@ -62,11 +62,11 @@ function readmeTypeScriptCommands(readme: string): string[][] {
     .flatMap((b) => b.split("\n"))
     .flatMap((line) => line.split("&&"))
     .map((c) => c.trim())
-    .filter((c) => c !== "" && !c.startsWith("#") && !/^pnpm (init|pkg|add)\b/.test(c))
+    .filter((c) => c !== "" && !c.startsWith("#") && !c.startsWith("npm "))
     .map((c) => {
       const argv = c.split(/\s+/);
-      if (argv[0] !== "pnpm" || argv[1] !== "exec") throw new Error(`no runner for README command ${c}`);
-      return argv.slice(2);
+      if (argv[0] !== "npx") throw new Error(`no runner for README command ${c}`);
+      return argv.slice(1);
     });
 }
 
