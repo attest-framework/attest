@@ -7,6 +7,7 @@ import logging
 import os
 import threading
 from collections.abc import Generator
+from pathlib import Path
 from typing import Any, TypeVar
 
 import pytest
@@ -17,6 +18,7 @@ from attest.config import is_simulation_mode
 from attest.engine_manager import EngineManager
 from attest.exceptions import EngineVersionMismatchError
 from attest.expect import ExpectChain
+from attest.report_v2 import TEST_OUTCOMES, TestRecord, write_report
 from attest.result import OUTCOME_FAIL, OUTCOME_SKIP, AgentResult, Verdict
 
 logger = logging.getLogger("attest.plugin")
@@ -35,6 +37,9 @@ _session_outcomes: dict[str, str] = {}
 # Maps nodeid → soft failures across every evaluation in the test (all
 # trials of a repeat or scenario loop, not only the last result).
 _session_soft_counts: dict[str, int] = {}
+# Maps nodeid → report-v2 test row (location, outcome, every AgentResult).
+# Filled only when --attest-report is set.
+_session_tests: dict[str, TestRecord] = {}
 # Thread-local-ish slot for the AgentResults produced inside the running
 # test. pytest serialises test execution, so a single slot is safe; the
 # makereport hook below pops it, keyed on nodeid, as soon as the call
@@ -106,6 +111,13 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         default=False,
         help="Fail (instead of skip) tests with assertions that were not evaluated "
         "(also enabled by ATTEST_STRICT=1)",
+    )
+    group.addoption(
+        "--attest-report",
+        default=None,
+        metavar="PATH",
+        help="Write a report-v2 JSON file (every test with its outcome, file and line, "
+        "and every assertion result) for attest policy evaluate and pr-annotate",
     )
     group.addoption(
         "--attest-diagnostics",
@@ -183,23 +195,83 @@ def pytest_runtest_makereport(
     attribute ``not evaluated`` skips to the test's own location.
 
     Pytest serialises tests within a worker, so the stashed AgentResults
-    always belong to the call phase that just ran.
+    always belong to the phase (setup, call or teardown) that just ran.
     """
     outcome = yield
-    if call.when != "call":
-        return
     report: pytest.TestReport = outcome.get_result()
-    if report.skipped and isinstance(report.longrepr, tuple):
+    record = (
+        _record_test_phase(item, report)
+        if item.config.getoption("--attest-report", default=None)
+        else None
+    )
+    if call.when == "call" and report.skipped and isinstance(report.longrepr, tuple):
         # Attribute "not evaluated" skips to the test, not to this plugin.
         path, _, reason = report.longrepr
         if os.path.abspath(path) == os.path.abspath(__file__) and "not evaluated:" in reason:
             _, lineno, _ = item.location
             report.longrepr = (str(item.path), (lineno or 0) + 1, reason)
+    if call.when == "setup":
+        # A new attempt (a rerun plugin retrying the test) starts its counts over.
+        _session_soft_counts.pop(item.nodeid, None)
+    # Evaluations in fixture setup or teardown belong to this test, like the call's.
     results = _take_test_results()
+    if record is not None:
+        record.agent_results.extend(results)
     if results:
         _session_results[item.nodeid] = results[-1]
-        _session_outcomes[item.nodeid] = report.outcome
-        _session_soft_counts[item.nodeid] = sum(len(r.soft_failures) for r in results)
+        _session_soft_counts[item.nodeid] = _session_soft_counts.get(item.nodeid, 0) + sum(
+            len(r.soft_failures) for r in results
+        )
+    if results or item.nodeid in _session_results:
+        if call.when == "call" or report.outcome != "passed":
+            _session_outcomes[item.nodeid] = report.outcome
+
+
+def _record_test_phase(item: pytest.Item, report: pytest.TestReport) -> TestRecord:
+    """Fold one setup/call/teardown report into the test's report-v2 row and return it.
+
+    The outcome is the call phase's, overridden by a failed or skipped setup and by a
+    failed teardown. A new setup phase for a test that already ran (a rerun plugin
+    retrying it) starts the row over, so only the last attempt's outcome and results
+    are reported. ``line`` is the 1-based line of the test definition.
+    """
+    record = _session_tests.get(item.nodeid)
+    if record is not None and report.when == "setup":
+        record.outcome = "passed"
+        record.duration_ms = 0
+        record.agent_results.clear()
+    if record is None:
+        path, lineno, _ = item.location
+        record = TestRecord(
+            test_id=item.nodeid,
+            name=item.name,
+            file=Path(path).as_posix(),
+            line=(lineno or 0) + 1,
+        )
+        _session_tests[item.nodeid] = record
+    record.duration_ms += int(report.duration * 1000)
+    if report.outcome not in TEST_OUTCOMES:
+        raise ValueError(f"{item.nodeid}: unknown pytest outcome {report.outcome!r}")
+    if report.when == "call" or report.outcome != "passed":
+        if not (report.when == "teardown" and report.outcome == "skipped"):
+            record.outcome = report.outcome
+    return record
+
+
+def pytest_sessionstart(session: pytest.Session) -> None:
+    """Start each session with an empty report (pytester runs share this module)."""
+    _session_tests.clear()
+
+
+def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
+    """Write the --attest-report file once every test has run."""
+    target: str | None = session.config.getoption("--attest-report", default=None)
+    if not target:
+        return
+    path = Path(target)
+    if not path.is_absolute():
+        path = Path(session.config.invocation_params.dir) / path
+    write_report(path, list(_session_tests.values()), simulated=is_simulation_mode())
 
 
 def soft_failure_lines(soft_counts: dict[str, int], outcomes: dict[str, str]) -> list[str]:

@@ -6,6 +6,11 @@ All notable changes to Attest are documented in this file. The format follows [K
 
 ### Added
 
+- `attest init` (Python and TypeScript) writes a sample test that passes with no API key: a refund agent's run built with `TraceBuilder`, checked by schema, constraint, trace and content assertions, with one line marked `ATTEST-DEMO` that turns it red with the layer, expected and actual value. It also writes `attest.policy.yaml` (block on hard failures, warn on not-evaluated assertions). The Python sample test defines the `my_agent_result` fixture it uses (the old sample used it without defining it), so an existing `tests/conftest.py` does not affect it.
+- `attest init --ci github` writes `.github/workflows/attest.yml`: the test step continues on failure, the report upload and `attest policy evaluate` always run, the `pr-annotate` action always runs for pull requests from the same repository (a fork's read-only token cannot post reviews), a policy warning (exit 2) does not fail the job, and a final step fails the job when the tests failed. See `docs/guides/merge-gate.md`.
+- report-v2 (`proto/attest/v1/report-v2.schema.json`, fixtures in `protocol-tests/report-v2/` checked in Go, Python and TypeScript): every assertion row carries the `test_id`, `file` and `line` of its test, a `tests` list gives each test's outcome (`passed`, `failed`, `skipped`) and not-evaluated reasons, and `summary.not_evaluated` counts not-evaluated rows.
+- `pytest --attest-report=<path>` writes report-v2 for every test in the session.
+- `AttestReporter` (`@attest-ai/vitest/reporter`) writes report-v2 when given `outputFile` in the Vitest config, or from the command line: `vitest run --reporter=default --reporter=@attest-ai/vitest/reporter --outputFile.attest=<path>`. `inspect()`/`evaluate()` attach results to the running test, so they reach the reporter from Vitest workers; a retried test reports only its last attempt's results (pytest reruns likewise).
 - `release.yml` publishes a release from one tag push: it builds the six engine binaries, checksums, the Python distributions and the npm tarballs once, verifies them, and after `release` environment approval publishes the GitHub (pre-)release, then PyPI (trusted publishing) and npm (trusted publishing with provenance) from those stored artifacts, records which components published in the release notes, and dispatches the website sync. A tag that differs from `VERSION` fails before anything builds. `workflow_dispatch` with `dry_run: true` runs the whole pipeline without publishing.
 - `setup-attest` accepts a `ref` input: consumer repositories build the engine and install the Python and TypeScript SDKs from any attest branch, tag or commit.
 - `CHANGELOG.md` is the single changelog; `scripts/release-notes.sh <version>` prints one version's section.
@@ -17,6 +22,10 @@ All notable changes to Attest are documented in this file. The format follows [K
 
 ### Changed
 
+- **BREAKING:** `@attest-ai/vitest` requires Vitest 3 or later (`AttestReporter` uses the Vitest 3 reporter API), and its `@attest-ai/core` peer range is `>=1.0.0-rc`; the old `>=0.3.0` range excluded 1.0.0 prereleases, so `npm install` of the two packages failed.
+- **BREAKING:** under `test.concurrent`, `inspect()` and `evaluate()` require the test context (`{ context }`) and throw without it, so results are never attached to another test.
+- The TypeScript sample test written by `attest init` is `tests/my-agent.test.ts` (was `tests/test_my_agent.test.ts`).
+- The README quickstart runs as written: install, `attest init`, `pytest` / `vitest run`, the marked edit, the report and the policy gate. A test runs every README code block.
 - **BREAKING:** `ATTEST_BUDGET_MAX_COST` is renamed `ATTEST_MAX_SOFT_FAILURES`; it always counted soft failures in one engine session, not cost. No alias.
 - **BREAKING:** with `ATTEST_JUDGE_BASE_URL` set, only `ATTEST_JUDGE_API_KEY` is sent to the endpoint; `OPENAI_API_KEY` is used only at the default OpenAI endpoint. A base URL without `ATTEST_JUDGE_API_KEY`, with credentials, a query or a fragment, is a startup error.
 - **BREAKING:** `OPENAI_API_KEY` in the engine's environment now enables the OpenAI judge and OpenAI embeddings (previously only `ATTEST_OPENAI_API_KEY` did).

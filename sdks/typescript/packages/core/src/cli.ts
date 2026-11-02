@@ -13,10 +13,10 @@
 import { spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
-import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { ENGINE_VERSION, VERSION } from "./version.js";
 import { resolveEngine } from "./engine-manager.js";
+import { scaffoldProject } from "./scaffold.js";
 
 const HELP_FLAGS = new Set(["-h", "--help"]);
 
@@ -24,39 +24,28 @@ const SDK_USAGE =
   "usage: attest <command> [args]\n" +
   "\n" +
   "SDK commands:\n" +
-  "  init  scaffold an attest test project in the current directory\n" +
+  "  init [--ci github]  scaffold a sample test and merge policy here\n" +
+  "                      (--ci github also writes .github/workflows/attest.yml)\n" +
   "\n" +
   "options:\n" +
   "  --version  print the SDK version and the engine version it requires\n" +
   "  --help     print this help\n";
 
-const CONFTEST_TEMPLATE = `import { describe, it, expect } from "vitest";
-import { attestExpect, TraceBuilder } from "@attest-ai/core";
+const INIT_USAGE = "usage: attest init [--ci github]  (scaffolds into the current directory)";
 
-describe("my agent", () => {
-  it("returns expected output", async () => {
-    const trace = new TraceBuilder("my-agent")
-      .setInput({ user_message: "hello" })
-      .setOutput({ message: "world" })
-      .build();
-
-    attestExpect(trace).outputContains("world");
-  });
-});
-`;
-
-function cmdInit(targetDir: string): void {
-  const testsDir = path.join(targetDir, "tests");
-  fs.mkdirSync(testsDir, { recursive: true });
-  process.stdout.write(`Directory: ${testsDir}\n`);
-
-  const sampleTestPath = path.join(testsDir, "test_my_agent.test.ts");
-  if (fs.existsSync(sampleTestPath)) {
-    process.stderr.write(`Skipped (exists): ${sampleTestPath}\n`);
-  } else {
-    fs.writeFileSync(sampleTestPath, CONFTEST_TEMPLATE);
-    process.stdout.write(`Created: ${sampleTestPath}\n`);
+/** Run `attest init [--ci github]` in the current directory. */
+function cmdInit(args: string[]): number {
+  if (args.some((a) => HELP_FLAGS.has(a))) {
+    process.stdout.write(`${INIT_USAGE}\n`);
+    return 0;
   }
+  const joined = args.join(" ");
+  if (args.length > 0 && joined !== "--ci github" && joined !== "--ci=github") {
+    process.stderr.write(`${INIT_USAGE}\n`);
+    return 2;
+  }
+  scaffoldProject(process.cwd(), args.length > 0 ? { ci: "github" } : {});
+  return 0;
 }
 
 const HELP_PROBE_TIMEOUT_MS = 10_000;
@@ -164,12 +153,7 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
     return 0;
   }
   if (command === "init") {
-    if (argv.length > 1) {
-      process.stderr.write("usage: attest init  (scaffolds into the current directory)\n");
-      return HELP_FLAGS.has(argv[1] ?? "") ? 0 : 2;
-    }
-    cmdInit(process.cwd());
-    return 0;
+    return cmdInit(argv.slice(1));
   }
   if (command.startsWith("-")) {
     process.stderr.write(`attest: unknown option ${command}\n\n${SDK_USAGE}`);
