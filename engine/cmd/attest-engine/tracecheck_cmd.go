@@ -144,9 +144,9 @@ func writeCheckText(w io.Writer, path string, r *trace.CheckReport, fixture bool
 	if fixture {
 		fmt.Fprintf(w, "trace %s: capture fixture, attest trace schema v%d\n", terminalSafe(r.TraceID), r.SchemaVersion)
 	} else {
-		fmt.Fprintf(w, "trace %s: %d spans, attest trace schema v%d\n", r.TraceID, r.Spans, r.SchemaVersion)
+		fmt.Fprintf(w, "trace %s: %d spans, attest trace schema v%d\n", terminalSafe(r.TraceID), r.Spans, r.SchemaVersion)
 	}
-	fmt.Fprintf(w, "steps: %s; %s, %s, %s\n", stepSummary(r.Steps),
+	fmt.Fprintf(w, "steps: %s; %s, %s, %s\n", terminalSafe(stepSummary(r.Steps)),
 		count(r.Turns, "turn", "turns"), count(r.Handoffs, "handoff", "handoffs"), count(r.Retries, "retry", "retries"))
 
 	errs := r.Errors()
@@ -161,7 +161,7 @@ func writeCheckText(w io.Writer, path string, r *trace.CheckReport, fixture bool
 		if span == "" {
 			span = "-"
 		}
-		fmt.Fprintf(tw, "  %s\t%s\tspan %s\t%s\n", is.Severity, is.Code, span, terminalSafe(is.Message))
+		fmt.Fprintf(tw, "  %s\t%s\tspan %s\t%s\n", is.Severity, is.Code, terminalSafe(span), terminalSafe(is.Message))
 	}
 	tw.Flush()
 
@@ -172,7 +172,7 @@ func writeCheckText(w io.Writer, path string, r *trace.CheckReport, fixture bool
 	fmt.Fprintln(w, "coverage: missing evidence")
 	tw = tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
 	for _, g := range r.Coverage {
-		fmt.Fprintf(tw, "  %s\t%d of %d %s spans lack %s\n", g.Field, g.Missing, g.Total, g.SpanKind, strings.Join(g.Attributes, " / "))
+		fmt.Fprintf(tw, "  %s\t%d of %d %s spans lack %s\n", terminalSafe(g.Field), g.Missing, g.Total, terminalSafe(g.SpanKind), terminalSafe(strings.Join(g.Attributes, " / ")))
 	}
 	tw.Flush()
 }

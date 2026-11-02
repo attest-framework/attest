@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"mime"
@@ -39,9 +40,9 @@ func (r *Receiver) Spans() []trace.Span {
 	return append([]trace.Span(nil), r.spans...)
 }
 
-// Register adds the traces endpoint to mux.
-func (r *Receiver) Register(mux *http.ServeMux) {
-	mux.HandleFunc(TracesPath, r.serve)
+// Register adds the traces endpoint, under base, to mux.
+func (r *Receiver) Register(mux *http.ServeMux, base string) {
+	mux.HandleFunc(base+TracesPath, r.serve)
 }
 
 func (r *Receiver) serve(w http.ResponseWriter, req *http.Request) {
@@ -62,6 +63,14 @@ func (r *Receiver) serve(w http.ResponseWriter, req *http.Request) {
 	}
 	doc := body
 	if mediaType == "application/x-protobuf" {
+		if err := checkOTLPLimits(body); err != nil {
+			status := http.StatusBadRequest
+			if errors.Is(err, errOverLimit) {
+				status = http.StatusRequestEntityTooLarge
+			}
+			http.Error(w, "attest capture: "+err.Error(), status)
+			return
+		}
 		if doc, err = protobufToOTLPJSON(body); err != nil {
 			http.Error(w, "attest capture: "+err.Error(), http.StatusBadRequest)
 			return

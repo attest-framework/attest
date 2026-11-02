@@ -44,7 +44,9 @@ options:
   --result-file <path>   also write {"fixture", "verified"} JSON to <path>
   --from <otlp.json>     build from an OTLP/JSON export (trace only; no replay)
   --serve                in-process capture: print the environment as one JSON
-                         line, then finalize when stdin sends "finalize"`
+                         line, then finalize when stdin sends "finalize" or
+                         {"finalize":true,"environ":[...]} (secrets in that
+                         environment are redacted too)`
 
 func handleCaptureCommand(args []string) {
 	os.Exit(runCapture(args, os.Stdin, os.Stdout, os.Stderr))
@@ -195,7 +197,10 @@ func captureCommand(argv []string, environ []string, in *capture.BuildInput, std
 	if closeErr != nil {
 		return closeErr
 	}
-	spans, exchanges, incomplete := s.Recorded()
+	spans, exchanges, incomplete, err := s.Recorded()
+	if err != nil {
+		return err
+	}
 	if err := requireComplete(incomplete); err != nil {
 		return err
 	}
@@ -216,27 +221,62 @@ func captureServe(environ []string, in *capture.BuildInput, stdin io.Reader, std
 		s.Close()
 		return err
 	}
-	finalize := false
-	sc := bufio.NewScanner(stdin)
-	for sc.Scan() {
-		if strings.TrimSpace(sc.Text()) == "finalize" {
-			finalize = true
-			break
-		}
+	finalize, environAtEnd, err := readFinalize(stdin)
+	if cerr := s.Close(); cerr != nil {
+		return cerr
 	}
-	if err := s.Close(); err != nil {
+	if err != nil {
 		return err
 	}
 	if !finalize {
 		return errors.New("aborted: input closed before finalize; no fixture written")
 	}
-	spans, exchanges, incomplete := s.Recorded()
+	// Secrets the block loaded into its own environment (a dotenv file, for
+	// example) are redacted too.
+	in.Redactor = in.Redactor.Merge(redact.FromEnviron(environAtEnd))
+	spans, exchanges, incomplete, err := s.Recorded()
+	if err != nil {
+		return err
+	}
 	if err := requireComplete(incomplete); err != nil {
 		return err
 	}
 	in.Spans, in.Exchanges = spans, exchanges
 	in.Source = capture.Source{Kind: capture.SourceInProcess, ReplayCapable: true}
 	return nil
+}
+
+// maxFinalizeLine bounds the finalize line, which carries the helper's
+// environment.
+const maxFinalizeLine = 4 << 20
+
+// readFinalize reads stdin until a finalize line: the word finalize, or
+// {"finalize": true, "environ": ["NAME=value", ...]} with the helper's
+// environment at the end of the block. It reports false when input ends
+// first.
+func readFinalize(stdin io.Reader) (bool, []string, error) {
+	sc := bufio.NewScanner(stdin)
+	sc.Buffer(make([]byte, 0, 64<<10), maxFinalizeLine)
+	for sc.Scan() {
+		line := strings.TrimSpace(sc.Text())
+		if line == "finalize" {
+			return true, nil, nil
+		}
+		if !strings.HasPrefix(line, "{") {
+			continue
+		}
+		var msg struct {
+			Finalize bool     `json:"finalize"`
+			Environ  []string `json:"environ"`
+		}
+		if err := json.Unmarshal([]byte(line), &msg); err != nil {
+			return false, nil, fmt.Errorf("finalize line: %w", err)
+		}
+		if msg.Finalize {
+			return true, msg.Environ, nil
+		}
+	}
+	return false, nil, sc.Err()
 }
 
 // requireComplete refuses a capture with model calls whose response the
@@ -290,7 +330,7 @@ func finishCapture(o *captureOptions, in capture.BuildInput, stdout, stderr io.W
 }
 
 func writeCaptureSummary(w io.Writer, path string, f *capture.Fixture) {
-	fmt.Fprintf(w, "capture %s: %s\n", f.Name, terminalSafe(path))
+	fmt.Fprintf(w, "capture %s: %s\n", terminalSafe(f.Name), terminalSafe(path))
 	kinds := map[string]int{}
 	for _, s := range f.Trace.Steps {
 		kinds[s.Type]++
@@ -299,13 +339,13 @@ func writeCaptureSummary(w io.Writer, path string, f *capture.Fixture) {
 	if !f.Verification.TraceCheck.OK {
 		tc = fmt.Sprintf("%d %s", f.Verification.TraceCheck.Errors, plural(f.Verification.TraceCheck.Errors, "error", "errors"))
 	}
-	fmt.Fprintf(w, "  trace: %s; trace check %s\n", stepSummary(kinds), tc)
+	fmt.Fprintf(w, "  trace: %s; trace check %s\n", terminalSafe(stepSummary(kinds)), tc)
 	if f.Source.ReplayCapable {
 		apis := map[string]int{}
 		for _, ex := range f.Exchanges {
 			apis[ex.Provider+" "+ex.API]++
 		}
-		fmt.Fprintf(w, "  exchanges: %d recorded%s\n", len(f.Exchanges), apiSummary(apis))
+		fmt.Fprintf(w, "  exchanges: %d recorded%s\n", len(f.Exchanges), terminalSafe(apiSummary(apis)))
 		if len(f.Exchanges) == 0 {
 			fmt.Fprintln(w, "  no model calls reached the proxy: does the agent read OPENAI_BASE_URL or ANTHROPIC_BASE_URL?")
 		}
@@ -315,19 +355,19 @@ func writeCaptureSummary(w io.Writer, path string, f *capture.Fixture) {
 	fmt.Fprintln(w, "  contracts:")
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
 	for _, r := range f.Verification.Results {
-		fmt.Fprintf(tw, "    %s\t%s\t%s\n", r.Status, r.Contract, terminalSafe(r.Explanation))
+		fmt.Fprintf(tw, "    %s\t%s\t%s\n", terminalSafe(r.Status), terminalSafe(r.Contract), terminalSafe(r.Explanation))
 	}
 	tw.Flush()
 	v := f.Verification
 	switch {
 	case v.Verified && v.ExpectFail:
-		fmt.Fprintf(w, "  verified: incident reproduction; expected %s: %s\n", plural(len(v.ExpectedFailures), "failure", "failures"), strings.Join(v.ExpectedFailures, ", "))
+		fmt.Fprintf(w, "  verified: incident reproduction; expected %s: %s\n", plural(len(v.ExpectedFailures), "failure", "failures"), terminalSafe(strings.Join(v.ExpectedFailures, ", ")))
 	case v.Verified:
 		fmt.Fprintln(w, "  verified: every drafted contract passes")
 	case v.ExpectFail && len(v.ExpectedFailures) == 0:
 		fmt.Fprintln(w, "  not verified: --expect-fail given but every drafted contract passes")
 	default:
-		fmt.Fprintf(w, "  not verified: %s\n", unverifiedReason(f))
+		fmt.Fprintf(w, "  not verified: %s\n", terminalSafe(unverifiedReason(f)))
 	}
 }
 

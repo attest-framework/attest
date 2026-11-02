@@ -24,6 +24,15 @@ type fakeUpstream struct {
 	seq     atomic.Int64
 	// auth holds the last Authorization or x-api-key header seen.
 	auth atomic.Value
+	// deltas, when set, replace every streamed response's text deltas.
+	deltas []string
+}
+
+func (f *fakeUpstream) deltasOr(defaults ...string) []string {
+	if f.deltas != nil {
+		return f.deltas
+	}
+	return defaults
 }
 
 func newFakeUpstream(t *testing.T) *fakeUpstream {
@@ -67,7 +76,7 @@ func (f *fakeUpstream) serve(w http.ResponseWriter, r *http.Request) {
 			"choices": []any{map[string]any{"index": 0, "finish_reason": "stop",
 				"message": map[string]any{"role": "assistant", "content": "hello from chat"}}},
 		}
-		for _, d := range []string{"hello ", "from ", "chat"} {
+		for _, d := range f.deltasOr("hello ", "from ", "chat") {
 			events = append(events, "data: "+mustJSON(map[string]any{"id": id, "object": "chat.completion.chunk", "created": created,
 				"choices": []any{map[string]any{"index": 0, "delta": map[string]any{"content": d}}}})+"\n\n")
 		}
@@ -80,7 +89,7 @@ func (f *fakeUpstream) serve(w http.ResponseWriter, r *http.Request) {
 				"content": []any{map[string]any{"type": "output_text", "text": "hello from responses"}}}},
 		}
 		events = append(events, "event: response.created\ndata: "+mustJSON(map[string]any{"type": "response.created", "response": map[string]any{"id": id, "created_at": created}})+"\n\n")
-		for _, d := range []string{"hello ", "from ", "responses"} {
+		for _, d := range f.deltasOr("hello ", "from ", "responses") {
 			events = append(events, "event: response.output_text.delta\ndata: "+mustJSON(map[string]any{"type": "response.output_text.delta", "item_id": msg, "delta": d})+"\n\n")
 		}
 		events = append(events, "event: response.completed\ndata: "+mustJSON(map[string]any{"type": "response.completed", "response": whole})+"\n\n")
@@ -91,7 +100,7 @@ func (f *fakeUpstream) serve(w http.ResponseWriter, r *http.Request) {
 			"content": []any{map[string]any{"type": "text", "text": "hello from messages"}},
 		}
 		events = append(events, "event: message_start\ndata: "+mustJSON(map[string]any{"type": "message_start", "message": map[string]any{"id": id, "type": "message", "content": []any{}}})+"\n\n")
-		for _, d := range []string{"hello ", "from ", "messages"} {
+		for _, d := range f.deltasOr("hello ", "from ", "messages") {
 			events = append(events, "event: content_block_delta\ndata: "+mustJSON(map[string]any{"type": "content_block_delta", "index": 0, "delta": map[string]any{"type": "text_delta", "text": d}})+"\n\n")
 		}
 		events = append(events, "event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n")

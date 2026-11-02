@@ -191,7 +191,10 @@ func captureRun(t *testing.T, up *fakeUpstream, issueRefunds int, expectFail boo
 	if err := s.Close(); err != nil {
 		t.Fatal(err)
 	}
-	spans, exchanges, incomplete := s.Recorded()
+	spans, exchanges, incomplete, err := s.Recorded()
+	if err != nil {
+		t.Fatal(err)
+	}
 	if incomplete != 0 {
 		t.Fatalf("incomplete exchanges: %d", incomplete)
 	}

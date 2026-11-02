@@ -192,7 +192,7 @@ func TestSession_UnreachableUpstream_Returns502AndRecordsIt(t *testing.T) {
 	if err := s.Close(); err != nil {
 		t.Fatal(err)
 	}
-	_, exchanges, _ := s.Recorded()
+	_, exchanges, _, _ := s.Recorded()
 
 	if resp.StatusCode != http.StatusBadGateway || len(exchanges) != 1 || exchanges[0].status != http.StatusBadGateway {
 		t.Fatalf("status %d, exchanges %+v; want 502 recorded once", resp.StatusCode, exchanges)
@@ -251,7 +251,7 @@ func TestSession_ClientCancelsStream_ExchangeIncomplete(t *testing.T) {
 	if err := s.Close(); err != nil {
 		t.Fatal(err)
 	}
-	_, exchanges, incomplete := s.Recorded()
+	_, exchanges, incomplete, _ := s.Recorded()
 
 	if incomplete != 1 || len(exchanges) != 0 {
 		t.Fatalf("incomplete %d exchanges %+v; want the cancelled stream incomplete", incomplete, exchanges)
@@ -278,5 +278,78 @@ func TestCheckRedaction_SecretInKey_PathHidesIt(t *testing.T) {
 	}
 	if strings.Contains(hits[0].Path, secret) || !strings.Contains(hits[0].Path, "<redacted key #0>") {
 		t.Fatalf("path %q", hits[0].Path)
+	}
+}
+
+func TestSession_WrongOrMissingToken_404AndNotRecorded(t *testing.T) {
+	up := newFakeUpstream(t)
+	s, err := Start(Upstreams{OpenAI: up.OpenAIBase(), Anthropic: up.AnthropicBase()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := `{"model":"m","messages":[]}`
+	// No keep-alive: the transport must not leave a spare connection open.
+	client := &http.Client{Transport: &http.Transport{DisableKeepAlives: true}}
+	for _, url := range []string{
+		s.BaseURL() + OpenAIPrefix + "/chat/completions",
+		s.BaseURL() + "/" + strings.Repeat("0", 32) + OpenAIPrefix + "/chat/completions",
+		s.BaseURL() + TracesPath,
+	} {
+		resp, err := client.Post(url, "application/json", strings.NewReader(body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusNotFound {
+			t.Errorf("%s: status %d, want 404", url, resp.StatusCode)
+		}
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	spans, exchanges, incomplete, err := s.Recorded()
+
+	if err != nil || len(spans)+len(exchanges)+incomplete != 0 || up.seq.Load() != 0 {
+		t.Fatalf("recorded spans %d exchanges %d incomplete %d upstream calls %d err %v",
+			len(spans), len(exchanges), incomplete, up.seq.Load(), err)
+	}
+	if !strings.Contains(s.Env()["OPENAI_BASE_URL"], "/"+s.token+OpenAIPrefix) || len(s.token) != 32 {
+		t.Fatalf("env %v token %q", s.Env(), s.token)
+	}
+}
+
+func TestSession_OriginHeader_403(t *testing.T) {
+	s, err := Start(Upstreams{OpenAI: "http://127.0.0.1:1/v1", Anthropic: "http://127.0.0.1:1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	req, _ := http.NewRequest(http.MethodPost, s.Env()["OTEL_EXPORTER_OTLP_TRACES_ENDPOINT"], strings.NewReader("{}"))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Origin", "http://evil.example")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("status %d, want 403", resp.StatusCode)
+	}
+}
+
+func TestProxy_SessionByteCap_RefusesAndFails(t *testing.T) {
+	p, err := NewProxy(Upstreams{OpenAI: DefaultOpenAIBaseURL, Anthropic: DefaultAnthropicBaseURL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.recorded = MaxSessionBytes - 10
+
+	_, ok := p.begin("openai", "POST", "/chat/completions", make([]byte, 11))
+	_, _, exErr := p.Exchanges()
+
+	if ok || exErr == nil || !strings.Contains(exErr.Error(), "no fixture written") {
+		t.Fatalf("ok %v err %v", ok, exErr)
 	}
 }

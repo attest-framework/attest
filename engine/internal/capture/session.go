@@ -2,6 +2,8 @@ package capture
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -25,6 +27,10 @@ type Session struct {
 	server   *http.Server
 	listener net.Listener
 	served   chan error
+	// token is the first path segment of every capture URL: 128 random
+	// bits, so only the process given the environment can reach the
+	// listener's routes.
+	token string
 }
 
 // Start opens the capture listener on an ephemeral 127.0.0.1 port.
@@ -34,18 +40,26 @@ func Start(up Upstreams) (*Session, error) {
 	if err != nil {
 		return nil, err
 	}
-	s := &Session{proxy: proxy, receiver: &Receiver{}, served: make(chan error, 1)}
+	raw := make([]byte, 16)
+	if _, err := rand.Read(raw); err != nil {
+		return nil, fmt.Errorf("capture token: %w", err)
+	}
+	s := &Session{proxy: proxy, receiver: &Receiver{}, served: make(chan error, 1), token: hex.EncodeToString(raw)}
 	mux := http.NewServeMux()
-	proxy.Register(mux)
-	s.receiver.Register(mux)
+	proxy.Register(mux, "/"+s.token)
+	s.receiver.Register(mux, "/"+s.token)
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		return nil, fmt.Errorf("capture listener: %w", err)
 	}
 	s.listener = ln
 	s.server = &http.Server{
-		Handler:           loopbackOnly(mux),
+		Handler:           guard(mux),
 		ReadHeaderTimeout: 10 * time.Second,
+		// ReadTimeout bounds reading a request; there is no WriteTimeout,
+		// which would cut long streamed responses.
+		ReadTimeout: 60 * time.Second,
+		IdleTimeout: 120 * time.Second,
 	}
 	go func() { s.served <- s.server.Serve(ln) }()
 	return s, nil
@@ -57,7 +71,7 @@ func (s *Session) BaseURL() string { return "http://" + s.listener.Addr().String
 // Env returns the variables that point an agent at the capture: provider base
 // URLs for the proxy and the OTLP traces endpoint for the receiver.
 func (s *Session) Env() map[string]string {
-	base := s.BaseURL()
+	base := s.BaseURL() + "/" + s.token
 	return map[string]string{
 		"OPENAI_BASE_URL":                    base + OpenAIPrefix,
 		"ANTHROPIC_BASE_URL":                 base + AnthropicPrefix,
@@ -65,11 +79,17 @@ func (s *Session) Env() map[string]string {
 	}
 }
 
-// Close stops accepting connections and waits for in-flight requests.
+// Close stops accepting connections and waits up to shutdownTimeout for
+// in-flight requests, then closes the rest: a connection a client opened but
+// never used holds Shutdown for its full timeout, and an exchange cut off
+// here is incomplete, which fails the capture anyway.
 func (s *Session) Close() error {
 	ctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 	defer cancel()
 	err := s.server.Shutdown(ctx)
+	if errors.Is(err, context.DeadlineExceeded) {
+		err = s.server.Close()
+	}
 	if serr := <-s.served; serr != nil && !errors.Is(serr, http.ErrServerClosed) {
 		return serr
 	}
@@ -77,10 +97,14 @@ func (s *Session) Close() error {
 }
 
 // Recorded returns what the session captured: spans, completed exchanges
-// and the count of exchanges the client never finished reading.
-func (s *Session) Recorded() ([]trace.Span, []rawExchange, int) {
-	ex, incomplete := s.proxy.Exchanges()
-	return s.receiver.Spans(), ex, incomplete
+// and the count of exchanges the client never finished reading. A session
+// over its recording limit is an error.
+func (s *Session) Recorded() ([]trace.Span, []rawExchange, int, error) {
+	ex, incomplete, err := s.proxy.Exchanges()
+	if err != nil {
+		return nil, nil, 0, err
+	}
+	return s.receiver.Spans(), ex, incomplete, nil
 }
 
 // BuildInput is everything a fixture is built from.
@@ -115,14 +139,14 @@ func BuildFixture(in BuildInput) (*Fixture, error) {
 	}
 	exDocs := make([]any, 0, len(in.Exchanges))
 	for _, ex := range in.Exchanges {
-		d, err := exchangeDoc(ex)
+		d, err := exchangeDoc(ex, in.Redactor)
 		if err != nil {
 			return nil, err
 		}
 		exDocs = append(exDocs, d)
 	}
 	command := make([]any, len(in.Source.Command))
-	for i, a := range in.Source.Command {
+	for i, a := range redactArgv(in.Source.Command) {
 		command[i] = a
 	}
 	doc, err := redactTree(map[string]any{"trace": traceDoc, "exchanges": exDocs, "command": command}, in.Redactor)

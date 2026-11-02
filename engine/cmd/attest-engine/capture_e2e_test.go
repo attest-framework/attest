@@ -43,6 +43,11 @@ func TestCaptureHelperAgent(t *testing.T) {
 // runScriptedAgent makes one model call and exports the INC-1042 shape: a
 // lookup and two refunds of the same order.
 func runScriptedAgent(openaiBase, tracesEndpoint, apiKey string) error {
+	return runScriptedAgentNote(openaiBase, tracesEndpoint, apiKey, "key "+apiKey)
+}
+
+// runScriptedAgentNote is runScriptedAgent with the first refund's note text.
+func runScriptedAgentNote(openaiBase, tracesEndpoint, apiKey, note string) error {
 	req, _ := http.NewRequest(http.MethodPost, openaiBase+"/chat/completions",
 		strings.NewReader(`{"model":"gpt-test","messages":[{"role":"user","content":"refund O-7 for `+e2ePlantedEmail+`"}]}`))
 	req.Header.Set("Authorization", "Bearer "+apiKey)
@@ -77,7 +82,7 @@ func runScriptedAgent(openaiBase, tracesEndpoint, apiKey string) error {
 		spanJSON(root, "", "invoke_agent refund-desk", 0, attr("gen_ai.operation.name", "invoke_agent"), attr("gen_ai.agent.name", "refund-desk")),
 		spanJSON(randomHex(8), root, "chat gpt-test", 1, attr("gen_ai.operation.name", "chat"), attr("gen_ai.request.model", "gpt-test")),
 		tool("lookup_order", `{"order_id":"O-7"}`, 3),
-		tool("issue_refund", `{"order_id":"O-7","note":"key `+apiKey+` for `+e2ePlantedEmail+`"}`, 5),
+		tool("issue_refund", `{"order_id":"O-7","note":"`+note+` for `+e2ePlantedEmail+`"}`, 5),
 	}
 	// ATTEST_CAPTURE_HELPER_REFUNDS=1 plays a healthy run with one refund.
 	if os.Getenv("ATTEST_CAPTURE_HELPER_REFUNDS") != "1" {
@@ -341,5 +346,90 @@ func TestCaptureCommand_SIGTERM_ForwardedToChild(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), "command exited 7") {
 		t.Fatalf("child did not get SIGTERM:\n%s", stderr.String())
+	}
+}
+
+func TestCaptureFrom_ToolNameWithESC_SummaryEscaped(t *testing.T) {
+	bin := buildEngineBinary(t)
+	dir := t.TempDir()
+	src, _ := os.ReadFile("../../../protocol-tests/trace-v2/otlp/inc-1042-refund.otlp.json")
+	hostile := filepath.Join(dir, "esc.otlp.json")
+	os.WriteFile(hostile, bytes.ReplaceAll(src, []byte(`"issue_refund"`), []byte(`"issue\u001b[31mrefund"`)), 0o644)
+
+	stdout, stderr, code := runEngine(t, bin, t.TempDir(), "capture", "--name", "esc", "--expect-fail", "--from", hostile, "--out-dir", dir)
+
+	if code != 0 {
+		t.Fatalf("exit %d\n%s%s", code, stdout, stderr)
+	}
+	if strings.ContainsRune(stdout+stderr, 0x1b) || !strings.Contains(stdout, `issue\u001b[31mrefund`) {
+		t.Fatalf("summary not escaped:\n%q", stdout)
+	}
+	out, _, _ := runEngine(t, bin, t.TempDir(), "trace", "check", filepath.Join(dir, "esc.attest.json"))
+	if strings.ContainsRune(out, 0x1b) {
+		t.Fatalf("trace check output carries ESC: %q", out)
+	}
+}
+
+func TestCaptureCheckRedaction_KeySplitAcrossDeltas_ExitsOne(t *testing.T) {
+	bin := buildEngineBinary(t)
+	var body strings.Builder
+	for i := 0; i < len(e2ePlantedKey); i += 6 {
+		part := e2ePlantedKey[i:min(i+6, len(e2ePlantedKey))]
+		body.WriteString(`data: {"choices":[{"index":0,"delta":{"content":"` + part + `"}}]}` + "\n\n")
+	}
+	doc, _ := json.Marshal(map[string]any{"exchanges": []any{map[string]any{
+		"response": map[string]any{"content_type": "text/event-stream", "body": body.String()},
+	}}})
+	path := filepath.Join(t.TempDir(), "split.attest.json")
+	os.WriteFile(path, doc, 0o644)
+	cmd := exec.Command(bin, "capture", "--check-redaction", path)
+	cmd.Env = append(os.Environ(), "OPENAI_API_KEY="+e2ePlantedKey)
+
+	out, err := cmd.CombinedOutput()
+
+	exitErr, ok := err.(*exec.ExitError)
+	if !ok || exitErr.ExitCode() != 1 || !strings.Contains(string(out), `stream "choice 0 content"`) || strings.Contains(string(out), e2ePlantedKey) {
+		t.Fatalf("err %v\n%s", err, out)
+	}
+}
+
+// A secret the block loads into its own environment after the engine started
+// (a dotenv file) reaches the engine only in the finalize line.
+func TestCaptureServe_SecretInFinalizeEnviron_Redacted(t *testing.T) {
+	bin := buildEngineBinary(t)
+	const late = "late-loaded-value-7f3a9c"
+	dir := t.TempDir()
+	cmd := exec.Command(bin, "capture", "--serve", "--expect-fail", "--name", "late", "--out-dir", dir)
+	cmd.Env = append(os.Environ(), "OPENAI_BASE_URL="+fakeModel(t))
+	stdin, _ := cmd.StdinPipe()
+	stdoutPipe, _ := cmd.StdoutPipe()
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	lines := bufio.NewScanner(stdoutPipe)
+	if !lines.Scan() {
+		t.Fatalf("no ready line: %s", stderr.String())
+	}
+	var ready struct {
+		Env map[string]string `json:"env"`
+	}
+	json.Unmarshal(lines.Bytes(), &ready)
+	if err := runScriptedAgentNote(ready.Env["OPENAI_BASE_URL"], ready.Env["OTEL_EXPORTER_OTLP_TRACES_ENDPOINT"], e2ePlantedKey, late); err != nil {
+		t.Fatal(err)
+	}
+
+	finalize, _ := json.Marshal(map[string]any{"finalize": true, "environ": []string{"DOTENV_SERVICE_TOKEN=" + late, "HOME=/x"}})
+	stdin.Write(append(finalize, '\n'))
+	stdin.Close()
+	io.ReadAll(stdoutPipe)
+	if err := cmd.Wait(); err != nil {
+		t.Fatalf("%v\n%s", err, stderr.String())
+	}
+	data, _ := os.ReadFile(filepath.Join(dir, "late.attest.json"))
+
+	if bytes.Contains(data, []byte(late)) || !bytes.Contains(data, []byte(`"note": "[redacted] for {{email_1}}"`)) {
+		t.Fatalf("late secret not redacted:\n%s", data)
 	}
 }

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sort"
 	"strconv"
+	"strings"
 
 	"github.com/attest-ai/attest/engine/internal/redact"
 	"github.com/attest-ai/attest/engine/internal/trace"
@@ -59,6 +60,39 @@ func CheckRedaction(data []byte, r *redact.Redactor) ([]RedactionHit, error) {
 		}
 	}
 	walk(doc, "$")
+	streamHits, err := checkStreams(doc, r)
+	if err != nil {
+		return nil, err
+	}
+	return append(hits, streamHits...), nil
+}
+
+// checkStreams scans the rebuilt delta text of every event-stream response,
+// where a secret split across deltas is whole.
+func checkStreams(doc any, r *redact.Redactor) ([]RedactionHit, error) {
+	var hits []RedactionHit
+	for i, e := range asSlice(asMap(doc)["exchanges"]) {
+		resp := asMap(asMap(e)["response"])
+		ct, _ := resp["content_type"].(string)
+		body, ok := resp["body"].(string)
+		if !ok || !strings.HasPrefix(strings.ToLower(ct), "text/event-stream") {
+			continue
+		}
+		texts, err := streamTexts(body)
+		if err != nil {
+			return nil, fmt.Errorf("exchanges[%d]: unparseable event stream: %w", i, err)
+		}
+		ids := make([]string, 0, len(texts))
+		for id := range texts {
+			ids = append(ids, id)
+		}
+		sort.Strings(ids)
+		for _, id := range ids {
+			for _, h := range r.Scan(texts[id]) {
+				hits = append(hits, RedactionHit{Kind: h.Kind, Path: fmt.Sprintf("$.exchanges[%d].response.body (stream %q)", i, id)})
+			}
+		}
+	}
 	return hits, nil
 }
 

@@ -328,7 +328,7 @@ func TestParseOTLP_FloodsRejectedWhileStreaming(t *testing.T) {
 	cases := map[string][]byte{
 		"spans":           otlpDoc(strings.Repeat(validSpan+`,`, MaxOTLPSpans) + validSpan),
 		"values":          otlpDoc(`{"traceId":"4bf92f3577b34da6a3ce929d0e0e4736","spanId":"a000000000000001","startTimeUnixNano":"1","endTimeUnixNano":"2","attributes":[` + values + `]}`),
-		"attributes":      otlpDoc(`{"attributes":[` + strings.Repeat(`{"key":"k","value":{}},`, maxAttrsPerSpan) + `{"key":"k","value":{}}]}`),
+		"attributes":      otlpDoc(`{"attributes":[` + strings.Repeat(`{"key":"k","value":{}},`, MaxAttrsPerSpan) + `{"key":"k","value":{}}]}`),
 		"skipped nesting": []byte(`{"resource":` + strings.Repeat(`[`, maxSkipDepth+1) + strings.Repeat(`]`, maxSkipDepth+1) + `,"resourceSpans":[]}`),
 	}
 	for name, data := range cases {
@@ -358,7 +358,7 @@ func TestParseOTLP_ErrorsEchoAtMost64BytesOfAValue(t *testing.T) {
 }
 
 func TestParseOTLP_AttributeCapCountsRepeatedKeys(t *testing.T) {
-	half := strings.Repeat(`{"key":"k","value":{}},`, maxAttrsPerSpan/2) + `{"key":"k","value":{}}`
+	half := strings.Repeat(`{"key":"k","value":{}},`, MaxAttrsPerSpan/2) + `{"key":"k","value":{}}`
 	_, err := ParseOTLP(otlpDoc(`{"traceId":"4bf92f3577b34da6a3ce929d0e0e4736","spanId":"a000000000000001","startTimeUnixNano":"1","endTimeUnixNano":"2","attributes":[` + half + `],"attributes":[` + half + `]}`))
 	if err == nil || !strings.Contains(err.Error(), "more than") {
 		t.Fatalf("err = %v, want the per-span attribute cap", err)

@@ -21,6 +21,10 @@ import (
 const (
 	MaxRequestBytes  = 32 << 20
 	MaxResponseBytes = 32 << 20
+	// MaxSessionBytes bounds everything one session records.
+	MaxSessionBytes = 512 << 20
+	// MaxInFlight bounds concurrent requests on the capture listener.
+	MaxInFlight = 64
 )
 
 // Default upstreams, used when the capture's environment does not set
@@ -57,9 +61,11 @@ type rawExchange struct {
 // exchange. Credentials pass through to the upstream in the request headers;
 // the proxy never stores request headers, so they never reach a fixture.
 type Proxy struct {
-	routes []route
-	mu     sync.Mutex
-	log    []*rawExchange
+	routes   []route
+	mu       sync.Mutex
+	log      []*rawExchange
+	recorded int64
+	overflow bool
 }
 
 // Upstreams holds the provider base URLs the proxy forwards to.
@@ -113,17 +119,17 @@ func NewProxy(up Upstreams) (*Proxy, error) {
 	return p, nil
 }
 
-// Register adds the proxy's route prefixes to mux.
-func (p *Proxy) Register(mux *http.ServeMux) {
+// Register adds the proxy's route prefixes, under base, to mux.
+func (p *Proxy) Register(mux *http.ServeMux, base string) {
 	for _, r := range p.routes {
-		mux.Handle(r.prefix+"/", p.forward(r))
+		mux.Handle(base+r.prefix+"/", p.forward(r, base+r.prefix))
 	}
 }
 
-func (p *Proxy) forward(r route) http.Handler {
+func (p *Proxy) forward(r route, prefix string) http.Handler {
 	rp := &httputil.ReverseProxy{
 		Rewrite: func(pr *httputil.ProxyRequest) {
-			rest := strings.TrimPrefix(pr.In.URL.Path, r.prefix)
+			rest := strings.TrimPrefix(pr.In.URL.Path, prefix)
 			pr.Out.URL.Scheme = r.upstream.Scheme
 			pr.Out.URL.Host = r.upstream.Host
 			pr.Out.URL.Path = r.upstream.Path + rest
@@ -171,23 +177,40 @@ func (p *Proxy) forward(r route) http.Handler {
 			http.Error(w, fmt.Sprintf("attest capture: request body exceeds %d bytes", MaxRequestBytes), http.StatusRequestEntityTooLarge)
 			return
 		}
-		path := strings.TrimPrefix(req.URL.Path, r.prefix)
+		path := strings.TrimPrefix(req.URL.Path, prefix)
 		if req.URL.RawQuery != "" {
 			path += "?" + req.URL.RawQuery
 		}
-		ex := p.begin(r.provider, req.Method, path, body)
+		ex, ok := p.begin(r.provider, req.Method, path, body)
+		if !ok {
+			http.Error(w, fmt.Sprintf("attest capture: the session recorded more than %d bytes", MaxSessionBytes), http.StatusInsufficientStorage)
+			return
+		}
 		req.Body = io.NopCloser(bytes.NewReader(body))
 		req.ContentLength = int64(len(body))
 		rp.ServeHTTP(w, req.WithContext(withExchange(req.Context(), ex)))
 	})
 }
 
-func (p *Proxy) begin(provider, method, path string, body []byte) *rawExchange {
+func (p *Proxy) begin(provider, method, path string, body []byte) (*rawExchange, bool) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	if !p.account(len(body)) {
+		return nil, false
+	}
 	ex := &rawExchange{seq: len(p.log), provider: provider, method: method, path: path, request: body}
 	p.log = append(p.log, ex)
-	return ex
+	return ex, true
+}
+
+// account adds n recorded bytes; past MaxSessionBytes the session overflows
+// and the capture fails. Callers hold p.mu.
+func (p *Proxy) account(n int) bool {
+	p.recorded += int64(n)
+	if p.recorded > MaxSessionBytes {
+		p.overflow = true
+	}
+	return !p.overflow
 }
 
 func (p *Proxy) finish(ex *rawExchange, status int, contentType string, body []byte, truncated bool) {
@@ -196,14 +219,19 @@ func (p *Proxy) finish(ex *rawExchange, status int, contentType string, body []b
 	if ex.done {
 		return
 	}
+	p.account(len(body))
 	ex.status, ex.contentType, ex.response, ex.truncated, ex.done = status, contentType, body, truncated, true
 }
 
 // Exchanges returns the completed exchanges in request order and the number
-// of exchanges whose response body the client never finished reading.
-func (p *Proxy) Exchanges() ([]rawExchange, int) {
+// of exchanges whose response body the client never finished reading. A
+// session that recorded more than MaxSessionBytes is an error.
+func (p *Proxy) Exchanges() ([]rawExchange, int, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	if p.overflow {
+		return nil, 0, fmt.Errorf("the session recorded more than %d bytes of model exchanges; no fixture written", MaxSessionBytes)
+	}
 	out := make([]rawExchange, 0, len(p.log))
 	incomplete := 0
 	for _, ex := range p.log {
@@ -213,7 +241,7 @@ func (p *Proxy) Exchanges() ([]rawExchange, int) {
 		}
 		out = append(out, *ex)
 	}
-	return out, incomplete
+	return out, incomplete, nil
 }
 
 // teeBody records a response body as the client reads it, so streamed events
@@ -257,9 +285,11 @@ func (t *teeBody) complete() {
 	t.p.finish(t.ex, t.status, t.contentType, bytes.Clone(t.buf.Bytes()), t.truncated)
 }
 
-// loopbackOnly rejects requests whose Host is not a loopback name, so a web
-// page cannot reach the capture listener through DNS rebinding.
-func loopbackOnly(next http.Handler) http.Handler {
+// guard admits only local, non-browser clients, at most MaxInFlight at a
+// time. A Host that is not a loopback name (DNS rebinding) and any request
+// with an Origin header (a web page) are refused.
+func guard(next http.Handler) http.Handler {
+	slots := make(chan struct{}, MaxInFlight)
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		host := req.Host
 		if h, _, err := net.SplitHostPort(host); err == nil {
@@ -268,6 +298,17 @@ func loopbackOnly(next http.Handler) http.Handler {
 		ip := net.ParseIP(strings.Trim(host, "[]"))
 		if host != "localhost" && (ip == nil || !ip.IsLoopback()) {
 			http.Error(w, "attest capture: loopback clients only", http.StatusForbidden)
+			return
+		}
+		if req.Header.Get("Origin") != "" {
+			http.Error(w, "attest capture: browser requests are refused", http.StatusForbidden)
+			return
+		}
+		select {
+		case slots <- struct{}{}:
+			defer func() { <-slots }()
+		default:
+			http.Error(w, fmt.Sprintf("attest capture: more than %d concurrent requests", MaxInFlight), http.StatusServiceUnavailable)
 			return
 		}
 		next.ServeHTTP(w, req)

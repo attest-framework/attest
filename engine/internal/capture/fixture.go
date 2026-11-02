@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"mime"
+	"net/url"
 	"strings"
 
 	"github.com/attest-ai/attest/engine/internal/redact"
@@ -135,7 +136,10 @@ func apiOf(provider, path string) string {
 }
 
 // exchangeDoc is the generic (pre-template) form of one exchange.
-func exchangeDoc(ex rawExchange) (map[string]any, error) {
+// exchangeDoc is the generic form of one exchange. An event-stream body has
+// secrets that span deltas redacted here, before the per-string redaction of
+// the whole fixture; a stream that does not parse fails the capture.
+func exchangeDoc(ex rawExchange, r *redact.Redactor) (map[string]any, error) {
 	req, err := bodyValue(ex.request, "application/json")
 	if err != nil {
 		return nil, fmt.Errorf("exchange %d request: %w", ex.seq, err)
@@ -149,12 +153,23 @@ func exchangeDoc(ex rawExchange) (map[string]any, error) {
 		stream, _ = m["stream"].(bool)
 	}
 	ct, _, _ := mime.ParseMediaType(ex.contentType)
-	stream = stream || ct == "text/event-stream"
+	if ct == "text/event-stream" {
+		stream = true
+		if text, ok := resp.(string); ok && text != "" {
+			if resp, err = redactSSE(text, r); err != nil {
+				return nil, fmt.Errorf("exchange %d (%s %s): unparseable event stream, no fixture written: %w", ex.seq, ex.method, ex.path, err)
+			}
+		}
+	}
+	path, err := redactPath(ex.path)
+	if err != nil {
+		return nil, fmt.Errorf("exchange %d path: %w", ex.seq, err)
+	}
 	doc := map[string]any{
 		"provider": ex.provider,
-		"api":      apiOf(ex.provider, ex.path),
+		"api":      apiOf(ex.provider, path),
 		"method":   ex.method,
-		"path":     ex.path,
+		"path":     path,
 		"stream":   stream,
 		"request":  req,
 		"response": map[string]any{
@@ -167,6 +182,67 @@ func exchangeDoc(ex rawExchange) (map[string]any, error) {
 		doc["response"].(map[string]any)["truncated"] = true
 	}
 	return doc, nil
+}
+
+// secretQueryParams are query parameters that carry credentials.
+var secretQueryParams = map[string]bool{
+	"key": true, "api_key": true, "apikey": true, "token": true, "access_token": true, "sig": true, "signature": true,
+}
+
+// redactPath percent-decodes an exchange path and query, so encoded secrets
+// meet the redactor's patterns, and replaces the values of credential query
+// parameters with the marker.
+func redactPath(raw string) (string, error) {
+	p, q, hasQuery := strings.Cut(raw, "?")
+	path, err := url.PathUnescape(p)
+	if err != nil {
+		return "", err
+	}
+	if !hasQuery {
+		return path, nil
+	}
+	var parts []string
+	for _, kv := range strings.Split(q, "&") {
+		k, v, _ := strings.Cut(kv, "=")
+		name, err := url.QueryUnescape(k)
+		if err != nil {
+			return "", err
+		}
+		value, err := url.QueryUnescape(v)
+		if err != nil {
+			return "", err
+		}
+		if secretQueryParams[strings.ToLower(name)] {
+			value = redact.Marker
+		}
+		parts = append(parts, name+"="+value)
+	}
+	return path + "?" + strings.Join(parts, "&"), nil
+}
+
+// redactArgv replaces the values of secret-named flags: --flag=value, and the
+// argument after a bare --flag. Key-shaped arguments are left to the
+// fixture-wide redaction.
+func redactArgv(argv []string) []string {
+	out := make([]string, len(argv))
+	copy(out, argv)
+	for i := 1; i < len(out); i++ {
+		a := out[i]
+		if !strings.HasPrefix(a, "-") || a == "-" || a == "--" {
+			continue
+		}
+		name, _, hasValue := strings.Cut(strings.TrimLeft(a, "-"), "=")
+		if !redact.IsSecretArgName(name) {
+			continue
+		}
+		if hasValue {
+			out[i] = a[:strings.Index(a, "=")+1] + redact.Marker
+		} else if i+1 < len(out) {
+			out[i+1] = redact.Marker
+			i++
+		}
+	}
+	return out
 }
 
 // bodyValue decodes a JSON body, or returns the text as a string for any
