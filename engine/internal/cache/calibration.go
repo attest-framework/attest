@@ -11,8 +11,10 @@ import (
 
 // CalibrationStore persists human-labeled examples and their
 // machine-judged counterparts so reports can show how closely the judge
-// agrees with the gold labels for each (rubric_name, rubric_version,
-// prompt_hash) bucket. Backed by the same *sql.DB as HistoryStore so
+// agrees with the gold labels for each (judge_provider, judge_model,
+// rubric_name, rubric_version, prompt_hash) bucket. Agreement is a property
+// of one judge model, so labels scored by different providers or models are
+// never pooled. Backed by the same *sql.DB as HistoryStore so
 // calibration data lives next to the assertion history that consumes it.
 type CalibrationStore struct {
 	db *sql.DB
@@ -23,6 +25,8 @@ type CalibrationStore struct {
 // JudgedAt are populated by the calibration runner; HumanLabel and Input
 // come from the loader.
 type CalibrationLabel struct {
+	JudgeProvider string
+	JudgeModel    string
 	RubricName    string
 	RubricVersion string
 	PromptHash    string
@@ -32,8 +36,21 @@ type CalibrationLabel struct {
 	JudgedAt      time.Time
 }
 
+// CalibrationKey selects the labels of one judge configuration. PromptHash
+// is ignored by PairsForRubric.
+type CalibrationKey struct {
+	JudgeProvider string
+	JudgeModel    string
+	RubricName    string
+	RubricVersion string
+	PromptHash    string
+}
+
 // NewCalibrationStore creates the calibration_labels table and index if
-// missing. Returns the wrapper for read/write access.
+// missing and migrates a table created before labels were keyed by judge
+// provider and model. Migrated rows keep an empty provider and model: they
+// are only returned for an empty key and never pooled with a provider's
+// labels. Returns the wrapper for read/write access.
 func NewCalibrationStore(db *sql.DB) (*CalibrationStore, error) {
 	if _, err := db.Exec(`PRAGMA journal_mode=WAL`); err != nil {
 		return nil, fmt.Errorf("set WAL mode: %w", err)
@@ -44,6 +61,8 @@ func NewCalibrationStore(db *sql.DB) (*CalibrationStore, error) {
 			rubric_name     TEXT    NOT NULL,
 			rubric_version  TEXT    NOT NULL,
 			prompt_hash     TEXT    NOT NULL,
+			judge_provider  TEXT    NOT NULL DEFAULT '',
+			judge_model     TEXT    NOT NULL DEFAULT '',
 			input           TEXT    NOT NULL,
 			human_label     REAL    NOT NULL,
 			judge_score     REAL    NOT NULL,
@@ -52,18 +71,55 @@ func NewCalibrationStore(db *sql.DB) (*CalibrationStore, error) {
 	`); err != nil {
 		return nil, fmt.Errorf("create calibration_labels: %w", err)
 	}
+	if err := migrateCalibrationJudgeKey(db); err != nil {
+		return nil, err
+	}
 	if _, err := db.Exec(`
-		CREATE INDEX IF NOT EXISTS idx_calibration_key
-		ON calibration_labels (rubric_name, rubric_version, prompt_hash)
+		DROP INDEX IF EXISTS idx_calibration_key;
+		CREATE INDEX IF NOT EXISTS idx_calibration_judge_key
+		ON calibration_labels (judge_provider, judge_model, rubric_name, rubric_version, prompt_hash)
 	`); err != nil {
 		return nil, fmt.Errorf("create calibration index: %w", err)
 	}
 	return &CalibrationStore{db: db}, nil
 }
 
+// migrateCalibrationJudgeKey adds the judge_provider and judge_model columns
+// to a calibration_labels table that predates them. Idempotent.
+func migrateCalibrationJudgeKey(db *sql.DB) error {
+	rows, err := db.Query(`SELECT name FROM pragma_table_info('calibration_labels')`)
+	if err != nil {
+		return fmt.Errorf("inspect calibration_labels: %w", err)
+	}
+	present := map[string]bool{}
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			rows.Close()
+			return fmt.Errorf("scan calibration_labels column: %w", err)
+		}
+		present[name] = true
+	}
+	if err := rows.Close(); err != nil {
+		return fmt.Errorf("close calibration_labels columns: %w", err)
+	}
+	for _, col := range []string{"judge_provider", "judge_model"} {
+		if present[col] {
+			continue
+		}
+		if _, err := db.Exec(`ALTER TABLE calibration_labels ADD COLUMN ` + col + ` TEXT NOT NULL DEFAULT ''`); err != nil {
+			return fmt.Errorf("add calibration_labels.%s: %w", col, err)
+		}
+	}
+	return nil
+}
+
 // Record inserts one calibration label. Inputs are stored verbatim so the
 // store doubles as a regression dataset; callers should keep them small.
 func (s *CalibrationStore) Record(label CalibrationLabel) error {
+	if label.JudgeProvider == "" || label.JudgeModel == "" {
+		return errors.New("judge_provider and judge_model must be set")
+	}
 	if label.RubricName == "" || label.RubricVersion == "" {
 		return errors.New("rubric_name and rubric_version must be set")
 	}
@@ -78,9 +134,9 @@ func (s *CalibrationStore) Record(label CalibrationLabel) error {
 	}
 	_, err := s.db.Exec(
 		`INSERT INTO calibration_labels
-		 (rubric_name, rubric_version, prompt_hash, input, human_label, judge_score, judged_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		label.RubricName, label.RubricVersion, label.PromptHash, label.Input,
+		 (judge_provider, judge_model, rubric_name, rubric_version, prompt_hash, input, human_label, judge_score, judged_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		label.JudgeProvider, label.JudgeModel, label.RubricName, label.RubricVersion, label.PromptHash, label.Input,
 		label.HumanLabel, label.JudgeScore, label.JudgedAt.UnixNano(),
 	)
 	if err != nil {
@@ -89,26 +145,27 @@ func (s *CalibrationStore) Record(label CalibrationLabel) error {
 	return nil
 }
 
-// Pairs returns the (human_label, judge_score) pairs stored under the given
-// rubric+version+prompt_hash key. Empty slice when no rows match.
-func (s *CalibrationStore) Pairs(rubricName, rubricVersion, promptHash string) ([]LabelPair, error) {
+// Pairs returns the (human_label, judge_score) pairs stored under the full
+// key. Empty slice when no rows match.
+func (s *CalibrationStore) Pairs(key CalibrationKey) ([]LabelPair, error) {
 	return s.scanPairs(
 		`SELECT human_label, judge_score FROM calibration_labels
-		 WHERE rubric_name = ? AND rubric_version = ? AND prompt_hash = ?
+		 WHERE judge_provider = ? AND judge_model = ?
+		   AND rubric_name = ? AND rubric_version = ? AND prompt_hash = ?
 		 ORDER BY judged_at ASC`,
-		rubricName, rubricVersion, promptHash,
+		key.JudgeProvider, key.JudgeModel, key.RubricName, key.RubricVersion, key.PromptHash,
 	)
 }
 
-// PairsForRubric returns all (human, judge) pairs for the rubric+version
-// regardless of prompt_hash. Use when the caller wants an aggregate
-// agreement number across the whole rubric.
-func (s *CalibrationStore) PairsForRubric(rubricName, rubricVersion string) ([]LabelPair, error) {
+// PairsForRubric returns all (human, judge) pairs for the judge provider,
+// model, rubric and version regardless of prompt_hash. Use when the caller
+// wants an aggregate agreement number across the whole rubric.
+func (s *CalibrationStore) PairsForRubric(key CalibrationKey) ([]LabelPair, error) {
 	return s.scanPairs(
 		`SELECT human_label, judge_score FROM calibration_labels
-		 WHERE rubric_name = ? AND rubric_version = ?
+		 WHERE judge_provider = ? AND judge_model = ? AND rubric_name = ? AND rubric_version = ?
 		 ORDER BY judged_at ASC`,
-		rubricName, rubricVersion,
+		key.JudgeProvider, key.JudgeModel, key.RubricName, key.RubricVersion,
 	)
 }
 
