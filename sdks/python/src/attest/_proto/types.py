@@ -123,6 +123,95 @@ class TraceMetadata:
 
 
 @dataclass
+class StepError:
+    """Trace v2: a step whose span ended in error."""
+
+    type: str
+    message: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        d: dict[str, Any] = {"type": self.type}
+        if self.message:
+            d["message"] = self.message
+        return d
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> StepError:
+        return cls(type=data["type"], message=data.get("message"))
+
+
+@dataclass
+class Exchange:
+    """Trace v2: a recorded model request/response pair."""
+
+    request: dict[str, Any]
+    response: dict[str, Any]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"request": _serialize(self.request), "response": _serialize(self.response)}
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> Exchange:
+        return cls(request=data["request"], response=data["response"])
+
+
+@dataclass
+class Turn:
+    """Trace v2: one conversation turn and the indices of its steps."""
+
+    index: int
+    step_indices: list[int] = field(default_factory=list)
+    span_id: str | None = None
+    input: Any = None
+    output: Any = None
+
+    def to_dict(self) -> dict[str, Any]:
+        d: dict[str, Any] = {"index": self.index}
+        if self.span_id:
+            d["span_id"] = self.span_id
+        if self.input is not None:
+            d["input"] = _serialize(self.input)
+        if self.output is not None:
+            d["output"] = _serialize(self.output)
+        d["step_indices"] = list(self.step_indices)
+        return d
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> Turn:
+        return cls(
+            index=data["index"],
+            step_indices=list(data.get("step_indices") or []),
+            span_id=data.get("span_id"),
+            input=data.get("input"),
+            output=data.get("output"),
+        )
+
+
+@dataclass
+class Handoff:
+    """Trace v2: control passing from one agent to another at an agent_call step."""
+
+    from_agent: str
+    to_agent: str
+    step_index: int
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "from_agent": self.from_agent,
+            "to_agent": self.to_agent,
+            "step_index": self.step_index,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> Handoff:
+        return cls(
+            from_agent=data["from_agent"],
+            to_agent=data["to_agent"],
+            step_index=data["step_index"],
+        )
+
+
+@dataclass
 class Step:
     type: str
     name: str
@@ -134,6 +223,13 @@ class Step:
     ended_at_ms: int | None = None
     agent_id: str | None = None
     agent_role: str | None = None
+    # Trace v2 (schema_version 2) fields.
+    span_id: str | None = None
+    parent_span_id: str | None = None
+    tool_call_id: str | None = None
+    retry_of: int | None = None
+    error: StepError | None = None
+    exchange: Exchange | None = None
 
     def to_dict(self) -> dict[str, Any]:
         d: dict[str, Any] = {"type": self.type, "name": self.name}
@@ -153,6 +249,18 @@ class Step:
             d["agent_id"] = self.agent_id
         if self.agent_role is not None:
             d["agent_role"] = self.agent_role
+        if self.span_id:
+            d["span_id"] = self.span_id
+        if self.parent_span_id:
+            d["parent_span_id"] = self.parent_span_id
+        if self.tool_call_id:
+            d["tool_call_id"] = self.tool_call_id
+        if self.retry_of is not None:
+            d["retry_of"] = self.retry_of
+        if self.error is not None:
+            d["error"] = self.error.to_dict()
+        if self.exchange is not None:
+            d["exchange"] = self.exchange.to_dict()
         return d
 
 
@@ -166,6 +274,10 @@ class Trace:
     steps: list[Step] = field(default_factory=list)
     metadata: TraceMetadata | None = None
     parent_trace_id: str | None = None
+    # Trace v2 (schema_version 2) fields.
+    conversation_id: str | None = None
+    turns: list[Turn] = field(default_factory=list)
+    handoffs: list[Handoff] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         d: dict[str, Any] = {
@@ -180,7 +292,14 @@ class Trace:
         d["steps"] = [s.to_dict() for s in self.steps]
         if self.metadata is not None:
             d["metadata"] = self.metadata.to_dict()
-        d["parent_trace_id"] = self.parent_trace_id
+        if self.parent_trace_id is not None:
+            d["parent_trace_id"] = self.parent_trace_id
+        if self.conversation_id:
+            d["conversation_id"] = self.conversation_id
+        if self.turns:
+            d["turns"] = [t.to_dict() for t in self.turns]
+        if self.handoffs:
+            d["handoffs"] = [h.to_dict() for h in self.handoffs]
         return d
 
     @classmethod
@@ -202,6 +321,12 @@ class Trace:
                     ended_at_ms=s.get("ended_at_ms"),
                     agent_id=s.get("agent_id"),
                     agent_role=s.get("agent_role"),
+                    span_id=s.get("span_id"),
+                    parent_span_id=s.get("parent_span_id"),
+                    tool_call_id=s.get("tool_call_id"),
+                    retry_of=s.get("retry_of"),
+                    error=StepError.from_dict(s["error"]) if s.get("error") else None,
+                    exchange=Exchange.from_dict(s["exchange"]) if s.get("exchange") else None,
                 )
             )
         raw_meta = data.get("metadata")
@@ -215,6 +340,9 @@ class Trace:
             steps=steps,
             metadata=metadata,
             parent_trace_id=data.get("parent_trace_id"),
+            conversation_id=data.get("conversation_id"),
+            turns=[Turn.from_dict(t) for t in data.get("turns") or []],
+            handoffs=[Handoff.from_dict(h) for h in data.get("handoffs") or []],
         )
 
 
