@@ -37,7 +37,8 @@ def test_contract_dsl_emits_fixture_spec(case: dict[str, Any]) -> None:
 
     [assertion] = chain.assertions
     assert assertion.type == TYPE_TRACE
-    assert json.loads(json.dumps(assertion.spec)) == case["spec"]
+    # Compare JSON text, not Python values: True == 1 and 1 == 1.0 in Python.
+    assert json.dumps(assertion.spec, sort_keys=True) == json.dumps(case["spec"], sort_keys=True)
 
 
 @pytest.mark.parametrize("name", sorted(_FIXTURE["traces"]))

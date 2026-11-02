@@ -29,6 +29,16 @@
       ]
     },
     {
+      "name": "cardinality-at-least-only",
+      "python": {"method": "tool_cardinality", "args": ["notify_customer"], "kwargs": {"at_least": 1}},
+      "typescript": {"method": "toolCardinality", "args": ["notify_customer", {"atLeast": 1}]},
+      "spec": {"check": "tool_cardinality", "tool": "notify_customer", "min": 1, "soft": false},
+      "results": [
+        {"trace": "inc-1042-py", "status": "pass"},
+        {"trace": "abab", "status": "hard_fail", "explanation": "notify_customer called 0× (min 1)"}
+      ]
+    },
+    {
       "name": "forbidden-tools",
       "python": {"method": "forbidden_tools", "args": [["delete_order"]], "kwargs": {}},
       "typescript": {"method": "forbiddenTools", "args": [["delete_order"]]},
@@ -40,9 +50,7 @@
       "python": {"method": "trajectory", "args": [["lookup_order", "issue_refund", "notify_customer"]], "kwargs": {}},
       "typescript": {"method": "trajectory", "args": [["lookup_order", "issue_refund", "notify_customer"]]},
       "spec": {"check": "trajectory", "mode": "strict", "tools": ["lookup_order", "issue_refund", "notify_customer"], "soft": false},
-      "results": [
-        {"trace": "inc-1042-py", "status": "hard_fail", "explanation": "trajectory (strict): tool calls [lookup_order issue_refund issue_refund notify_customer] differ from expected [lookup_order issue_refund notify_customer]"}
-      ]
+      "results": [{"trace": "inc-1042-py", "status": "hard_fail", "explanation": "trajectory (strict): tool calls [lookup_order issue_refund issue_refund notify_customer] differ from expected [lookup_order issue_refund notify_customer]"}]
     },
     {
       "name": "trajectory-unordered",
@@ -56,9 +64,7 @@
       "python": {"method": "trajectory", "args": [["lookup_order", "issue_refund", "notify_customer"]], "kwargs": {"mode": "subset"}},
       "typescript": {"method": "trajectory", "args": [["lookup_order", "issue_refund", "notify_customer"], {"mode": "subset"}]},
       "spec": {"check": "trajectory", "mode": "subset", "tools": ["lookup_order", "issue_refund", "notify_customer"], "soft": false},
-      "results": [
-        {"trace": "inc-1042-py", "status": "hard_fail", "explanation": "trajectory (subset): tool calls not in the expected trajectory: issue_refund (2 vs 1)"}
-      ]
+      "results": [{"trace": "inc-1042-py", "status": "hard_fail", "explanation": "trajectory (subset): tool calls not in the expected trajectory: issue_refund (2 vs 1)"}]
     },
     {
       "name": "trajectory-superset",
@@ -75,6 +81,16 @@
       "results": [
         {"trace": "inc-1042-py", "status": "pass"},
         {"trace": "abab", "status": "hard_fail", "explanation": "trajectory (partial_order): tools not called: lookup_order, issue_refund, notify_customer"}
+      ]
+    },
+    {
+      "name": "trajectory-partial-order-without-tools",
+      "python": {"method": "trajectory_partial_order", "args": [[["search", "rephrase"]]], "kwargs": {}},
+      "typescript": {"method": "trajectoryPartialOrder", "args": [[["search", "rephrase"]]]},
+      "spec": {"check": "trajectory", "mode": "partial_order", "order": [["search", "rephrase"]], "soft": false},
+      "results": [
+        {"trace": "abab", "status": "pass"},
+        {"trace": "inc-1042-py", "status": "hard_fail", "explanation": "trajectory (partial_order): tools not called: search, rephrase"}
       ]
     },
     {
@@ -119,9 +135,7 @@
       "python": {"method": "tool_arg_satisfies", "args": ["issue_refund", "amount_cents", "lte", 5000], "kwargs": {}},
       "typescript": {"method": "toolArgSatisfies", "args": ["issue_refund", "amount_cents", "lte", 5000]},
       "spec": {"check": "arg_predicate", "tool": "issue_refund", "arg": "amount_cents", "op": "lte", "value": 5000, "soft": false},
-      "results": [
-        {"trace": "inc-1042-py", "status": "hard_fail", "explanation": "issue_refund violates amount_cents lte 5000 at step 3: amount_cents=8400; step 5: amount_cents=8400"}
-      ]
+      "results": [{"trace": "inc-1042-py", "status": "hard_fail", "explanation": "issue_refund violates amount_cents lte 5000 at step 3: amount_cents=8400; step 5: amount_cents=8400"}]
     },
     {
       "name": "arg-predicate-in",
