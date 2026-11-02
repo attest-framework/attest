@@ -7,12 +7,17 @@ runs in ``attest-engine``: the CLI resolves a version-checked engine with
 command, and forwards the arguments, stdout, stderr and exit code unchanged. A missing,
 mismatched or too-old engine exits 1 before anything runs, so a gate such as
 ``attest policy evaluate`` never exits 0 without evaluating.
+
+``attest capture`` is forwarded the same way; when the engine writes a fixture, the CLI
+then drafts its pytest file (:func:`attest.capture.emit_pytest`).
 """
 
 from __future__ import annotations
 
+import json
 import subprocess
 import sys
+import tempfile
 from collections.abc import Sequence
 from pathlib import Path
 
@@ -30,6 +35,9 @@ _SDK_USAGE = (
     "SDK commands:\n"
     "  init [--ci github]  scaffold a sample test and merge policy in the current directory\n"
     "                      (--ci github also writes .github/workflows/attest.yml)\n"
+    "\n"
+    "`attest capture` (engine) also drafts tests/attest/test_<name>.py from the fixture\n"
+    "it writes, unless that file exists.\n"
     "\n"
     "options:\n"
     "  --version  print the SDK version and the engine version it requires\n"
@@ -119,7 +127,45 @@ def forward(argv: Sequence[str]) -> int:
             file=sys.stderr,
         )
         return 1
+    if command == "capture" and _capture_writes_fixture(argv[1:]):
+        return _capture_and_emit(engine, argv[1:])
     return exit_status(subprocess.run([engine, *argv], check=False).returncode)
+
+
+# Engine capture modes that do not write a fixture.
+_CAPTURE_NO_FIXTURE = frozenset({"--check-redaction", "--serve", "-h", "--help", "-help"})
+
+
+def _capture_writes_fixture(args: Sequence[str]) -> bool:
+    """True unless ``attest capture`` args select a mode that writes no fixture."""
+    for a in args:
+        if a == "--":
+            break
+        if a.split("=", 1)[0] in _CAPTURE_NO_FIXTURE:
+            return False
+    return True
+
+
+def _capture_and_emit(engine: str, args: Sequence[str]) -> int:
+    """Run ``attest-engine capture`` and draft the pytest file for the fixture it wrote."""
+    from attest.capture import emit_pytest, test_path_for
+
+    with tempfile.TemporaryDirectory(prefix="attest-capture-") as tmp:
+        result_file = Path(tmp) / "result.json"
+        code = exit_status(
+            subprocess.run(
+                [engine, "capture", "--result-file", str(result_file), *args], check=False
+            ).returncode
+        )
+        if not result_file.exists():
+            return code
+        fixture = Path(json.loads(result_file.read_text(encoding="utf-8"))["fixture"])
+    written = emit_pytest(fixture)
+    if written is None:
+        print(f"  test: {test_path_for(fixture)} exists; left unchanged", file=sys.stderr)
+    else:
+        print(f"  test: drafted {written}", file=sys.stderr)
+    return code
 
 
 _INIT_USAGE = "usage: attest init [--ci github]  (scaffolds into the current directory)"
