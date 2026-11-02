@@ -128,9 +128,14 @@ func (p *Gemini) Complete(ctx context.Context, req *llm.CompletionRequest) (*llm
 
 	endpoint := p.baseURL + "/v1beta/models/" + url.PathEscape(model) + ":generateContent"
 	start := time.Now()
-	raw, err := postJSON(ctx, p.client, "gemini", endpoint, map[string]string{
-		"x-goog-api-key": p.apiKey,
-	}, body, geminiErrorMessage)
+	raw, err := postJSON(ctx, p.client, postRequest{
+		provider:   "gemini",
+		url:        endpoint,
+		apiKey:     p.apiKey,
+		headers:    map[string]string{"x-goog-api-key": p.apiKey},
+		body:       body,
+		errMessage: geminiErrorMessage,
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -147,7 +152,8 @@ func (p *Gemini) Complete(ctx context.Context, req *llm.CompletionRequest) (*llm
 		text.WriteString(part.Text)
 	}
 	if text.Len() == 0 {
-		return nil, fmt.Errorf("gemini: first candidate has no text (finishReason %q)", resp.Candidates[0].FinishReason)
+		reason := truncate(stripControl(resp.Candidates[0].FinishReason), maxErrorDetail)
+		return nil, fmt.Errorf("gemini: first candidate has no text (finishReason %q)", reason)
 	}
 	respModel := resp.ModelVersion
 	if respModel == "" {

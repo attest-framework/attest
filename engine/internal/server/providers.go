@@ -26,13 +26,14 @@ type judgeConfig struct {
 	acpCommand string
 }
 
-// cacheEndpoint scopes judge cache entries: the base URL for HTTP providers,
-// the agent command for acp.
+// cacheEndpoint scopes judge cache entries by provider and base URL, so two
+// providers behind the same gateway with the same model name never share
+// scores; the acp judge is scoped by its agent command (never printed).
 func (c judgeConfig) cacheEndpoint() string {
 	if c.provider == "acp" {
 		return "acp:" + c.acpCommand
 	}
-	return c.baseURL
+	return c.provider + "|" + c.baseURL
 }
 
 // judgeBackend describes one native judge provider family.

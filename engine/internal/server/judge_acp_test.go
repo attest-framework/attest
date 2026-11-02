@@ -96,7 +96,7 @@ func TestJudgeConfig_CacheEndpoint_ScopesACPByCommand(t *testing.T) {
 	acp := judgeConfig{provider: "acp", acpCommand: "claude-code-acp"}
 	openai := judgeConfig{provider: "openai", baseURL: "https://api.openai.com/v1"}
 
-	if acp.cacheEndpoint() != "acp:claude-code-acp" || openai.cacheEndpoint() != openai.baseURL {
+	if acp.cacheEndpoint() != "acp:claude-code-acp" || openai.cacheEndpoint() != "openai|"+openai.baseURL {
 		t.Errorf("cache endpoints = %q, %q", acp.cacheEndpoint(), openai.cacheEndpoint())
 	}
 }

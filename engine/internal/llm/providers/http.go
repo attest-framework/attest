@@ -61,29 +61,36 @@ func (e *StatusError) Error() string {
 	return fmt.Sprintf("%s: HTTP %d: %s", e.Provider, e.StatusCode, e.Message)
 }
 
-// postJSON sends body as JSON to url with headers and returns the raw
-// response body for a 2xx status. Non-2xx responses become a *StatusError
-// whose message is extracted from the body by errMessage, stripped of
-// control characters and capped at maxErrorDetail bytes, because it reaches
-// assertion explanations and reports.
-func postJSON(
-	ctx context.Context,
-	client *http.Client,
-	provider, url string,
-	headers map[string]string,
-	body any,
-	errMessage func([]byte) string,
-) ([]byte, error) {
-	payload, err := json.Marshal(body)
+// postRequest is one JSON POST to a provider API.
+type postRequest struct {
+	provider string
+	url      string
+	apiKey   string            // redacted from error messages
+	headers  map[string]string // including the header carrying apiKey
+	body     any
+	// errMessage extracts the human-readable message from an error body;
+	// it returns "" when the body has no recognizable message.
+	errMessage func([]byte) string
+}
+
+// postJSON sends r.body as JSON and returns the raw response body for a 2xx
+// status. Non-2xx responses become a *StatusError whose message is
+// extracted by r.errMessage, has the API key redacted (a gateway may echo
+// request headers), is stripped of control and format characters and is
+// capped at maxErrorDetail bytes, because it reaches assertion explanations
+// and reports.
+func postJSON(ctx context.Context, client *http.Client, r postRequest) ([]byte, error) {
+	provider := r.provider
+	payload, err := json.Marshal(r.body)
 	if err != nil {
 		return nil, fmt.Errorf("%s: marshal request: %w", provider, err)
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(payload))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, r.url, bytes.NewReader(payload))
 	if err != nil {
 		return nil, fmt.Errorf("%s: build request: %w", provider, err)
 	}
 	req.Header.Set("Content-Type", "application/json")
-	for k, v := range headers {
+	for k, v := range r.headers {
 		req.Header.Set(k, v)
 	}
 
@@ -98,21 +105,34 @@ func postJSON(
 		return nil, fmt.Errorf("%s: read body: %w", provider, err)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		msg := errMessage(raw)
+		msg := r.errMessage(raw)
 		if msg == "" {
 			msg = string(raw)
 		}
-		msg = truncate(stripControl(msg), maxErrorDetail)
+		msg = truncate(stripControl(redact(msg, r.apiKey)), maxErrorDetail)
 		return nil, &StatusError{Provider: provider, StatusCode: resp.StatusCode, Message: msg}
 	}
 	return raw, nil
 }
 
-// stripControl drops control characters (including terminal escapes) from
-// text supplied by a remote endpoint.
+// redactedKey replaces an API key found in provider-supplied text.
+const redactedKey = "[redacted]"
+
+// redact replaces every occurrence of key in s. An empty key leaves s as is.
+func redact(s, key string) string {
+	if key == "" {
+		return s
+	}
+	return strings.ReplaceAll(s, key, redactedKey)
+}
+
+// stripControl drops control characters (including terminal escapes) and
+// format characters (bidi overrides such as U+202E, isolates, zero-width
+// characters) from text supplied by a remote endpoint, so it can neither
+// drive a terminal nor visually reorder a report.
 func stripControl(s string) string {
 	return strings.Map(func(r rune) rune {
-		if unicode.IsControl(r) {
+		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) {
 			return -1
 		}
 		return r
