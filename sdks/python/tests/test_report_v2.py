@@ -10,7 +10,7 @@ from typing import Any
 import jsonschema
 import pytest
 
-from attest._proto.types import AssertionResult, Trace
+from attest._proto.types import AssertionResult, Trace, Usage
 from attest.report_v2 import TestRecord, build_report
 from attest.result import AgentResult
 
@@ -102,7 +102,7 @@ def test_build_report_tags_rows_with_test_location_and_matches_schema() -> None:
         ],
     )
 
-    report = build_report([failed, skipped], simulated=False)
+    report = build_report([failed, skipped], simulated=False, usage=Usage())
 
     _validate(report)
     assert report["summary"] == {
@@ -111,6 +111,7 @@ def test_build_report_tags_rows_with_test_location_and_matches_schema() -> None:
         "soft_fail": 0,
         "hard_fail": 1,
         "not_evaluated": 2,
+        "usage": Usage().to_dict(),
     }
     hard = next(r for r in report["results"] if r["status"] == "hard_fail")
     assert (hard["test_id"], hard["file"], hard["line"]) == (
@@ -217,7 +218,7 @@ def test_rerun_test_reports_only_the_last_attempt() -> None:
     _run_phase(item, "call", "passed")
     _run_phase(item, "teardown", "passed")
 
-    report = build_report(list(plugin._session_tests.values()), simulated=False)
+    report = build_report(list(plugin._session_tests.values()), simulated=False, usage=Usage())
     plugin._session_tests.clear()
     _validate(report)
     assert report["tests"][0]["outcome"] == "passed"

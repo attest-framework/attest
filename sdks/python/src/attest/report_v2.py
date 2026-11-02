@@ -20,6 +20,7 @@ from attest._proto.types import (
     STATUS_NOT_EVALUATED,
     STATUS_PASS,
     STATUS_SOFT_FAIL,
+    Usage,
 )
 from attest.result import AgentResult
 
@@ -41,16 +42,21 @@ class TestRecord:
     outcome: str = "passed"
     duration_ms: int = 0
     agent_results: list[AgentResult] = field(default_factory=list)
+    #: Fixed-N trials actually run (``--attest-trials`` > 1); ``None`` for a single run.
+    trials: int | None = None
 
     def __post_init__(self) -> None:
         if self.line < 1:
             raise ValueError(f"{self.test_id}: line must be >= 1, got {self.line}")
         if self.outcome not in TEST_OUTCOMES:
             raise ValueError(f"{self.test_id}: unknown outcome {self.outcome!r}")
+        if self.trials is not None and self.trials < 1:
+            raise ValueError(f"{self.test_id}: trials must be >= 1, got {self.trials}")
 
 
-def build_report(tests: list[TestRecord], *, simulated: bool) -> dict[str, Any]:
-    """Return the report-v2 document for ``tests``."""
+def build_report(tests: list[TestRecord], *, simulated: bool, usage: Usage) -> dict[str, Any]:
+    """Return the report-v2 document for ``tests``; ``usage`` is the session's
+    attest model usage (``summary.usage``)."""
     rows: list[dict[str, Any]] = []
     test_rows: list[dict[str, Any]] = []
     total_cost = 0.0
@@ -84,6 +90,8 @@ def build_report(tests: list[TestRecord], *, simulated: bool) -> dict[str, Any]:
         }
         if reasons:
             test_row["not_evaluated_reasons"] = reasons
+        if test.trials is not None:
+            test_row["trials"] = test.trials
         test_rows.append(test_row)
 
     statuses = [row["status"] for row in rows]
@@ -97,6 +105,7 @@ def build_report(tests: list[TestRecord], *, simulated: bool) -> dict[str, Any]:
             "soft_fail": statuses.count(STATUS_SOFT_FAIL),
             "hard_fail": statuses.count(STATUS_HARD_FAIL),
             "not_evaluated": statuses.count(STATUS_NOT_EVALUATED),
+            "usage": usage.to_dict(),
         },
         "results": rows,
         "tests": test_rows,
@@ -105,7 +114,8 @@ def build_report(tests: list[TestRecord], *, simulated: bool) -> dict[str, Any]:
     }
 
 
-def write_report(path: Path, tests: list[TestRecord], *, simulated: bool) -> None:
+def write_report(path: Path, tests: list[TestRecord], *, simulated: bool, usage: Usage) -> None:
     """Write the report-v2 document for ``tests`` to ``path``, creating parent directories."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(build_report(tests, simulated=simulated), indent=2) + "\n")
+    report = build_report(tests, simulated=simulated, usage=usage)
+    path.write_text(json.dumps(report, indent=2) + "\n")
