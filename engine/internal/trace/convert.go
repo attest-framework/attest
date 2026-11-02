@@ -283,7 +283,7 @@ func FromSpans(spans []Span, opts ConvertOptions) (*types.Trace, error) {
 		return nil, fmt.Errorf("no spans to convert")
 	}
 	if ids := traceIDs(spans); len(ids) > 1 {
-		return nil, fmt.Errorf("input holds %d traces (%s); convert one trace per file", len(ids), strings.Join(ids, ", "))
+		return nil, fmt.Errorf("input holds %d traces (%s); convert one trace per file", len(ids), listIDs(ids))
 	}
 	if n := contentBytes(spans); n > MaxTraceSize {
 		return nil, fmt.Errorf("recorded content is %d bytes; a trace holds at most %d", n, MaxTraceSize)
@@ -293,8 +293,12 @@ func FromSpans(spans []Span, opts ConvertOptions) (*types.Trace, error) {
 	if err := c.buildSteps(); err != nil {
 		return nil, err
 	}
-	c.buildTurns()
-	c.buildHandoffs()
+	if err := c.buildTurns(); err != nil {
+		return nil, err
+	}
+	if err := c.buildHandoffs(); err != nil {
+		return nil, err
+	}
 	c.markRetries()
 
 	t := &types.Trace{
@@ -314,7 +318,11 @@ func FromSpans(spans []Span, opts ConvertOptions) (*types.Trace, error) {
 			t.Input = mustJSON(map[string]any{"messages": decodeJSONText(msgs)})
 		}
 	}
-	t.Output = mustJSON(map[string]any{"message": c.outputText()})
+	text := c.outputText()
+	if err := c.charge(jsonSize(text)); err != nil {
+		return nil, err
+	}
+	t.Output = mustJSON(map[string]any{"message": text})
 	for i := range x.spans {
 		if id, ok := x.spans[i].Attributes[attrConversationID].(string); ok && id != "" {
 			t.ConversationID = id
@@ -326,6 +334,17 @@ func FromSpans(spans []Span, opts ConvertOptions) (*types.Trace, error) {
 		return nil, fmt.Errorf("converted trace is invalid: %s", rpcErr.Message)
 	}
 	return t, nil
+}
+
+// maxListedIDs bounds how many ids one message lists.
+const maxListedIDs = 10
+
+// listIDs joins at most maxListedIDs ids for a message.
+func listIDs(ids []string) string {
+	if len(ids) <= maxListedIDs {
+		return strings.Join(ids, ", ")
+	}
+	return strings.Join(ids[:maxListedIDs], ", ") + fmt.Sprintf(", … (%d more)", len(ids)-maxListedIDs)
 }
 
 func traceIDs(spans []Span) []string {
@@ -349,10 +368,41 @@ type converter struct {
 	turns     []types.Turn
 	handoffs  []types.Handoff
 
-	texts       map[int]string // span index → model output text
+	texts map[int]string // span index → model output text
+	// outBytes is a running upper bound on the converted trace's encoded
+	// size; conversion stops as soon as it passes MaxTraceSize, before a
+	// value copied many times (an agent name in every handoff) is built.
+	outBytes    int
 	totalTokens *int
 	costUSD     *float64
 	model       *string
+}
+
+// stepOverhead bounds the encoded size of a step's keys, punctuation and
+// numeric fields.
+const stepOverhead = 256
+
+// charge adds n bytes to the converted trace's size bound and fails once it
+// exceeds the trace limit.
+func (c *converter) charge(n int) error {
+	c.outBytes += n
+	if c.outBytes > MaxTraceSize {
+		return fmt.Errorf("converted trace would exceed %d bytes; a trace holds at most %d", c.outBytes, MaxTraceSize)
+	}
+	return nil
+}
+
+func stepSize(s *types.Step) int {
+	n := stepOverhead + len(s.Args) + len(s.Result) + len(s.Metadata) +
+		jsonSize(s.Name) + jsonSize(s.AgentID) + jsonSize(s.AgentRole) + jsonSize(s.ToolCallID) +
+		len(s.SpanID) + len(s.ParentSpanID)
+	if s.Error != nil {
+		n += jsonSize(s.Error.Type) + jsonSize(s.Error.Message)
+	}
+	if s.Exchange != nil {
+		n += len(s.Exchange.Request) + len(s.Exchange.Response)
+	}
+	return n
 }
 
 func (c *converter) buildSteps() error {
@@ -373,6 +423,9 @@ func (c *converter) buildSteps() error {
 		}
 		c.stepOf[i] = len(c.steps)
 		c.stepSpan = append(c.stepSpan, i)
+		if err := c.charge(stepSize(&step)); err != nil {
+			return err
+		}
 		c.steps = append(c.steps, step)
 	}
 	return nil
@@ -507,9 +560,9 @@ func (c *converter) llmStep(i int, step *types.Step, a map[string]any) (args, re
 
 // buildTurns makes one turn per top-level invoke_agent span, holding every
 // step in its subtree.
-func (c *converter) buildTurns() {
+func (c *converter) buildTurns() error {
 	if len(c.turnSpans) == 0 {
-		return
+		return nil
 	}
 	turnOf := make(map[int]int, len(c.turnSpans))
 	c.turns = make([]types.Turn, len(c.turnSpans))
@@ -523,6 +576,9 @@ func (c *converter) buildTurns() {
 		if v, ok := s.Attributes[attrOutputMessages]; ok {
 			turn.Output = mustJSON(decodeJSONText(v))
 		}
+		if err := c.charge(stepOverhead + len(turn.Input) + len(turn.Output) + len(turn.SpanID)); err != nil {
+			return err
+		}
 		c.turns[n] = turn
 	}
 	for stepIdx, si := range c.stepSpan {
@@ -531,11 +587,12 @@ func (c *converter) buildTurns() {
 			c.turns[n].StepIndices = append(c.turns[n].StepIndices, stepIdx)
 		}
 	}
+	return nil
 }
 
 // buildHandoffs records an invoke_agent span nested under another agent as
 // a handoff from the enclosing agent.
-func (c *converter) buildHandoffs() {
+func (c *converter) buildHandoffs() error {
 	for stepIdx, si := range c.stepSpan {
 		if !c.x.isInvokeAgent(si) {
 			continue
@@ -549,12 +606,16 @@ func (c *converter) buildHandoffs() {
 		if fromName == toName {
 			continue
 		}
+		if err := c.charge(stepOverhead + jsonSize(fromName) + jsonSize(toName)); err != nil {
+			return err
+		}
 		c.handoffs = append(c.handoffs, types.Handoff{
 			FromAgent: fromName,
 			ToAgent:   toName,
 			StepIndex: stepIdx,
 		})
 	}
+	return nil
 }
 
 // markRetries sets retry_of on a step that repeats a failed sibling under the
@@ -728,8 +789,9 @@ var copiedAttributes = []string{
 // contentBytes estimates the JSON size of everything the converter copies
 // from the spans (attribute values, span names, status messages), counting
 // JSON escaping and the turn messages that appear twice, so oversized input
-// is rejected before any of it is decoded or copied. It never undercounts
-// the encoded size of copied values.
+// is rejected before any of it is decoded. Values the converter copies more
+// than once (an agent name into every handoff, output text into the trace
+// output) are bounded while converting by converter.charge.
 func contentBytes(spans []Span) int {
 	n := 0
 	for i := range spans {
