@@ -10,6 +10,7 @@
     "not_evaluated": 1,
     "usage": {
       "model_calls": 2,
+      "judge_calls": 2,
       "input_tokens": 812,
       "output_tokens": 64,
       "cached_tokens": 0,

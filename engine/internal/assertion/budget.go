@@ -308,7 +308,7 @@ func (b *BudgetedProvider) Complete(ctx context.Context, req *llm.CompletionRequ
 	}
 
 	resp, err := b.inner.Complete(ctx, req)
-	u := types.Usage{ModelCalls: 1}
+	u := types.Usage{ModelCalls: 1, JudgeCalls: 1}
 	if !priced {
 		u.UnpricedCalls = 1
 	}

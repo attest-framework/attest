@@ -152,7 +152,7 @@ func TestHandler_FiftyConcurrentJudges_CallBudgetOfTen_SendsAtMostTen(t *testing
 	if passed != int(judge.requests.Load()) || reasons[types.ReasonBudgetExhausted] != 50-passed {
 		t.Fatalf("passed=%d reasons=%v, want every unsent judge not_evaluated(budget_exhausted)", passed, reasons)
 	}
-	if res.Usage.ModelCalls != passed || res.Usage.BudgetRefused != 50-passed {
+	if res.Usage.ModelCalls != passed || res.Usage.JudgeCalls != passed || res.Usage.BudgetRefused != 50-passed {
 		t.Errorf("usage = %+v, want %d calls and %d refused", res.Usage, passed, 50-passed)
 	}
 	if exit := policy.Evaluate(&policy.Policy{}, res.Results, res.TotalCost, nil); exit.ExitCode() != policy.ExitWarn {

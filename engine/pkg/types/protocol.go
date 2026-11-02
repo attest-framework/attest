@@ -71,7 +71,9 @@ type BatchBudget struct {
 }
 
 // Usage counts attest-initiated model calls (L5 embeddings, L6 judges,
-// judge repeats, bias probes and simulated-user messages). CostUSD is
+// judge repeats, bias probes and simulated-user messages). JudgeCalls is
+// the judge-provider part of ModelCalls, the count max_judge_calls limits.
+// CostUSD is
 // reconciled from reported token usage at the configured price;
 // RetryCostUSD is the part of CostUSD spent on retried calls.
 // UnpricedCalls counts calls whose model has no price, so CostUSD
@@ -79,6 +81,7 @@ type BatchBudget struct {
 // that were not sent because no budget remained.
 type Usage struct {
 	ModelCalls    int     `json:"model_calls"`
+	JudgeCalls    int     `json:"judge_calls"`
 	InputTokens   int64   `json:"input_tokens"`
 	OutputTokens  int64   `json:"output_tokens"`
 	CachedTokens  int64   `json:"cached_tokens"`
@@ -91,6 +94,7 @@ type Usage struct {
 // Add accumulates o into u.
 func (u *Usage) Add(o Usage) {
 	u.ModelCalls += o.ModelCalls
+	u.JudgeCalls += o.JudgeCalls
 	u.InputTokens += o.InputTokens
 	u.OutputTokens += o.OutputTokens
 	u.CachedTokens += o.CachedTokens

@@ -390,6 +390,7 @@ Every model call reserves one call and its worst-case cost (price × prompt byte
     "simulated": false,
     "usage": {
       "model_calls": 1,
+      "judge_calls": 1,
       "input_tokens": 412,
       "output_tokens": 38,
       "cached_tokens": 0,
@@ -402,7 +403,7 @@ Every model call reserves one call and its worst-case cost (price × prompt byte
 }
 ```
 
-**`usage`** counts the batch's attest-initiated model calls: `model_calls` sent (failed requests included), `input_tokens` / `output_tokens` / `cached_tokens` (provider prompt-cache reads, included in `input_tokens`), `cost_usd` reconciled from the reported tokens at the configured price, `retry_cost_usd` (the part of `cost_usd` spent on retried requests), `unpriced_calls` (calls whose model has no price, so `cost_usd` excludes them) and `budget_refused` (calls not sent because no budget remained). Judge-cache hits make no call.
+**`usage`** counts the batch's attest-initiated model calls: `model_calls` sent (failed requests included) and `judge_calls`, the judge-provider part of them that `max_judge_calls` limits, `input_tokens` / `output_tokens` / `cached_tokens` (provider prompt-cache reads, included in `input_tokens`), `cost_usd` reconciled from the reported tokens at the configured price, `retry_cost_usd` (the part of `cost_usd` spent on retried requests), `unpriced_calls` (calls whose model has no price, so `cost_usd` excludes them) and `budget_refused` (calls not sent because no budget remained). Judge-cache hits make no call.
 
 **Result object fields:**
 
