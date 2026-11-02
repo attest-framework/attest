@@ -2,7 +2,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, relative, resolve, sep } from "node:path";
 import { isSimulationMode, renderDiagnostics, renderSummary } from "@attest-ai/core";
 import type { Reporter, TestModule, Vitest } from "vitest/node";
-import { buildReport, type TestRecord } from "./report.js";
+import { buildReport, summaryLines, type TestRecord } from "./report.js";
 
 interface ReporterContext {
   printInfo: (message: string) => void;
@@ -78,16 +78,22 @@ export interface AttestReporterOptions {
  * `--attest-report=<path>`:
  * `vitest run --reporter=default --reporter=@attest-ai/vitest/reporter --outputFile.attest=<path>`. Turns on `includeTaskLocation` so each test carries its
  * line. Requires Vitest 3+.
+ *
+ * At the end of the run it prints, with or without an output file, one line per
+ * `trials()` test ("<test_id>: <passed>/<evaluated> trials passed (<n> not evaluated)")
+ * and the "attest usage: …" line when the run made or refused an attest model call.
  */
 export class AttestReporter implements Reporter {
   private outputFile: string | undefined;
   private root = process.cwd();
+  private vitest: Vitest | undefined;
 
   constructor(options: AttestReporterOptions = {}) {
     this.outputFile = options.outputFile;
   }
 
   onInit(vitest: Vitest): void {
+    this.vitest = vitest;
     this.root = vitest.config.root;
     const configured = vitest.config.outputFile;
     if (this.outputFile === undefined && typeof configured === "object") {
@@ -98,13 +104,13 @@ export class AttestReporter implements Reporter {
 
   onTestRunEnd(testModules: ReadonlyArray<TestModule>): void {
     const outputFile = this.outputFile;
-    if (outputFile === undefined) return;
     const tests: TestRecord[] = [];
     for (const testModule of testModules) {
       const file = relative(this.root, testModule.moduleId).split(sep).join("/");
       for (const testCase of testModule.children.allTests()) {
         const location = testCase.location;
-        if (location === undefined) {
+        // The location matters only for the report file; summary lines need none.
+        if (location === undefined && outputFile !== undefined) {
           throw new Error(
             `AttestReporter: no source location for "${testCase.fullName}". Vitest records ` +
               "locations only when test.includeTaskLocation is true and the test file path matches " +
@@ -116,13 +122,16 @@ export class AttestReporter implements Reporter {
           testId: `${file} > ${testCase.fullName}`,
           name: testCase.name,
           file,
-          line: location.line,
+          line: location?.line ?? 0,
           outcome: state === "passed" || state === "failed" ? state : "skipped",
           durationMs: testCase.diagnostic()?.duration ?? 0,
           attest: testCase.meta().attest,
         });
       }
     }
+    const lines = summaryLines(tests);
+    if (lines.length > 0) this.vitest?.logger.log(lines.join("\n"));
+    if (outputFile === undefined) return;
     const path = resolve(this.root, outputFile);
     mkdirSync(dirname(path), { recursive: true });
     writeFileSync(path, `${JSON.stringify(buildReport(tests, isSimulationMode()), null, 2)}\n`);

@@ -1,4 +1,5 @@
-import type { AssertionResult, Trace } from "./proto/types.js";
+import type { AssertionResult, Trace, Usage } from "./proto/types.js";
+import { zeroUsage } from "./usage.js";
 import {
   STATUS_PASS,
   STATUS_SOFT_FAIL,
@@ -35,17 +36,21 @@ export class AgentResult {
   readonly assertionResults: readonly AssertionResult[];
   readonly totalCost: number;
   readonly totalDurationMs: number;
+  /** Attest model usage of the evaluation that produced this result. */
+  readonly usage: Usage;
 
   constructor(
     trace: Trace,
     assertionResults: readonly AssertionResult[] = [],
     totalCost = 0.0,
     totalDurationMs = 0,
+    usage: Usage = zeroUsage(),
   ) {
     this.trace = trace;
     this.assertionResults = assertionResults.map(normalizeAssertionResult);
     this.totalCost = totalCost;
     this.totalDurationMs = totalDurationMs;
+    this.usage = usage;
   }
 
   /** True if every assertion has status "pass". */

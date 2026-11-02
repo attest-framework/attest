@@ -1,7 +1,9 @@
 import type {
   Assertion,
+  BatchBudget,
   ConversationMessage,
   DriftReport,
+  EvaluateBatchParams,
   EvaluateBatchResult,
   InitializeResult,
   SimulateFaultConfig,
@@ -29,6 +31,7 @@ import {
 } from "./proto/diagnostics.js";
 import type { EngineManager } from "./engine-manager.js";
 import { isSimulationMode } from "./config.js";
+import { parseUsage } from "./usage.js";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 const DEFAULT_DIAGNOSTIC_BUFFER = 32;
@@ -360,7 +363,7 @@ export class AttestClient {
   async evaluateBatch(
     trace: Trace,
     assertions: readonly Assertion[],
-    options?: { timeout?: number },
+    options?: { timeout?: number; budget?: BatchBudget },
   ): Promise<EvaluateBatchResult> {
     // Simulation is decided by the engine: started with ATTEST_SIMULATION
     // set, it evaluates layers 1-4 for real and returns not_evaluated
@@ -370,16 +373,17 @@ export class AttestClient {
       // EngineManager keeps the initialize result private.
       requireSimulationCapability(this.engine["initResult"]);
     }
-    const params = {
+    const params: EvaluateBatchParams = {
       trace,
       assertions: [...assertions],
+      ...(options?.budget !== undefined ? { budget: options.budget } : {}),
     };
-    const raw = await this.sendRequest(
+    const raw = (await this.sendRequest(
       "evaluate_batch",
-      params as Record<string, unknown>,
+      params as unknown as Record<string, unknown>,
       options?.timeout,
-    );
-    return raw as EvaluateBatchResult;
+    )) as Record<string, unknown>;
+    return { ...(raw as unknown as EvaluateBatchResult), usage: parseUsage(raw["usage"]) };
   }
 
   async submitPluginResult(

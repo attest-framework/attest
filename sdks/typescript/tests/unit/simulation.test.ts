@@ -204,6 +204,17 @@ describe("AttestClient.evaluateBatch — simulation goes to the engine", () => {
       ],
       total_cost: 0,
       total_duration_ms: 0,
+      usage: {
+        model_calls: 0,
+        judge_calls: 0,
+        input_tokens: 0,
+        output_tokens: 0,
+        cached_tokens: 0,
+        cost_usd: 0,
+        retry_cost_usd: 0,
+        unpriced_calls: 0,
+        budget_refused: 0,
+      },
     };
     const send = vi.spyOn(client, "sendRequest").mockResolvedValue(engineResult as never);
     enable();
