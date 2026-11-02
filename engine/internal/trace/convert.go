@@ -6,6 +6,7 @@ import (
 	"math"
 	"sort"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/attest-ai/attest/engine/pkg/types"
 )
@@ -368,7 +369,7 @@ func (c *converter) buildSteps() error {
 		step, err := c.buildStep(i, kind)
 		if err != nil {
 			s := &c.x.spans[i]
-			return fmt.Errorf("span %s (%q): %w", s.SpanID, s.Name, err)
+			return fmt.Errorf("span %s (%s): %w", s.SpanID, quoteShort(s.Name), err)
 		}
 		c.stepOf[i] = len(c.steps)
 		c.stepSpan = append(c.stepSpan, i)
@@ -714,22 +715,74 @@ func decodeJSONText(v any) any {
 	return out
 }
 
-// contentAttributes are the attributes whose JSON text is decoded into the
-// trace.
-var contentAttributes = []string{attrInputMessages, attrOutputMessages, attrSystemInstr, attrToolArguments, attrToolResult}
+// copiedAttributes are every attribute the converter copies into the trace:
+// recorded content (decoded from JSON text) and the values pick() copies.
+var copiedAttributes = []string{
+	attrInputMessages, attrOutputMessages, attrSystemInstr, attrToolArguments, attrToolResult,
+	attrRequestModel, attrResponseModel, attrSystem, attrProvider, attrPrompt, attrCompletion,
+	attrFinishReasons, attrCost, attrInputTokens, attrOutputTokens, attrConversationID,
+	attrAgentName, attrAgentID, attrAgentDesc, attrToolName, attrToolCallID, attrErrorType,
+	attrRetrievalQuery, attrRetrievalSrc, attrRetrievalCount, attrRetrievalDocs,
+}
 
-// contentBytes is the total length of recorded content strings, which bounds
-// the size of the converted trace before any of it is decoded.
+// contentBytes estimates the JSON size of everything the converter copies
+// from the spans (attribute values, span names, status messages), counting
+// JSON escaping and the turn messages that appear twice, so oversized input
+// is rejected before any of it is decoded or copied. It never undercounts
+// the encoded size of copied values.
 func contentBytes(spans []Span) int {
 	n := 0
 	for i := range spans {
-		for _, k := range contentAttributes {
-			if s, ok := spans[i].Attributes[k].(string); ok {
-				n += len(s)
+		s := &spans[i]
+		n += jsonSize(s.Name) + jsonSize(s.StatusMessage)
+		turnSpan := operation(s) == opInvokeAgent
+		for _, k := range copiedAttributes {
+			v, ok := s.Attributes[k]
+			if !ok {
+				continue
 			}
+			size := jsonSize(v)
+			if turnSpan && (k == attrInputMessages || k == attrOutputMessages) {
+				size *= 2 // turn input/output and trace input
+			}
+			n += size
 		}
 	}
 	return n
+}
+
+// jsonSize is an upper bound on the encoded size of an attribute value:
+// every character encoding/json escapes (quotes, backslashes, control
+// characters, <, >, &, U+2028, U+2029, invalid UTF-8) counts as six bytes.
+func jsonSize(v any) int {
+	switch x := v.(type) {
+	case string:
+		n := 2
+		for i, r := range x {
+			switch {
+			case r == utf8.RuneError && !strings.HasPrefix(x[i:], "\uFFFD"):
+				n += 6 // invalid UTF-8 byte → \ufffd
+			case r < 0x20, r == '"', r == '\\', r == '<', r == '>', r == '&', r == '\u2028', r == '\u2029':
+				n += 6
+			default:
+				n += utf8.RuneLen(r)
+			}
+		}
+		return n
+	case []any:
+		n := 2
+		for _, e := range x {
+			n += jsonSize(e) + 1
+		}
+		return n
+	case map[string]any:
+		n := 2
+		for k, e := range x {
+			n += jsonSize(k) + jsonSize(e) + 2
+		}
+		return n
+	}
+	return 24 // numbers and booleans
 }
 
 // llmText is the model's text output: gen_ai.completion, else the text
