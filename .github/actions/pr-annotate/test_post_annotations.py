@@ -256,6 +256,9 @@ class TestMainArguments(unittest.TestCase):
 
 class TestMainReport(unittest.TestCase):
     def _main(self, report: object) -> tuple[int, str]:
+        return self._main_text(json.dumps(report))
+
+    def _main_text(self, text: str) -> tuple[int, str]:
         import contextlib
         import io
         import os
@@ -265,7 +268,7 @@ class TestMainReport(unittest.TestCase):
         self.addCleanup(setattr, sys, "argv", list(sys.argv))
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "r.json"
-            path.write_text(json.dumps(report))
+            path.write_text(text)
             sys.argv = ["post_annotations.py", "--report", str(path), "--pr", "1",
                         "--repo", "o/r", "--commit", "a" * 40]
             env = {"GITHUB_TOKEN": "t"}
@@ -273,6 +276,19 @@ class TestMainReport(unittest.TestCase):
                 with contextlib.redirect_stderr(io.StringIO()) as err:
                     code = _pa.main()
         return code, err.getvalue()
+
+    def test_integer_literal_over_digit_limit_exits_1_with_message(self) -> None:
+        import sys
+
+        digits = sys.get_int_max_str_digits()  # 4300 by default; 0 disables the limit
+        self.assertGreater(digits, 0)
+        text = '{"report_version": 2, "results": [], "total_cost": 1' + "0" * digits + "}"
+
+        code, err = self._main_text(text)
+
+        self.assertEqual(code, 1)
+        self.assertTrue(err.startswith("post_annotations: cannot read report: "), err)
+        self.assertNotIn("Traceback", err)
 
     def test_non_object_summary_or_failure_classes_exit_1_with_message(self) -> None:
         for key in ("summary", "failure_classes"):

@@ -303,7 +303,9 @@ def main() -> int:
         return 1
     try:
         report = json.loads(report_path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+    # ValueError covers JSONDecodeError, UnicodeDecodeError and an integer
+    # literal longer than sys.get_int_max_str_digits() (4300 by default).
+    except (OSError, ValueError) as exc:
         print(f"post_annotations: cannot read report: {exc}", file=sys.stderr)
         return 1
     if not isinstance(report, dict) or not isinstance(report.get("results", []), list):
