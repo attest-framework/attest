@@ -2,6 +2,7 @@ package llm
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"time"
@@ -97,9 +98,12 @@ func (r *RateLimitedProvider) Complete(ctx context.Context, req *CompletionReque
 			return nil, fmt.Errorf("rate limiter wait: %w", err)
 		}
 
-		resp, err := r.inner.Complete(ctx, req)
+		resp, err := r.inner.Complete(WithAttempt(ctx, attempt), req)
 		if err == nil {
 			return resp, nil
+		}
+		if errors.Is(err, ErrBudgetExhausted) {
+			return nil, err
 		}
 		lastErr = err
 	}

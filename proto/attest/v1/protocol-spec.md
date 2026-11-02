@@ -313,6 +313,15 @@ Capabilities are additive. New capabilities never remove or alter old ones, with
 | `spec` | object | yes | Type-specific assertion parameters. See Section 4. |
 | `request_id` | string | no | Idempotency key. If the same `request_id` is submitted twice, the engine returns the cached result. |
 
+**Optional `budget` param:** `params.budget` limits the attest-initiated model calls of this batch on top of the session budget (`ATTEST_MAX_JUDGE_CALLS`, `ATTEST_BUDGET_USD`). SDKs send the remainder of a test's budget marker here.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `budget.max_judge_calls` | int ≥ 0 | Judge-provider requests this batch may send (judges, `repeat` runs, bias probes, retries). |
+| `budget.max_cost_usd` | number ≥ 0 | USD this batch may spend on judge and embedding calls. |
+
+Every model call reserves one call and its worst-case cost (price × prompt bytes + price × output-token limit) against both budgets before it is sent and is reconciled to the reported usage afterwards. A call that cannot reserve is not sent; its assertion returns `not_evaluated` with reason `budget_exhausted`. A negative limit is error 2001.
+
 #### Response
 
 ```json
@@ -377,10 +386,23 @@ Capabilities are additive. New capabilities never remove or alter old ones, with
       }
     ],
     "total_cost": 0.0012,
-    "total_duration_ms": 1845
+    "total_duration_ms": 1845,
+    "simulated": false,
+    "usage": {
+      "model_calls": 1,
+      "input_tokens": 412,
+      "output_tokens": 38,
+      "cached_tokens": 0,
+      "cost_usd": 0.0012,
+      "retry_cost_usd": 0,
+      "unpriced_calls": 0,
+      "budget_refused": 0
+    }
   }
 }
 ```
+
+**`usage`** counts the batch's attest-initiated model calls: `model_calls` sent (failed requests included), `input_tokens` / `output_tokens` / `cached_tokens` (provider prompt-cache reads, included in `input_tokens`), `cost_usd` reconciled from the reported tokens at the configured price, `retry_cost_usd` (the part of `cost_usd` spent on retried requests), `unpriced_calls` (calls whose model has no price, so `cost_usd` excludes them) and `budget_refused` (calls not sent because no budget remained). Judge-cache hits make no call.
 
 **Result object fields:**
 
@@ -388,7 +410,7 @@ Capabilities are additive. New capabilities never remove or alter old ones, with
 |-------|------|-------------|
 | `assertion_id` | string | Matches the assertion from the request |
 | `status` | string | `pass`, `soft_fail`, `hard_fail`, or `not_evaluated` (see [Assertion Status and Aggregation](#assertion-status-and-aggregation)) |
-| `reason` | string | Present only when `status` is `not_evaluated`: `provider_unavailable`, `provider_not_configured`, `simulation`, `missing_evidence`, or `short_circuited` |
+| `reason` | string | Present only when `status` is `not_evaluated`: `provider_unavailable`, `provider_not_configured`, `simulation`, `missing_evidence`, `short_circuited`, `budget_exhausted` or `judge_abstained` |
 | `score` | float | 0.0 to 1.0. For boolean checks: 0.0 or 1.0. For scored checks: continuous value. `0.0` when `not_evaluated`. |
 | `explanation` | string | Human-readable explanation of the result, including relevant values |
 | `cost` | float | USD cost for this assertion (non-zero for LLM-backed assertions) |
@@ -414,6 +436,8 @@ Every requested assertion appears exactly once in `results`, including assertion
 | `simulation` | The engine runs with `ATTEST_SIMULATION` set (capability `simulation_mode`). L1–L4 run normally; no provider is called. |
 | `missing_evidence` | The trace does not record the field the assertion checks (for example `metadata.cost_usd` unset). |
 | `short_circuited` | An L5/L6 assertion was not run because an L1–L4 assertion in the same batch returned `hard_fail`. |
+| `budget_exhausted` | An L5/L6 model call could not reserve its call count or cost against the session or batch budget, so it was not sent. |
+| `judge_abstained` | The judge answered `{"abstain": true, "reason": "..."}`: the output lacks the evidence the rubric needs. |
 
 SDKs aggregate a test's results after its whole batch:
 
@@ -1147,6 +1171,8 @@ Custom judge prompt:
   }
 }
 ```
+
+Built-in rubrics end with the response format: `{"score": <0.0–1.0>, "explanation": "..."}`, or `{"abstain": true, "reason": "<the evidence that is missing>"}` when the output does not contain enough information to apply the rubric. The engine reads the `abstain` field only (no phrase matching) and returns `not_evaluated` with reason `judge_abstained`. With `repeat: N`, runs that abstain or could not reserve budget are left out of the median and noted in the explanation; the assertion is not evaluated only when no run scored (reason precedence: `provider_unavailable`, then `judge_abstained`, then `budget_exhausted`).
 
 **Pass result:**
 ```json

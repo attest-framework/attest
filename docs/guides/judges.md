@@ -55,9 +55,17 @@ Each provider has its own token-bucket limiter, read from `ATTEST_RATE_LIMIT_<PR
 
 When the provider is still unavailable after the retries, or its reply cannot be parsed as a score, the assertion is `not_evaluated` with reason `provider_unavailable`. An outage never becomes a pass or a failure: the test is skipped with the reason (`--attest-strict` turns it into a failure), and `attest policy evaluate` warns with exit 2 unless the policy sets `not_evaluated: block`. See [verdicts](verdicts.md).
 
+## Abstention
+
+Built-in rubrics (version `v2`) tell the judge to answer `{"abstain": true, "reason": "<the evidence that is missing>"}` instead of guessing a score when the agent output lacks what the rubric needs. The engine reads only that structured field, never phrases in an explanation: the assertion is `not_evaluated` with reason `judge_abstained` and the judge's reason in its explanation, and the answer is not cached. With `repeat: N`, abstaining runs are left out of the median; the assertion is `judge_abstained` only when no run scored. A bias probe whose judge abstains is skipped. Custom rubrics opt in by asking for the same object.
+
+## Budgets
+
+`ATTEST_MAX_JUDGE_CALLS` caps judge requests per engine session and `ATTEST_BUDGET_USD` caps the spend of judge and embedding calls. Every call reserves one request and its worst-case cost before it is sent, so concurrent assertions, `repeat` runs, bias probes and retries can never exceed the budget; a call that cannot reserve is not sent and its assertion is `not_evaluated: budget_exhausted`. Costs come from a built-in price table (`gpt-4.1`, `gpt-4.1-mini`, `gpt-4.1-nano`, `text-embedding-3-small`, `text-embedding-3-large`) or `ATTEST_JUDGE_PRICE_IN` / `ATTEST_JUDGE_PRICE_OUT` (USD per 1M tokens), and are reconciled to the token usage each provider reports. See [configuration](configuration.md#evaluation).
+
 ## What a result records
 
-Every judge result carries `judge_metadata` with `provider` (`openai`, `anthropic`, `gemini`, `acp`) and `model`, alongside the rubric name and version, prompt hash and sample scores. Reports print them (`judge: anthropic/<model> / default @ v1`), so a score can always be traced to the model that produced it. Judge responses are cached per provider, endpoint (the ACP command for `acp`), rubric and model, so switching provider or model never reuses another judge's scores, even behind one gateway with the same model name.
+Every judge result carries `judge_metadata` with `provider` (`openai`, `anthropic`, `gemini`, `acp`) and `model`, alongside the rubric name and version, prompt hash and sample scores. Reports print them (`judge: anthropic/<model> / default @ v2`), so a score can always be traced to the model that produced it. Judge responses are cached per provider, endpoint (the ACP command for `acp`), rubric and model, so switching provider or model never reuses another judge's scores, even behind one gateway with the same model name.
 
 ## Calibration is per model
 

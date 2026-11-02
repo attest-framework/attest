@@ -73,8 +73,11 @@ type openAIChatResponse struct {
 		Message openAIChatMessage `json:"message"`
 	} `json:"choices"`
 	Usage struct {
-		PromptTokens     int `json:"prompt_tokens"`
-		CompletionTokens int `json:"completion_tokens"`
+		PromptTokens        int `json:"prompt_tokens"`
+		CompletionTokens    int `json:"completion_tokens"`
+		PromptTokensDetails struct {
+			CachedTokens int `json:"cached_tokens"`
+		} `json:"prompt_tokens_details"`
 	} `json:"usage"`
 	Error *struct {
 		Message string `json:"message"`
@@ -144,32 +147,18 @@ func (p *OpenAIProvider) Complete(ctx context.Context, req *CompletionRequest) (
 
 	inputTokens := chatResp.Usage.PromptTokens
 	outputTokens := chatResp.Usage.CompletionTokens
-	cost := estimateOpenAICost(model, inputTokens, outputTokens)
+	var cost float64
+	if price, ok := LookupPrice(model); ok {
+		cost = price.Cost(inputTokens, outputTokens)
+	}
 
 	return &CompletionResponse{
-		Content:      chatResp.Choices[0].Message.Content,
-		Model:        chatResp.Model,
-		InputTokens:  inputTokens,
-		OutputTokens: outputTokens,
-		Cost:         cost,
-		DurationMS:   durationMS,
+		Content:           chatResp.Choices[0].Message.Content,
+		Model:             chatResp.Model,
+		InputTokens:       inputTokens,
+		OutputTokens:      outputTokens,
+		CachedInputTokens: chatResp.Usage.PromptTokensDetails.CachedTokens,
+		Cost:              cost,
+		DurationMS:        durationMS,
 	}, nil
-}
-
-// estimateOpenAICost returns a rough USD cost estimate based on public pricing.
-// Prices are per million tokens.
-func estimateOpenAICost(model string, inputTokens, outputTokens int) float64 {
-	var inputPricePer1M, outputPricePer1M float64
-	switch model {
-	case "gpt-4.1":
-		inputPricePer1M = 2.00
-		outputPricePer1M = 8.00
-	case "gpt-4.1-mini":
-		inputPricePer1M = 0.40
-		outputPricePer1M = 1.60
-	default:
-		// Unknown model — return 0
-		return 0
-	}
-	return (float64(inputTokens)*inputPricePer1M + float64(outputTokens)*outputPricePer1M) / 1_000_000
 }

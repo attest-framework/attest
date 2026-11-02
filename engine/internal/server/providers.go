@@ -200,6 +200,9 @@ type providers struct {
 	embedder           embedding.Embedder
 	judgeConfig        judgeConfig
 	judge              llm.Provider // nil when no judge is configured
+	// ledger reserves every paid L5/L6 call; it is always set so usage is
+	// counted even without limits.
+	ledger *assertion.Ledger
 }
 
 // buildProviders constructs the embedding and judge providers selected by the
@@ -216,20 +219,33 @@ func buildProviders(logger *slog.Logger) (providers, error) {
 	if requested != "auto" && requested != "openai" && requested != "onnx" {
 		return p, fmt.Errorf("ATTEST_EMBEDDING_PROVIDER=%q is not supported; supported: auto, openai, onnx", requested)
 	}
+	budget, err := resolveBudgetConfig()
+	if err != nil {
+		return p, err
+	}
+	p.ledger = assertion.NewLedger(budget.limits)
+
 	p.embeddingRequested = requested
 	p.embedder, p.embeddingProvider = buildEmbedder(logger, requested)
+	var paidEmbedder *assertion.BudgetedEmbedder
+	if ue, ok := p.embedder.(assertion.UsageEmbedder); ok {
+		paidEmbedder = assertion.NewBudgetedEmbedder(ue, p.ledger)
+		p.embedder = paidEmbedder
+	}
 
 	cfg, err := resolveJudgeConfig()
 	if err != nil {
 		return p, err
 	}
 	p.judgeConfig = cfg
+	judgeModel := ""
 	if cfg.provider != "" {
-		judge, err := buildJudgeProvider(logger, cfg)
+		judge, err := buildJudgeProvider(logger, cfg, p.ledger, budget.priceOverride)
 		if err != nil {
 			return p, err
 		}
 		p.judge = judge
+		judgeModel = judge.DefaultModel()
 		if cfg.provider == "acp" {
 			logger.Warn("acp judge: the agent is not sandboxed; it runs as you with your network access and its own "+
 				"configuration, so tools it may use without asking can act on untrusted agent output in judge prompts",
@@ -239,6 +255,9 @@ func buildProviders(logger *slog.Logger) (providers, error) {
 			logger.Warn("insecure judge endpoint: plain http to a non-loopback host sends ATTEST_JUDGE_API_KEY in cleartext",
 				"base_url", cfg.baseURL)
 		}
+	}
+	if err := checkBudgetPricing(budget, cfg.provider, judgeModel, paidEmbedder); err != nil {
+		return p, err
 	}
 	return p, nil
 }
@@ -276,7 +295,7 @@ func buildEmbedder(logger *slog.Logger, requested string) (embedding.Embedder, s
 
 // buildJudgeProvider constructs the judge provider selected by cfg and wraps
 // it with that provider's rate limiter (ATTEST_RATE_LIMIT_<PROVIDER>).
-func buildJudgeProvider(logger *slog.Logger, cfg judgeConfig) (llm.Provider, error) {
+func buildJudgeProvider(logger *slog.Logger, cfg judgeConfig, ledger *assertion.Ledger, price *llm.Price) (llm.Provider, error) {
 	var p llm.Provider
 	var err error
 	switch cfg.provider {
@@ -294,6 +313,9 @@ func buildJudgeProvider(logger *slog.Logger, cfg judgeConfig) (llm.Provider, err
 	if err != nil {
 		return nil, err
 	}
+	// The ledger wraps the concrete provider, inside the rate limiter, so
+	// each retry reserves as its own call.
+	p = assertion.NewBudgetedProvider(p, ledger, price)
 
 	rlCfg, err := buildRateLimiterConfig(cfg.provider)
 	if err != nil {

@@ -37,7 +37,7 @@ func RegisterBuiltinHandlers(s *Server) error {
 	if err := validateEngineEnv(); err != nil {
 		return err
 	}
-	opts, caps, judgeProvider, historyStore, err := buildRegistryOptions(s.logger)
+	opts, caps, provs, historyStore, err := buildRegistryOptions(s.logger)
 	if err != nil {
 		return err
 	}
@@ -68,12 +68,12 @@ func RegisterBuiltinHandlers(s *Server) error {
 
 	s.RegisterHandler("initialize", handleInitialize(caps))
 	s.RegisterHandler("shutdown", handleShutdown)
-	s.RegisterHandler("evaluate_batch", handleEvaluateBatch(pipeline, historyStore, budget, s.writeNotification))
+	s.RegisterHandler("evaluate_batch", handleEvaluateBatch(pipeline, historyStore, batchBudgets{softFail: budget, ledger: provs.ledger}, s.writeNotification))
 	s.RegisterHandler("submit_plugin_result", handleSubmitPluginResult(historyStore))
 	s.RegisterHandler("validate_trace_tree", handleValidateTraceTree())
 	s.RegisterHandler("query_drift", handleQueryDrift(historyStore))
-	if judgeProvider != nil {
-		s.RegisterHandler("generate_user_message", handleGenerateUserMessage(judgeProvider))
+	if provs.judge != nil {
+		s.RegisterHandler("generate_user_message", handleGenerateUserMessage(provs.judge))
 	}
 	return nil
 }
@@ -83,10 +83,10 @@ func RegisterBuiltinHandlers(s *Server) error {
 // options, the list of supported capabilities, the judge provider (may be nil),
 // and the HistoryStore (may be nil on failure). Returns an error when any
 // explicitly-set env var has an invalid value.
-func buildRegistryOptions(logger *slog.Logger) ([]assertion.RegistryOption, []string, llm.Provider, *cache.HistoryStore, error) {
+func buildRegistryOptions(logger *slog.Logger) ([]assertion.RegistryOption, []string, providers, *cache.HistoryStore, error) {
 	provs, err := buildProviders(logger)
 	if err != nil {
-		return nil, nil, nil, nil, err
+		return nil, nil, providers{}, nil, err
 	}
 	simulation := assertion.SimulationModeFromEnv()
 	caps := provs.capabilities(simulation)
@@ -98,7 +98,7 @@ func buildRegistryOptions(logger *slog.Logger) ([]assertion.RegistryOption, []st
 		cacheDir := cacheDirectory()
 		maxMB, err := envInt("ATTEST_EMBEDDING_CACHE_MAX_MB", 500)
 		if err != nil {
-			return nil, nil, nil, nil, err
+			return nil, nil, providers{}, nil, err
 		}
 		dbPath := filepath.Join(cacheDir, "attest.db")
 		if err := os.MkdirAll(cacheDir, 0o755); err != nil {
@@ -127,7 +127,7 @@ func buildRegistryOptions(logger *slog.Logger) ([]assertion.RegistryOption, []st
 		} else {
 			judgeCacheMaxMB, envErr := envInt("ATTEST_JUDGE_CACHE_MAX_MB", 100)
 			if envErr != nil {
-				return nil, nil, nil, nil, envErr
+				return nil, nil, providers{}, nil, envErr
 			}
 			if judgeCacheMaxMB < 10 {
 				judgeCacheMaxMB = 10
@@ -171,12 +171,12 @@ func buildRegistryOptions(logger *slog.Logger) ([]assertion.RegistryOption, []st
 					maxRows, envErr := envInt("ATTEST_HISTORY_MAX_ROWS", 0)
 					if envErr != nil {
 						db.Close()
-						return nil, nil, nil, nil, envErr
+						return nil, nil, providers{}, nil, envErr
 					}
 					maxDays, envErr := envInt("ATTEST_HISTORY_MAX_AGE_DAYS", 0)
 					if envErr != nil {
 						db.Close()
-						return nil, nil, nil, nil, envErr
+						return nil, nil, providers{}, nil, envErr
 					}
 					if maxRows > 0 || maxDays > 0 {
 						if maxRows <= 0 {
@@ -194,7 +194,7 @@ func buildRegistryOptions(logger *slog.Logger) ([]assertion.RegistryOption, []st
 		}
 	}
 
-	return opts, caps, provs.judge, historyStore, nil
+	return opts, caps, provs, historyStore, nil
 }
 
 // openHistoryDB opens the SQLite database at dbPath for the history store.
@@ -379,7 +379,15 @@ func handleShutdown(session *Session, _ json.RawMessage) (any, *types.RPCError) 
 	}, nil
 }
 
-func handleEvaluateBatch(pipeline *assertion.Pipeline, historyStore *cache.HistoryStore, budget *assertion.BudgetTracker, writeNotification func(any)) Handler {
+// batchBudgets holds the session budgets applied to each evaluate_batch:
+// the soft-fail counter (ATTEST_MAX_SOFT_FAILURES, may be nil) and the
+// model-call ledger.
+type batchBudgets struct {
+	softFail *assertion.BudgetTracker
+	ledger   *assertion.Ledger
+}
+
+func handleEvaluateBatch(pipeline *assertion.Pipeline, historyStore *cache.HistoryStore, budgets batchBudgets, writeNotification func(any)) Handler {
 	return func(session *Session, params json.RawMessage) (any, *types.RPCError) {
 		if session.State() != StateInitialized {
 			return nil, types.NewRPCError(
@@ -449,7 +457,12 @@ func handleEvaluateBatch(pipeline *assertion.Pipeline, historyStore *cache.Histo
 			assertionMap[a.AssertionID] = meta
 		}
 
-		result, err := pipeline.EvaluateBatchWithBudget(context.Background(), &p.Trace, p.Assertions, budget)
+		if rpcErr := validateBatchBudget(p.Budget); rpcErr != nil {
+			return nil, rpcErr
+		}
+		scope := budgets.ledger.NewScope(p.Budget)
+		ctx := assertion.WithBudgetScope(context.Background(), scope)
+		result, err := pipeline.EvaluateBatchWithBudget(ctx, &p.Trace, p.Assertions, budgets.softFail)
 		if err != nil {
 			return nil, types.NewRPCError(
 				types.ErrEngineError,
@@ -500,6 +513,7 @@ func handleEvaluateBatch(pipeline *assertion.Pipeline, historyStore *cache.Histo
 			TotalCost:       result.TotalCost,
 			TotalDurationMS: result.TotalDurationMS,
 			Simulated:       false,
+			Usage:           scope.Usage(),
 		}, nil
 	}
 }
