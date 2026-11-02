@@ -20,10 +20,6 @@ const AnthropicDefaultBaseURL = "https://api.anthropic.com"
 // below is written against.
 const anthropicVersion = "2023-06-01"
 
-// anthropicDefaultMaxTokens is used when the request leaves MaxTokens at 0;
-// the Messages API requires max_tokens.
-const anthropicDefaultMaxTokens = 1024
-
 // Anthropic implements llm.Provider on the Anthropic Messages API.
 type Anthropic struct {
 	client  *http.Client
@@ -45,7 +41,7 @@ func NewAnthropic(apiKey, model, baseURL string) (*Anthropic, error) {
 		baseURL = AnthropicDefaultBaseURL
 	}
 	return &Anthropic{
-		client:  &http.Client{Timeout: requestTimeout},
+		client:  newHTTPClient(),
 		apiKey:  apiKey,
 		model:   model,
 		baseURL: strings.TrimRight(baseURL, "/"),
@@ -63,12 +59,13 @@ type anthropicMessage struct {
 	Content string `json:"content"`
 }
 
+// anthropicRequest omits sampling parameters: current Claude models reject
+// a non-default temperature, so the model's default sampling is used.
 type anthropicRequest struct {
-	Model       string             `json:"model"`
-	MaxTokens   int                `json:"max_tokens"`
-	System      string             `json:"system,omitempty"`
-	Messages    []anthropicMessage `json:"messages"`
-	Temperature float64            `json:"temperature"`
+	Model     string             `json:"model"`
+	MaxTokens int                `json:"max_tokens"`
+	System    string             `json:"system,omitempty"`
+	Messages  []anthropicMessage `json:"messages"`
 }
 
 type anthropicResponse struct {
@@ -99,22 +96,17 @@ func anthropicErrorMessage(raw []byte) string {
 }
 
 // Complete sends one Messages API request. Text content blocks are
-// concatenated into the response content.
+// concatenated into the response content; thinking blocks are ignored.
 func (p *Anthropic) Complete(ctx context.Context, req *llm.CompletionRequest) (*llm.CompletionResponse, error) {
 	model := req.Model
 	if model == "" {
 		model = p.model
 	}
-	maxTokens := req.MaxTokens
-	if maxTokens <= 0 {
-		maxTokens = anthropicDefaultMaxTokens
-	}
 	body := anthropicRequest{
-		Model:       model,
-		MaxTokens:   maxTokens,
-		System:      req.SystemPrompt,
-		Messages:    make([]anthropicMessage, 0, len(req.Messages)),
-		Temperature: req.Temperature,
+		Model:     model,
+		MaxTokens: outputBudget(req.MaxTokens),
+		System:    req.SystemPrompt,
+		Messages:  make([]anthropicMessage, 0, len(req.Messages)),
 	}
 	for _, m := range req.Messages {
 		body.Messages = append(body.Messages, anthropicMessage{Role: m.Role, Content: m.Content})

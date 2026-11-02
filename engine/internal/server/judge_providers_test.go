@@ -43,8 +43,11 @@ var nativeJudges = []nativeJudge{
 			if s, _ := b["system"].(string); s == "" {
 				return "system prompt missing"
 			}
-			if mt, _ := b["max_tokens"].(float64); mt <= 0 {
-				return "max_tokens missing"
+			if mt, _ := b["max_tokens"].(float64); mt < 4096 {
+				return "max_tokens below the reasoning budget"
+			}
+			if _, ok := b["temperature"]; ok {
+				return "temperature is rejected by current Claude models"
 			}
 			msgs, _ := b["messages"].([]any)
 			if len(msgs) != 1 || msgs[0].(map[string]any)["role"] != "user" {
@@ -68,6 +71,10 @@ var nativeJudges = []nativeJudge{
 			si, _ := b["systemInstruction"].(map[string]any)
 			if parts, _ := si["parts"].([]any); len(parts) != 1 {
 				return "systemInstruction missing"
+			}
+			gc, _ := b["generationConfig"].(map[string]any)
+			if mot, _ := gc["maxOutputTokens"].(float64); mot < 4096 {
+				return "maxOutputTokens below the reasoning budget"
 			}
 			contents, _ := b["contents"].([]any)
 			if len(contents) != 1 || contents[0].(map[string]any)["role"] != "user" {
@@ -240,6 +247,19 @@ func TestResolveJudgeConfig_NativeProviderStandardKeys(t *testing.T) {
 		{"gemini", "GEMINI_API_KEY", "https://generativelanguage.googleapis.com"},
 		{"gemini", "GOOGLE_API_KEY", "https://generativelanguage.googleapis.com"},
 	}
+	t.Run("gemini/GOOGLE_API_KEY wins over GEMINI_API_KEY", func(t *testing.T) {
+		withoutProviders(t, "")
+		t.Setenv("ATTEST_JUDGE_PROVIDER", "gemini")
+		t.Setenv("ATTEST_JUDGE_MODEL", "judge-model")
+		t.Setenv("GEMINI_API_KEY", "gemini-key")
+		t.Setenv("GOOGLE_API_KEY", "google-key")
+
+		cfg, err := resolveJudgeConfig()
+
+		if err != nil || cfg.keySource != "GOOGLE_API_KEY" || cfg.apiKey != "google-key" {
+			t.Errorf("got source=%q err=%v, want GOOGLE_API_KEY as in Google's SDK", cfg.keySource, err)
+		}
+	})
 	for _, tc := range cases {
 		t.Run(tc.provider+"/"+tc.keyVar, func(t *testing.T) {
 			withoutProviders(t, "")

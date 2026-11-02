@@ -38,7 +38,7 @@ func NewGemini(apiKey, model, baseURL string) (*Gemini, error) {
 		baseURL = GeminiDefaultBaseURL
 	}
 	return &Gemini{
-		client:  &http.Client{Timeout: requestTimeout},
+		client:  newHTTPClient(),
 		apiKey:  apiKey,
 		model:   model,
 		baseURL: strings.TrimRight(baseURL, "/"),
@@ -117,7 +117,7 @@ func (p *Gemini) Complete(ctx context.Context, req *llm.CompletionRequest) (*llm
 	}
 	body := geminiRequest{
 		Contents:         make([]geminiContent, 0, len(req.Messages)),
-		GenerationConfig: geminiGenerationConfig{Temperature: req.Temperature, MaxOutputTokens: req.MaxTokens},
+		GenerationConfig: geminiGenerationConfig{Temperature: req.Temperature, MaxOutputTokens: outputBudget(req.MaxTokens)},
 	}
 	if req.SystemPrompt != "" {
 		body.SystemInstruction = &geminiContent{Parts: []geminiPart{{Text: req.SystemPrompt}}}

@@ -15,6 +15,7 @@ import (
 
 	"github.com/attest-ai/attest/engine/internal/assertion/judge"
 	"github.com/attest-ai/attest/engine/internal/cache"
+	"github.com/attest-ai/attest/engine/internal/server"
 )
 
 func init() {
@@ -46,6 +47,10 @@ func handleCalibrateCommand(args []string) {
 	}
 	if *persist && (*judgeProvider == "" || *judgeModel == "") {
 		fmt.Fprintln(os.Stderr, "calibrate: --persist requires --judge-provider and --judge-model; calibration is stored per judge model")
+		os.Exit(2)
+	}
+	if *judgeProvider != "" && !server.IsJudgeProvider(*judgeProvider) {
+		fmt.Fprintf(os.Stderr, "calibrate: --judge-provider %q is not supported; supported: %s\n", *judgeProvider, server.SupportedJudgeProviders())
 		os.Exit(2)
 	}
 

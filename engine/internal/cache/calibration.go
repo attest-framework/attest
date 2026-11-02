@@ -100,6 +100,10 @@ func migrateCalibrationJudgeKey(db *sql.DB) error {
 		}
 		present[name] = true
 	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return fmt.Errorf("iterate calibration_labels columns: %w", err)
+	}
 	if err := rows.Close(); err != nil {
 		return fmt.Errorf("close calibration_labels columns: %w", err)
 	}

@@ -35,11 +35,21 @@ type judgeBackend struct {
 var judgeBackends = map[string]judgeBackend{
 	"openai":    {defaultBaseURL: llm.OpenAIDefaultBaseURL, standardKeys: []string{"OPENAI_API_KEY"}},
 	"anthropic": {defaultBaseURL: llmproviders.AnthropicDefaultBaseURL, standardKeys: []string{"ANTHROPIC_API_KEY"}, requiresModel: true},
-	"gemini":    {defaultBaseURL: llmproviders.GeminiDefaultBaseURL, standardKeys: []string{"GEMINI_API_KEY", "GOOGLE_API_KEY"}, requiresModel: true},
+	"gemini":    {defaultBaseURL: llmproviders.GeminiDefaultBaseURL, standardKeys: []string{"GOOGLE_API_KEY", "GEMINI_API_KEY"}, requiresModel: true},
 }
 
 // supportedJudgeProviders is the ATTEST_JUDGE_PROVIDER list shown in errors.
 const supportedJudgeProviders = "openai, anthropic, gemini"
+
+// IsJudgeProvider reports whether name is a supported ATTEST_JUDGE_PROVIDER
+// value. calibrate uses it so stored labels match judge_metadata.provider.
+func IsJudgeProvider(name string) bool {
+	_, ok := judgeBackends[name]
+	return ok
+}
+
+// SupportedJudgeProviders returns the supported provider names for messages.
+func SupportedJudgeProviders() string { return supportedJudgeProviders }
 
 // resolveJudgeConfig reads ATTEST_JUDGE_PROVIDER (default openai),
 // ATTEST_JUDGE_MODEL, ATTEST_JUDGE_BASE_URL, ATTEST_JUDGE_API_KEY and the
@@ -47,7 +57,8 @@ const supportedJudgeProviders = "openai, anthropic, gemini"
 // provider means no judge is configured.
 //
 // ATTEST_JUDGE_API_KEY overrides the provider's standard variable
-// (OPENAI_API_KEY, ANTHROPIC_API_KEY, GEMINI_API_KEY/GOOGLE_API_KEY). With
+// (OPENAI_API_KEY, ANTHROPIC_API_KEY, GOOGLE_API_KEY then GEMINI_API_KEY,
+// the precedence of Google's own SDK). With
 // ATTEST_JUDGE_BASE_URL set, only ATTEST_JUDGE_API_KEY is used, so an
 // exported provider key is never sent to a custom endpoint. Errors never
 // include the API key or the base URL, which may embed credentials.

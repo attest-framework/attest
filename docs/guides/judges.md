@@ -9,7 +9,7 @@ Layer 6 (`llm_judge`) asks a model to score agent output against a rubric. The e
 | `openai` (default) | Chat Completions | `ATTEST_JUDGE_API_KEY`, `OPENAI_API_KEY` | optional, default `gpt-4.1` | `https://api.openai.com/v1` |
 | `openai` + `ATTEST_JUDGE_BASE_URL` | Any OpenAI-compatible server (vLLM, Ollama `/v1`, LiteLLM) | `ATTEST_JUDGE_API_KEY` only | the server's model name | the URL you set |
 | `anthropic` | Messages (`/v1/messages`) | `ATTEST_JUDGE_API_KEY`, `ANTHROPIC_API_KEY` | required | `https://api.anthropic.com` |
-| `gemini` | `generateContent` (`/v1beta/models/<model>:generateContent`) | `ATTEST_JUDGE_API_KEY`, `GEMINI_API_KEY`, `GOOGLE_API_KEY` | required | `https://generativelanguage.googleapis.com` |
+| `gemini` | `generateContent` (`/v1beta/models/<model>:generateContent`) | `ATTEST_JUDGE_API_KEY`, `GOOGLE_API_KEY`, `GEMINI_API_KEY` | required | `https://generativelanguage.googleapis.com` |
 
 Anthropic and Gemini have no built-in default model: a judge whose model silently changes is not the judge you calibrated, so `ATTEST_JUDGE_MODEL` is required and its absence is a startup error.
 
@@ -24,7 +24,9 @@ With no key for the selected provider, the judge is not configured and every jud
 
 ### Keys and custom endpoints
 
-`ATTEST_JUDGE_BASE_URL` points the selected provider at another host: a local OpenAI-compatible server, or an Anthropic/Gemini gateway that speaks the same API. With a base URL set, only `ATTEST_JUDGE_API_KEY` is sent; a provider's standard key (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, `GOOGLE_API_KEY`) never reaches a custom endpoint. Base URLs must be `http`/`https` without credentials, query or fragment. Plain `http` to a non-loopback host works but is flagged as insecure by the startup log and `doctor`. Keys travel in headers (`Authorization`, `x-api-key`, `x-goog-api-key`), never in URLs, and never appear in errors, logs or `doctor` output.
+`ATTEST_JUDGE_BASE_URL` points the selected provider at another host: a local OpenAI-compatible server, or an Anthropic/Gemini gateway that speaks the same API. For OpenAI-compatible servers the base URL includes `/v1` (`http://localhost:11434/v1`); for Anthropic and Gemini it is the root without a version segment (`https://gateway.example`), because the engine appends `/v1/messages` or `/v1beta/models/<model>:generateContent`. With a base URL set, only `ATTEST_JUDGE_API_KEY` is sent; a provider's standard key (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, `GOOGLE_API_KEY`) never reaches a custom endpoint. Base URLs must be `http`/`https` without credentials, query or fragment. Plain `http` to a non-loopback host works but is flagged as insecure by the startup log and `doctor`. Keys travel in headers (`Authorization`, `x-api-key`, `x-goog-api-key`), never in URLs, and never appear in errors, logs or `doctor` output.
+
+Anthropic requests use the model's default sampling (current Claude models reject a non-default `temperature`); OpenAI and Gemini requests use temperature 0. Anthropic and Gemini requests carry an output budget of at least 4096 tokens, because their current models count reasoning against it and a budget sized for the JSON verdict alone would end before any text.
 
 ## Rate limits and outages
 
