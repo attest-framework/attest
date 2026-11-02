@@ -109,7 +109,7 @@ func postJSON(ctx context.Context, client *http.Client, r postRequest) ([]byte, 
 		if msg == "" {
 			msg = string(raw)
 		}
-		msg = truncate(stripControl(redact(msg, r.apiKey)), maxErrorDetail)
+		msg = truncate(redact(stripControl(msg), r.apiKey), maxErrorDetail)
 		return nil, &StatusError{Provider: provider, StatusCode: resp.StatusCode, Message: msg}
 	}
 	return raw, nil
