@@ -89,7 +89,9 @@
         "properties": {
           "provider": {
             "enum": [
-              "openai"
+              "openai",
+              "anthropic",
+              "gemini"
             ]
           },
           "model": {
@@ -103,7 +105,10 @@
           "api_key_source": {
             "enum": [
               "ATTEST_JUDGE_API_KEY",
-              "OPENAI_API_KEY"
+              "OPENAI_API_KEY",
+              "ANTHROPIC_API_KEY",
+              "GEMINI_API_KEY",
+              "GOOGLE_API_KEY"
             ]
           }
         }

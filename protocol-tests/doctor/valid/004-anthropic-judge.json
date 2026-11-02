@@ -7,8 +7,8 @@
   "judge": {
     "configured": true,
     "provider": "anthropic",
-    "model": "claude",
-    "base_url": "https://api.anthropic.com/v1",
+    "model": "judge-model",
+    "base_url": "https://api.anthropic.com",
     "api_key_source": "ANTHROPIC_API_KEY"
   },
   "embedding": { "configured": false, "requested": "auto", "provider": null },
