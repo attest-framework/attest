@@ -64,6 +64,8 @@ describe.skipIf(!existsSync(engine))("trials() (real engine)", () => {
 
     const byName = new Map(report.tests.map((t) => [t.name, t]));
     const refunds = byName.get("refunds once")!;
+    // 2/3 evaluated trials passed: below the default 1.0, above the run's 0.5
+    // that attestGlobalSetup passed to the worker.
     expect(refunds).toMatchObject({ outcome: "passed", trials: 4 });
     expect(refunds.test_id).toBe(`${fixture} > refund desk > refunds once`);
     expect([...refunds.assertion_ids].sort()).toEqual(

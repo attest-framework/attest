@@ -22,6 +22,9 @@ import {
   type TestBudget,
 } from "./test-state.js";
 
+/** How attestGlobalSetup({ minPassRate }) reaches the workers that run trials(). */
+export const MIN_PASS_RATE_ENV = "ATTEST_MIN_PASS_RATE";
+
 export interface TrialsOptions {
   /** Number of trials N; defaults to the ATTEST_TRIALS environment variable, else 1. */
   n?: number;
@@ -36,6 +39,12 @@ export interface TrialsOptions {
    * when attest cost plus agent spend has reached `maxCostUsd`.
    */
   budget?: TestBudget;
+  /**
+   * Fail the test when passed / evaluated trials is below this rate (0..1).
+   * Overrides the run's value: attestGlobalSetup({ minPassRate }) or the
+   * ATTEST_MIN_PASS_RATE environment variable, else 1.0 (any failing trial fails).
+   */
+  minPassRate?: number;
 }
 
 type TrialOutcome = "pass" | "fail" | "skip";
@@ -54,6 +63,21 @@ function trialCount(n: number | undefined): number {
     throw new Error(`trials(): N must be an integer >= 1, got ${source}`);
   }
   return raw;
+}
+
+/** A pass rate in [0, 1]; anything else is an error naming where it came from. */
+export function validateMinPassRate(rate: number, source: string): number {
+  if (!Number.isFinite(rate) || rate < 0 || rate > 1) {
+    throw new Error(`minPassRate must be a number between 0 and 1, got ${source}`);
+  }
+  return rate;
+}
+
+/** The run's minimum pass rate: ATTEST_MIN_PASS_RATE (set by attestGlobalSetup), else 1.0. */
+function runMinPassRate(): number {
+  const raw = process.env[MIN_PASS_RATE_ENV];
+  if (raw === undefined) return 1;
+  return validateMinPassRate(raw.trim() === "" ? Number.NaN : Number(raw), `${MIN_PASS_RATE_ENV}=${raw}`);
 }
 
 function describeError(error: unknown): string {
@@ -101,8 +125,12 @@ function thrownTrialRows(test: RunningTest, trials: readonly TrialRecord[]): voi
   }
 }
 
-function failureMessage(summary: TrialsMeta, trials: readonly TrialRecord[]): string {
-  const parts = [`0/${summary.evaluated} trials passed (${summary.notEvaluated} not evaluated)`];
+function failureMessage(summary: TrialsMeta, trials: readonly TrialRecord[], minPassRate: number): string {
+  const rate = summary.passed / summary.evaluated;
+  const parts = [
+    `${summary.passed}/${summary.evaluated} trials passed (pass rate ${rate.toFixed(2)}) ` +
+      `below min pass rate ${minPassRate.toFixed(2)}`,
+  ];
   for (const trial of trials) {
     if (trialOutcome(trial) !== "fail") continue;
     if (trial.error !== undefined) {
@@ -130,8 +158,9 @@ function failureMessage(summary: TrialsMeta, trials: readonly TrialRecord[]): st
  * assertion ID the test evaluated; when no trial evaluated anything, the first
  * error is rethrown. A trial whose own outcome is skip counts as not evaluated,
  * also under ATTEST_STRICT. After the last trial the test is skipped when no trial was
- * evaluated (failed under ATTEST_STRICT), fails when no trial passed, and
- * passes otherwise. AttestReporter prints "<test_id>: <passed>/<evaluated>
+ * evaluated (failed under ATTEST_STRICT), fails when passed / evaluated
+ * trials is below the minimum pass rate (default 1.0: any failing trial
+ * fails; not-evaluated trials are left out of the rate), and passes otherwise. AttestReporter prints "<test_id>: <passed>/<evaluated>
  * trials passed (<n> not evaluated)".
  *
  * This is a pass/fail gate on N runs, not a statistical verdict: whether the
@@ -144,6 +173,10 @@ export async function trials(
   options?: TrialsOptions,
 ): Promise<void> {
   const n = trialCount(options?.n);
+  const minPassRate =
+    options?.minPassRate === undefined
+      ? runMinPassRate()
+      : validateMinPassRate(options.minPassRate, `minPassRate=${options.minPassRate}`);
   const budget = options?.budget === undefined ? undefined : validateBudget(options.budget);
   const test = options?.context?.task ?? (await runningTest());
   if (test === undefined) throw new Error("trials() must be called inside a test");
@@ -204,5 +237,7 @@ export async function trials(
     (options?.context ?? test.context).skip(reason);
     return;
   }
-  if (passed === 0) throw new Error(failureMessage(summary, records));
+  if (passed / summary.evaluated < minPassRate) {
+    throw new Error(failureMessage(summary, records, minPassRate));
+  }
 }

@@ -26,6 +26,7 @@ from attest.expect import ExpectChain
 from attest.report_v2 import TestRecord, build_report
 from attest.result import OUTCOME_FAIL, OUTCOME_PASS, OUTCOME_SKIP, AgentResult
 from attest.trials import (
+    DEFAULT_MIN_PASS_RATE,
     TestBudget,
     TestRun,
     TrialsResult,
@@ -33,7 +34,9 @@ from attest.trials import (
     begin_run,
     current_run,
     end_run,
+    min_pass_rate_from_marker,
     run_trials,
+    validate_min_pass_rate,
 )
 
 pytest_plugins = ["pytester"]
@@ -216,6 +219,8 @@ def test_run_trials_tags_rows_and_passes_when_some_trial_passes(run: TestRun) ->
 
     assert [r.assertion_results[0].trial for t in result.trials for r in t] == [1, 2, 3]
     assert (result.passed, result.evaluated, result.not_evaluated) == (2, 3, 0)
+    assert result.outcome() == OUTCOME_FAIL  # default min pass rate 1.0
+    result.min_pass_rate = 0.6
     assert result.outcome() == OUTCOME_PASS
     assert result.summary_lines("tid") == ["tid: 2/3 trials passed (0 not evaluated)"]
 
@@ -252,6 +257,8 @@ def test_run_trials_raised_trial_adds_hard_fail_row_per_seen_assertion_id(run: T
     assert result.trials[1] == [replacement]
     assert result.raised == frozenset({2})
     assert (result.passed, result.evaluated) == (1, 3)
+    assert result.outcome() == OUTCOME_FAIL  # default min pass rate 1.0
+    result.min_pass_rate = 0.3
     assert result.outcome() == OUTCOME_PASS
 
 
@@ -516,3 +523,84 @@ def test_nested_session_keeps_outer_usage_and_running_test(pytester: pytest.Pyte
     finally:
         end_run()
         plugin._session_usage = Usage()
+
+
+# ── Min pass rate ──
+
+
+def _rate_trials(passed: int, failed: int, not_evaluated: int = 0) -> TrialsResult:
+    trials = (
+        [[_result(_row("a", "pass"))]] * passed
+        + [[_result(_row("a", "hard_fail"))]] * failed
+        + [[_result(_row("a", "not_evaluated", REASON_BUDGET_EXHAUSTED))]] * not_evaluated
+    )
+    return TrialsResult(trials=trials, planned=len(trials))
+
+
+def test_min_pass_rate_default_one_fails_on_any_failing_trial() -> None:
+    result = _rate_trials(passed=19, failed=1)
+
+    assert DEFAULT_MIN_PASS_RATE == 1.0
+    assert result.outcome() == OUTCOME_FAIL
+    assert result.render_diagnostics().startswith(
+        "19/20 trials passed (pass rate 0.95) below min pass rate 1.00\n"
+    )
+    assert result.summary_lines("tid") == ["tid: 19/20 trials passed (0 not evaluated)"]
+
+
+@pytest.mark.parametrize(("passed", "outcome"), [(18, OUTCOME_PASS), (17, OUTCOME_FAIL)])
+def test_min_pass_rate_point_nine_boundary(passed: int, outcome: str) -> None:
+    result = _rate_trials(passed=passed, failed=20 - passed)
+    result.min_pass_rate = 0.9
+
+    assert result.outcome() == outcome
+
+
+def test_min_pass_rate_excludes_not_evaluated_trials() -> None:
+    result = _rate_trials(passed=9, failed=1, not_evaluated=10)
+    result.min_pass_rate = 0.9
+
+    assert (result.passed, result.evaluated, result.not_evaluated) == (9, 10, 10)
+    assert result.outcome() == OUTCOME_PASS
+
+
+def test_min_pass_rate_counts_raised_trial_as_evaluated_failure() -> None:
+    result = TrialsResult(
+        trials=[[_result(_row("a", "pass"))], [_result(_row("a", "hard_fail"))]],
+        planned=2,
+        raised=frozenset({2}),
+        min_pass_rate=0.5,
+    )
+
+    assert (result.passed, result.evaluated) == (1, 2)
+    assert result.outcome() == OUTCOME_PASS
+
+
+@pytest.mark.parametrize("value", [-0.1, 1.5, float("nan"), float("inf"), "0.9", True])
+def test_validate_min_pass_rate_rejects_invalid(value: object) -> None:
+    with pytest.raises(ValueError, match="--attest-min-pass-rate must be"):
+        validate_min_pass_rate(value, "--attest-min-pass-rate")
+
+
+@pytest.mark.parametrize(
+    ("args", "kwargs"), [((), {}), ((0.5, 0.6), {}), ((), {"rate": 0.5}), ((2,), {})]
+)
+def test_min_pass_rate_marker_invalid_raises(
+    args: tuple[object, ...], kwargs: dict[str, object]
+) -> None:
+    with pytest.raises(ValueError, match="attest_min_pass_rate"):
+        min_pass_rate_from_marker(args, kwargs)
+
+
+def test_min_pass_rate_marker_valid() -> None:
+    assert min_pass_rate_from_marker((0.8,), {}) == 0.8
+
+
+@pytest.mark.parametrize("value", ["1.5", "-1", "nan"])
+def test_cli_min_pass_rate_invalid_is_usage_error(pytester: pytest.Pytester, value: str) -> None:
+    pytester.makepyfile(test_inner="def test_ok():\n    pass\n")
+
+    run = pytester.runpytest_subprocess(f"--attest-min-pass-rate={value}")
+
+    assert run.ret == pytest.ExitCode.USAGE_ERROR
+    run.stderr.fnmatch_lines(["*--attest-min-pass-rate must be a finite number between 0 and 1*"])

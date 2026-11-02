@@ -40,6 +40,7 @@ def refund_agent(builder, order_id):
     return {"message": "Your refund has been processed."}
 
 
+@pytest.mark.attest_min_pass_rate(0.6)
 def test_flaky(attest):
     result = refund_agent(order_id="ORD-1")
     attest.evaluate(expect(result).output_contains("refund").cost_under(0.05))
@@ -58,6 +59,11 @@ def test_assert_after_evaluate(attest):
 @pytest.mark.attest_budget(max_cost_usd=0.001)
 def test_budget_stops(attest):
     attest.evaluate(expect(refund_agent(order_id="ORD-3")).output_contains("refund"))
+
+
+@pytest.mark.attest_min_pass_rate(1.5)
+def test_bad_rate_marker(attest):
+    pass
 
 
 @pytest.mark.attest_budget(max_calls=1)
@@ -89,14 +95,20 @@ def scratch(pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch) -> pytes
 @pytest.mark.integration
 def test_trials_rows_ids_and_usage_reach_report(scratch: pytest.Pytester) -> None:
     run = scratch.runpytest_subprocess(
-        "-p", "no:cacheprovider", "--attest-trials=3", "--attest-report=r.json"
+        "-p",
+        "no:cacheprovider",
+        "--attest-trials=3",
+        "--attest-min-pass-rate=0.9",
+        "--attest-report=r.json",
     )
 
-    run.assert_outcomes(passed=2, failed=4)
+    run.assert_outcomes(passed=2, failed=5)
     run.stdout.fnmatch_lines(
         [
             "*test_refund.py::test_flaky: 2/3 trials passed (0 not evaluated)*",
             "*test_refund.py::test_budget_stops: stopped after 1 of 3 trials: test budget spent*",
+            "*0/3 trials passed (pass rate 0.00) below min pass rate 0.90*",
+            "*attest_min_pass_rate must be a finite number between 0 and 1, got 1.5*",
             "*unknown argument(s) max_calls*",
             "*--attest-trials supports synchronous tests*attest.simulation.repeat*",
         ]

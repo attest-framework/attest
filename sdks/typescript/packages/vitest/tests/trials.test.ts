@@ -26,6 +26,7 @@ import {
   validateBudget,
   type RunningTest,
 } from "../src/test-state.js";
+import { attestGlobalSetup } from "../src/plugin.js";
 import { trials } from "../src/trials.js";
 
 type Status = "pass" | "hard_fail" | "not_evaluated";
@@ -206,7 +207,7 @@ describe("trials()", () => {
     const t = fakeTest("partial");
     await trials(async () => {
       await evaluate(chain()); // does not enforce the hard_fail of trial 2
-    }, { n: 3, context: t.context });
+    }, { n: 3, context: t.context, minPassRate: 0.5 });
 
     const testId = testIdOf(t.task);
     const ids = [deterministicAssertionId(testId, 0), deterministicAssertionId(testId, 1)];
@@ -236,7 +237,7 @@ describe("trials()", () => {
     await trials(async (i) => {
       if (i === 2) throw new TypeError("chat completion failed: HTTP 500");
       await evaluate(chain());
-    }, { n: 3, context: t.context });
+    }, { n: 3, context: t.context, minPassRate: 0.5 });
 
     const thrown = t.meta().results.filter((r) => r.trial === 2);
     expect(thrown).toHaveLength(2);
@@ -257,7 +258,7 @@ describe("trials()", () => {
     await trials(async (i) => {
       await evaluate(chain());
       if (i === 2) throw new Error("HTTP 500");
-    }, { n: 3, context: t.context });
+    }, { n: 3, context: t.context, minPassRate: 0.5 });
 
     const rows = t.meta().results;
     expect(rows).toHaveLength(6);
@@ -283,7 +284,9 @@ describe("trials()", () => {
       if (i === 1) throw new Error("HTTP 500");
       await evaluate(chain());
     }, { n: 2, context: t.context });
-    await expect(run).rejects.toThrow(/0\/2 trials passed \(0 not evaluated\)\ntrial 1 raised Error: HTTP 500\ntrial 2:/);
+    await expect(run).rejects.toThrow(
+      /0\/2 trials passed \(pass rate 0\.00\) below min pass rate 1\.00\ntrial 1 raised Error: HTTP 500\ntrial 2:/,
+    );
   });
 
   it("rethrows the first error when no trial evaluated an assertion", async () => {
@@ -359,5 +362,69 @@ describe("trials()", () => {
     ).rejects.toThrow();
     expect(t.meta().results.every((r) => r.trial === undefined)).toBe(true);
     expect(t.meta().trials).toBeUndefined();
+  });
+});
+
+describe("trials() minimum pass rate", () => {
+  /** n trials where the trials listed in `failing` hard_fail and the rest pass. */
+  async function run(n: number, failing: number, options: { minPassRate?: number } = {}) {
+    const statuses: Status[] = Array.from({ length: n }, (_, i) => (i < failing ? "hard_fail" : "pass"));
+    scriptedClient(statuses);
+    const t = fakeTest(`rate ${failing}/${n}`);
+    await trials(async () => {
+      await evaluate(chain());
+    }, { n, context: t.context, ...options });
+    return t;
+  }
+
+  afterEach(() => {
+    delete process.env["ATTEST_MIN_PASS_RATE"];
+  });
+
+  it("defaults to 1.0: one failing trial in 20 fails the test", async () => {
+    await expect(run(20, 1)).rejects.toThrow(
+      "19/20 trials passed (pass rate 0.95) below min pass rate 1.00\ntrial 1:",
+    );
+  });
+
+  it("passes at 18/20 and fails at 17/20 with minPassRate 0.9", async () => {
+    const t = await run(20, 2, { minPassRate: 0.9 });
+    expect(t.meta().trials).toMatchObject({ passed: 18, evaluated: 20 });
+    await expect(run(20, 3, { minPassRate: 0.9 })).rejects.toThrow(
+      "17/20 trials passed (pass rate 0.85) below min pass rate 0.90",
+    );
+  });
+
+  it("takes the run's rate from ATTEST_MIN_PASS_RATE and lets trials() override it", async () => {
+    process.env["ATTEST_MIN_PASS_RATE"] = "0.5";
+    await run(4, 2);
+    await expect(run(4, 2, { minPassRate: 0.75 })).rejects.toThrow("below min pass rate 0.75");
+    process.env["ATTEST_MIN_PASS_RATE"] = "0.9";
+    await run(4, 2, { minPassRate: 0.5 });
+  });
+
+  it("rejects rates outside [0, 1]", async () => {
+    scriptedClient([]);
+    const t = fakeTest("invalid");
+    for (const minPassRate of [-0.1, 1.5, Number.NaN]) {
+      await expect(trials(() => undefined, { n: 2, context: t.context, minPassRate })).rejects.toThrow(
+        "minPassRate must be a number between 0 and 1",
+      );
+    }
+    process.env["ATTEST_MIN_PASS_RATE"] = "most";
+    await expect(trials(() => undefined, { n: 2, context: t.context })).rejects.toThrow(
+      "minPassRate must be a number between 0 and 1, got ATTEST_MIN_PASS_RATE=most",
+    );
+    expect(() => attestGlobalSetup({ minPassRate: 2 })).toThrow("minPassRate must be a number between 0 and 1");
+  });
+
+  it("leaves not-evaluated trials out of the rate", async () => {
+    scriptedClient(["pass", "not_evaluated", "not_evaluated"]);
+    const t = fakeTest("partly judged");
+    await trials(async (i) => {
+      await evaluate(i === 1 ? chain() : judged());
+    }, { n: 3, context: t.context });
+    expect(t.meta().trials).toMatchObject({ passed: 1, evaluated: 1, notEvaluated: 2 });
+    expect(t.skip).not.toHaveBeenCalled();
   });
 });

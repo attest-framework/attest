@@ -25,12 +25,16 @@ from attest.report_v2 import TEST_OUTCOMES, TestRecord, write_report
 from attest.result import OUTCOME_FAIL, OUTCOME_SKIP, AgentResult, Verdict
 from attest.trials import (
     BUDGET_MARKER,
+    DEFAULT_MIN_PASS_RATE,
+    MIN_PASS_RATE_MARKER,
     TestBudget,
     TestRun,
     begin_run,
     current_run,
     end_run,
+    min_pass_rate_from_marker,
     run_trials,
+    validate_min_pass_rate,
 )
 
 logger = logging.getLogger("attest.plugin")
@@ -104,9 +108,21 @@ def pytest_configure(config: pytest.Config) -> None:
         f"{BUDGET_MARKER}(max_judge_calls=None, max_cost_usd=None): per-test limit on "
         "attest judge calls and on attest cost plus agent spend (USD), across all trials",
     )
+    config.addinivalue_line(
+        "markers",
+        f"{MIN_PASS_RATE_MARKER}(rate): lowest pass rate over evaluated trials "
+        "(0..1) for this test under --attest-trials; overrides --attest-min-pass-rate",
+    )
     trials = config.getoption("--attest-trials", default=1)
     if trials < 1:
         raise pytest.UsageError(f"--attest-trials must be an integer >= 1, got {trials}")
+    try:
+        validate_min_pass_rate(
+            config.getoption("--attest-min-pass-rate", default=DEFAULT_MIN_PASS_RATE),
+            "--attest-min-pass-rate",
+        )
+    except ValueError as exc:
+        raise pytest.UsageError(str(exc)) from exc
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:
@@ -163,6 +179,15 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         help="Run every test using the attest fixture N times as fixed-N trials (sync tests "
         "only); each report row carries its trial. The statistical verdict against a pinned "
         "baseline comes from `attest policy evaluate --baseline <tag>` with a regression rule",
+    )
+    group.addoption(
+        "--attest-min-pass-rate",
+        default=DEFAULT_MIN_PASS_RATE,
+        type=float,
+        metavar="RATE",
+        help="Under --attest-trials > 1, fail a test whose pass rate over evaluated trials "
+        "is below RATE (0..1, default 1.0: any failing trial fails the test); the "
+        "attest_min_pass_rate marker overrides it per test",
     )
     group.addoption(
         "--attest-diagnostics",
@@ -263,7 +288,18 @@ def pytest_runtest_call(item: pytest.Item) -> Generator[None, Any, None]:
             budget = TestBudget.from_marker(marker.args, marker.kwargs)
         except ValueError as exc:
             pytest.fail(f"{item.nodeid}: {exc}", pytrace=False)
-    run = TestRun(test_id=item.nodeid, budget=budget) if _uses_attest(item) else None
+    rate_marker = item.get_closest_marker(MIN_PASS_RATE_MARKER)
+    min_pass_rate: float | None = None
+    if rate_marker is not None:
+        try:
+            min_pass_rate = min_pass_rate_from_marker(rate_marker.args, rate_marker.kwargs)
+        except ValueError as exc:
+            pytest.fail(f"{item.nodeid}: {exc}", pytrace=False)
+    run = (
+        TestRun(test_id=item.nodeid, budget=budget, min_pass_rate=min_pass_rate)
+        if _uses_attest(item)
+        else None
+    )
     if run is not None:
         begin_run(run)
     try:
@@ -313,6 +349,10 @@ def pytest_pyfunc_call(pyfuncitem: pytest.Function) -> bool | None:
 
     result = run_trials(run, lambda: testfunction(**testargs), n, _replace_test_results, trials_run)
     _session_trial_lines[pyfuncitem.nodeid] = result.summary_lines(pyfuncitem.nodeid)
+    cli_rate: float = pyfuncitem.config.getoption(
+        "--attest-min-pass-rate", default=DEFAULT_MIN_PASS_RATE
+    )
+    result.min_pass_rate = run.min_pass_rate if run.min_pass_rate is not None else cli_rate
     fixture.enforce(result)
     return True
 

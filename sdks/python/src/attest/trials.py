@@ -39,6 +39,30 @@ from attest.simulation.repeat import RepeatResult
 
 BUDGET_MARKER = "attest_budget"
 _BUDGET_KWARGS = ("max_judge_calls", "max_cost_usd")
+MIN_PASS_RATE_MARKER = "attest_min_pass_rate"
+#: Default ``--attest-min-pass-rate``: any failing evaluated trial fails the test.
+DEFAULT_MIN_PASS_RATE = 1.0
+
+
+def validate_min_pass_rate(value: object, source: str) -> float:
+    """Return ``value`` as a min pass rate: a finite number with 0 <= r <= 1.
+    Raise ``ValueError`` naming ``source`` otherwise."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(f"{source} must be a number between 0 and 1, got {value!r}")
+    if not math.isfinite(value) or not 0 <= value <= 1:
+        raise ValueError(f"{source} must be a finite number between 0 and 1, got {value}")
+    return float(value)
+
+
+def min_pass_rate_from_marker(args: Sequence[object], kwargs: Mapping[str, object]) -> float:
+    """Validate ``@pytest.mark.attest_min_pass_rate(<float>)``: exactly one
+    positional argument."""
+    if kwargs or len(args) != 1:
+        raise ValueError(
+            f"{MIN_PASS_RATE_MARKER} takes exactly one positional rate, "
+            f"got args={list(args)!r} kwargs={dict(kwargs)!r}"
+        )
+    return validate_min_pass_rate(args[0], MIN_PASS_RATE_MARKER)
 
 
 def assertion_id_for(test_id: str, ordinal: int) -> str:
@@ -103,6 +127,8 @@ class TestRun:
 
     test_id: str
     budget: TestBudget | None = None
+    #: ``attest_min_pass_rate`` marker value; ``None`` uses ``--attest-min-pass-rate``.
+    min_pass_rate: float | None = None
     trial: int | None = None
     usage: Usage = field(default_factory=Usage)
     agent_spend_usd: float = 0.0
@@ -216,9 +242,11 @@ class TrialsResult:
 
     Test outcome: no trial evaluated → skip with the summed not-evaluated
     reasons, or ``no assertions in N trials`` when no trial produced a row
-    (fail when ``strict``); otherwise no trial passed → fail;
-    otherwise pass. Use ``attest policy evaluate --baseline <tag>`` with a
-    ``regression`` rule for the statistical verdict against a baseline.
+    (fail when ``strict``); otherwise the pass rate over evaluated trials
+    (passed / evaluated; not-evaluated trials excluded, raised trials count
+    as failures) below ``min_pass_rate`` → fail; otherwise pass. Use
+    ``attest policy evaluate --baseline <tag>`` with a ``regression`` rule for
+    the statistical verdict against a baseline.
     """
 
     #: Evaluations of each trial that ran, in trial order.
@@ -229,6 +257,8 @@ class TrialsResult:
     stopped_by_budget: bool = False
     #: 1-based indices of the trials that raised; each is a failed trial.
     raised: frozenset[int] = frozenset()
+    #: Lowest passing pass rate (``--attest-min-pass-rate`` or the marker).
+    min_pass_rate: float = DEFAULT_MIN_PASS_RATE
 
     def _outcomes(self) -> list[str]:
         return [
@@ -263,9 +293,13 @@ class TrialsResult:
     def outcome(self, *, strict: bool = False) -> str:
         if self.evaluated == 0:
             return OUTCOME_FAIL if strict else OUTCOME_SKIP
-        if self.passed == 0:
+        if self._below_min_pass_rate():
             return OUTCOME_FAIL
         return OUTCOME_PASS
+
+    def _below_min_pass_rate(self) -> bool:
+        evaluated = self.evaluated
+        return evaluated > 0 and self.passed / evaluated < self.min_pass_rate
 
     def skip_reason(self) -> str:
         if not self._any_rows():
@@ -273,8 +307,17 @@ class TrialsResult:
         return format_skip_reason(self.not_evaluated_reasons)
 
     def render_diagnostics(self, *, color: bool = False) -> str:
-        """Diagnostics of every trial that did not pass."""
-        return trials_diagnostics(self._verdicts(), label="trial", color=color)
+        """Diagnostics of every trial that did not pass, headed by the pass
+        rate when it is below ``min_pass_rate``."""
+        diagnostics = trials_diagnostics(self._verdicts(), label="trial", color=color)
+        if not self._below_min_pass_rate():
+            return diagnostics
+        passed, evaluated = self.passed, self.evaluated
+        header = (
+            f"{passed}/{evaluated} trials passed (pass rate {passed / evaluated:.2f}) "
+            f"below min pass rate {self.min_pass_rate:.2f}"
+        )
+        return f"{header}\n{diagnostics}"
 
     def summary_lines(self, test_id: str) -> list[str]:
         """Terminal lines: the pass count, and the budget stop when it happened."""

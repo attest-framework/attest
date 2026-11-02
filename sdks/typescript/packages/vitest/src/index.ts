@@ -2,7 +2,7 @@ export { attestGlobalSetup } from "./plugin.js";
 export type { AttestGlobalSetupOptions } from "./plugin.js";
 export { AttestEngineFixture, useAttest, evaluate, inspect, enforceOutcome } from "./fixtures.js";
 export type { EvaluateOptions, InspectOptions } from "./fixtures.js";
-export { trials } from "./trials.js";
+export { trials, MIN_PASS_RATE_ENV } from "./trials.js";
 export type { TrialsOptions } from "./trials.js";
 export type { TestBudget } from "./test-state.js";
 export { AttestCostReporter, AttestReporter } from "./reporter.js";

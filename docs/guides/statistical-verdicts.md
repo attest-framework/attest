@@ -31,8 +31,17 @@ During a trial, `evaluate()` records the result without failing or skipping the 
 | Trials | Test outcome |
 |---|---|
 | no trial evaluated an assertion | skipped with the not-evaluated reasons, or `no assertions in N trials` (failed with `--attest-strict`) |
-| no evaluated trial passed | failed, with the diagnostics of the failing trials |
-| at least one trial passed | passed; the summary prints `<test>: <passed>/<evaluated> trials passed (<n> not evaluated)` |
+| pass rate of the evaluated trials below the minimum pass rate | failed: `<passed>/<evaluated> trials passed (pass rate <r>) below min pass rate <min>`, then the diagnostics of the failing trials |
+| otherwise | passed; the summary prints `<test>: <passed>/<evaluated> trials passed (<n> not evaluated)` |
+
+The minimum pass rate defaults to 1.0: any failing trial fails the test. Lower it for an agent that is allowed to miss sometimes:
+
+| Scope | pytest | Vitest |
+|---|---|---|
+| Run | `--attest-min-pass-rate=0.8` | `attestGlobalSetup({ minPassRate: 0.8 })` or `ATTEST_MIN_PASS_RATE=0.8` |
+| One test (overrides the run) | `@pytest.mark.attest_min_pass_rate(0.8)` | `trials(body, { minPassRate: 0.8 })` |
+
+Trials whose assertions were not evaluated are left out of the pass rate. The minimum pass rate decides this run's test outcome; whether the pass rate dropped against the reference version is the policy's question (section 3).
 
 A trial that raises (for example when the agent's model call fails) is a failed trial: its rows are replaced by one `hard_fail` row per assertion of the test, with the exception in the explanation (and the engine's status when the trial had already evaluated that assertion), so every trial contributes exactly one row per assertion. A pytest `skip` or `fail` inside a trial ends the test as usual.
 
@@ -62,7 +71,7 @@ regression:
 uv run attest policy evaluate --policy attest.policy.yaml --report attest-report.json --baseline main
 ```
 
-For each assertion the engine computes the Wilson interval of the current pass rate and draws a line at the baseline pass rate minus the tolerance:
+The rule compares assertions that have at least 2 runs in both the report and the baseline. Single runs keep the status comparison of `block_on_regression`; an assertion run as trials that cannot be compared (a baseline pinned from a single run, or no evaluated run on one side) is reported `inconclusive` and stays under `block_on_regression`. For each compared assertion the engine computes the Wilson interval of the current pass rate and draws a line at the baseline pass rate minus the tolerance:
 
 | Interval | Verdict | Exit |
 |---|---|---|
@@ -70,7 +79,7 @@ For each assertion the engine computes the Wilson interval of the current pass r
 | lower bound at or above the line | `pass` | 0 |
 | straddles the line | `inconclusive` | 2 |
 
-The JSON output has the overall `verdict` and a `trials` list with each assertion's passes, evaluated runs, interval, baseline rate and line. An assertion that is absent from the baseline, or has no evaluated run on one side, is not compared; when nothing is compared the verdict is `inconclusive`. Other policy rules (`not_evaluated`, `layers`, `max_cost_usd`) still apply to the same report.
+The JSON output has the overall `verdict` and a `trials` list with each assertion's passes, evaluated runs, interval, baseline rate and line. An assertion absent from the baseline is not compared. When the report has only single runs, the rule gives no verdict and the status comparison decides; when the report has trials and none could be compared, the verdict is `inconclusive`. Other policy rules (`not_evaluated`, `layers`, `max_cost_usd`) still apply to the same report.
 
 With a baseline of 18/20 (0.90) the line is 0.85:
 
