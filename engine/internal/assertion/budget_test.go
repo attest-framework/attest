@@ -6,12 +6,14 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/attest-ai/attest/engine/internal/assertion/judge"
+	"github.com/attest-ai/attest/engine/internal/cache"
 	"github.com/attest-ai/attest/engine/internal/llm"
 	"github.com/attest-ai/attest/engine/pkg/types"
 )
@@ -358,5 +360,34 @@ func TestAbstainExplanation_StripsControlAndTruncates(t *testing.T) {
 
 	if strings.ContainsAny(got, "\x1b‮") || len(got) > maxDiagnosticBytes {
 		t.Errorf("explanation not sanitized: len %d, %q...", len(got), got[:40])
+	}
+}
+
+func TestJudgeEvaluator_SameOutputDifferentCriteria_CachedSeparately(t *testing.T) {
+	// Arrange: a real judge cache and a judge that scores by criteria.
+	c, err := cache.NewJudgeCache(filepath.Join(t.TempDir(), "attest.db"), 10, "openai|http://judge")
+	if err != nil {
+		t.Fatal(err)
+	}
+	mock := llm.NewMockProvider(nil, nil)
+	mock.MatchFunc = func(req *llm.CompletionRequest) *llm.CompletionResponse {
+		if strings.Contains(req.Messages[0].Content, "polite") {
+			return &llm.CompletionResponse{Content: `{"score": 0.9, "explanation": "polite"}`}
+		}
+		return &llm.CompletionResponse{Content: `{"score": 0.1, "explanation": "wrong amount"}`}
+	}
+	e := NewJudgeEvaluator(mock, judge.NewRubricRegistry(), c)
+
+	// Act
+	polite := e.Evaluate(budgetJudgeTrace(), budgetJudgeAssertion("p", `{"target":"output","criteria":"polite"}`))
+	amount := e.Evaluate(budgetJudgeTrace(), budgetJudgeAssertion("a", `{"target":"output","criteria":"states the amount"}`))
+	again := e.Evaluate(budgetJudgeTrace(), budgetJudgeAssertion("p2", `{"target":"output","criteria":"polite"}`))
+
+	// Assert
+	if mock.CallCount != 2 {
+		t.Errorf("provider calls = %d, want 2 (one per criteria; the repeat is a cache hit)", mock.CallCount)
+	}
+	if polite.Score != 0.9 || amount.Score != 0.1 || again.Score != 0.9 {
+		t.Errorf("scores = %v, %v, %v; want 0.9, 0.1, 0.9", polite.Score, amount.Score, again.Score)
 	}
 }

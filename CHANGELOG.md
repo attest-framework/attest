@@ -28,6 +28,7 @@ All notable changes to Attest are documented in this file. The format follows [K
 - Gemini judge usage counts thinking tokens (`thoughtsTokenCount`) as output tokens, as they are billed.
 - Judge and embedding calls stop when the batch's context is cancelled.
 - `attest policy evaluate --baseline` folds the rows of fixed-N trials into one row per assertion (worst status, mean score, summed cost and duration) before computing transitions.
+- Judge cache entries are keyed by the whole judge prompt (rubric version, criteria and agent output) instead of the agent output alone. Two `passes_judge` assertions with different criteria on one output previously shared one cached score. Entries cached by earlier versions are misses and are judged again.
 - Cached judge scores are scoped by judge provider as well as endpoint, rubric and model, so two providers behind the same gateway with the same model name never share a score. Entries cached by earlier versions are misses and are judged again.
 - Judge provider error messages have any echoed API key replaced by `[redacted]` and control and Unicode format characters (bidi overrides, zero-width) removed before they reach results and reports.
 - A constraint on a trace field the trace does not record, such as `cost_under` without `metadata.cost_usd`, explains its `not_evaluated: missing_evidence` result as `metadata.cost_usd absent`.

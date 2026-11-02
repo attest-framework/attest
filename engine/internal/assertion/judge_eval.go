@@ -100,9 +100,14 @@ func (e *JudgeEvaluator) EvaluateContext(parent context.Context, trace *types.Tr
 		model = e.provider.DefaultModel()
 	}
 
+	wrapped := judge.WrapAgentOutput(targetStr)
+	userContent := wrapped
+	if spec.Criteria != "" {
+		userContent = fmt.Sprintf("Evaluation criteria: %s\n\n%s", spec.Criteria, wrapped)
+	}
 	// Check cache
 	if e.cache != nil {
-		contentHash := cache.JudgeContentHash(targetStr)
+		contentHash := cache.JudgePromptKey(rubric.Version, userContent)
 		if cached, cErr := e.cache.Get(contentHash, rubricName, model); cErr == nil && cached != nil {
 			durationMS := time.Since(start).Milliseconds()
 			meta := &types.JudgeMetadata{
@@ -110,7 +115,7 @@ func (e *JudgeEvaluator) EvaluateContext(parent context.Context, trace *types.Tr
 				Model:         model,
 				RubricName:    rubricName,
 				RubricVersion: rubric.Version,
-				PromptHash:    judge.PromptHash(targetStr),
+				PromptHash:    judge.PromptHash(userContent),
 				SampleScores:  []float64{cached.Score},
 				ScoreMean:     cached.Score,
 			}
@@ -123,11 +128,6 @@ func (e *JudgeEvaluator) EvaluateContext(parent context.Context, trace *types.Tr
 	timeoutSecs := judgeTimeoutSeconds()
 	ctx, cancel := context.WithTimeout(parent, time.Duration(timeoutSecs)*time.Second)
 	defer cancel()
-	wrapped := judge.WrapAgentOutput(targetStr)
-	userContent := wrapped
-	if spec.Criteria != "" {
-		userContent = fmt.Sprintf("Evaluation criteria: %s\n\n%s", spec.Criteria, wrapped)
-	}
 
 	runs, err := repeatRuns(spec)
 	if err != nil {
@@ -305,7 +305,7 @@ func (e *JudgeEvaluator) evaluateSinglePass(
 	durationMS := time.Since(start).Milliseconds()
 
 	if e.cache != nil {
-		contentHash := cache.JudgeContentHash(targetStr)
+		contentHash := cache.JudgePromptKey(rubric.Version, userContent)
 		if putErr := e.cache.Put(contentHash, rubricName, model, &cache.JudgeCacheEntry{
 			Score:       scoreResult.Score,
 			Explanation: scoreResult.Explanation,
@@ -440,7 +440,7 @@ func (e *JudgeEvaluator) evaluateRepeated(
 	// Cache the median result only when every run scored: a partial
 	// sample must not stand in for N runs later.
 	if e.cache != nil && miss.total() == 0 {
-		contentHash := cache.JudgeContentHash(targetStr)
+		contentHash := cache.JudgePromptKey(rubric.Version, userContent)
 		if putErr := e.cache.Put(contentHash, rubricName, model, &cache.JudgeCacheEntry{
 			Score:       medianScore,
 			Explanation: combinedExplanation,
