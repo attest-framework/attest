@@ -54,6 +54,10 @@ func (p *Anthropic) Name() string { return "anthropic" }
 // DefaultModel returns the configured model.
 func (p *Anthropic) DefaultModel() string { return p.model }
 
+// MaxOutputTokens returns the output budget actually sent for a request
+// asking for requested tokens (see outputBudget).
+func (p *Anthropic) MaxOutputTokens(requested int) int { return outputBudget(requested) }
+
 type anthropicMessage struct {
 	Role    string `json:"role"`
 	Content string `json:"content"`
@@ -74,9 +78,13 @@ type anthropicResponse struct {
 		Type string `json:"type"`
 		Text string `json:"text"`
 	} `json:"content"`
+	// input_tokens excludes prompt-cache reads and writes, which the
+	// Messages API reports separately.
 	Usage struct {
-		InputTokens  int `json:"input_tokens"`
-		OutputTokens int `json:"output_tokens"`
+		InputTokens              int `json:"input_tokens"`
+		OutputTokens             int `json:"output_tokens"`
+		CacheReadInputTokens     int `json:"cache_read_input_tokens"`
+		CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
 	} `json:"usage"`
 }
 
@@ -146,10 +154,12 @@ func (p *Anthropic) Complete(ctx context.Context, req *llm.CompletionRequest) (*
 		respModel = model
 	}
 	return &llm.CompletionResponse{
-		Content:      text.String(),
-		Model:        respModel,
-		InputTokens:  resp.Usage.InputTokens,
-		OutputTokens: resp.Usage.OutputTokens,
-		DurationMS:   time.Since(start).Milliseconds(),
+		Content: text.String(),
+		Model:   respModel,
+		InputTokens: resp.Usage.InputTokens + resp.Usage.CacheReadInputTokens +
+			resp.Usage.CacheCreationInputTokens,
+		OutputTokens:      resp.Usage.OutputTokens,
+		CachedInputTokens: resp.Usage.CacheReadInputTokens,
+		DurationMS:        time.Since(start).Milliseconds(),
 	}, nil
 }

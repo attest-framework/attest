@@ -2,6 +2,7 @@ package assertion
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"math"
@@ -61,6 +62,12 @@ const (
 
 // Evaluate runs the LLM judge assertion against the trace.
 func (e *JudgeEvaluator) Evaluate(trace *types.Trace, assertion *types.Assertion) *types.AssertionResult {
+	return e.EvaluateContext(context.Background(), trace, assertion)
+}
+
+// EvaluateContext runs the judge under parent, which carries cancellation
+// and the batch budget scope (WithBudgetScope).
+func (e *JudgeEvaluator) EvaluateContext(parent context.Context, trace *types.Trace, assertion *types.Assertion) *types.AssertionResult {
 	start := time.Now()
 
 	var spec judgeSpec
@@ -93,9 +100,14 @@ func (e *JudgeEvaluator) Evaluate(trace *types.Trace, assertion *types.Assertion
 		model = e.provider.DefaultModel()
 	}
 
+	wrapped := judge.WrapAgentOutput(targetStr)
+	userContent := wrapped
+	if spec.Criteria != "" {
+		userContent = fmt.Sprintf("Evaluation criteria: %s\n\n%s", spec.Criteria, wrapped)
+	}
 	// Check cache
 	if e.cache != nil {
-		contentHash := cache.JudgeContentHash(targetStr)
+		contentHash := cache.JudgePromptKey(rubric.Version, userContent)
 		if cached, cErr := e.cache.Get(contentHash, rubricName, model); cErr == nil && cached != nil {
 			durationMS := time.Since(start).Milliseconds()
 			meta := &types.JudgeMetadata{
@@ -103,7 +115,7 @@ func (e *JudgeEvaluator) Evaluate(trace *types.Trace, assertion *types.Assertion
 				Model:         model,
 				RubricName:    rubricName,
 				RubricVersion: rubric.Version,
-				PromptHash:    judge.PromptHash(targetStr),
+				PromptHash:    judge.PromptHash(userContent),
 				SampleScores:  []float64{cached.Score},
 				ScoreMean:     cached.Score,
 			}
@@ -114,13 +126,8 @@ func (e *JudgeEvaluator) Evaluate(trace *types.Trace, assertion *types.Assertion
 
 	// Build LLM request
 	timeoutSecs := judgeTimeoutSeconds()
-	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeoutSecs)*time.Second)
+	ctx, cancel := context.WithTimeout(parent, time.Duration(timeoutSecs)*time.Second)
 	defer cancel()
-	wrapped := judge.WrapAgentOutput(targetStr)
-	userContent := wrapped
-	if spec.Criteria != "" {
-		userContent = fmt.Sprintf("Evaluation criteria: %s\n\n%s", spec.Criteria, wrapped)
-	}
 
 	runs, err := repeatRuns(spec)
 	if err != nil {
@@ -272,7 +279,7 @@ func (e *JudgeEvaluator) evaluateSinglePass(
 
 	resp, err := e.provider.Complete(ctx, req)
 	if err != nil {
-		return notEvaluatedResult(assertion, start, types.ReasonProviderUnavailable, fmt.Sprintf("judge provider call failed: %v", err))
+		return judgeCallFailed(assertion, start, err)
 	}
 
 	scoreResult, err := judge.ParseScoreResult(resp.Content)
@@ -282,11 +289,23 @@ func (e *JudgeEvaluator) evaluateSinglePass(
 		ar.Cost = resp.Cost
 		return ar
 	}
+	if scoreResult.Abstain {
+		ar := notEvaluatedResult(assertion, start, types.ReasonJudgeAbstained, abstainExplanation(scoreResult.Reason))
+		ar.Cost = resp.Cost
+		ar.Judge = &types.JudgeMetadata{
+			Provider:      e.provider.Name(),
+			Model:         model,
+			RubricName:    rubricName,
+			RubricVersion: rubric.Version,
+			PromptHash:    judge.PromptHash(userContent),
+		}
+		return ar
+	}
 
 	durationMS := time.Since(start).Milliseconds()
 
 	if e.cache != nil {
-		contentHash := cache.JudgeContentHash(targetStr)
+		contentHash := cache.JudgePromptKey(rubric.Version, userContent)
 		if putErr := e.cache.Put(contentHash, rubricName, model, &cache.JudgeCacheEntry{
 			Score:       scoreResult.Score,
 			Explanation: scoreResult.Explanation,
@@ -318,6 +337,9 @@ type metaEvalResult struct {
 	explanation string
 	cost        float64
 	err         error
+	// abstain is set when the judge declined to score this run.
+	abstain       bool
+	abstainReason string
 }
 
 // evaluateRepeated runs the judge `runs` times concurrently, takes the median
@@ -361,6 +383,10 @@ func (e *JudgeEvaluator) evaluateRepeated(
 				results[idx] = metaEvalResult{err: err, cost: resp.Cost}
 				return
 			}
+			if sr.Abstain {
+				results[idx] = metaEvalResult{abstain: true, abstainReason: sr.Reason, cost: resp.Cost}
+				return
+			}
 
 			results[idx] = metaEvalResult{
 				score:       sr.Score,
@@ -376,30 +402,26 @@ func (e *JudgeEvaluator) evaluateRepeated(
 	var scores []float64
 	var explanations []string
 	var totalCost float64
-	var firstErr error
-
+	var miss unscoredRuns
 	for i, r := range results {
 		totalCost += r.cost
-		if r.err != nil {
-			if firstErr == nil {
-				firstErr = r.err
-			}
+		if miss.add(r) {
 			continue
 		}
 		scores = append(scores, r.score)
 		explanations = append(explanations, fmt.Sprintf("Run %d: %s", i+1, r.explanation))
 	}
 
-	// Need at least 1 successful run
+	// Need at least 1 scored run
 	if len(scores) == 0 {
-		ar := notEvaluatedResult(assertion, start, types.ReasonProviderUnavailable, fmt.Sprintf("all %d judge runs failed: %v", runs, firstErr))
+		ar := notEvaluatedResult(assertion, start, miss.reason(), fmt.Sprintf("none of %d judge runs scored: %s", runs, miss.summary()))
 		ar.Cost = totalCost
 		return ar
 	}
 
 	// Sort and take median
 	sort.Float64s(scores)
-	medianScore := scores[len(scores)/2]
+	medianScore := median(scores)
 
 	// Calculate variance (spread)
 	spread := scores[len(scores)-1] - scores[0]
@@ -409,12 +431,16 @@ func (e *JudgeEvaluator) evaluateRepeated(
 	}
 
 	combinedExplanation := strings.Join(explanations, " | ") + " | Median selected." + varianceNote
+	if miss.total() > 0 {
+		combinedExplanation += fmt.Sprintf(" [%d of %d runs not scored: %s]", miss.total(), runs, miss.summary())
+	}
 
 	durationMS := time.Since(start).Milliseconds()
 
-	// Cache the median result
-	if e.cache != nil {
-		contentHash := cache.JudgeContentHash(targetStr)
+	// Cache the median result only when every run scored: a partial
+	// sample must not stand in for N runs later.
+	if e.cache != nil && miss.total() == 0 {
+		contentHash := cache.JudgePromptKey(rubric.Version, userContent)
 		if putErr := e.cache.Put(contentHash, rubricName, model, &cache.JudgeCacheEntry{
 			Score:       medianScore,
 			Explanation: combinedExplanation,
@@ -442,4 +468,90 @@ func (e *JudgeEvaluator) evaluateRepeated(
 	durationMS = time.Since(start).Milliseconds()
 	return e.buildResult(assertion, medianScore, combinedExplanation, spec.Threshold, spec.Soft, durationMS, totalCost,
 		judgeBuildArgs{target: spec.Target, model: model, rubric: rubricName, meta: meta})
+}
+
+// judgeCallFailed maps a failed judge call to not_evaluated:
+// budget_exhausted when the budget refused it, otherwise provider_unavailable.
+func judgeCallFailed(assertion *types.Assertion, start time.Time, err error) *types.AssertionResult {
+	if errors.Is(err, llm.ErrBudgetExhausted) {
+		return notEvaluatedResult(assertion, start, types.ReasonBudgetExhausted, fmt.Sprintf("judge call not sent: %v", err))
+	}
+	return notEvaluatedResult(assertion, start, types.ReasonProviderUnavailable, fmt.Sprintf("judge provider call failed: %v", err))
+}
+
+// abstainExplanation renders the judge's abstain reason, which is model
+// output, with control and format characters removed and its length cut.
+func abstainExplanation(reason string) string {
+	reason = strings.TrimSpace(llm.StripControl(reason))
+	if reason == "" {
+		return "judge abstained without giving a reason"
+	}
+	return truncate("judge abstained: " + reason)
+}
+
+// unscoredRuns counts repeated judge runs that produced no score, by cause.
+type unscoredRuns struct {
+	failed, refused, abstained int
+	firstErr                   error
+	firstAbstain               string
+}
+
+// add records r when it produced no score and reports whether it did not.
+func (u *unscoredRuns) add(r metaEvalResult) bool {
+	switch {
+	case r.abstain:
+		u.abstained++
+		if u.firstAbstain == "" {
+			u.firstAbstain = r.abstainReason
+		}
+	case r.err != nil && errors.Is(r.err, llm.ErrBudgetExhausted):
+		u.refused++
+	case r.err != nil:
+		u.failed++
+		if u.firstErr == nil {
+			u.firstErr = r.err
+		}
+	default:
+		return false
+	}
+	return true
+}
+
+func (u *unscoredRuns) total() int { return u.failed + u.refused + u.abstained }
+
+// reason picks the not_evaluated reason when no run scored: a provider
+// failure outranks an abstention, which outranks a budget refusal.
+func (u *unscoredRuns) reason() string {
+	switch {
+	case u.failed > 0:
+		return types.ReasonProviderUnavailable
+	case u.abstained > 0:
+		return types.ReasonJudgeAbstained
+	default:
+		return types.ReasonBudgetExhausted
+	}
+}
+
+func (u *unscoredRuns) summary() string {
+	var parts []string
+	if u.failed > 0 {
+		parts = append(parts, fmt.Sprintf("%d failed (%v)", u.failed, u.firstErr))
+	}
+	if u.abstained > 0 {
+		parts = append(parts, fmt.Sprintf("%d abstained (%s)", u.abstained, truncate(llm.StripControl(u.firstAbstain))))
+	}
+	if u.refused > 0 {
+		parts = append(parts, fmt.Sprintf("%d not sent: budget exhausted", u.refused))
+	}
+	return strings.Join(parts, ", ")
+}
+
+// median returns the median of sorted scores: the middle score, or the
+// mean of the two middle scores for an even count.
+func median(sorted []float64) float64 {
+	n := len(sorted)
+	if n%2 == 1 {
+		return sorted[n/2]
+	}
+	return (sorted[n/2-1] + sorted[n/2]) / 2
 }

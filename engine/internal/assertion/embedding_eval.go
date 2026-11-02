@@ -2,6 +2,7 @@ package assertion
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"github.com/segmentio/encoding/json"
 	"log/slog"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/attest-ai/attest/engine/internal/assertion/embedding"
 	"github.com/attest-ai/attest/engine/internal/cache"
+	"github.com/attest-ai/attest/engine/internal/llm"
 	"github.com/attest-ai/attest/engine/pkg/types"
 )
 
@@ -34,6 +36,12 @@ type embeddingSpec struct {
 
 // Evaluate runs the embedding similarity assertion against the trace.
 func (e *EmbeddingEvaluator) Evaluate(trace *types.Trace, assertion *types.Assertion) *types.AssertionResult {
+	return e.EvaluateContext(context.Background(), trace, assertion)
+}
+
+// EvaluateContext runs the assertion under ctx, which carries cancellation
+// and the batch budget scope (WithBudgetScope).
+func (e *EmbeddingEvaluator) EvaluateContext(ctx context.Context, trace *types.Trace, assertion *types.Assertion) *types.AssertionResult {
 	start := time.Now()
 
 	var spec embeddingSpec
@@ -55,16 +63,14 @@ func (e *EmbeddingEvaluator) Evaluate(trace *types.Trace, assertion *types.Asser
 		return failResult(assertion, start, fmt.Sprintf("target resolution failed: %v", err))
 	}
 
-	ctx := context.Background()
-
 	targetVec, err := e.getEmbedding(ctx, targetStr)
 	if err != nil {
-		return notEvaluatedResult(assertion, start, types.ReasonProviderUnavailable, fmt.Sprintf("embedding provider failed on target: %v", err))
+		return embeddingCallFailed(assertion, start, "target", err)
 	}
 
 	refVec, err := e.getEmbedding(ctx, spec.Reference)
 	if err != nil {
-		return notEvaluatedResult(assertion, start, types.ReasonProviderUnavailable, fmt.Sprintf("embedding provider failed on reference: %v", err))
+		return embeddingCallFailed(assertion, start, "reference", err)
 	}
 
 	sim, err := embedding.CosineSimilarity(targetVec, refVec)
@@ -137,4 +143,14 @@ func (e *EmbeddingEvaluator) getEmbedding(ctx context.Context, text string) ([]f
 	}
 
 	return e.embedder.Embed(ctx, text)
+}
+
+// embeddingCallFailed maps a failed embedding call on what ("target" or
+// "reference") to not_evaluated: budget_exhausted when the budget refused
+// it, otherwise provider_unavailable.
+func embeddingCallFailed(assertion *types.Assertion, start time.Time, what string, err error) *types.AssertionResult {
+	if errors.Is(err, llm.ErrBudgetExhausted) {
+		return notEvaluatedResult(assertion, start, types.ReasonBudgetExhausted, fmt.Sprintf("embedding call on %s not sent: %v", what, err))
+	}
+	return notEvaluatedResult(assertion, start, types.ReasonProviderUnavailable, fmt.Sprintf("embedding provider failed on %s: %v", what, err))
 }

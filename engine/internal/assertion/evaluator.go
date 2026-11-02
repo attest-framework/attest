@@ -1,6 +1,7 @@
 package assertion
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/attest-ai/attest/engine/internal/assertion/embedding"
@@ -13,6 +14,14 @@ import (
 // Evaluator is the interface for assertion evaluators.
 type Evaluator interface {
 	Evaluate(trace *types.Trace, assertion *types.Assertion) *types.AssertionResult
+}
+
+// ContextEvaluator is an Evaluator that makes model calls. The pipeline
+// passes the batch context, which carries cancellation and the batch
+// budget scope, to EvaluateContext instead of calling Evaluate.
+type ContextEvaluator interface {
+	Evaluator
+	EvaluateContext(ctx context.Context, trace *types.Trace, assertion *types.Assertion) *types.AssertionResult
 }
 
 // Registry maps assertion type strings to Evaluator implementations.

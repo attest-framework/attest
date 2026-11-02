@@ -43,7 +43,9 @@
               "provider_not_configured",
               "simulation",
               "missing_evidence",
-              "short_circuited"
+              "short_circuited",
+              "budget_exhausted",
+              "judge_abstained"
             ]
           },
           "failure_class": {
