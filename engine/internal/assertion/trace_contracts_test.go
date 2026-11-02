@@ -319,3 +319,45 @@ func TestINC1042Contracts(t *testing.T) {
 		}
 	})
 }
+
+func TestContractArgumentValues(t *testing.T) {
+	call := func(name, args string) contractCall { return contractCall{name: name, args: args} }
+	cardinality := `{"check":"tool_cardinality","tool":"r","per":"id","max":1}`
+	runContractCases(t, []contractCase{
+		{"string and number keys stay apart", contractTrace(call("r", `{"id":"7"}`), call("r", `{"id":7}`)),
+			cardinality, types.StatusPass, "for each of 2 id value(s)"},
+		{"equal numbers merge", contractTrace(call("r", `{"id":7}`), call("r", `{"id":7.0}`)),
+			cardinality, types.StatusHardFail, "r called 2× for id=7 (max 1)"},
+		{"large integers stay apart", contractTrace(call("r", `{"id":9007199254740993}`), call("r", `{"id":9007199254740992}`)),
+			cardinality, types.StatusPass, ""},
+		{"object keys group regardless of key order", contractTrace(call("r", `{"id":{"a":1,"b":2}}`), call("r", `{"id":{"b":2,"a":1}}`)),
+			cardinality, types.StatusHardFail, `for id={"a":1,"b":2}`},
+		{"null key is missing evidence", contractTrace(call("r", `{"id":null}`), call("r", `{"id":null}`)),
+			cardinality, types.StatusNotEvaluated, `have no argument "id"`},
+		{"per with min fails when never called", contractTrace(tools("x")...),
+			`{"check":"tool_cardinality","tool":"r","per":"id","min":1}`, types.StatusHardFail, "r called 0× (min 1)"},
+		{"per with max passes when never called", contractTrace(tools("x")...), cardinality, types.StatusPass, ""},
+		{"null argument is missing evidence", contractTrace(call("pay", `{"amount":null}`)),
+			`{"check":"arg_predicate","tool":"pay","arg":"amount","op":"lt","value":10}`, types.StatusNotEvaluated, `no argument "amount"`},
+		{"eq is exact on large integers", contractTrace(call("pay", `{"n":9007199254740993}`)),
+			`{"check":"arg_predicate","tool":"pay","arg":"n","op":"eq","value":9007199254740992}`, types.StatusHardFail, "n=9007199254740993"},
+		{"eq treats 1 and 1.0 as equal", contractTrace(call("pay", `{"n":1.0}`)),
+			`{"check":"arg_predicate","tool":"pay","arg":"n","op":"eq","value":1}`, types.StatusPass, ""},
+		{"lt is exact on decimals", contractTrace(call("pay", `{"n":0.30000000000000001}`)),
+			`{"check":"arg_predicate","tool":"pay","arg":"n","op":"lt","value":0.3}`, types.StatusHardFail, ""},
+		{"in compares strings and numbers apart", contractTrace(call("pay", `{"n":"1"}`)),
+			`{"check":"arg_predicate","tool":"pay","arg":"n","op":"in","value":[1]}`, types.StatusHardFail, "n=1"},
+	})
+}
+
+func TestTrajectoryPartialOrderRejectsContradictoryEdges(t *testing.T) {
+	trace := contractTrace(tools("a", "b", "c")...)
+	runContractCases(t, []contractCase{
+		{"two-edge cycle", trace, `{"check":"trajectory","mode":"partial_order","order":[["a","b"],["b","a"]]}`,
+			types.StatusHardFail, "contradictory: a → b → a"},
+		{"three-edge cycle", trace, `{"check":"trajectory","mode":"partial_order","order":[["a","b"],["b","c"],["c","a"]]}`,
+			types.StatusHardFail, "contradictory: a → b → c → a"},
+		{"diamond is a partial order", trace, `{"check":"trajectory","mode":"partial_order","order":[["a","b"],["a","c"],["b","c"]]}`,
+			types.StatusPass, ""},
+	})
+}
