@@ -114,6 +114,34 @@ export interface TraceMetadata {
   readonly timestamp?: string;
 }
 
+/** Trace v2: a step whose span ended in error. */
+export interface StepError {
+  readonly type: string;
+  readonly message?: string;
+}
+
+/** Trace v2: a recorded model request/response pair. */
+export interface Exchange {
+  readonly request: Record<string, unknown>;
+  readonly response: Record<string, unknown>;
+}
+
+/** Trace v2: one conversation turn and the indices of its steps. */
+export interface Turn {
+  readonly index: number;
+  readonly span_id?: string;
+  readonly input?: unknown;
+  readonly output?: unknown;
+  readonly step_indices: readonly number[];
+}
+
+/** Trace v2: control passing from one agent to another at an agent_call step. */
+export interface Handoff {
+  readonly from_agent: string;
+  readonly to_agent: string;
+  readonly step_index: number;
+}
+
 export interface Step {
   readonly type: string;
   readonly name: string;
@@ -125,6 +153,13 @@ export interface Step {
   readonly ended_at_ms?: number;
   readonly agent_id?: string;
   readonly agent_role?: string;
+  // Trace v2 (schema_version 2) fields.
+  readonly span_id?: string;
+  readonly parent_span_id?: string;
+  readonly tool_call_id?: string;
+  readonly retry_of?: number;
+  readonly error?: StepError;
+  readonly exchange?: Exchange;
 }
 
 export interface Trace {
@@ -136,6 +171,10 @@ export interface Trace {
   readonly steps: readonly Step[];
   readonly metadata?: TraceMetadata;
   readonly parent_trace_id?: string;
+  // Trace v2 (schema_version 2) fields.
+  readonly conversation_id?: string;
+  readonly turns?: readonly Turn[];
+  readonly handoffs?: readonly Handoff[];
 }
 
 export interface Assertion {
