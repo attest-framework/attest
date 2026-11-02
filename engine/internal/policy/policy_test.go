@@ -369,3 +369,52 @@ func TestEvaluate_UnknownStatusCountsAsNotEvaluated(t *testing.T) {
 		t.Errorf("detail = %q, want %q", r.Violations[0].Detail, want)
 	}
 }
+
+func TestValidate_RegressionOutOfRange_ReturnsError(t *testing.T) {
+	cases := map[string]*policy.RegressionRule{
+		"confidence 1":   {Confidence: ptr(1.0)},
+		"confidence 0":   {Confidence: ptr(0.0)},
+		"tolerance -0.1": {Tolerance: ptr(-0.1)},
+		"tolerance 1":    {Tolerance: ptr(1.0)},
+		"severity typo":  {Severity: "blokc"},
+	}
+	for name, rule := range cases {
+		t.Run(name, func(t *testing.T) {
+			p := &policy.Policy{Regression: rule}
+			if err := p.Validate(); err == nil {
+				t.Errorf("Validate(%+v) = nil", rule)
+			}
+		})
+	}
+}
+
+func TestEvaluate_RegressionRuleWithoutMatchingIDs_IsInconclusive(t *testing.T) {
+	p := &policy.Policy{Regression: &policy.RegressionRule{}}
+	delta := report.ComputeBaselineDelta("base", nil, nil)
+	results := []types.AssertionResult{{AssertionID: "new-id", Status: types.StatusPass}}
+
+	got := policy.Evaluate(p, results, 0, &delta)
+
+	if got.Verdict != report.TrialInconclusive || got.ExitCode() != policy.ExitWarn {
+		t.Errorf("verdict=%q exit=%d, want inconclusive and exit 2", got.Verdict, got.ExitCode())
+	}
+}
+
+func TestEvaluate_RegressionSeverityWarn_RegressedExitsTwo(t *testing.T) {
+	p := &policy.Policy{Regression: &policy.RegressionRule{Severity: policy.SeverityWarn}}
+	delta := report.BaselineDelta{BaselineTag: "base", BaselineCounts: map[string]report.PassCount{"a": {Passes: 20, Evaluated: 20}}}
+	var results []types.AssertionResult
+	for i := range 20 {
+		status := types.StatusHardFail
+		if i < 2 {
+			status = types.StatusPass
+		}
+		results = append(results, types.AssertionResult{AssertionID: "a", Status: status, Trial: i + 1})
+	}
+
+	got := policy.Evaluate(p, results, 0, &delta)
+
+	if got.Verdict != report.TrialRegressed || got.ExitCode() != policy.ExitWarn {
+		t.Errorf("verdict=%q exit=%d, want regressed downgraded to exit 2", got.Verdict, got.ExitCode())
+	}
+}

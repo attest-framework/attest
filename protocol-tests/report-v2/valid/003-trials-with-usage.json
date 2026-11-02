@@ -1,0 +1,89 @@
+{
+  "report_version": 2,
+  "timestamp": "2026-11-02T10:00:00Z",
+  "simulated": false,
+  "summary": {
+    "total": 3,
+    "passed": 1,
+    "soft_fail": 0,
+    "hard_fail": 1,
+    "not_evaluated": 1,
+    "usage": {
+      "model_calls": 2,
+      "input_tokens": 812,
+      "output_tokens": 64,
+      "cached_tokens": 0,
+      "cost_usd": 0.0008,
+      "retry_cost_usd": 0.0,
+      "unpriced_calls": 0,
+      "budget_refused": 1
+    }
+  },
+  "results": [
+    {
+      "assertion_id": "t_tone_0",
+      "status": "pass",
+      "score": 1.0,
+      "explanation": "t_tone_0 pass",
+      "cost": 0.0004,
+      "duration_ms": 1,
+      "layer": 6,
+      "type": "llm_judge",
+      "trial": 1,
+      "test_id": "tests/test_refund.py::test_tone",
+      "file": "tests/test_refund.py",
+      "line": 21
+    },
+    {
+      "assertion_id": "t_tone_0",
+      "status": "hard_fail",
+      "score": 0.0,
+      "explanation": "t_tone_0 hard_fail",
+      "cost": 0.0004,
+      "duration_ms": 1,
+      "layer": 6,
+      "type": "llm_judge",
+      "trial": 2,
+      "test_id": "tests/test_refund.py::test_tone",
+      "file": "tests/test_refund.py",
+      "line": 21,
+      "failure_class": "stochastic_variance"
+    },
+    {
+      "assertion_id": "t_tone_0",
+      "status": "not_evaluated",
+      "score": 0.0,
+      "explanation": "t_tone_0 not_evaluated",
+      "cost": 0.0,
+      "duration_ms": 1,
+      "layer": 6,
+      "type": "llm_judge",
+      "trial": 3,
+      "test_id": "tests/test_refund.py::test_tone",
+      "file": "tests/test_refund.py",
+      "line": 21,
+      "reason": "budget_exhausted"
+    }
+  ],
+  "tests": [
+    {
+      "test_id": "tests/test_refund.py::test_tone",
+      "name": "test_tone",
+      "file": "tests/test_refund.py",
+      "line": 21,
+      "outcome": "failed",
+      "assertion_ids": [
+        "t_tone_0",
+        "t_tone_0",
+        "t_tone_0"
+      ],
+      "duration_ms": 30,
+      "trials": 3,
+      "not_evaluated_reasons": [
+        "budget_exhausted"
+      ]
+    }
+  ],
+  "total_cost": 0.0008,
+  "total_duration_ms": 30
+}

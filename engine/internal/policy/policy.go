@@ -69,6 +69,33 @@ type Policy struct {
 	// not_evaluated: "warn" (default, exit 2) or "block" (exit 1). It does
 	// not inherit Severity, so an outage never blocks unless asked to.
 	NotEvaluated string `yaml:"not_evaluated" json:"not_evaluated,omitempty"`
+	// Regression compares each assertion's pass rate over fixed-N trials
+	// with the baseline (`--baseline <tag>`) using a Wilson interval:
+	// regressed (Severity, default block → exit 1), inconclusive (warn →
+	// exit 2) or pass. `regression: {}` applies the defaults.
+	Regression *RegressionRule `yaml:"regression" json:"regression,omitempty"`
+}
+
+// RegressionRule configures the statistical baseline comparison. Nil
+// fields take report.DefaultConfidence (0.95) and report.DefaultTolerance
+// (0.05). Severity applies to regressed assertions; inconclusive ones
+// always warn.
+type RegressionRule struct {
+	Confidence *float64 `yaml:"confidence" json:"confidence,omitempty"`
+	Tolerance  *float64 `yaml:"tolerance" json:"tolerance,omitempty"`
+	Severity   string   `yaml:"severity" json:"severity,omitempty"`
+}
+
+// resolved returns the rule with defaults applied.
+func (r *RegressionRule) resolved() report.RegressionRule {
+	out := report.RegressionRule{Confidence: report.DefaultConfidence, Tolerance: report.DefaultTolerance}
+	if r.Confidence != nil {
+		out.Confidence = *r.Confidence
+	}
+	if r.Tolerance != nil {
+		out.Tolerance = *r.Tolerance
+	}
+	return out
 }
 
 // LayerLimit is a per-layer ceiling on hard or soft fails. Both caps
@@ -98,9 +125,13 @@ type Violation struct {
 	Severity string `json:"severity"`
 }
 
-// Result is the outcome of evaluating a policy against a report.
+// Result is the outcome of evaluating a policy against a report. Verdict
+// and Trials are set when the policy has a regression rule and a baseline
+// was given: Verdict is pass, regressed or inconclusive.
 type Result struct {
-	Violations []Violation `json:"violations"`
+	Violations []Violation           `json:"violations"`
+	Verdict    string                `json:"verdict,omitempty"`
+	Trials     []report.TrialVerdict `json:"trials,omitempty"`
 }
 
 // ExitCode returns 0 when no violations exist, 1 when any blocking
@@ -181,6 +212,17 @@ func (p *Policy) Validate() error {
 	}
 	if p.MaxCostUSD != nil && *p.MaxCostUSD < 0 {
 		return fmt.Errorf("max_cost_usd must be non-negative; got %f", *p.MaxCostUSD)
+	}
+	if r := p.Regression; r != nil {
+		if r.Confidence != nil && (*r.Confidence <= 0 || *r.Confidence >= 1) {
+			return fmt.Errorf("regression.confidence must be between 0 and 1 exclusive; got %g", *r.Confidence)
+		}
+		if r.Tolerance != nil && (*r.Tolerance < 0 || *r.Tolerance >= 1) {
+			return fmt.Errorf("regression.tolerance must be in [0, 1); got %g", *r.Tolerance)
+		}
+		if err := validateSeverity("regression", r.Severity); err != nil {
+			return err
+		}
 	}
 	for class, lim := range p.FailureClasses {
 		if lim.Max != nil && *lim.Max < 0 {
@@ -311,6 +353,54 @@ func Evaluate(p *Policy, results []types.AssertionResult, totalCost float64, bas
 		}
 	}
 
+	// ── Statistical regression (fixed-N trials) ──
+	if p.Regression != nil && baseline != nil {
+		out.Trials = report.CompareTrials(report.CountPasses(results), baseline.BaselineCounts, p.Regression.resolved())
+		out.Verdict = report.OverallTrialVerdict(out.Trials)
+		out.Violations = append(out.Violations, trialViolations(out.Trials, baseline.BaselineTag,
+			resolvedSeverity(p.Regression.Severity, p.Severity))...)
+		if len(out.Trials) == 0 {
+			// Nothing was compared, so nothing was shown to hold.
+			out.Verdict = report.TrialInconclusive
+			out.Violations = append(out.Violations, Violation{
+				Rule: "regression.inconclusive",
+				Detail: fmt.Sprintf("no evaluated assertion id matches baseline %s; "+
+					"pin the baseline from a run of the same tests", baseline.BaselineTag),
+				Severity: SeverityWarn,
+			})
+		}
+	}
+
+	return out
+}
+
+// trialViolations reports regressed assertions at severity and
+// inconclusive ones as a warning.
+func trialViolations(trials []report.TrialVerdict, tag, severity string) []Violation {
+	var regressed, inconclusive []string
+	for _, t := range trials {
+		switch t.Verdict {
+		case report.TrialRegressed:
+			regressed = append(regressed, t.String())
+		case report.TrialInconclusive:
+			inconclusive = append(inconclusive, t.String())
+		}
+	}
+	var out []Violation
+	if len(regressed) > 0 {
+		out = append(out, Violation{
+			Rule:     "regression",
+			Detail:   fmt.Sprintf("regressed vs %s: %s", tag, strings.Join(regressed, "; ")),
+			Severity: severity,
+		})
+	}
+	if len(inconclusive) > 0 {
+		out = append(out, Violation{
+			Rule:     "regression.inconclusive",
+			Detail:   fmt.Sprintf("inconclusive vs %s (run more trials): %s", tag, strings.Join(inconclusive, "; ")),
+			Severity: SeverityWarn,
+		})
+	}
 	return out
 }
 
