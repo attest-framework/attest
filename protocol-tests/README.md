@@ -71,3 +71,12 @@ Go checks the wire format and `policyExit` (`engine/internal/policy/verdict_conf
 - `otlp-invalid/`: malformed OTLP/JSON inputs that conversion must reject with an error. They also seed the engine fuzz target.
 
 The engine tests in `engine/internal/trace/` (`trace_v2_schema_test.go`, `otlp_test.go`, `fuzz_test.go`) check them. Python checks the schema fixtures and that every golden trace survives `Trace.from_dict(...).to_dict()` unchanged (`tests/test_trace_v2.py`), and that `OTelAdapter.from_otlp` returns each golden trace and rejects each malformed input (`tests/integration/test_otel_engine.py`, with the engine built by `make engine`). TypeScript checks the schema fixtures and runs `OTelAdapter.fromOtlp` against the same golden and malformed files (`tests/conformance/trace-v2-conformance.test.ts`), so both SDKs produce identical trace v2 JSON for the same export.
+
+## Contract fixtures
+
+`contracts/traces/` holds traces for the behavior-contract trace checks (`proto/attest/v1/protocol-spec.md`, Layer 3):
+
+- `inc-1042-ts.trace.json`: the refund-desk INC-1042 TypeScript export converted by `attest-engine trace convert`. The Python export is `trace-v2/otlp/inc-1042-refund.trace.json`. In both, the second `issue_refund` retries the first after a payments timeout.
+- `inc-1042-corrected.trace.json`: the Python trace with the retry replaced by a `lookup_order` that finds the refund, so `issue_refund` runs once for `O-1042`.
+
+`engine/internal/assertion/trace_contracts_test.go` checks that `tool_cardinality` per `order_id` reports `issue_refund called 2× for order_id=O-1042 (max 1)` on both incident traces and passes on the corrected one.
