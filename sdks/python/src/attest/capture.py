@@ -440,13 +440,16 @@ def _finish(proc: subprocess.Popen[str], *, finalize: bool) -> tuple[str, str]:
 
     An engine that already exited cannot take ``finalize``; its output still says why.
     """
-    assert proc.stdin is not None
+    stdin = proc.stdin
+    assert stdin is not None
     try:
         if finalize:
-            proc.stdin.write("finalize\n")
-        proc.stdin.close()
+            stdin.write("finalize\n")
+        stdin.close()
     except BrokenPipeError:
         pass
+    # communicate() flushes stdin when it is set; it is closed (or broken) here.
+    proc.stdin = None
     return proc.communicate()
 
 
