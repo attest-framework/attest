@@ -30,9 +30,11 @@ The engine opens one listener on `127.0.0.1` (an ephemeral port) and runs the co
 
 | Variable | Points at | Read by |
 | --- | --- | --- |
-| `OPENAI_BASE_URL` | the recording proxy, `/openai/v1` | OpenAI SDKs (Chat Completions and Responses) |
-| `ANTHROPIC_BASE_URL` | the recording proxy, `/anthropic` | Anthropic SDKs (Messages) |
-| `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` | the trace receiver, `/v1/traces` | OpenTelemetry OTLP/HTTP exporters |
+| `OPENAI_BASE_URL` | the recording proxy, `/<token>/openai/v1` | OpenAI SDKs (Chat Completions and Responses) |
+| `ANTHROPIC_BASE_URL` | the recording proxy, `/<token>/anthropic` | Anthropic SDKs (Messages) |
+| `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` | the trace receiver, `/<token>/v1/traces` | OpenTelemetry OTLP/HTTP exporters |
+
+`<token>` is 128 random bits chosen for each capture; requests without it get 404 and are not recorded.
 
 The proxy forwards each model call to the upstream named by the same variable in the environment you ran `attest capture` from (default `https://api.openai.com/v1` and `https://api.anthropic.com`), so a capture against a local or scripted model server works by setting `OPENAI_BASE_URL` before the command. Streaming and non-streaming calls are both recorded; streamed events reach your agent as the upstream sends them. Your API key passes through to the upstream and is never written down.
 
@@ -149,8 +151,10 @@ Each exchange's `key` identifies the request: the `model`, the request parameter
 
 Request headers, which carry the API key, are never recorded. Everywhere else in the fixture, including object keys, capture replaces with `[redacted]`:
 
-- the value of every environment variable whose name ends in `KEY`, `TOKEN`, `SECRET` or `PASSWORD` (values of eight characters or more);
-- strings shaped like known credentials: `sk-…` (OpenAI, Anthropic), `AKIA…`, `AIza…`, `ghp_…` / `github_pat_…`, `xox…-`, `Bearer …`, PEM private keys.
+- the value of every environment variable whose name ends in `KEY`, `TOKEN`, `SECRET`, `PASSWORD`, `PASS`, `PWD`, `PASSWD`, `CREDENTIALS`, `CREDENTIAL`, `DSN` or `AUTH` (values of eight characters or more), and the password of any environment value that is a URL with userinfo. For `record()` this includes variables the block sets itself, such as keys loaded from a dotenv file;
+- strings shaped like known credentials: `sk-…` (OpenAI, Anthropic), `sk_live_` / `sk_test_` / `rk_live_` (Stripe), `gsk_` (Groq), `hf_` (Hugging Face), `xai-`, `AKIA…`, `AIza…`, `ghp_` / `gho_` / `ghs_` / `github_pat_`, `xox…-`, `Bearer …`, PEM private keys, and the password in any `scheme://user:password@`;
+- the value of command flags whose name contains `key`, `token`, `secret`, `password`, `pass`, `auth` or `credential` (`--api-key=…` or `--api-key …`), and of `key`, `api_key`, `apikey`, `token`, `access_token`, `sig` and `signature` query parameters in exchange paths, which are stored percent-decoded;
+- secrets a streamed response spells out across several deltas (Chat Completions content and tool-call arguments, Responses `*.delta` events, Anthropic text and `partial_json`): the delta text is rebuilt per stream, and the marker replaces the secret in the first delta it touches while the rest lose their part, so the events stay valid and replayable. A stream that does not parse fails the capture instead of being written.
 
 Check a fixture before committing it, for example in CI with the same secrets in the environment:
 
@@ -187,4 +191,4 @@ Keys are sorted and indentation is fixed, so capturing the same scripted run twi
 
 ## Limits
 
-The listener accepts loopback clients only (requests whose `Host` is not `localhost` or a loopback address are refused), serves only `/openai/v1/…`, `/anthropic/…` and `/v1/traces`, refuses request bodies over 32 MiB, records at most 32 MiB of each response (marked `truncated`), and holds at most 20,000 spans. An agent whose model client cannot change its base URL still gets its trace and drafted contracts through the receiver; its fixture has no exchanges.
+The listener accepts loopback clients only: requests whose `Host` is not `localhost` or a loopback address, and requests with an `Origin` header (a web page), are refused. It serves only `/<token>/openai/v1/…`, `/<token>/anthropic/…` and `/<token>/v1/traces`, admits 64 concurrent requests, refuses request bodies over 32 MiB, records at most 32 MiB of each response (marked `truncated`) and 512 MiB per capture (past which the capture fails), and holds at most 20,000 spans; OTLP protobuf bodies are checked against the span, attribute and nesting limits before they are decoded. An agent whose model client cannot change its base URL still gets its trace and drafted contracts through the receiver; its fixture has no exchanges.
