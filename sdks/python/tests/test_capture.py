@@ -5,6 +5,7 @@ from __future__ import annotations
 import ast
 import shutil
 import sys
+import threading
 import types
 from pathlib import Path
 
@@ -90,8 +91,9 @@ def test_dsl_call_unsupported_or_malformed_spec_raises_value_error(
         dsl_call(_contract(type_, spec))
 
 
-def test_dsl_call_rendered_call_emits_the_same_spec() -> None:
-    fixture = load_fixture(_INCIDENT)
+@pytest.mark.parametrize("path", sorted(_FIXTURES.glob("*.attest.json")), ids=lambda p: p.name)
+def test_dsl_call_rendered_call_emits_the_same_spec(path: Path) -> None:
+    fixture = load_fixture(path)
     chain = expect(fixture.trace)
 
     for contract in fixture.contracts:
@@ -159,6 +161,8 @@ def test_test_path_for_names_test_after_fixture(name: str, test_name: str) -> No
         (["--check-redaction=f.json"], False),
         (["--name", "x", "--serve"], False),
         (["--help"], False),
+        (["-serve"], False),
+        (["-check-redaction=f.json"], False),
     ],
 )
 def test_capture_writes_fixture_by_mode(args: list[str], writes: bool) -> None:
@@ -214,5 +218,46 @@ def test_record_engine_fails_to_start_raises_capture_error(
     monkeypatch.setattr("attest.engine_manager.resolve_engine", lambda path: str(path))
 
     with pytest.raises(CaptureError, match="did not start: capture: listener refused"):
+        with record("x", engine_path=str(engine)):
+            pass
+
+
+def test_render_pytest_newline_in_description_stays_in_comment(tmp_path: Path) -> None:
+    fixture = load_fixture(_INCIDENT)
+    hostile = Contract(
+        id="tools-called",
+        kind="tools",
+        description="calls x\nimport os; os.system('true')",
+        type="trace",
+        spec={"check": "trajectory", "mode": "superset", "tools": ["x"], "soft": False},
+    )
+    hostile_fixture = type(fixture)(**{**fixture.__dict__, "contracts": [hostile]})
+
+    source = render_pytest(hostile_fixture, tmp_path / "f.attest.json", tmp_path / "test_f.py")
+
+    tree = ast.parse(source)
+    assert not [n for n in ast.walk(tree) if isinstance(n, ast.Import) and n.names[0].name == "os"]
+    assert "# tools-called: calls x import os" in source
+
+
+def test_record_while_recording_raises_capture_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    lock = threading.Lock()
+    lock.acquire()
+    monkeypatch.setattr("attest.capture._RECORDING", lock)
+
+    with pytest.raises(CaptureError, match="already running"):
+        with record("x"):
+            pass
+
+
+def test_record_malformed_ready_line_raises_and_reaps_engine(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr("attest.engine_manager.resolve_engine", lambda path: str(path))
+    engine = tmp_path / "attest-engine"
+    engine.write_text("#!/bin/sh\necho 'not json'\ncat >/dev/null\necho 'old engine' >&2\n")
+    engine.chmod(0o755)
+
+    with pytest.raises(CaptureError, match="did not start: old engine"):
         with record("x", engine_path=str(engine)):
             pass

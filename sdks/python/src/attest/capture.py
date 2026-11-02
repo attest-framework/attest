@@ -18,6 +18,7 @@ import os
 import re
 import subprocess
 import sys
+import threading
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -173,6 +174,11 @@ def dsl_call(contract: Contract) -> str:
     raise ValueError(f"contract {contract.id}: no Python DSL call for {contract.type} spec")
 
 
+def _comment(text: str) -> str:
+    """Make captured text safe inside a ``#`` comment: one line, no control characters."""
+    return "".join(ch if ch.isprintable() else " " for ch in text)
+
+
 def _identifier(name: str) -> str:
     ident = re.sub(r"\W", "_", name).strip("_").lower() or "fixture"
     if ident[0].isdigit() or keyword.iskeyword(ident):
@@ -224,11 +230,11 @@ def render_pytest(fixture: Fixture, fixture_path: Path, test_path: Path) -> str:
     ]
     if skipped:
         lines += ["", "# Drafted contracts without a Python DSL call (left out):"]
-        lines += [f"# - {s}" for s in skipped]
+        lines += [f"# - {_comment(s)}" for s in skipped]
     lines += ["", "", "def contracts() -> ExpectChain:", "    return ("]
     lines.append("        expect(FIXTURE.trace)")
     for c, call in calls:
-        lines.append(f"        # {c.id}: {c.description}")
+        lines.append(f"        # {_comment(f'{c.id}: {c.description}')}")
         lines.append(f"        {call}")
     lines.append("    )")
 
@@ -334,7 +340,8 @@ def record(
     OpenTelemetry exporter read these when they are constructed, so construct them inside
     the block. On exit the global tracer provider is flushed, the variables are restored
     and the engine writes the fixture; with ``emit_test`` the drafted pytest file is
-    written next to the fixture directory unless one exists. If the block raises, the
+    written next to the fixture directory when the fixture is verified, unless one exists.
+    ``record()`` sets process-wide variables, so captures cannot overlap. If the block raises, the
     capture is abandoned and no fixture is written.
 
     Args:
@@ -352,8 +359,29 @@ def record(
     # attest.engine_manager imports the attest package, which imports this module.
     from attest.engine_manager import resolve_engine
 
-    engine = resolve_engine(engine_path)
-    args = [engine, "capture", "--serve", "--name", name, "--out-dir", os.fspath(out_dir)]
+    if not _RECORDING.acquire(blocking=False):
+        raise CaptureError("record() is already running; captures cannot overlap")
+    try:
+        with _serve(
+            name, resolve_engine(engine_path), os.fspath(out_dir), expect_fail, agent_id
+        ) as capture:
+            yield capture
+    finally:
+        _RECORDING.release()
+    if not capture.result.verified:
+        raise CaptureError(
+            f"capture {name}: fixture {capture.result.fixture} is not verified; no test drafted"
+        )
+    if emit_test and capture.result.fixture is not None:
+        capture.result.test_file = emit_pytest(capture.result.fixture)
+
+
+@contextmanager
+def _serve(
+    name: str, engine: str, out_dir: str, expect_fail: bool, agent_id: str | None
+) -> Iterator[Capture]:
+    """Run ``attest-engine capture --serve`` around the block and fill in the result."""
+    args = [engine, "capture", "--serve", "--name", name, "--out-dir", out_dir]
     if expect_fail:
         args.append("--expect-fail")
     if agent_id is not None:
@@ -366,13 +394,11 @@ def record(
         text=True,
     )
     assert proc.stdin is not None and proc.stdout is not None and proc.stderr is not None
-    ready = proc.stdout.readline()
-    if not ready:
-        proc.stdin.close()
-        stderr = proc.stderr.read()
-        proc.wait()
-        raise CaptureError(f"attest-engine capture --serve did not start: {stderr.strip()}")
-    env: dict[str, str] = json.loads(ready)["env"]
+    try:
+        env = _ready_env(proc.stdout.readline())
+    except CaptureError:
+        _, err = _finish(proc, finalize=False)
+        raise CaptureError(f"attest-engine capture --serve did not start: {err.strip()}") from None
     capture = Capture(name=name, env=env)
     saved = {k: os.environ.get(k) for k in env}
     os.environ.update(env)
@@ -381,23 +407,47 @@ def record(
         _flush_opentelemetry()
     except BaseException:
         _restore(saved)
-        proc.stdin.close()
-        proc.communicate()
+        _finish(proc, finalize=False)
         raise
     _restore(saved)
-    proc.stdin.write("finalize\n")
-    proc.stdin.close()
-    out, err = proc.communicate()
+    out, err = _finish(proc, finalize=True)
     sys.stderr.write(err)
     if not out.strip():
         raise CaptureError(f"capture {name} wrote no fixture: {err.strip()}")
     outcome = json.loads(out.strip().splitlines()[-1])
     capture.result.fixture = Path(outcome["fixture"])
-    capture.result.verified = bool(outcome["verified"])
-    if emit_test:
-        capture.result.test_file = emit_pytest(capture.result.fixture)
-    if proc.returncode != 0:
-        raise CaptureError(f"capture {name}: fixture {capture.result.fixture} is not verified")
+    capture.result.verified = proc.returncode == 0 and bool(outcome["verified"])
+
+
+# One capture at a time: record() sets process-wide environment variables, so a
+# second concurrent capture would save and later restore the first one's values.
+_RECORDING = threading.Lock()
+
+
+def _ready_env(line: str) -> dict[str, str]:
+    """Parse the engine's ready line, ``{"env": {...}}``."""
+    try:
+        env = json.loads(line)["env"]
+    except (ValueError, KeyError, TypeError):
+        raise CaptureError(f"unexpected ready line {line.strip()[:200]!r}") from None
+    if not isinstance(env, dict) or not all(isinstance(v, str) for v in env.values()):
+        raise CaptureError(f"unexpected ready line {line.strip()[:200]!r}")
+    return env
+
+
+def _finish(proc: subprocess.Popen[str], *, finalize: bool) -> tuple[str, str]:
+    """Close the engine's stdin (after ``finalize`` when asked) and reap it.
+
+    An engine that already exited cannot take ``finalize``; its output still says why.
+    """
+    assert proc.stdin is not None
+    try:
+        if finalize:
+            proc.stdin.write("finalize\n")
+        proc.stdin.close()
+    except BrokenPipeError:
+        pass
+    return proc.communicate()
 
 
 def _restore(saved: dict[str, str | None]) -> None:

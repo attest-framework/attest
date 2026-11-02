@@ -213,11 +213,12 @@ def test_record_incident_without_expect_fail_raises_and_writes_unverified_fixtur
 ) -> None:
     out_dir = tmp_path / "fixtures"
 
-    with pytest.raises(CaptureError, match="is not verified"):
-        with record("inc-9", out_dir=out_dir, emit_test=False):
+    with pytest.raises(CaptureError, match="is not verified; no test drafted"):
+        with record("inc-9", out_dir=out_dir):
             _scripted_agent(refunds=2)
 
     assert load_fixture(out_dir / "inc-9.attest.json").verified is False
+    assert not (tmp_path / "test_inc_9.py").exists()
 
 
 @pytest.mark.integration
@@ -271,3 +272,27 @@ def test_attest_capture_cli_from_otlp_drafts_test_that_reproduces(
         cwd=tmp_path,
     )
     assert run.returncode == 0, run.stdout + run.stderr
+
+
+@pytest.mark.integration
+def test_attest_capture_cli_unverified_drafts_no_test(engine_env: str, tmp_path: Path) -> None:
+    proc = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "attest",
+            "capture",
+            "--name",
+            "inc-1042",
+            "--from",
+            str(_INCIDENT_OTLP),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+        cwd=tmp_path,
+    )
+
+    assert proc.returncode == 1
+    assert "test: none drafted for unverified" in proc.stderr
+    assert not (tmp_path / "tests" / "attest" / "test_inc_1042.py").exists()
