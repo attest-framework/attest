@@ -39,8 +39,8 @@ from attest.tier import TIER_1, TIER_2, TIER_3, tier
 from attest.trace import TraceBuilder
 from attest.trace_tree import TraceTree
 
-__version__: str = "1.0.0-rc.1"
-ENGINE_VERSION: str = "1.0.0-rc.1"
+__version__: str = "1.0.0-rc.2"
+ENGINE_VERSION: str = "1.0.0-rc.2"
 
 __all__ = [
     # Core types

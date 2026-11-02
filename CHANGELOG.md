@@ -4,6 +4,10 @@ All notable changes to Attest are documented in this file. The format follows [K
 
 ## [Unreleased]
 
+## [1.0.0-rc.2] — 2026-11-02
+
+Second release candidate, themed "Evidence": check a trace's integrity, write behavior contracts over what the agent did, get statistical verdicts and judge budgets, and judge with OpenAI, Anthropic, Gemini or a local ACP agent.
+
 ### Added
 
 - Native Anthropic (Messages API) and Gemini (`generateContent`) judges: `ATTEST_JUDGE_PROVIDER=anthropic` or `gemini`, with keys from `ATTEST_JUDGE_API_KEY`, `ANTHROPIC_API_KEY`, or `GOOGLE_API_KEY` then `GEMINI_API_KEY`, `ATTEST_JUDGE_MODEL` required, and `ATTEST_JUDGE_BASE_URL` for gateways. Each provider has its own rate limit (`ATTEST_RATE_LIMIT_ANTHROPIC[_BURST]`, `ATTEST_RATE_LIMIT_GEMINI[_BURST]`); an outage is `not_evaluated: provider_unavailable`. `doctor` reports the new providers and key sources. See `docs/guides/judges.md`.
@@ -178,7 +182,9 @@ Tagged, not published to registries. No GitHub release was created.
 
 Versions 0.1.0 through 0.6.0 are described in their [GitHub releases](https://github.com/attest-framework/attest/releases); 0.6.1 exists only as a tag. 0.1.0–0.6.0 were published to PyPI; 0.3.0–0.6.0 were also published to npm.
 
-[Unreleased]: https://github.com/attest-framework/attest/compare/v1.0.0-rc...HEAD
+[Unreleased]: https://github.com/attest-framework/attest/compare/v1.0.0-rc.2...HEAD
+[1.0.0-rc.2]: https://github.com/attest-framework/attest/releases/tag/v1.0.0-rc.2
+[1.0.0-rc.1]: https://github.com/attest-framework/attest/releases/tag/v1.0.0-rc.1
 [1.0.0-rc]: https://github.com/attest-framework/attest/releases/tag/v1.0.0-rc
 [0.9.0]: https://github.com/attest-framework/attest/releases/tag/v0.9.0
 [0.8.0]: https://github.com/attest-framework/attest/releases/tag/v0.8.0
