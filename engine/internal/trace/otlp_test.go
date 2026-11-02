@@ -8,6 +8,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/attest-ai/attest/engine/pkg/types"
 )
@@ -361,5 +362,36 @@ func TestParseOTLP_AttributeCapCountsRepeatedKeys(t *testing.T) {
 	_, err := ParseOTLP(otlpDoc(`{"traceId":"4bf92f3577b34da6a3ce929d0e0e4736","spanId":"a000000000000001","startTimeUnixNano":"1","endTimeUnixNano":"2","attributes":[` + half + `],"attributes":[` + half + `]}`))
 	if err == nil || !strings.Contains(err.Error(), "more than") {
 		t.Fatalf("err = %v, want the per-span attribute cap", err)
+	}
+}
+
+// Stack re-check repro: a 1 MiB agent name copied into every handoff. The
+// running budget stops conversion before the copies are encoded.
+func TestConvert_HandoffFanOutStopsAtTheTraceLimit(t *testing.T) {
+	name := strings.Repeat("a", 1<<20)
+	spans := []string{spanJSON(t, "a000000000000001", "", "invoke_agent root", 0, 1_000_000,
+		map[string]any{"gen_ai.operation.name": "invoke_agent", "gen_ai.agent.name": name})}
+	for i := 2; i <= 1001; i++ {
+		spans = append(spans, spanJSON(t, fmt.Sprintf("a%015x", i), "a000000000000001", "invoke_agent child", i, i+1,
+			map[string]any{"gen_ai.operation.name": "invoke_agent", "gen_ai.agent.name": fmt.Sprintf("child-%d", i)}))
+	}
+	start := time.Now()
+	_, err := ConvertOTLP(otlpDoc(spans...), ConvertOptions{})
+	if err == nil || !strings.Contains(err.Error(), "converted trace would exceed") {
+		t.Fatalf("err = %v, want the converted trace size bound", err)
+	}
+	if elapsed := time.Since(start); elapsed > 5*time.Second {
+		t.Errorf("conversion took %s", elapsed)
+	}
+}
+
+func TestCheck_MessagesListAtMostTenIDs(t *testing.T) {
+	var spans []string
+	for i := 1; i <= 50; i++ {
+		spans = append(spans, fmt.Sprintf(`{"traceId":"4bf92f3577b34da6a3ce929d0e0e4736","spanId":"a%015x","name":"r","startTimeUnixNano":"%d","endTimeUnixNano":"%d"}`, i, i, i+1))
+	}
+	is := findIssue(checkData(t, otlpDoc(spans...)), IssueMultipleRoots, "")
+	if is == nil || strings.Count(is.Message, "a0000") != maxListedIDs || !strings.Contains(is.Message, "40 more") {
+		t.Errorf("multiple_roots message = %+v", is)
 	}
 }

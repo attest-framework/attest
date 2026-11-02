@@ -104,7 +104,7 @@ func Check(spans []Span) *CheckReport {
 	multiple := len(traceIDs(spans)) > 1
 	if multiple {
 		ids := traceIDs(spans)
-		c.add(SeverityError, IssueMultipleTraces, "", fmt.Sprintf("input holds %d traces (%s); check one trace per file", len(ids), strings.Join(ids, ", ")))
+		c.add(SeverityError, IssueMultipleTraces, "", fmt.Sprintf("input holds %d traces (%s); check one trace per file", len(ids), listIDs(ids)))
 	}
 	c.checkParentage()
 	// Pairing decodes recorded content; above the trace size limit the
@@ -181,7 +181,7 @@ func (c *checker) checkParentage() {
 	}
 	switch {
 	case len(roots) > 1:
-		c.add(SeverityWarning, IssueMultipleRoots, "", fmt.Sprintf("trace has %d root spans (%s)", len(roots), strings.Join(roots, ", ")))
+		c.add(SeverityWarning, IssueMultipleRoots, "", fmt.Sprintf("trace has %d root spans (%s)", len(roots), listIDs(roots)))
 	case len(roots) == 0 && !c.x.remoteRoot:
 		c.add(SeverityWarning, IssueNoRoot, "", "trace has no root span")
 	}
