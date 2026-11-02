@@ -2,6 +2,7 @@ package providers
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -15,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/attest-ai/attest/engine/internal/buildinfo"
 	"github.com/attest-ai/attest/engine/internal/llm"
 )
 
@@ -34,8 +36,10 @@ const acpStderrTail = 512
 // adapter) on the developer's own subscription. Each Complete spawns the
 // agent in an empty temporary directory, opens one session, sends one
 // prompt and collects the agent's message text. The client advertises no
-// file-system or terminal capability and rejects every permission request,
-// so the agent cannot act on the untrusted agent output inside the prompt.
+// file-system or terminal capability, refuses those requests and rejects
+// every permission request, which blocks actions routed through the client.
+// It is not a sandbox: tools the agent's own configuration allows without
+// asking still run as the user.
 type ACP struct {
 	argv  []string
 	model string
@@ -47,11 +51,11 @@ type ACP struct {
 // records "acp:<command name>". ACP judges use a personal subscription and
 // are refused when the CI environment variable is set.
 func NewACP(command, model string) (*ACP, error) {
-	if ci := os.Getenv("CI"); ci != "" {
+	if name, ok := ciMarker(); ok {
 		return nil, fmt.Errorf(
-			"ATTEST_JUDGE_PROVIDER=acp is refused because CI is set (CI=%q): an ACP judge runs on a developer's "+
+			"ATTEST_JUDGE_PROVIDER=acp is refused because CI is set (%s is defined): an ACP judge runs on a developer's "+
 				"personal Claude Code or Codex subscription and is for local use only; in CI use "+
-				"ATTEST_JUDGE_PROVIDER=openai, anthropic or gemini with an API key", ci)
+				"ATTEST_JUDGE_PROVIDER=openai, anthropic or gemini with an API key", name)
 	}
 	argv := strings.Fields(command)
 	if len(argv) == 0 {
@@ -61,11 +65,31 @@ func NewACP(command, model string) (*ACP, error) {
 	if err != nil {
 		return nil, fmt.Errorf("ATTEST_JUDGE_ACP_COMMAND: %q is not an executable on PATH: %w", argv[0], err)
 	}
-	argv[0] = path
+	// The agent runs in a temporary directory, so a relative path must be
+	// resolved against the engine's working directory now.
+	if argv[0], err = filepath.Abs(path); err != nil {
+		return nil, fmt.Errorf("ATTEST_JUDGE_ACP_COMMAND: resolve %q: %w", path, err)
+	}
 	if model == "" {
 		model = "acp:" + filepath.Base(path)
 	}
 	return &ACP{argv: argv, model: model}, nil
+}
+
+// CIEnvVars are the variables whose presence, with any value including
+// empty, marks a CI environment. CI is the convention most providers set;
+// the rest catch wrappers that drop CI but keep the vendor variable.
+var CIEnvVars = []string{
+	"CI", "GITHUB_ACTIONS", "GITLAB_CI", "BUILDKITE", "CIRCLECI", "JENKINS_URL", "TF_BUILD", "TEAMCITY_VERSION",
+}
+
+func ciMarker() (string, bool) {
+	for _, name := range CIEnvVars {
+		if _, ok := os.LookupEnv(name); ok {
+			return name, true
+		}
+	}
+	return "", false
 }
 
 // Name returns "acp".
@@ -87,6 +111,11 @@ func (p *ACP) Complete(ctx context.Context, req *llm.CompletionRequest) (*llm.Co
 	cmd := exec.CommandContext(ctx, p.argv[0], p.argv[1:]...)
 	cmd.Dir = dir
 	cmd.Env = agentEnv()
+	// Wrappers such as npx keep the pipes open in grandchildren: the agent
+	// gets its own process group, which cancellation kills as a whole, and
+	// Wait stops waiting for the pipes after acpShutdownGrace.
+	startInProcessGroup(cmd)
+	cmd.WaitDelay = acpShutdownGrace
 	stderr := &tailBuffer{max: acpStderrTail}
 	cmd.Stderr = stderr
 	stdin, err := cmd.StdinPipe()
@@ -102,6 +131,10 @@ func (p *ACP) Complete(ctx context.Context, req *llm.CompletionRequest) (*llm.Co
 		return nil, fmt.Errorf("acp: start agent: %w", err)
 	}
 	defer stopAgent(cmd, stdin, cancel)
+	// A timed-out judgment must not block on the agent: close its stdout so
+	// the read loop returns even if a descendant still holds the pipe.
+	stopReading := context.AfterFunc(ctx, func() { _ = stdout.Close() })
+	defer stopReading()
 
 	text, err := runJudgeTurn(newACPConn(stdin, stdout), dir, acpPromptText(req))
 	if err != nil {
@@ -110,28 +143,43 @@ func (p *ACP) Complete(ctx context.Context, req *llm.CompletionRequest) (*llm.Co
 		}
 		return nil, err
 	}
+	if err := ctx.Err(); err != nil {
+		return nil, fmt.Errorf("acp: %w", err)
+	}
 	return &llm.CompletionResponse{
-		Content:    text,
+		Content:    stripTerminalControl(text),
 		Model:      p.model,
 		DurationMS: time.Since(start).Milliseconds(),
 	}, nil
 }
 
-// agentEnv is the engine's environment minus ATTEST_JUDGE_API_KEY, which
-// belongs to API-key providers and is never handed to a local agent.
+// agentScrubbedKeys are provider API keys removed from the agent's
+// environment: they are attest's judge credentials, and an agent such as
+// Claude Code would otherwise bill them instead of the subscription.
+var agentScrubbedKeys = map[string]bool{
+	"OPENAI_API_KEY": true, "ANTHROPIC_API_KEY": true, "GEMINI_API_KEY": true, "GOOGLE_API_KEY": true,
+}
+
+// agentEnv is the engine's environment minus every ATTEST_JUDGE_* variable
+// and the provider API keys. The rest is inherited, because the agent needs
+// HOME, PATH and its own configuration to find the developer's login.
 func agentEnv() []string {
 	env := os.Environ()
 	out := env[:0:0]
 	for _, kv := range env {
-		if !strings.HasPrefix(kv, "ATTEST_JUDGE_API_KEY=") {
-			out = append(out, kv)
+		name, _, _ := strings.Cut(kv, "=")
+		if strings.HasPrefix(name, "ATTEST_JUDGE_") || agentScrubbedKeys[name] {
+			continue
 		}
+		out = append(out, kv)
 	}
 	return out
 }
 
 // stopAgent closes the agent's stdin, which ends a well-behaved agent, and
-// kills it if it has not exited within acpShutdownGrace.
+// kills its process group if it has not exited within acpShutdownGrace. The
+// group is killed only while its leader is alive: after the leader is
+// reaped its PID may be reused.
 func stopAgent(cmd *exec.Cmd, stdin io.Closer, cancel context.CancelFunc) {
 	_ = stdin.Close()
 	done := make(chan struct{})
@@ -172,7 +220,7 @@ func runJudgeTurn(c *acpConn, cwd, prompt string) (string, error) {
 			"fs":       map[string]bool{"readTextFile": false, "writeTextFile": false},
 			"terminal": false,
 		},
-		"clientInfo": map[string]string{"name": "attest-engine"},
+		"clientInfo": map[string]string{"name": "attest-engine", "version": buildinfo.Version},
 	}, &initRes); err != nil {
 		return "", err
 	}
@@ -262,8 +310,13 @@ func (c *acpConn) call(method string, params, result any) error {
 		return fmt.Errorf("acp %s: write: %w", method, err)
 	}
 	for c.r.Scan() {
+		line := bytes.TrimSpace(c.r.Bytes())
+		if len(line) == 0 || line[0] != '{' {
+			// Not a JSON-RPC message (a wrapper's banner, for example).
+			continue
+		}
 		var msg acpMessage
-		if err := json.Unmarshal(c.r.Bytes(), &msg); err != nil {
+		if err := json.Unmarshal(line, &msg); err != nil {
 			return fmt.Errorf("acp %s: agent wrote a line that is not JSON-RPC: %w", method, err)
 		}
 		switch {
@@ -297,26 +350,35 @@ func (c *acpConn) notify(msg acpMessage) error {
 	if msg.Method != "session/update" {
 		return nil
 	}
+	// content is an object for message chunks but an array for tool calls,
+	// so it is decoded only once the update kind is known.
 	var p struct {
 		SessionID string `json:"sessionId"`
 		Update    struct {
-			SessionUpdate string `json:"sessionUpdate"`
-			Content       struct {
-				Type string `json:"type"`
-				Text string `json:"text"`
-			} `json:"content"`
+			SessionUpdate string          `json:"sessionUpdate"`
+			Content       json.RawMessage `json:"content"`
 		} `json:"update"`
 	}
 	if err := json.Unmarshal(msg.Params, &p); err != nil {
 		return fmt.Errorf("decode session/update: %w", err)
 	}
-	if p.SessionID != c.sessionID || p.Update.SessionUpdate != "agent_message_chunk" || p.Update.Content.Type != "text" {
+	if p.SessionID != c.sessionID || p.Update.SessionUpdate != "agent_message_chunk" {
 		return nil
 	}
-	if c.text.Len()+len(p.Update.Content.Text) > maxResponseBytes {
+	var content struct {
+		Type string `json:"type"`
+		Text string `json:"text"`
+	}
+	if err := json.Unmarshal(p.Update.Content, &content); err != nil {
+		return fmt.Errorf("decode agent_message_chunk: %w", err)
+	}
+	if content.Type != "text" {
+		return nil
+	}
+	if c.text.Len()+len(content.Text) > maxResponseBytes {
 		return fmt.Errorf("agent message exceeds %d bytes", maxResponseBytes)
 	}
-	c.text.WriteString(p.Update.Content.Text)
+	c.text.WriteString(content.Text)
 	return nil
 }
 

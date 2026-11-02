@@ -25,9 +25,18 @@ func TestMain(m *testing.M) {
 	os.Exit(m.Run())
 }
 
+// clearCI unsets every CI marker for the test, restoring them afterwards.
+func clearCI(t *testing.T) {
+	t.Helper()
+	for _, k := range CIEnvVars {
+		t.Setenv(k, "")
+		os.Unsetenv(k)
+	}
+}
+
 func newStubACP(t *testing.T, scenario string) *ACP {
 	t.Helper()
-	t.Setenv("CI", "")
+	clearCI(t)
 	t.Setenv(acptest.StubEnv, scenario)
 	p, err := NewACP(os.Args[0], "")
 	if err != nil {
@@ -46,7 +55,9 @@ func acpJudgeRequest() *llm.CompletionRequest {
 
 func TestACP_Complete_StubAgent_ReturnsOnlySessionMessageText(t *testing.T) {
 	p := newStubACP(t, acptest.Judge)
-	t.Setenv("ATTEST_JUDGE_API_KEY", "secret-key-for-another-provider")
+	for _, k := range []string{"ATTEST_JUDGE_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY"} {
+		t.Setenv(k, "secret-key-that-must-not-reach-the-agent")
+	}
 
 	resp, err := p.Complete(context.Background(), acpJudgeRequest())
 
@@ -81,23 +92,34 @@ func TestACP_Complete_AgentFailures_ReturnErrors(t *testing.T) {
 	}
 }
 
-func TestNewACP_CISet_RefusesWithExplanation(t *testing.T) {
-	t.Setenv("CI", "true")
-
-	_, err := NewACP(os.Args[0], "")
-
-	if err == nil {
-		t.Fatal("NewACP succeeded with CI set")
+func TestNewACP_CIMarkerSet_RefusesWithExplanation(t *testing.T) {
+	cases := map[string][2]string{
+		"CI=true":          {"CI", "true"},
+		"empty CI":         {"CI", ""},
+		"GITHUB_ACTIONS":   {"GITHUB_ACTIONS", "true"},
+		"JENKINS_URL only": {"JENKINS_URL", "http://jenkins"},
 	}
-	for _, want := range []string{"CI is set", "local use only", "anthropic"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("error %q does not contain %q", err, want)
-		}
+	for name, kv := range cases {
+		t.Run(name, func(t *testing.T) {
+			clearCI(t)
+			t.Setenv(kv[0], kv[1])
+
+			_, err := NewACP(os.Args[0], "")
+
+			if err == nil {
+				t.Fatalf("NewACP succeeded with %s set", kv[0])
+			}
+			for _, want := range []string{"CI is set", kv[0] + " is defined", "local use only", "anthropic"} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("error %q does not contain %q", err, want)
+				}
+			}
+		})
 	}
 }
 
 func TestNewACP_InvalidCommand_Errors(t *testing.T) {
-	t.Setenv("CI", "")
+	clearCI(t)
 	cases := map[string]string{
 		"":                             "requires ATTEST_JUDGE_ACP_COMMAND",
 		"   ":                          "requires ATTEST_JUDGE_ACP_COMMAND",
@@ -113,7 +135,7 @@ func TestNewACP_InvalidCommand_Errors(t *testing.T) {
 }
 
 func TestNewACP_ModelLabel_RecordsConfiguredModel(t *testing.T) {
-	t.Setenv("CI", "")
+	clearCI(t)
 
 	p, err := NewACP(os.Args[0]+" --flag", "claude-subscription")
 

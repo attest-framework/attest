@@ -216,6 +216,11 @@ func buildProviders(logger *slog.Logger) (providers, error) {
 			return p, err
 		}
 		p.judge = judge
+		if cfg.provider == "acp" {
+			logger.Warn("acp judge: the agent is not sandboxed; it runs as you with your network access and its own "+
+				"configuration, so tools it may use without asking can act on untrusted agent output in judge prompts",
+				"command", cfg.acpCommand)
+		}
 		if cfg.insecure {
 			logger.Warn("insecure judge endpoint: plain http to a non-loopback host sends ATTEST_JUDGE_API_KEY in cleartext",
 				"base_url", cfg.baseURL)

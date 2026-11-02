@@ -47,7 +47,7 @@ The judge runs natively on OpenAI, Anthropic and Gemini, on any OpenAI-compatibl
 |---|---|---|
 | `ATTEST_JUDGE_PROVIDER` | `openai` (also OpenAI-compatible endpoints), `anthropic`, `gemini`, or `acp` (local only). Any other value is a startup error. | `openai` |
 | `ATTEST_JUDGE_ACP_COMMAND` | With `acp`: the command that starts the ACP agent, split on whitespace and run without a shell. | unset |
-| `CI` | When set to any value, `ATTEST_JUDGE_PROVIDER=acp` is a startup error. | unset |
+| `CI` (also `GITHUB_ACTIONS`, `GITLAB_CI`, `BUILDKITE`, `CIRCLECI`, `JENKINS_URL`, `TF_BUILD`, `TEAMCITY_VERSION`) | When any is defined, even empty, `ATTEST_JUDGE_PROVIDER=acp` is a startup error. | unset |
 | `ATTEST_JUDGE_API_KEY` | Judge API key. Takes precedence over the provider's standard key variable, and is required with `ATTEST_JUDGE_BASE_URL`. For an endpoint without authentication, set any non-empty value. | unset |
 | `OPENAI_API_KEY` | OpenAI's standard key variable. Used for the `openai` judge when `ATTEST_JUDGE_API_KEY` is unset and no `ATTEST_JUDGE_BASE_URL` is set, and for OpenAI embeddings. Never sent to a custom base URL. | unset |
 | `ANTHROPIC_API_KEY` | Anthropic's standard key variable, used for the `anthropic` judge under the same rules. | unset |

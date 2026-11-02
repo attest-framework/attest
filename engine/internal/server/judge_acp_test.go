@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	llmproviders "github.com/attest-ai/attest/engine/internal/llm/providers"
 	"github.com/attest-ai/attest/engine/internal/llm/providers/acptest"
 	"github.com/attest-ai/attest/engine/pkg/types"
 )
@@ -28,7 +29,10 @@ func TestMain(m *testing.M) {
 func configureACPJudge(t *testing.T, scenario string) {
 	t.Helper()
 	withoutProviders(t, "")
-	t.Setenv("CI", "")
+	for _, k := range llmproviders.CIEnvVars {
+		t.Setenv(k, "")
+		os.Unsetenv(k)
+	}
 	t.Setenv("ATTEST_JUDGE_PROVIDER", "acp")
 	t.Setenv("ATTEST_JUDGE_ACP_COMMAND", os.Args[0])
 	t.Setenv(acptest.StubEnv, scenario)

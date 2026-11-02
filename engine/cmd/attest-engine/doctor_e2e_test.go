@@ -12,6 +12,7 @@ import (
 
 	"github.com/santhosh-tekuri/jsonschema/v6"
 
+	llmproviders "github.com/attest-ai/attest/engine/internal/llm/providers"
 	"github.com/attest-ai/attest/engine/pkg/types"
 )
 
@@ -25,11 +26,20 @@ const (
 var providerEnv = []string{
 	"ATTEST_JUDGE_PROVIDER", "ATTEST_JUDGE_MODEL", "ATTEST_JUDGE_BASE_URL", "ATTEST_JUDGE_API_KEY",
 	"OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY",
-	"ATTEST_EMBEDDING_PROVIDER", "ATTEST_SIMULATION", "ATTEST_JUDGE_ACP_COMMAND", "CI",
+	"ATTEST_EMBEDDING_PROVIDER", "ATTEST_SIMULATION", "ATTEST_JUDGE_ACP_COMMAND",
 }
 
+// engineEnv is the test environment with every provider variable cleared
+// and every CI marker removed (an empty CI still counts as set), plus extra.
 func engineEnv(cacheDir string, extra ...string) []string {
-	env := append(os.Environ(), "ATTEST_CACHE_DIR="+cacheDir)
+	var env []string
+	for _, kv := range os.Environ() {
+		name, _, _ := strings.Cut(kv, "=")
+		if !slices.Contains(llmproviders.CIEnvVars, name) {
+			env = append(env, kv)
+		}
+	}
+	env = append(env, "ATTEST_CACHE_DIR="+cacheDir)
 	for _, k := range providerEnv {
 		env = append(env, k+"=")
 	}

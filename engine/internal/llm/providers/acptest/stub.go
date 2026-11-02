@@ -9,8 +9,11 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"time"
 )
 
 // StubEnv selects the scenario the stub agent plays.
@@ -31,7 +34,16 @@ const (
 	Refusal = "refusal"
 	// VersionMismatch answers initialize with protocol version 2.
 	VersionMismatch = "version-mismatch"
+	// Hang starts a child process that shares the stub's stdout and stderr
+	// (as npx does), writes the child's PID to the file named by PIDFileEnv,
+	// and never answers session/prompt.
+	Hang = "hang"
+	// sleepChild is the child Hang starts.
+	sleepChild = "sleep-child"
 )
+
+// PIDFileEnv names the file Hang writes its child's PID to.
+const PIDFileEnv = "ATTEST_ACP_STUB_PIDFILE"
 
 // SessionID is the session the stub creates.
 const SessionID = "stub-session"
@@ -57,6 +69,16 @@ type stub struct {
 
 // Serve plays scenario over r/w until the client closes r.
 func Serve(r io.Reader, w io.Writer, scenario string) error {
+	if scenario == sleepChild {
+		time.Sleep(time.Minute)
+		return nil
+	}
+	if scenario == Judge {
+		// Wrappers print banners; the client must skip non-JSON lines.
+		if _, err := io.WriteString(w, "npx: installed 1 package\n"); err != nil {
+			return err
+		}
+	}
 	s := &stub{in: bufio.NewScanner(r), out: w, scenario: scenario}
 	s.in.Buffer(make([]byte, 64<<10), 8<<20)
 	for {
@@ -159,6 +181,11 @@ func (s *stub) checkSessionNew(raw json.RawMessage) {
 
 func (s *stub) prompt(m message) error {
 	switch s.scenario {
+	case Hang:
+		if err := startSleepingChild(); err != nil {
+			return err
+		}
+		select {}
 	case PromptError:
 		return s.send(map[string]any{"id": m.ID, "error": map[string]any{"code": -32000, "message": "Authentication required"}})
 	case Refusal:
@@ -174,8 +201,10 @@ func (s *stub) prompt(m message) error {
 	if len(p.Prompt) != 1 || !strings.Contains(p.Prompt[0].Text, "score") {
 		s.violate("prompt does not carry the rubric and output as one text block")
 	}
-	if os.Getenv("ATTEST_JUDGE_API_KEY") != "" {
-		s.violate("ATTEST_JUDGE_API_KEY reached the agent")
+	for _, k := range []string{"ATTEST_JUDGE_API_KEY", "ATTEST_JUDGE_MODEL", "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY"} {
+		if _, ok := os.LookupEnv(k); ok {
+			s.violate(k + " reached the agent")
+		}
 	}
 	if err := s.askPermission(); err != nil {
 		return err
@@ -190,6 +219,13 @@ func (s *stub) prompt(m message) error {
 	}
 	half := len(verdict) / 2
 	updates := []map[string]any{
+		{"sessionId": SessionID, "update": map[string]any{
+			"sessionUpdate": "tool_call", "toolCallId": "call-1", "title": "Read file", "kind": "read", "status": "pending",
+			"content": []map[string]any{{"type": "content", "content": map[string]any{"type": "text", "text": "tool output {"}}},
+		}},
+		{"sessionId": SessionID, "update": map[string]any{
+			"sessionUpdate": "plan", "entries": []map[string]any{{"content": "judge", "priority": "high", "status": "pending"}},
+		}},
 		chunk(SessionID, "agent_thought_chunk", "thinking that must not reach the verdict {"),
 		chunk("other-session", "agent_message_chunk", "text from another session }"),
 		chunk(SessionID, "agent_message_chunk", verdict[:half]),
@@ -254,6 +290,16 @@ func (s *stub) askFileRead() error {
 		s.violate("fs/read_text_file was not refused")
 	}
 	return nil
+}
+
+func startSleepingChild() error {
+	child := exec.Command(os.Args[0])
+	child.Env = append(os.Environ(), StubEnv+"="+sleepChild)
+	child.Stdout, child.Stderr = os.Stdout, os.Stderr
+	if err := child.Start(); err != nil {
+		return err
+	}
+	return os.WriteFile(os.Getenv(PIDFileEnv), []byte(strconv.Itoa(child.Process.Pid)), 0o600)
 }
 
 func (s *stub) violate(v string) { s.violations = append(s.violations, v) }

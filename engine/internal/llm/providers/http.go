@@ -119,6 +119,18 @@ func stripControl(s string) string {
 	}, s)
 }
 
+// stripTerminalControl drops control characters except newline and tab, so
+// multi-line text from a local agent keeps its layout but cannot carry
+// terminal escape sequences into reports.
+func stripTerminalControl(s string) string {
+	return strings.Map(func(r rune) rune {
+		if r != '\n' && r != '\t' && unicode.IsControl(r) {
+			return -1
+		}
+		return r
+	}, s)
+}
+
 // truncate caps s at n bytes without splitting a UTF-8 sequence.
 func truncate(s string, n int) string {
 	if len(s) <= n {
