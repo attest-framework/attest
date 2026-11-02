@@ -100,8 +100,9 @@ func TestTruncate_DoesNotSplitUTF8(t *testing.T) {
 
 func TestComplete_GatewayEchoesKey_KeyRedactedFromError(t *testing.T) {
 	bodies := map[string]string{
-		"error.message": `{"error":{"type":"authentication_error","status":"UNAUTHENTICATED","message":"bad key secret-key for x-api-key"}}`,
-		"raw body":      `upstream rejected headers: x-api-key=secret-key x-goog-api-key=secret-key`,
+		"error.message":         `{"error":{"type":"authentication_error","status":"UNAUTHENTICATED","message":"bad key secret-key for x-api-key"}}`,
+		"raw body":              `upstream rejected headers: x-api-key=secret-key x-goog-api-key=secret-key`,
+		"zero-width inside key": "upstream rejected x-api-key=secret-\u200bkey",
 	}
 	for shape, body := range bodies {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
