@@ -336,3 +336,30 @@ func TestParseOTLP_FloodsRejectedWhileStreaming(t *testing.T) {
 		}
 	}
 }
+
+// Values pick() copies count toward the size limit, including the six-byte
+// escapes encoding/json writes for <, > and &.
+func TestConvert_CopiedAttributesCountTowardTheLimit(t *testing.T) {
+	escaped := strings.Repeat("<", MaxTraceSize/6+1) // 1.75 MB that encodes to 10.5 MB
+	_, err := ConvertOTLP(otlpDoc(spanJSON(t, "a000000000000001", "", "chat", 1, 2,
+		map[string]any{"gen_ai.operation.name": "chat", "gen_ai.completion": escaped})), ConvertOptions{})
+	if err == nil || !strings.Contains(err.Error(), "recorded content") {
+		t.Fatalf("err = %v, want the recorded content limit before conversion", err)
+	}
+}
+
+func TestParseOTLP_ErrorsEchoAtMost64BytesOfAValue(t *testing.T) {
+	huge := strings.Repeat("9", 1<<20) + "x"
+	_, err := ParseOTLP(otlpDoc(`{"traceId":"4bf92f3577b34da6a3ce929d0e0e4736","spanId":"a000000000000001","startTimeUnixNano":"1","endTimeUnixNano":"2","attributes":[{"key":"n","value":{"intValue":"` + huge + `"}}]}`))
+	if err == nil || len(err.Error()) > 300 || !strings.Contains(err.Error(), "bytes)") {
+		t.Fatalf("error is %d bytes: %.200v", len(fmt.Sprint(err)), err)
+	}
+}
+
+func TestParseOTLP_AttributeCapCountsRepeatedKeys(t *testing.T) {
+	half := strings.Repeat(`{"key":"k","value":{}},`, maxAttrsPerSpan/2) + `{"key":"k","value":{}}`
+	_, err := ParseOTLP(otlpDoc(`{"traceId":"4bf92f3577b34da6a3ce929d0e0e4736","spanId":"a000000000000001","startTimeUnixNano":"1","endTimeUnixNano":"2","attributes":[` + half + `],"attributes":[` + half + `]}`))
+	if err == nil || !strings.Contains(err.Error(), "more than") {
+		t.Fatalf("err = %v, want the per-span attribute cap", err)
+	}
+}

@@ -10,6 +10,7 @@ import (
 	"math"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 )
 
 // OTLP/JSON input limits. Input is untrusted (exported by any producer), so
@@ -237,6 +238,7 @@ type rawSpan struct {
 	attrs                           map[string]any
 	statusError                     bool
 	statusMessage                   string
+	nAttrs                          int
 }
 
 func (p *otlpParser) span() (Span, error) {
@@ -257,8 +259,11 @@ func (p *otlpParser) span() (Span, error) {
 		case "endTimeUnixNano":
 			r.end, err = p.unixNano(key)
 		case "attributes":
-			_, err = p.array("attributes", func(i int) error {
-				if i >= maxAttrsPerSpan {
+			// Counted across repeats of the key: a span cannot reset the cap
+			// by listing "attributes" again.
+			_, err = p.array("attributes", func(int) error {
+				r.nAttrs++
+				if r.nAttrs > maxAttrsPerSpan {
 					return fmt.Errorf("attributes: more than %d entries", maxAttrsPerSpan)
 				}
 				if err := p.keyValue(r.attrs, 0); err != nil {
@@ -339,7 +344,7 @@ func hexID(v string, width int, field string, optional bool) (string, error) {
 	for i := 0; i < len(v); i++ {
 		c := v[i]
 		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
-			return "", fmt.Errorf("%s is not hex: %q", field, v)
+			return "", fmt.Errorf("%s is not hex: %s", field, quoteShort(v))
 		}
 		if c != '0' {
 			allZero = false
@@ -374,7 +379,7 @@ func (p *otlpParser) unixNano(field string) (*uint64, error) {
 	}
 	n, err := strconv.ParseUint(text, 10, 64)
 	if err != nil {
-		return nil, fmt.Errorf("%s is not an unsigned integer: %q", field, text)
+		return nil, fmt.Errorf("%s is not an unsigned integer: %s", field, quoteShort(text))
 	}
 	return &n, nil
 }
@@ -394,7 +399,7 @@ func (p *otlpParser) statusCode() (bool, error) {
 	case json.Number:
 		n, err := strconv.ParseInt(v.String(), 10, 32)
 		if err != nil {
-			return false, fmt.Errorf("status.code is not an integer: %q", v.String())
+			return false, fmt.Errorf("status.code is not an integer: %s", quoteShort(v.String()))
 		}
 		return n == otlpStatusError, nil
 	}
@@ -425,7 +430,7 @@ func (p *otlpParser) keyValue(into map[string]any, depth int) error {
 		case "value":
 			val, err = p.anyValue(depth)
 			if err != nil && key != "" {
-				err = fmt.Errorf("%q: %w", key, err)
+				err = fmt.Errorf("%s: %w", quoteShort(key), err)
 			}
 		default:
 			err = p.skip()
@@ -568,7 +573,7 @@ func (p *otlpParser) intValue() (any, error) {
 	}
 	n, err := strconv.ParseInt(text, 10, 64)
 	if err != nil {
-		return nil, fmt.Errorf("intValue is not an int64: %q", text)
+		return nil, fmt.Errorf("intValue is not an int64: %s", quoteShort(text))
 	}
 	return n, nil
 }
@@ -584,7 +589,24 @@ func (p *otlpParser) doubleValue() (any, error) {
 	}
 	f, err := strconv.ParseFloat(n.String(), 64)
 	if err != nil || math.IsNaN(f) || math.IsInf(f, 0) {
-		return nil, fmt.Errorf("doubleValue is not a finite number: %q", n.String())
+		return nil, fmt.Errorf("doubleValue is not a finite number: %s", quoteShort(n.String()))
 	}
 	return f, nil
+}
+
+// maxEchoBytes bounds how much of an offending input value an error repeats.
+const maxEchoBytes = 64
+
+// quoteShort quotes a value from the input for an error message, keeping at
+// most maxEchoBytes of it so a huge value cannot flood stderr or an SDK
+// exception.
+func quoteShort(v string) string {
+	if len(v) <= maxEchoBytes {
+		return strconv.Quote(v)
+	}
+	cut := maxEchoBytes
+	for cut > 0 && !utf8.RuneStart(v[cut]) {
+		cut--
+	}
+	return fmt.Sprintf("%s… (%d bytes)", strconv.Quote(v[:cut]), len(v))
 }
