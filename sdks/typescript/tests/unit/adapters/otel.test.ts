@@ -77,6 +77,19 @@ describe("spansToOtlp()", () => {
     expect(encoded!["parentSpanId"]).toBe("0000000000000001");
   });
 
+  it("sends whole numbers beyond the safe integer range as doubles", () => {
+    const [encoded] = encodedSpans(
+      spansToOtlp([span({ name: "x", spanId: "0000000000000001", attributes: { big: 1e21 } })]),
+    );
+    expect(encoded!["attributes"]).toEqual([{ key: "big", value: { doubleValue: 1e21 } }]);
+  });
+
+  it("rejects a fractional HrTime naming the span", () => {
+    expect(() =>
+      spansToOtlp([span({ name: "chat", spanId: "0000000000000001", startTime: [1.5, 0] })]),
+    ).toThrow(/"chat"/);
+  });
+
   it("rejects non-finite numbers", () => {
     expect(() =>
       spansToOtlp([span({ name: "x", spanId: "0000000000000001", attributes: { cost: Number.NaN } })]),
@@ -148,6 +161,10 @@ describe("OTelAdapter engine call", () => {
 
     const sent = JSON.parse(fs.readFileSync(path.join(dir, "stdin"), "utf8")) as Record<string, unknown>;
     expect(encodedSpans(sent)[0]!["name"]).toBe("chat");
+  });
+
+  it("rejects a parsed export holding a non-finite number", async () => {
+    await expect(OTelAdapter.fromOtlp({ x: Number.NaN })).rejects.toThrow(RangeError);
   });
 
   it("raises OTLPConversionError with the engine's message on rejection", async () => {

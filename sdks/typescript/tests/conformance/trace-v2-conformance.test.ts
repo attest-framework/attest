@@ -9,7 +9,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { OTelAdapter } from "../../packages/core/src/adapters/otel.js";
+import { OTelAdapter, type OTelSpan } from "../../packages/core/src/adapters/otel.js";
 import { OTLPConversionError } from "../../packages/core/src/index.js";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../../../..");
@@ -49,6 +49,43 @@ describe("trace-v2 fixtures", () => {
   });
 });
 
+interface OtlpSpan {
+  traceId: string;
+  spanId: string;
+  parentSpanId?: string;
+  name: string;
+  startTimeUnixNano: string;
+  endTimeUnixNano: string;
+  attributes: { key: string; value: Record<string, unknown> }[];
+  status?: { code?: number; message?: string };
+}
+
+function attributeValue(v: Record<string, unknown>): string | number | boolean | string[] {
+  if ("stringValue" in v) return v["stringValue"] as string;
+  if ("intValue" in v) return Number(v["intValue"]);
+  if ("doubleValue" in v) return v["doubleValue"] as number;
+  if ("boolValue" in v) return v["boolValue"] as boolean;
+  const values = (v["arrayValue"] as { values: { stringValue: string }[] }).values;
+  return values.map((x) => x.stringValue);
+}
+
+const hrTime = (ns: string): [number, number] => [
+  Number(BigInt(ns) / 1_000_000_000n),
+  Number(BigInt(ns) % 1_000_000_000n),
+];
+
+function toOTelSpan(s: OtlpSpan): OTelSpan {
+  return {
+    name: s.name,
+    startTime: hrTime(s.startTimeUnixNano),
+    endTime: hrTime(s.endTimeUnixNano),
+    attributes: Object.fromEntries(s.attributes.map((a) => [a.key, attributeValue(a.value)])),
+    ...(s.parentSpanId ? { parentSpanContext: { spanId: s.parentSpanId } } : {}),
+    ...(s.status?.code ? { status: { code: s.status.code, message: s.status.message ?? "" } } : {}),
+    spanContext: () => ({ traceId: s.traceId, spanId: s.spanId }),
+  };
+}
+
 const enginePath = join(root, "bin", "attest-engine");
 const engineBuilt = existsSync(enginePath);
 
@@ -65,6 +102,17 @@ describe.skipIf(!engineBuilt)("OTelAdapter with the engine", () => {
   it.each(otlp.map((p) => [name(p), p]))("%s converts to its golden trace", async (_n, p) => {
     const trace = await OTelAdapter.fromOtlp(readFileSync(p, "utf8"));
     expect(trace).toEqual(load(p.replace(".otlp.json", ".trace.json")));
+  });
+
+  it("fromSpans output converts to the same golden trace as the export", async () => {
+    // Rebuild INC-1042 as OTel SDK spans, so spansToOtlp's encoding reaches the engine.
+    const path = join(fixtures, "otlp", "inc-1042-refund.otlp.json");
+    const doc = load(path) as { resourceSpans: { scopeSpans: { spans: OtlpSpan[] }[] }[] };
+    const spans = doc.resourceSpans[0]!.scopeSpans[0]!.spans.map(toOTelSpan);
+
+    const trace = await OTelAdapter.fromSpans(spans);
+
+    expect(trace).toEqual(load(path.replace(".otlp.json", ".trace.json")));
   });
 
   it.each(malformed.map((p) => [name(p), p]))("otlp-invalid/%s is rejected", async (_n, p) => {

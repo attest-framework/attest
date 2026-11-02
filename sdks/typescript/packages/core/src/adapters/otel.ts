@@ -59,10 +59,20 @@ export class OTelAdapter {
    * @param agentId Trace `agent_id`; defaults to the first turn's `gen_ai.agent.name`.
    * @throws OTLPConversionError when the engine rejects the export (malformed JSON, invalid
    *   ids or timestamps, more than one trace, non-numeric token counts, ...).
+   * @throws RangeError when a parsed export holds a non-finite number.
+   * @throws Error from `spawnSync` when the engine cannot start, times out or overflows its
+   *   output buffer.
    */
   static async fromOtlp(otlp: OTLPInput, agentId?: string): Promise<Trace> {
     const payload =
-      typeof otlp === "string" || otlp instanceof Uint8Array ? otlp : JSON.stringify(otlp);
+      typeof otlp === "string" || otlp instanceof Uint8Array
+        ? otlp
+        : JSON.stringify(otlp, (_key, v: unknown) => {
+            if (typeof v === "number" && !Number.isFinite(v)) {
+              throw new RangeError(`OTLP export holds a non-finite number: ${String(v)}`);
+            }
+            return v;
+          });
     const args = ["trace", "convert"];
     if (agentId !== undefined) args.push("--agent-id", agentId);
     args.push("-");
@@ -82,7 +92,10 @@ export class OTelAdapter {
   }
 }
 
-function hrTimeToNanos(time: readonly [number, number]): string {
+function hrTimeToNanos(time: readonly [number, number], spanName: string): string {
+  if (!Number.isSafeInteger(time[0]) || !Number.isSafeInteger(time[1])) {
+    throw new RangeError(`span ${JSON.stringify(spanName)} has a non-integer HrTime`);
+  }
   return (BigInt(time[0]) * 1_000_000_000n + BigInt(time[1])).toString();
 }
 
@@ -94,7 +107,7 @@ function anyValue(value: AttributeValue | null | undefined): Record<string, unkn
     if (!Number.isFinite(value)) {
       throw new RangeError(`OTel attribute value must be finite, got ${String(value)}`);
     }
-    return Number.isInteger(value) ? { intValue: String(value) } : { doubleValue: value };
+    return Number.isSafeInteger(value) ? { intValue: String(value) } : { doubleValue: value };
   }
   return { arrayValue: { values: value.map((v) => anyValue(v)) } };
 }
@@ -107,8 +120,8 @@ export function spansToOtlp(spans: readonly OTelSpan[]): Record<string, unknown>
       traceId: ctx.traceId,
       spanId: ctx.spanId,
       name: span.name,
-      startTimeUnixNano: hrTimeToNanos(span.startTime),
-      endTimeUnixNano: hrTimeToNanos(span.endTime),
+      startTimeUnixNano: hrTimeToNanos(span.startTime, span.name),
+      endTimeUnixNano: hrTimeToNanos(span.endTime, span.name),
       attributes: Object.entries(span.attributes ?? {})
         .filter(([, v]) => v !== undefined)
         .map(([key, v]) => ({ key, value: anyValue(v) })),

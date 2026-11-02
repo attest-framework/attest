@@ -259,6 +259,7 @@ trace = OTelAdapter.from_otlp(Path("incident.otlp.json"))
 TypeScript (`@attest-ai/core`) has the same adapter; both methods are async because they resolve the engine:
 
 ```typescript
+import { readFileSync } from "node:fs";
 import { OTelAdapter } from "@attest-ai/core";
 
 const trace = await OTelAdapter.fromSpans(exporter.getFinishedSpans(), "my-agent");
