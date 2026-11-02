@@ -101,6 +101,12 @@ def _scripted_agent(refunds: int) -> None:
         },
         {"Authorization": f"Bearer {os.environ['OPENAI_API_KEY']}"},
     )
+    _post(os.environ["OTEL_EXPORTER_OTLP_TRACES_ENDPOINT"], _incident_otlp(refunds), {})
+
+
+def _incident_otlp(refunds: int) -> dict[str, object]:
+    """An OTLP/JSON export of the INC-1042 shape with fresh ids and timestamps: one
+    lookup and ``refunds`` refunds of order O-9."""
     trace_id, root = secrets.token_hex(16), secrets.token_hex(8)
     start = time.time_ns()
 
@@ -156,11 +162,7 @@ def _scripted_agent(refunds: int) -> None:
         tool("issue_refund", f'{{"order_id":"O-9","to":"{_PLANTED_EMAIL}"}}', 4 + 2 * i)
         for i in range(refunds)
     ]
-    _post(
-        os.environ["OTEL_EXPORTER_OTLP_TRACES_ENDPOINT"],
-        {"resourceSpans": [{"scopeSpans": [{"spans": spans}]}]},
-        {},
-    )
+    return {"resourceSpans": [{"scopeSpans": [{"spans": spans}]}]}
 
 
 @pytest.mark.integration
@@ -208,14 +210,29 @@ def test_record_incident_twice_byte_identical_redacted_and_test_reproduces(
 
 
 @pytest.mark.integration
-def test_record_incident_without_expect_fail_raises_and_writes_unverified_fixture(
+def test_record_incident_without_expect_fail_drafts_observed_max_and_verifies(
+    engine_env: str, tmp_path: Path
+) -> None:
+    out_dir = tmp_path / "fixtures"
+
+    with record("inc-9", out_dir=out_dir) as cap:
+        _scripted_agent(refunds=2)
+
+    fixture = load_fixture(out_dir / "inc-9.attest.json")
+    [refund] = [c for c in fixture.contracts if c.id == "cardinality-issue_refund-per-order_id"]
+    assert cap.result.verified is True
+    assert refund.spec["max"] == 2
+
+
+@pytest.mark.integration
+def test_record_expect_fail_without_incident_raises_and_drafts_no_test(
     engine_env: str, tmp_path: Path
 ) -> None:
     out_dir = tmp_path / "fixtures"
 
     with pytest.raises(CaptureError, match="is not verified; no test drafted"):
-        with record("inc-9", out_dir=out_dir):
-            _scripted_agent(refunds=2)
+        with record("inc-9", out_dir=out_dir, expect_fail=True):
+            _scripted_agent(refunds=1)
 
     assert load_fixture(out_dir / "inc-9.attest.json").verified is False
     assert not (tmp_path / "test_inc_9.py").exists()
@@ -276,17 +293,12 @@ def test_attest_capture_cli_from_otlp_drafts_test_that_reproduces(
 
 @pytest.mark.integration
 def test_attest_capture_cli_unverified_drafts_no_test(engine_env: str, tmp_path: Path) -> None:
+    export = tmp_path / "healthy.otlp.json"
+    export.write_text(json.dumps(_incident_otlp(refunds=1)))
+
     proc = subprocess.run(
-        [
-            sys.executable,
-            "-m",
-            "attest",
-            "capture",
-            "--name",
-            "inc-1042",
-            "--from",
-            str(_INCIDENT_OTLP),
-        ],
+        [sys.executable, "-m", "attest", "capture", "--name", "healthy", "--expect-fail"]
+        + ["--from", str(export)],
         capture_output=True,
         text=True,
         check=False,
@@ -295,4 +307,4 @@ def test_attest_capture_cli_unverified_drafts_no_test(engine_env: str, tmp_path:
 
     assert proc.returncode == 1
     assert "test: none drafted for unverified" in proc.stderr
-    assert not (tmp_path / "tests" / "attest" / "test_inc_1042.py").exists()
+    assert not (tmp_path / "tests" / "attest" / "test_healthy.py").exists()
