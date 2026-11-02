@@ -592,6 +592,11 @@ The canonical trace format represents a single agent execution from input to out
 | `output` | object | yes | Agent output. Must contain at least one field. |
 | `metadata` | object | no | Trace-level metadata: tokens, cost, latency, model, timestamp. |
 | `parent_trace_id` | string \| null | no | Set when this trace is a sub-agent invocation from a parent trace. |
+| `conversation_id` | string | no | v2. Conversation the trace belongs to (`gen_ai.conversation.id`). |
+| `turns` | []Turn | no | v2. Conversation turns: `index`, optional `span_id`, `input`, `output`, and `step_indices` into `steps`. |
+| `handoffs` | []Handoff | no | v2. Agent handoffs: `from_agent`, `to_agent`, and `step_index` of the `agent_call` step that starts `to_agent`'s work. |
+
+`schema_version` 2 ("trace v2") adds the optional fields marked v2 here and in §3.4; the engine accepts versions 0–2 and a version 1 trace is unchanged. JSON Schema: `proto/attest/v1/trace-v2.schema.json`. A trace produced by `trace convert` always has `input` and `output` objects (`output.message` may be empty), `args` and `result` objects (never null), `metadata.duration_ms` (whole milliseconds, 0 when the span ends before it starts), `started_at_ms` and `ended_at_ms` on every step, and `step_indices` on every turn; `turns`, `handoffs`, `metadata` and every other optional field are omitted when empty. SDKs compare converted traces by parsed value, not bytes. `attest-engine trace convert <otlp.json>` produces a v2 trace from an OTLP/JSON export, and `attest-engine trace check` reports the export's integrity and evidence coverage (see `docs/guides/trace-check.md`).
 
 ### 3.3 Step Types
 
@@ -700,6 +705,12 @@ A sub-agent delegation. Contains a nested sub-trace for multi-agent evaluation.
 | `result` | object | no | Output from the step |
 | `sub_trace` | Trace | no | Only for `agent_call`. Nested trace of the sub-agent. |
 | `metadata` | object | no | Step-level timing and cost |
+| `span_id` | string | no | v2. 16-hex-character OTLP span id of the step. |
+| `parent_span_id` | string | no | v2. OTLP parent span id. |
+| `tool_call_id` | string | no | v2. Tool call id (`gen_ai.tool.call.id`) on `tool_call` steps. |
+| `retry_of` | int | no | v2. Index of the earlier failed step this step repeats. |
+| `error` | object | no | v2. `{ "type": string, "message"?: string }` when the step ended in error. |
+| `exchange` | object | no | v2. Recorded model `request` and `response` objects. |
 
 ---
 
@@ -1379,8 +1390,9 @@ The engine validates all traces before evaluation. Invalid traces return an `INV
 
 | schema_version | Status |
 |----------------|--------|
-| Current (1) | Fully supported |
-| Previous (0) | Supported with deprecation warning in engine logs |
+| Current (2) | Fully supported (trace v2: turns, handoffs, retries, recorded exchanges) |
+| 1 | Fully supported; v2 fields are optional, so a v1 trace is unchanged |
+| 0 | Supported with deprecation warning in engine logs |
 | Older | Rejected with `INVALID_TRACE` and migration message |
 
 ### Actionable Error Messages
@@ -1409,7 +1421,8 @@ The engine validates in this order and stops at the first failure:
 4. Size and count limits
 5. Field type and format validation
 6. Step-level validation (type, name, payload size)
-7. Sub-trace depth check
+7. Step references (`retry_of`, `turns[].step_indices`, `handoffs[].step_index` index existing steps; `retry_of` an earlier one)
+8. Sub-trace depth check
 
 This order ensures the most actionable error is surfaced first.
 

@@ -61,3 +61,13 @@ Go checks the wire format and `policyExit` (`engine/internal/policy/verdict_conf
 ## Report fixtures
 
 `report-v2/` holds examples of the report-v2 file (`proto/attest/v1/report-v2.schema.json`) that `pytest --attest-report`, the Vitest `AttestReporter` and the engine report generator write and that `attest policy evaluate` and the pr-annotate action read: every file in `report-v2/valid/` must match the schema and every file in `report-v2/invalid/` must not. Go (`engine/internal/report/report_v2_schema_test.go`, which also validates `GenerateJSONReport` output), Python (`tests/test_report_v2.py`) and TypeScript (`tests/conformance/report-v2-conformance.test.ts`) check them; the SDK tests also validate the reports their test runners write.
+
+## Trace fixtures
+
+`trace-v2/` covers the trace schema version 2 (`proto/attest/v1/trace-v2.schema.json`) and the engine's OTLP/JSON conversion:
+
+- `valid/` and `invalid/`: traces that must and must not match the schema.
+- `otlp/<name>.otlp.json` with `otlp/<name>.trace.json`: an OTLP/JSON export and the exact trace `attest-engine trace convert` produces for it. The golden traces must also match the schema. `inc-1042-refund` is the refund-desk INC-1042 incident export.
+- `otlp-invalid/`: malformed OTLP/JSON inputs that conversion must reject with an error. They also seed the engine fuzz target.
+
+The engine tests in `engine/internal/trace/` (`trace_v2_schema_test.go`, `otlp_test.go`, `fuzz_test.go`) check them.

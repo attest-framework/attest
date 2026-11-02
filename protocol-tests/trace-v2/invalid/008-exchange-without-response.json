@@ -1,0 +1,148 @@
+{
+  "schema_version": 2,
+  "trace_id": "trc_full",
+  "agent_id": "support",
+  "input": {
+    "messages": [
+      {
+        "role": "user",
+        "parts": [
+          {
+            "type": "text",
+            "content": "refund O-1"
+          }
+        ]
+      }
+    ]
+  },
+  "steps": [
+    {
+      "type": "llm_call",
+      "name": "chat gpt-4.1",
+      "args": {
+        "model": "gpt-4.1"
+      },
+      "result": {
+        "input_tokens": 10,
+        "output_tokens": 5
+      },
+      "metadata": {
+        "duration_ms": 4
+      },
+      "started_at_ms": 1000,
+      "ended_at_ms": 1004,
+      "span_id": "b000000000000002",
+      "parent_span_id": "b000000000000001",
+      "error": {
+        "type": "timeout",
+        "message": "deadline exceeded"
+      }
+    },
+    {
+      "type": "llm_call",
+      "name": "chat gpt-4.1",
+      "args": {
+        "model": "gpt-4.1"
+      },
+      "result": {
+        "input_tokens": 10,
+        "output_tokens": 7
+      },
+      "span_id": "b000000000000003",
+      "parent_span_id": "b000000000000001",
+      "retry_of": 0,
+      "exchange": {
+        "request": {
+          "model": "gpt-4.1",
+          "messages": [
+            {
+              "role": "user",
+              "parts": [
+                {
+                  "type": "text",
+                  "content": "refund O-1"
+                }
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "type": "tool_call",
+      "name": "refund",
+      "args": {
+        "order": "O-1"
+      },
+      "result": {
+        "ok": true
+      },
+      "tool_call_id": "call_1",
+      "span_id": "b000000000000004",
+      "parent_span_id": "b000000000000001"
+    },
+    {
+      "type": "agent_call",
+      "name": "billing",
+      "args": {
+        "agent_name": "billing"
+      },
+      "result": {},
+      "agent_id": "agt_billing",
+      "agent_role": "billing",
+      "sub_trace": {
+        "schema_version": 1,
+        "trace_id": "trc_sub",
+        "output": {
+          "message": "done"
+        },
+        "steps": []
+      }
+    }
+  ],
+  "output": {
+    "message": "Refunded."
+  },
+  "metadata": {
+    "total_tokens": 32,
+    "cost_usd": 0.002,
+    "latency_ms": 40,
+    "model": "gpt-4.1",
+    "timestamp": "2026-11-02T10:00:00Z",
+    "aggregate_tokens": 32,
+    "aggregate_cost_usd": 0.002,
+    "aggregate_latency_ms": 40,
+    "agent_count": 2
+  },
+  "parent_trace_id": null,
+  "conversation_id": "conv-1",
+  "turns": [
+    {
+      "index": 0,
+      "span_id": "b000000000000001",
+      "input": [
+        {
+          "role": "user"
+        }
+      ],
+      "output": [
+        {
+          "role": "assistant"
+        }
+      ],
+      "step_indices": [
+        0,
+        1,
+        2,
+        3
+      ]
+    }
+  ],
+  "handoffs": [
+    {
+      "from_agent": "support",
+      "to_agent": "billing",
+      "step_index": 3
+    }
+  ]
+}

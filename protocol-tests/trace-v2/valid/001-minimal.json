@@ -1,0 +1,8 @@
+{
+  "schema_version": 2,
+  "trace_id": "trc_min",
+  "output": {
+    "message": "hi"
+  },
+  "steps": []
+}
