@@ -12,6 +12,9 @@ import {
 } from "./proto/constants.js";
 import { AgentResult } from "./result.js";
 
+type TrajectoryMode = "strict" | "unordered" | "subset" | "superset";
+type ArgOperator = "eq" | "ne" | "lt" | "lte" | "gt" | "gte" | "in" | "not_in";
+
 export class ExpectChain {
   private readonly _result: AgentResult;
   private readonly _assertions: Assertion[] = [];
@@ -388,6 +391,106 @@ export class ExpectChain {
     return this.add(TYPE_TRACE, {
       check: "forbidden_tools",
       tools,
+      soft: opts?.soft ?? false,
+    });
+  }
+
+  // -- Layer 3: Behavior contracts (tool calls only, retries counted) --
+
+  /**
+   * Assert how many times a tool is called, per value of argument `per` when set.
+   *
+   * @example
+   * ```ts
+   * // fails with "issue_refund called 2× for order_id=O-1042 (max 1)"
+   * expect(result).toolCardinality("issue_refund", { per: "order_id", atMost: 1 });
+   * ```
+   */
+  toolCardinality(
+    tool: string,
+    opts: { per?: string; atMost?: number; atLeast?: number; soft?: boolean },
+  ): this {
+    if (opts.atMost === undefined && opts.atLeast === undefined) {
+      throw new Error("toolCardinality needs atMost, atLeast or both");
+    }
+    const spec: Record<string, unknown> = { check: "tool_cardinality", tool };
+    if (opts.per !== undefined) spec.per = opts.per;
+    if (opts.atLeast !== undefined) spec.min = opts.atLeast;
+    if (opts.atMost !== undefined) spec.max = opts.atMost;
+    spec.soft = opts.soft ?? false;
+    return this.add(TYPE_TRACE, spec);
+  }
+
+  /**
+   * Assert the tool-call trajectory matches `tools`: `strict` (same sequence,
+   * the default), `unordered` (same calls, any order), `subset` (no call
+   * outside `tools`) or `superset` (every call in `tools` made). Use
+   * {@link trajectoryPartialOrder} for ordering constraints.
+   */
+  trajectory(tools: string[], opts?: { mode?: TrajectoryMode; soft?: boolean }): this {
+    return this.add(TYPE_TRACE, {
+      check: "trajectory",
+      mode: opts?.mode ?? "strict",
+      tools,
+      soft: opts?.soft ?? false,
+    });
+  }
+
+  /**
+   * Assert every tool in `tools` and `order` is called and each
+   * `[before, after]` pair holds as in {@link toolCalledBefore}.
+   */
+  trajectoryPartialOrder(
+    order: Array<[string, string]>,
+    opts?: { tools?: string[]; soft?: boolean },
+  ): this {
+    const spec: Record<string, unknown> = {
+      check: "trajectory",
+      mode: "partial_order",
+      order: order.map(([before, after]) => [before, after]),
+    };
+    if (opts?.tools !== undefined) spec.tools = opts.tools;
+    spec.soft = opts?.soft ?? false;
+    return this.add(TYPE_TRACE, spec);
+  }
+
+  /** Assert every call to `after` has an earlier call to `before`; holds when `after` is never called. */
+  toolCalledBefore(before: string, after: string, opts?: { soft?: boolean }): this {
+    return this.add(TYPE_TRACE, { check: "tool_order", before, after, soft: opts?.soft ?? false });
+  }
+
+  /** Assert no block of `period` (1–4) tool calls repeats `minRepeats` (default 2) times in a row; A→B→A→B fails period 2. */
+  noToolCycles(period: number, opts?: { minRepeats?: number; soft?: boolean }): this {
+    return this.add(TYPE_TRACE, {
+      check: "cycle",
+      period,
+      min_repeats: opts?.minRepeats ?? 2,
+      soft: opts?.soft ?? false,
+    });
+  }
+
+  /** Assert at most `maxStreak` consecutive tool calls end in error (trace v2). */
+  maxToolFailureStreak(maxStreak: number, opts?: { soft?: boolean }): this {
+    return this.add(TYPE_TRACE, { check: "failure_streak", max: maxStreak, soft: opts?.soft ?? false });
+  }
+
+  /**
+   * Assert every call to `tool` has argument `arg` (a dot path) satisfying
+   * `op value`; holds when `tool` is never called.
+   */
+  toolArgSatisfies(
+    tool: string,
+    arg: string,
+    op: ArgOperator,
+    value: unknown,
+    opts?: { soft?: boolean },
+  ): this {
+    return this.add(TYPE_TRACE, {
+      check: "arg_predicate",
+      tool,
+      arg,
+      op,
+      value,
       soft: opts?.soft ?? false,
     });
   }
