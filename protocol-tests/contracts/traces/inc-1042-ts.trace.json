@@ -1,0 +1,237 @@
+{
+  "schema_version": 2,
+  "trace_id": "otel_8987a7e3685e7084",
+  "agent_id": "refund-desk",
+  "input": {},
+  "steps": [
+    {
+      "type": "llm_call",
+      "name": "chat refund-desk-scripted",
+      "args": {
+        "model": "refund-desk-scripted",
+        "operation": "chat"
+      },
+      "result": {
+        "finish_reasons": [
+          "tool_calls"
+        ],
+        "input_tokens": 86,
+        "model": "refund-desk-scripted",
+        "output_tokens": 43
+      },
+      "metadata": {
+        "duration_ms": 14
+      },
+      "started_at_ms": 1793604107800,
+      "ended_at_ms": 1793604107814,
+      "span_id": "04399e99258389c5",
+      "parent_span_id": "db8a4686a3ea875e"
+    },
+    {
+      "type": "tool_call",
+      "name": "lookup_order",
+      "args": {
+        "order_id": "O-1042"
+      },
+      "result": {
+        "amount_cents": 8400,
+        "currency": "USD",
+        "order_id": "O-1042",
+        "status": "delivered"
+      },
+      "metadata": {
+        "duration_ms": 3
+      },
+      "started_at_ms": 1793604107815,
+      "ended_at_ms": 1793604107818,
+      "span_id": "7e56d2a1dfb22f55",
+      "parent_span_id": "db8a4686a3ea875e",
+      "tool_call_id": "call_1"
+    },
+    {
+      "type": "llm_call",
+      "name": "chat refund-desk-scripted",
+      "args": {
+        "model": "refund-desk-scripted",
+        "operation": "chat"
+      },
+      "result": {
+        "finish_reasons": [
+          "tool_calls"
+        ],
+        "input_tokens": 168,
+        "model": "refund-desk-scripted",
+        "output_tokens": 58
+      },
+      "metadata": {
+        "duration_ms": 2
+      },
+      "started_at_ms": 1793604107818,
+      "ended_at_ms": 1793604107820,
+      "span_id": "44e72fca88f3ec27",
+      "parent_span_id": "db8a4686a3ea875e"
+    },
+    {
+      "type": "tool_call",
+      "name": "issue_refund",
+      "args": {
+        "amount_cents": 8400,
+        "order_id": "O-1042",
+        "reason": "item arrived damaged"
+      },
+      "result": {
+        "error": "payments_timeout",
+        "order_id": "O-1042"
+      },
+      "metadata": {
+        "duration_ms": 1203
+      },
+      "started_at_ms": 1793604107821,
+      "ended_at_ms": 1793604109024,
+      "span_id": "455be2f323853ba5",
+      "parent_span_id": "db8a4686a3ea875e",
+      "tool_call_id": "call_2",
+      "error": {
+        "type": "payments_timeout"
+      }
+    },
+    {
+      "type": "llm_call",
+      "name": "chat refund-desk-scripted",
+      "args": {
+        "model": "refund-desk-scripted",
+        "operation": "chat"
+      },
+      "result": {
+        "finish_reasons": [
+          "tool_calls"
+        ],
+        "input_tokens": 255,
+        "model": "refund-desk-scripted",
+        "output_tokens": 58
+      },
+      "metadata": {
+        "duration_ms": 3
+      },
+      "started_at_ms": 1793604109025,
+      "ended_at_ms": 1793604109028,
+      "span_id": "5e39b071ede57520",
+      "parent_span_id": "db8a4686a3ea875e"
+    },
+    {
+      "type": "tool_call",
+      "name": "issue_refund",
+      "args": {
+        "amount_cents": 8400,
+        "order_id": "O-1042",
+        "reason": "item arrived damaged"
+      },
+      "result": {
+        "amount_cents": 8400,
+        "order_id": "O-1042",
+        "refund_id": "R-0002",
+        "status": "committed"
+      },
+      "metadata": {
+        "duration_ms": 2
+      },
+      "started_at_ms": 1793604109028,
+      "ended_at_ms": 1793604109030,
+      "span_id": "535e83551003c6ae",
+      "parent_span_id": "db8a4686a3ea875e",
+      "tool_call_id": "call_3",
+      "retry_of": 3
+    },
+    {
+      "type": "llm_call",
+      "name": "chat refund-desk-scripted",
+      "args": {
+        "model": "refund-desk-scripted",
+        "operation": "chat"
+      },
+      "result": {
+        "finish_reasons": [
+          "tool_calls"
+        ],
+        "input_tokens": 352,
+        "model": "refund-desk-scripted",
+        "output_tokens": 63
+      },
+      "metadata": {
+        "duration_ms": 2
+      },
+      "started_at_ms": 1793604109031,
+      "ended_at_ms": 1793604109033,
+      "span_id": "4fe5e419f0964b5e",
+      "parent_span_id": "db8a4686a3ea875e"
+    },
+    {
+      "type": "tool_call",
+      "name": "notify_customer",
+      "args": {
+        "message": "Your refund of $84.00 for order O-1042 has been processed.",
+        "order_id": "O-1042"
+      },
+      "result": {
+        "notification_id": "N-0001",
+        "status": "sent"
+      },
+      "metadata": {
+        "duration_ms": 1
+      },
+      "started_at_ms": 1793604109034,
+      "ended_at_ms": 1793604109035,
+      "span_id": "932a1cc2d015de83",
+      "parent_span_id": "db8a4686a3ea875e",
+      "tool_call_id": "call_4"
+    },
+    {
+      "type": "llm_call",
+      "name": "chat refund-desk-scripted",
+      "args": {
+        "model": "refund-desk-scripted",
+        "operation": "chat"
+      },
+      "result": {
+        "finish_reasons": [
+          "stop"
+        ],
+        "input_tokens": 442,
+        "model": "refund-desk-scripted",
+        "output_tokens": 20
+      },
+      "metadata": {
+        "duration_ms": 2
+      },
+      "started_at_ms": 1793604109036,
+      "ended_at_ms": 1793604109038,
+      "span_id": "13bb46a12dbfcddc",
+      "parent_span_id": "db8a4686a3ea875e"
+    }
+  ],
+  "output": {
+    "message": ""
+  },
+  "metadata": {
+    "total_tokens": 1545,
+    "latency_ms": 1239,
+    "model": "refund-desk-scripted"
+  },
+  "turns": [
+    {
+      "index": 0,
+      "span_id": "db8a4686a3ea875e",
+      "step_indices": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8
+      ]
+    }
+  ]
+}

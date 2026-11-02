@@ -891,6 +891,14 @@ Structural checks on the sequence and properties of steps in the trace. Detects 
 | `tools` | []string | depends | Tool names for ordering checks |
 | `tool` | string | depends | Tool name for per-tool checks |
 | `max_repetitions` | int | depends | Maximum times a step may repeat |
+| `per` | string | no | `tool_cardinality`: dot path of the argument that groups calls (for example `order_id`) |
+| `min`, `max` | int | depends | `tool_cardinality` bounds per group (at least one); `failure_streak` uses `max` |
+| `mode` | string | depends | `trajectory`: `strict`, `unordered`, `subset`, `superset` or `partial_order` |
+| `order` | [][2]string | depends | `trajectory` mode `partial_order`: `[before, after]` pairs |
+| `before`, `after` | string | depends | `tool_order` tool names |
+| `period` | int | depends | `cycle` period, 1–4 |
+| `min_repeats` | int | no | `cycle`: consecutive repetitions that count as a cycle. Default `2`. |
+| `arg`, `op`, `value` | string, string, any | depends | `arg_predicate`: argument dot path, operator (`eq`, `ne`, `lt`, `lte`, `gt`, `gte`, `in`, `not_in`) and JSON operand |
 | `transitions` | []Transition | depends | Expected state machine transitions |
 | `soft` | bool | no | If `true`, failure is `soft_fail`. Default: `false`. |
 
@@ -904,6 +912,14 @@ Structural checks on the sequence and properties of steps in the trace. Detects 
 | `no_duplicates` | No tool is called more than once | none |
 | `required_tools` | All listed tools were called at least once | `tools` |
 | `forbidden_tools` | None of the listed tools were called | `tools` |
+| `tool_cardinality` | `tool` is called between `min` and `max` times, counted per value of argument `per` when set. Explanation on failure: `issue_refund called 2× for order_id=O-1042 (max 1)`. A call without the `per` argument makes the check `not_evaluated: missing_evidence` unless another group already fails. | `tool`, `min` and/or `max` |
+| `trajectory` | The tool calls match `tools`: `strict` (same sequence), `unordered` (same calls, any order), `subset` (no call outside `tools`, counting repeats), `superset` (every call in `tools` made, counting repeats), or `partial_order` (every tool in `tools` and `order` called, each `order` pair holding as in `tool_order`) | `mode`; `tools` (`partial_order`: `order`) |
+| `tool_order` | Every call to `after` has an earlier call to `before`; holds when `after` is never called | `before`, `after` |
+| `cycle` | No block of `period` tool calls repeats `min_repeats` or more times in a row (A→B→A→B fails `period: 2`). A block that is itself a shorter repetition (A A) is left to the shorter period. | `period` |
+| `failure_streak` | At most `max` consecutive tool calls end in `error`. Needs trace `schema_version` 2; an earlier trace is `not_evaluated: missing_evidence`. | `max` |
+| `arg_predicate` | Every call to `tool` has argument `arg` satisfying `op value`; holds when `tool` is never called. A call without the argument is `not_evaluated: missing_evidence` unless another call already fails. | `tool`, `arg`, `op`, `value` |
+
+The original six checks match steps of every type by name. The behavior-contract checks (`tool_cardinality` through `arg_predicate`) match `tool_call` steps only, so model calls between tool calls do not affect them, and a retried call (`retry_of`) counts as a call.
 
 **Examples:**
 
@@ -939,6 +955,20 @@ No duplicate state changes:
   "type": "trace",
   "spec": {
     "check": "no_duplicates"
+  }
+}
+```
+
+At most one refund per order:
+```json
+{
+  "assertion_id": "one_refund_per_order",
+  "type": "trace",
+  "spec": {
+    "check": "tool_cardinality",
+    "tool": "issue_refund",
+    "per": "order_id",
+    "max": 1
   }
 }
 ```
