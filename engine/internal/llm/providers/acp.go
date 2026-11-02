@@ -344,7 +344,7 @@ func (c *acpConn) call(method string, params, result any) error {
 		switch {
 		case msg.Method != "" && len(msg.ID) > 0:
 			if err := c.answer(msg); err != nil {
-				return fmt.Errorf("acp %s: answer %s: %w", method, msg.Method, err)
+				return fmt.Errorf("acp %s: answer %s: %w", method, truncate(stripControl(msg.Method), maxErrorDetail), err)
 			}
 		case msg.Method != "":
 			if err := c.notify(msg); err != nil {
