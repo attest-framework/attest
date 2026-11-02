@@ -176,6 +176,7 @@ class TestUntrustedMarkdown(unittest.TestCase):
 class TestReviewBodyLimit(unittest.TestCase):
     def test_many_long_failures_keep_whole_blocks_and_count_the_rest(self) -> None:
         long = "x" * 5000
+        live = "@org/team http://e [x](y) <img src=x> "
         failures = [
             {
                 "assertion_id": f"a{i}",
@@ -187,7 +188,9 @@ class TestReviewBodyLimit(unittest.TestCase):
                 "expected": long,
                 "actual": long,
                 "explanation": long,
-                "suggested_action": long if i < 7 else long + " @org/team http://e [x](y)",
+                # First block is rendered, last is counted; both carry live markdown
+                # ahead of the 280-char cut so it reaches the rendered text.
+                "suggested_action": live + long if i in (0, 7) else long,
             }
             for i in range(8)
         ]
@@ -200,8 +203,9 @@ class TestReviewBodyLimit(unittest.TestCase):
         shown = body.count("**Attest assertion failed:")
         self.assertGreater(shown, 0)
         self.assertIn(f"… and {8 - shown} more failure(s)", body)
+        self.assertIn(f"`{live}", body)
         outside = "".join(body.split("`")[0::2])
-        for token in ("@", "http", "["):
+        for token in ("@", "http", "[", "<"):
             self.assertNotIn(token, outside)
 
     def test_single_block_is_bounded_below_the_limit(self) -> None:
