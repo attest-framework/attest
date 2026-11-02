@@ -245,13 +245,15 @@ uv add 'attest-ai[otel]>=1.0.0rc1'
 **From collected spans or an OTLP/JSON export:**
 
 ```python
+from pathlib import Path
+
 from attest import OTelAdapter
 
 # finished opentelemetry-sdk spans of one trace, e.g. from an InMemorySpanExporter
 trace = OTelAdapter.from_spans(collected_spans, agent_id="my-agent")
 
-# an OTLP/JSON export (path, JSON text, bytes or parsed mapping)
-trace = OTelAdapter.from_otlp("incident.otlp.json")
+# an OTLP/JSON export: a pathlib.Path, JSON text (str), bytes or a parsed mapping
+trace = OTelAdapter.from_otlp(Path("incident.otlp.json"))
 ```
 
 The conversion runs in the engine (`attest-engine trace convert`), the same mapping the TypeScript adapter and `attest trace check` use, so every SDK produces the same trace v2 for the same spans. It follows the current OpenTelemetry GenAI semantic conventions: `chat`, `text_completion`, `generate_content` and `embeddings` spans become `llm_call` steps, `execute_tool` spans `tool_call` steps with `args` and `result` from `gen_ai.tool.call.arguments` / `gen_ai.tool.call.result`, nested `invoke_agent` spans `agent_call` steps with handoffs, and top-level `invoke_agent` spans conversation turns. Spans without GenAI attributes are skipped. Malformed input raises `attest.exceptions.OTLPConversionError` with the engine's message. The full mapping, and `attest trace check` for integrity and coverage, are in [trace-check.md](trace-check.md).

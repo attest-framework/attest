@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import stat
+import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -237,6 +238,23 @@ class TestEngineCall:
             OTelAdapter.from_otlp(source)
             assert (work / "stdin").read_text() == '{"resourceSpans":[1]}'
 
+    def test_from_otlp_engine_output_not_json_raises_otlp_conversion_error(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _script_engine(tmp_path, monkeypatch, "not json")
+
+        with pytest.raises(OTLPConversionError, match="not JSON"):
+            OTelAdapter.from_otlp({"resourceSpans": []})
+
+    def test_from_otlp_engine_timeout_raises_otlp_conversion_error(self) -> None:
+        timeout = subprocess.TimeoutExpired(cmd="attest-engine", timeout=60)
+        with (
+            patch("attest.engine_manager.resolve_engine", return_value="attest-engine"),
+            patch("subprocess.run", side_effect=timeout),
+            pytest.raises(OTLPConversionError, match="timed out"),
+        ):
+            OTelAdapter.from_otlp({"resourceSpans": []})
+
     def test_from_otlp_engine_rejection_raises_otlp_conversion_error(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -343,6 +361,18 @@ class TestToOtelSpans:
             "gen_ai.response.model": "gpt-4.1-2025",
             "gen_ai.response.finish_reasons": ["stop"],
         }
+
+    def test_export_tool_step_keeps_non_object_result_and_omits_absent_args(self) -> None:
+        trace = Trace(
+            trace_id="trc",
+            output={"message": ""},
+            steps=[Step(type=STEP_TOOL_CALL, name="t", result="plain")],  # type: ignore[arg-type]
+        )
+
+        attrs = _spans_by_name(trace)["execute_tool t"]["attributes"]
+
+        assert attrs["gen_ai.tool.call.result"] == '"plain"'
+        assert "gen_ai.tool.call.arguments" not in attrs
 
     def test_export_derives_trace_id_from_otel_prefix(self) -> None:
         trace = Trace(trace_id="otel_4bf92f3577b34da6", output={"message": ""})

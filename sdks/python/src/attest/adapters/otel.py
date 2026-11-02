@@ -65,7 +65,9 @@ class OTelAdapter(BaseAdapter):
             agent_id: Trace agent_id; defaults to the first turn's ``gen_ai.agent.name``.
 
         Raises:
-            OTLPConversionError: The engine rejected the spans.
+            OTLPConversionError: The engine rejected the spans, timed out or printed no trace.
+            FileNotFoundError: No engine was found and download is disabled.
+            EngineVersionMismatchError: The engine found is not this SDK's version.
         """
         _require_otel()
         return cls.from_otlp(_readable_spans_to_otlp(spans), agent_id=agent_id)
@@ -84,7 +86,9 @@ class OTelAdapter(BaseAdapter):
         ``status`` (``{"code": 2, "message": ...}`` for errors).
 
         Raises:
-            OTLPConversionError: The engine rejected the spans.
+            OTLPConversionError: The engine rejected the spans, timed out or printed no trace.
+            FileNotFoundError: No engine was found and download is disabled.
+            EngineVersionMismatchError: The engine found is not this SDK's version.
         """
         return cls.from_otlp(_span_dicts_to_otlp(span_dicts), agent_id=agent_id)
 
@@ -97,12 +101,16 @@ class OTelAdapter(BaseAdapter):
         """Convert an OTLP/JSON export (``resourceSpans`` → ``scopeSpans`` → ``spans``).
 
         Args:
-            otlp: The export as a parsed mapping, JSON text or bytes, or a file path.
+            otlp: The export as a parsed mapping, JSON text (``str``) or bytes, or a file
+                path as a ``pathlib.Path`` (a ``str`` is always JSON text).
             agent_id: Trace agent_id; defaults to the first turn's ``gen_ai.agent.name``.
 
         Raises:
             OTLPConversionError: The engine rejected the export (malformed JSON, invalid
-                ids or timestamps, more than one trace, non-numeric token counts, ...).
+                ids or timestamps, more than one trace, non-numeric token counts, ...),
+                timed out, or printed no trace.
+            FileNotFoundError: No engine was found and download is disabled.
+            EngineVersionMismatchError: The engine found is not this SDK's version.
         """
         if isinstance(otlp, Mapping):
             payload = json.dumps(otlp, allow_nan=False).encode("utf-8")
@@ -126,15 +134,25 @@ def _engine_convert(payload: bytes, agent_id: str | None) -> Trace:
     if agent_id is not None:
         cmd += ["--agent-id", agent_id]
     cmd.append("-")
-    proc = subprocess.run(
-        cmd, input=payload, capture_output=True, timeout=_CONVERT_TIMEOUT_S, check=False
-    )
+    try:
+        proc = subprocess.run(
+            cmd, input=payload, capture_output=True, timeout=_CONVERT_TIMEOUT_S, check=False
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise OTLPConversionError(
+            f"attest-engine trace convert timed out after {_CONVERT_TIMEOUT_S}s"
+        ) from exc
     if proc.returncode != 0:
         message = proc.stderr.decode("utf-8", errors="replace").strip()
         if not message:
             message = f"attest-engine trace convert exited {proc.returncode}"
         raise OTLPConversionError(message)
-    data: dict[str, Any] = json.loads(proc.stdout)
+    try:
+        data: dict[str, Any] = json.loads(proc.stdout)
+    except json.JSONDecodeError as exc:
+        raise OTLPConversionError(
+            f"attest-engine trace convert printed output that is not JSON: {exc}"
+        ) from exc
     return Trace.from_dict(data)
 
 
@@ -260,7 +278,9 @@ def to_otel_spans(trace: Trace) -> list[dict[str, Any]]:
 
     Not exported: ``Trace.input``, ``Trace.output``, turns, handoffs, retries
     and recorded exchanges; the engine derives turns, handoffs and retries
-    again from the span structure.
+    again from the span structure. Model and retrieval steps come back named
+    after their span (``chat <model>``, ``retrieval``), and a tool result that
+    is not a JSON object comes back under ``result``.
     """
     trace_id_hex = _derive_trace_id_hex(trace.trace_id)
     children: list[dict[str, Any]] = []
@@ -367,8 +387,10 @@ def _step_to_attributes(step: Any) -> dict[str, Any]:
         attrs["gen_ai.tool.name"] = step.name
         if step.tool_call_id:
             attrs["gen_ai.tool.call.id"] = step.tool_call_id
-        attrs["gen_ai.tool.call.arguments"] = json.dumps(args, sort_keys=True)
-        attrs["gen_ai.tool.call.result"] = json.dumps(result, sort_keys=True)
+        if step.args is not None:
+            attrs["gen_ai.tool.call.arguments"] = json.dumps(step.args, sort_keys=True)
+        if step.result is not None:
+            attrs["gen_ai.tool.call.result"] = json.dumps(step.result, sort_keys=True)
     elif step.type == STEP_AGENT_CALL:
         _copy(
             attrs,
