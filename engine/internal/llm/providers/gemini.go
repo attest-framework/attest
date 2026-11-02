@@ -85,6 +85,9 @@ type geminiResponse struct {
 		CandidatesTokenCount int `json:"candidatesTokenCount"`
 		// CachedContentTokenCount is included in PromptTokenCount.
 		CachedContentTokenCount int `json:"cachedContentTokenCount"`
+		// ThoughtsTokenCount is billed at the output price but not
+		// included in CandidatesTokenCount.
+		ThoughtsTokenCount int `json:"thoughtsTokenCount"`
 	} `json:"usageMetadata"`
 	ModelVersion string `json:"modelVersion"`
 }
@@ -169,7 +172,7 @@ func (p *Gemini) Complete(ctx context.Context, req *llm.CompletionRequest) (*llm
 		Content:           text.String(),
 		Model:             respModel,
 		InputTokens:       resp.UsageMetadata.PromptTokenCount,
-		OutputTokens:      resp.UsageMetadata.CandidatesTokenCount,
+		OutputTokens:      resp.UsageMetadata.CandidatesTokenCount + resp.UsageMetadata.ThoughtsTokenCount,
 		CachedInputTokens: resp.UsageMetadata.CachedContentTokenCount,
 		DurationMS:        time.Since(start).Milliseconds(),
 	}, nil

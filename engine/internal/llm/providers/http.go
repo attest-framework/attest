@@ -13,10 +13,12 @@ import (
 	"time"
 	"unicode"
 	"unicode/utf8"
+
+	"github.com/attest-ai/attest/engine/internal/llm"
 )
 
 // maxResponseBytes caps how much of a provider response body is read.
-const maxResponseBytes = 8 << 20
+const maxResponseBytes = llm.MaxResponseBytes
 
 // maxErrorDetail caps how much of an unparseable error body is echoed.
 const maxErrorDetail = 512
@@ -126,18 +128,8 @@ func redact(s, key string) string {
 	return strings.ReplaceAll(s, key, redactedKey)
 }
 
-// stripControl drops control characters (including terminal escapes) and
-// format characters (bidi overrides such as U+202E, isolates, zero-width
-// characters) from text supplied by a remote endpoint, so it can neither
-// drive a terminal nor visually reorder a report.
-func stripControl(s string) string {
-	return strings.Map(func(r rune) rune {
-		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) {
-			return -1
-		}
-		return r
-	}, s)
-}
+// stripControl is llm.StripControl.
+func stripControl(s string) string { return llm.StripControl(s) }
 
 // stripTerminalControl drops control characters except newline and tab, and
 // format characters (bidi overrides, zero-width), so

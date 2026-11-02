@@ -31,6 +31,13 @@ type PassCount struct {
 	NotEvaluated int `json:"not_evaluated"`
 }
 
+// Runs is the number of rows tallied: evaluated plus not evaluated.
+func (c PassCount) Runs() int { return c.Evaluated + c.NotEvaluated }
+
+// MinTrialRuns is the fewest runs an assertion needs on both sides for the
+// Wilson comparison; single runs are judged by status transitions instead.
+const MinTrialRuns = 2
+
 // Rate returns Passes/Evaluated, or 0 when nothing was evaluated.
 func (c PassCount) Rate() float64 {
 	if c.Evaluated == 0 {
@@ -98,8 +105,8 @@ type TrialVerdict struct {
 	Verdict          string  `json:"verdict"`
 }
 
-// CompareTrials returns one verdict per assertion present in both current
-// and baseline with at least one evaluated run on each side, sorted by
+// CompareTrials returns one verdict per assertion with at least
+// MinTrialRuns runs and one evaluated run on each side, sorted by
 // assertion id. Assertions evaluated on one side only are reported by the
 // baseline delta (added/removed) or the not_evaluated rule instead.
 func CompareTrials(current, baseline map[string]PassCount, rule RegressionRule) []TrialVerdict {
@@ -112,7 +119,7 @@ func CompareTrials(current, baseline map[string]PassCount, rule RegressionRule) 
 	var out []TrialVerdict
 	for _, id := range ids {
 		cur, base := current[id], baseline[id]
-		if cur.Evaluated == 0 || base.Evaluated == 0 {
+		if cur.Runs() < MinTrialRuns || base.Runs() < MinTrialRuns || cur.Evaluated == 0 || base.Evaluated == 0 {
 			continue
 		}
 		lower, upper := Wilson(cur.Passes, cur.Evaluated, rule.Confidence)

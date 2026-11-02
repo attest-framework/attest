@@ -11,6 +11,7 @@ package policy
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"sort"
@@ -214,6 +215,11 @@ func (p *Policy) Validate() error {
 		return fmt.Errorf("max_cost_usd must be non-negative; got %f", *p.MaxCostUSD)
 	}
 	if r := p.Regression; r != nil {
+		for name, v := range map[string]*float64{"confidence": r.Confidence, "tolerance": r.Tolerance} {
+			if v != nil && (math.IsNaN(*v) || math.IsInf(*v, 0)) {
+				return fmt.Errorf("regression.%s must be a finite number; got %g", name, *v)
+			}
+		}
 		if r.Confidence != nil && (*r.Confidence <= 0 || *r.Confidence >= 1) {
 			return fmt.Errorf("regression.confidence must be between 0 and 1 exclusive; got %g", *r.Confidence)
 		}
@@ -342,42 +348,19 @@ func Evaluate(p *Policy, results []types.AssertionResult, totalCost float64, bas
 		out.Violations = append(out.Violations, v)
 	}
 
+	// ── Statistical regression (fixed-N trials) ──
+	compared := evaluateTrials(p, &out, results, baseline)
+
 	// ── Regression block ──
-	// With a regression rule, assertions run as trials are judged by the
-	// statistical comparison alone: their folded worst status would call
-	// one failing trial in twenty a regression.
+	// Assertions the Wilson rule compared are judged by it alone: their
+	// folded worst status would call one failing trial in twenty a
+	// regression. Every other assertion keeps the status comparison.
 	if p.BlockOnRegression != nil && *p.BlockOnRegression && baseline != nil {
-		if ids := statusRegressions(p, baseline, results); len(ids) > 0 {
+		if ids := statusRegressions(baseline, compared); len(ids) > 0 {
 			out.Violations = append(out.Violations, Violation{
 				Rule:     "block_on_regression",
 				Detail:   fmt.Sprintf("regressions vs %s: %s", baseline.BaselineTag, strings.Join(ids, ", ")),
 				Severity: resolvedSeverity("", p.Severity),
-			})
-		}
-	}
-
-	// ── Statistical regression (fixed-N trials) ──
-	if p.Regression != nil && baseline == nil {
-		out.Verdict = report.TrialInconclusive
-		out.Violations = append(out.Violations, Violation{
-			Rule:     "regression.inconclusive",
-			Detail:   "the policy has a regression rule but no baseline was given; pass --baseline <tag>",
-			Severity: SeverityWarn,
-		})
-	}
-	if p.Regression != nil && baseline != nil {
-		out.Trials = report.CompareTrials(report.CountPasses(results), baseline.BaselineCounts, p.Regression.resolved())
-		out.Verdict = report.OverallTrialVerdict(out.Trials)
-		out.Violations = append(out.Violations, trialViolations(out.Trials, baseline.BaselineTag,
-			resolvedSeverity(p.Regression.Severity, p.Severity))...)
-		if len(out.Trials) == 0 {
-			// Nothing was compared, so nothing was shown to hold.
-			out.Verdict = report.TrialInconclusive
-			out.Violations = append(out.Violations, Violation{
-				Rule: "regression.inconclusive",
-				Detail: fmt.Sprintf("no evaluated assertion id matches baseline %s; "+
-					"pin the baseline from a run of the same tests", baseline.BaselineTag),
-				Severity: SeverityWarn,
 			})
 		}
 	}
@@ -456,22 +439,64 @@ func notEvaluatedViolation(results []types.AssertionResult, severity string) (Vi
 	}, true
 }
 
-// statusRegressions returns the baseline status regressions, leaving out
-// assertions run as trials when the policy has a regression rule.
-func statusRegressions(p *Policy, baseline *report.BaselineDelta, results []types.AssertionResult) []string {
-	ids := baseline.RegressedAssertionIDs()
+// evaluateTrials applies the regression rule: assertions with at least
+// report.MinTrialRuns runs in both the report and the baseline get a
+// Wilson verdict. Assertions run as trials that cannot be compared
+// (baseline pinned from a single run, or not evaluated on one side) are
+// reported inconclusive, so they never pass silently. Returns the ids the
+// rule compared.
+func evaluateTrials(p *Policy, out *Result, results []types.AssertionResult, baseline *report.BaselineDelta) map[string]bool {
+	compared := make(map[string]bool)
 	if p.Regression == nil {
-		return ids
+		return compared
 	}
-	trialed := make(map[string]bool)
-	for _, r := range results {
-		if r.Trial > 0 {
-			trialed[r.AssertionID] = true
+	if baseline == nil {
+		out.Verdict = report.TrialInconclusive
+		out.Violations = append(out.Violations, Violation{
+			Rule:     "regression.inconclusive",
+			Detail:   "the policy has a regression rule but no baseline was given; pass --baseline <tag>",
+			Severity: SeverityWarn,
+		})
+		return compared
+	}
+	current := report.CountPasses(results)
+	out.Trials = report.CompareTrials(current, baseline.BaselineCounts, p.Regression.resolved())
+	for _, t := range out.Trials {
+		compared[t.AssertionID] = true
+	}
+	var uncompared []string
+	for id, c := range current {
+		if c.Runs() >= report.MinTrialRuns && !compared[id] {
+			uncompared = append(uncompared, id)
 		}
 	}
-	out := ids[:0]
-	for _, id := range ids {
-		if !trialed[id] {
+	sort.Strings(uncompared)
+	if len(out.Trials) == 0 && len(uncompared) == 0 {
+		return compared // single runs only: the status comparison decides
+	}
+	out.Verdict = report.OverallTrialVerdict(out.Trials)
+	out.Violations = append(out.Violations, trialViolations(out.Trials, baseline.BaselineTag,
+		resolvedSeverity(p.Regression.Severity, p.Severity))...)
+	if len(uncompared) > 0 {
+		if out.Verdict == report.TrialPass {
+			out.Verdict = report.TrialInconclusive
+		}
+		out.Violations = append(out.Violations, Violation{
+			Rule: "regression.inconclusive",
+			Detail: fmt.Sprintf("not compared with %s (needs %d+ runs evaluated on both sides; status rules still apply): %s",
+				baseline.BaselineTag, report.MinTrialRuns, strings.Join(uncompared, ", ")),
+			Severity: SeverityWarn,
+		})
+	}
+	return compared
+}
+
+// statusRegressions returns the baseline status regressions of the
+// assertions the Wilson rule did not compare.
+func statusRegressions(baseline *report.BaselineDelta, compared map[string]bool) []string {
+	var out []string
+	for _, id := range baseline.RegressedAssertionIDs() {
+		if !compared[id] {
 			out = append(out, id)
 		}
 	}
