@@ -22,6 +22,10 @@ All notable changes to Attest are documented in this file. The format follows [K
 
 - The MkDocs site configuration (`mkdocs.yml`) and the pages it built outside `docs/guides/`. `https://attest-framework.github.io/attest/` already redirects to the documentation website, which syncs `docs/guides/*.md` at each release.
 
+### Fixed
+
+- Install instructions in the README, `docs/guides/merge-gate.md`, `docs/guides/framework-adapters.md` and the Python SDK README (the PyPI page) use `uv add "attest-ai>=1.0.0rc1"` instead of `pip install`, and `npm install -D "@attest-ai/core@>=1.0.0-rc.1" "@attest-ai/vitest@>=1.0.0-rc.1"`. A bare `pip install attest-ai`, `uv add attest-ai` or `npm install @attest-ai/core` installs 0.9.0, the newest stable release, until 1.0.0 is published.
+
 ## [1.0.0-rc.1] — 2026-11-02
 
 First release candidate, themed "Trust": a red result means a real failure, the SDKs run only an engine of their own version, and `attest init` goes from an empty project to a CI merge gate without an API key.
