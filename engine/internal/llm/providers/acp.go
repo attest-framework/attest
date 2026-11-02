@@ -11,6 +11,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -41,39 +43,46 @@ const acpStderrTail = 512
 // It is not a sandbox: tools the agent's own configuration allows without
 // asking still run as the user.
 type ACP struct {
-	argv  []string
-	model string
+	argv    []string
+	model   string
+	timeout time.Duration
 }
 
 // NewACP returns an ACP provider for command, split on whitespace (no shell
 // quoting or expansion). model is a label recorded on results; ACP has no
 // stable model selection, so it is not sent to the agent. An empty model
-// records "acp:<command name>". ACP judges use a personal subscription and
-// are refused when the CI environment variable is set.
-func NewACP(command, model string) (*ACP, error) {
+// records "acp:<command name>". timeout bounds every Complete on its own,
+// because some callers (simulated users) pass a context with no deadline.
+// ACP judges use a personal subscription and are refused in CI. Errors name
+// only the executable's base name: arguments may be sensitive.
+func NewACP(command, model string, timeout time.Duration) (*ACP, error) {
 	if name, ok := ciMarker(); ok {
 		return nil, fmt.Errorf(
 			"ATTEST_JUDGE_PROVIDER=acp is refused because CI is set (%s is defined): an ACP judge runs on a developer's "+
 				"personal Claude Code or Codex subscription and is for local use only; in CI use "+
 				"ATTEST_JUDGE_PROVIDER=openai, anthropic or gemini with an API key", name)
 	}
+	if timeout <= 0 {
+		return nil, fmt.Errorf("acp provider: timeout must be > 0, got %v", timeout)
+	}
 	argv := strings.Fields(command)
 	if len(argv) == 0 {
 		return nil, errors.New("ATTEST_JUDGE_PROVIDER=acp requires ATTEST_JUDGE_ACP_COMMAND, the command that starts the ACP agent")
 	}
+	name := filepath.Base(argv[0])
 	path, err := exec.LookPath(argv[0])
 	if err != nil {
-		return nil, fmt.Errorf("ATTEST_JUDGE_ACP_COMMAND: %q is not an executable on PATH: %w", argv[0], err)
+		return nil, fmt.Errorf("ATTEST_JUDGE_ACP_COMMAND: %q is not an executable on PATH", name)
 	}
 	// The agent runs in a temporary directory, so a relative path must be
 	// resolved against the engine's working directory now.
 	if argv[0], err = filepath.Abs(path); err != nil {
-		return nil, fmt.Errorf("ATTEST_JUDGE_ACP_COMMAND: resolve %q: %w", path, err)
+		return nil, fmt.Errorf("ATTEST_JUDGE_ACP_COMMAND: cannot resolve the path of %q", name)
 	}
 	if model == "" {
-		model = "acp:" + filepath.Base(path)
+		model = "acp:" + name
 	}
-	return &ACP{argv: argv, model: model}, nil
+	return &ACP{argv: argv, model: model, timeout: timeout}, nil
 }
 
 // CIEnvVars are the variables whose presence, with any value including
@@ -106,7 +115,8 @@ func (p *ACP) Complete(ctx context.Context, req *llm.CompletionRequest) (*llm.Co
 	}
 	defer os.RemoveAll(dir)
 
-	ctx, cancel := context.WithCancel(ctx)
+	// The earlier of the caller's deadline and the provider's own timeout.
+	ctx, cancel := context.WithTimeout(ctx, p.timeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, p.argv[0], p.argv[1:]...)
 	cmd.Dir = dir
@@ -153,22 +163,34 @@ func (p *ACP) Complete(ctx context.Context, req *llm.CompletionRequest) (*llm.Co
 	}, nil
 }
 
-// agentScrubbedKeys are provider API keys removed from the agent's
-// environment: they are attest's judge credentials, and an agent such as
-// Claude Code would otherwise bill them instead of the subscription.
-var agentScrubbedKeys = map[string]bool{
-	"OPENAI_API_KEY": true, "ANTHROPIC_API_KEY": true, "GEMINI_API_KEY": true, "GOOGLE_API_KEY": true,
+// AgentScrubbedVars are removed from the agent's environment, along with
+// every ATTEST_JUDGE_* variable: provider API keys and tokens, and the
+// endpoint and backend switches that would route the agent to API billing
+// (or another endpoint) instead of the developer's subscription.
+var AgentScrubbedVars = []string{
+	"OPENAI_API_KEY", "OPENAI_BASE_URL", "CODEX_API_KEY",
+	"ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL",
+	"CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX",
+	"GEMINI_API_KEY", "GOOGLE_API_KEY",
 }
 
-// agentEnv is the engine's environment minus every ATTEST_JUDGE_* variable
-// and the provider API keys. The rest is inherited, because the agent needs
+// agentEnv is the engine's environment minus AgentScrubbedVars and every
+// ATTEST_JUDGE_* variable. The rest is inherited, because the agent needs
 // HOME, PATH and its own configuration to find the developer's login.
 func agentEnv() []string {
-	env := os.Environ()
+	return scrubAgentEnv(os.Environ(), runtime.GOOS == "windows")
+}
+
+// scrubAgentEnv filters env. Windows variable names are case-insensitive,
+// so there names are compared in upper case.
+func scrubAgentEnv(env []string, foldCase bool) []string {
 	out := env[:0:0]
 	for _, kv := range env {
 		name, _, _ := strings.Cut(kv, "=")
-		if strings.HasPrefix(name, "ATTEST_JUDGE_") || agentScrubbedKeys[name] {
+		if foldCase {
+			name = strings.ToUpper(name)
+		}
+		if strings.HasPrefix(name, "ATTEST_JUDGE_") || slices.Contains(AgentScrubbedVars, name) {
 			continue
 		}
 		out = append(out, kv)
@@ -362,7 +384,8 @@ func (c *acpConn) notify(msg acpMessage) error {
 	if err := json.Unmarshal(msg.Params, &p); err != nil {
 		return fmt.Errorf("decode session/update: %w", err)
 	}
-	if p.SessionID != c.sessionID || p.Update.SessionUpdate != "agent_message_chunk" {
+	// Updates before session/new returns belong to no session of ours.
+	if c.sessionID == "" || p.SessionID != c.sessionID || p.Update.SessionUpdate != "agent_message_chunk" {
 		return nil
 	}
 	var content struct {
@@ -387,7 +410,8 @@ func (c *acpConn) notify(msg acpMessage) error {
 func (c *acpConn) answer(msg acpMessage) error {
 	if msg.Method != "session/request_permission" {
 		return c.write(acpMessage{ID: msg.ID, Error: &acpError{
-			Code: -32601, Message: "the attest judge client does not support " + msg.Method,
+			Code:    -32601,
+			Message: "the attest judge client does not support " + truncate(stripControl(msg.Method), maxErrorDetail),
 		}})
 	}
 	var p struct {

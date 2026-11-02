@@ -211,6 +211,13 @@ func scoreVarianceStats(scores []float64) (mean, stddev float64) {
 
 // judgeTimeoutSeconds reads the judge evaluation timeout from ATTEST_JUDGE_TIMEOUT_S.
 // Defaults to 30 seconds if unset or invalid.
+// JudgeTimeout is the per-evaluation judge timeout (ATTEST_JUDGE_TIMEOUT_S,
+// default 30s). Providers without their own HTTP timeout, such as the ACP
+// agent, also bound each call with it.
+func JudgeTimeout() time.Duration {
+	return time.Duration(judgeTimeoutSeconds()) * time.Second
+}
+
 func judgeTimeoutSeconds() int {
 	v := os.Getenv("ATTEST_JUDGE_TIMEOUT_S")
 	if v == "" {

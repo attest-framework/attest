@@ -1,9 +1,11 @@
 package server
 
 import (
+	"bytes"
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -98,5 +100,23 @@ func TestJudgeConfig_CacheEndpoint_ScopesACPByCommand(t *testing.T) {
 
 	if acp.cacheEndpoint() != "acp:claude-code-acp" || openai.cacheEndpoint() != "openai|"+openai.baseURL {
 		t.Errorf("cache endpoints = %q, %q", acp.cacheEndpoint(), openai.cacheEndpoint())
+	}
+}
+
+func TestBuildProviders_ACPWarning_LogsOnlyExecutableName(t *testing.T) {
+	configureACPJudge(t, acptest.Judge)
+	t.Setenv("ATTEST_JUDGE_ACP_COMMAND", os.Args[0]+" --api-token=SECRET-ARG")
+	var logs bytes.Buffer
+
+	_, err := buildProviders(slog.New(slog.NewTextHandler(&logs, nil)))
+
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(logs.String(), "not sandboxed") || !strings.Contains(logs.String(), filepath.Base(os.Args[0])) {
+		t.Errorf("startup warning missing or without the executable name:\n%s", logs.String())
+	}
+	if strings.Contains(logs.String(), "SECRET-ARG") || strings.Contains(logs.String(), filepath.Dir(os.Args[0])) {
+		t.Errorf("startup log exposes the ACP command line:\n%s", logs.String())
 	}
 }

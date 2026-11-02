@@ -15,15 +15,13 @@ import (
 	"github.com/attest-ai/attest/engine/internal/llm/providers/acptest"
 )
 
-// TestACP_Complete_TimeoutKillsAgentAndDescendants runs an agent that starts
-// a child holding stdout and stderr (as npx does) and never answers: the
-// judge deadline must end the call promptly and kill the child too.
-func TestACP_Complete_TimeoutKillsAgentAndDescendants(t *testing.T) {
-	p := newStubACP(t, acptest.Hang)
+// completeHangingAgent runs p against the Hang stub, whose agent starts a
+// child holding stdout and stderr (as npx does) and never answers. It
+// asserts the call fails within bound and the child is killed.
+func completeHangingAgent(t *testing.T, p *ACP, ctx context.Context, bound time.Duration) {
+	t.Helper()
 	pidFile := filepath.Join(t.TempDir(), "child.pid")
 	t.Setenv(acptest.PIDFileEnv, pidFile)
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-	defer cancel()
 
 	start := time.Now()
 	_, err := p.Complete(ctx, acpJudgeRequest())
@@ -32,8 +30,8 @@ func TestACP_Complete_TimeoutKillsAgentAndDescendants(t *testing.T) {
 	if err == nil {
 		t.Fatal("Complete succeeded against an agent that never answers")
 	}
-	if elapsed > time.Second+acpShutdownGrace+2*time.Second {
-		t.Errorf("Complete returned after %v; the deadline was 1s", elapsed)
+	if elapsed > bound+acpShutdownGrace+2*time.Second {
+		t.Errorf("Complete returned after %v; the deadline was %v", elapsed, bound)
 	}
 	raw, readErr := os.ReadFile(pidFile)
 	if readErr != nil {
@@ -44,10 +42,30 @@ func TestACP_Complete_TimeoutKillsAgentAndDescendants(t *testing.T) {
 	for syscall.Kill(pid, 0) == nil {
 		if time.Now().After(deadline) {
 			_ = syscall.Kill(pid, syscall.SIGKILL)
-			t.Fatalf("agent child %d survived the judge deadline", pid)
+			t.Fatalf("agent child %d survived the deadline", pid)
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
+}
+
+func TestACP_Complete_CallerDeadline_KillsAgentAndDescendants(t *testing.T) {
+	p := newStubACP(t, acptest.Hang)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+
+	completeHangingAgent(t, p, ctx, time.Second)
+}
+
+// TestACP_Complete_NoCallerDeadline_OwnTimeoutKillsAgent covers callers such
+// as generate_user_message that pass context.Background().
+func TestACP_Complete_NoCallerDeadline_OwnTimeoutKillsAgent(t *testing.T) {
+	newStubACP(t, acptest.Hang)
+	p, err := NewACP(os.Args[0], "", time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	completeHangingAgent(t, p, context.Background(), time.Second)
 }
 
 func TestNewACP_RelativeCommand_ResolvedToAbsolutePath(t *testing.T) {
@@ -58,7 +76,7 @@ func TestNewACP_RelativeCommand_ResolvedToAbsolutePath(t *testing.T) {
 	}
 	t.Chdir(dir)
 
-	p, err := NewACP("./agent", "")
+	p, err := NewACP("./agent", "", testACPTimeout)
 
 	if err != nil {
 		t.Fatal(err)

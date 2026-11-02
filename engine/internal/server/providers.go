@@ -6,8 +6,10 @@ import (
 	"net"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 
+	"github.com/attest-ai/attest/engine/internal/assertion"
 	"github.com/attest-ai/attest/engine/internal/assertion/embedding"
 	"github.com/attest-ai/attest/engine/internal/llm"
 	llmproviders "github.com/attest-ai/attest/engine/internal/llm/providers"
@@ -122,6 +124,17 @@ func resolveJudgeConfig() (judgeConfig, error) {
 	return cfg, nil
 }
 
+// acpCommandName is the base name of the agent executable: the only part of
+// ATTEST_JUDGE_ACP_COMMAND that is ever logged, because its arguments may
+// be sensitive.
+func (c judgeConfig) acpCommandName() string {
+	fields := strings.Fields(c.acpCommand)
+	if len(fields) == 0 {
+		return ""
+	}
+	return filepath.Base(fields[0])
+}
+
 // resolveACPJudgeConfig configures the local ACP judge. It takes no key and
 // no base URL; the command, and the refusal under CI, are checked when the
 // provider is built.
@@ -220,7 +233,7 @@ func buildProviders(logger *slog.Logger) (providers, error) {
 		if cfg.provider == "acp" {
 			logger.Warn("acp judge: the agent is not sandboxed; it runs as you with your network access and its own "+
 				"configuration, so tools it may use without asking can act on untrusted agent output in judge prompts",
-				"command", cfg.acpCommand)
+				"command", cfg.acpCommandName())
 		}
 		if cfg.insecure {
 			logger.Warn("insecure judge endpoint: plain http to a non-loopback host sends ATTEST_JUDGE_API_KEY in cleartext",
@@ -274,7 +287,7 @@ func buildJudgeProvider(logger *slog.Logger, cfg judgeConfig) (llm.Provider, err
 	case "gemini":
 		p, err = llmproviders.NewGemini(cfg.apiKey, cfg.model, cfg.baseURL)
 	case "acp":
-		p, err = llmproviders.NewACP(cfg.acpCommand, cfg.model)
+		p, err = llmproviders.NewACP(cfg.acpCommand, cfg.model, assertion.JudgeTimeout())
 	default:
 		return nil, fmt.Errorf("judge provider %q has no constructor", cfg.provider)
 	}
