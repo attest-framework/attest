@@ -86,8 +86,10 @@ type spanIndex struct {
 	cyclic   []bool   // span lies on a parent cycle
 	agentOf  []int    // nearest invoke_agent ancestor, -1 for none
 	topAgent []int    // outermost invoke_agent ancestor-or-self, -1 for none
-	// root is the earliest span without a parent id, or else the only span
-	// whose parent is outside the export (a remote parent); -1 for none.
+	// root is the earliest span without a parent id or, when there is none,
+	// the earliest span whose parent is outside the export; -1 for none.
+	// remoteRoot is set in the second case: every span with a missing parent
+	// is then a local root.
 	root       int
 	remoteRoot bool
 }
@@ -176,20 +178,32 @@ func newSpanIndex(in []Span) *spanIndex {
 	}
 	idx.resolveAncestry()
 	idx.root = -1
-	var missing []int
+	firstMissing := -1
 	for i := range spans {
 		if spans[i].ParentSpanID == "" {
 			idx.root = i
 			break
 		}
-		if idx.parentOf[i] < 0 {
-			missing = append(missing, i)
+		if idx.parentOf[i] < 0 && firstMissing < 0 {
+			firstMissing = i
 		}
 	}
-	if idx.root < 0 && len(missing) == 1 {
-		idx.root, idx.remoteRoot = missing[0], true
+	if idx.root < 0 && firstMissing >= 0 {
+		// No span is a true root: this export is one service's part of a
+		// distributed trace, and spans with a missing parent are its local
+		// roots. The earliest is the trace root.
+		idx.root, idx.remoteRoot = firstMissing, true
 	}
 	return idx
+}
+
+// detached reports a span cut off from the trace: its parent is missing
+// (and it is not a local root of a partial export) or it lies on a cycle.
+func (x *spanIndex) detached(i int) bool {
+	if x.cyclic[i] {
+		return true
+	}
+	return x.spans[i].ParentSpanID != "" && x.parentOf[i] < 0 && !x.remoteRoot
 }
 
 // isChatModel reports whether span i is a model call that can request tools

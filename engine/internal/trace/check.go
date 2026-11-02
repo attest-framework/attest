@@ -159,8 +159,8 @@ func (c *checker) checkParentage() {
 		}
 		p := c.x.parentOf[i]
 		if p < 0 {
-			if c.x.remoteRoot && c.x.root == i {
-				c.add(SeverityWarning, IssueRemoteParent, s.SpanID, fmt.Sprintf("span %q is the local root; its parent %s is outside this export", s.Name, s.ParentSpanID))
+			if c.x.remoteRoot {
+				c.add(SeverityWarning, IssueRemoteParent, s.SpanID, fmt.Sprintf("span %q is a local root; its parent %s is outside this export", s.Name, s.ParentSpanID))
 				continue
 			}
 			c.add(SeverityError, IssueOrphanSpan, s.SpanID, fmt.Sprintf("span %q names parent %s, which is not in the trace", s.Name, s.ParentSpanID))
@@ -198,8 +198,8 @@ func (c *checker) checkToolPairing() {
 	var order []int
 	for i := range c.x.spans {
 		k := c.x.kinds[i]
-		if k != types.StepTypeToolCall && !c.x.isChatModel(i) {
-			continue
+		if k != types.StepTypeToolCall && !c.x.isChatModel(i) || c.x.detached(i) {
+			continue // detached spans are already reported once
 		}
 		scope := c.x.agentOf[i]
 		if _, ok := scopes[scope]; !ok {
@@ -260,6 +260,8 @@ func (c *checker) pairScope(members []int, requested map[string]string, executed
 			if id != "" && !scopeIDs[id] {
 				c.add(SeverityError, IssueUnpairedToolResult, s.SpanID, fmt.Sprintf("tool call id %q was not requested by any recorded model output", id))
 			}
+		case c.x.parentOf[i] == lastModel:
+			// A tool span nested under the model call is its execution.
 		case knownNonToolFinish(&c.x.spans[lastModel]):
 			c.add(SeverityWarning, IssueUnrequestedTool, s.SpanID, fmt.Sprintf("tool span %q follows model call %s, whose finish reasons do not request tools", s.Name, c.x.spans[lastModel].SpanID))
 		}

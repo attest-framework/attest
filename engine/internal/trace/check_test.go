@@ -315,6 +315,16 @@ func TestCheck_RealWorldShapesHaveNoErrors(t *testing.T) {
 			{"a000000000000004", "a000000000000001", chat("tool_calls"), 5, 6},
 			{"a000000000000005", "a000000000000001", tool("call_2"), 7, 8},
 		},
+		"two local roots with remote parents": {
+			{"a000000000000001", "ffffffffffffff01", nil, 0, 10},
+			{"a000000000000002", "a000000000000001", chat("stop"), 1, 2},
+			{"a000000000000003", "ffffffffffffff02", nil, 20, 30},
+		},
+		"gemini STOP with the tool nested under the model call": {
+			{"a000000000000001", "", nil, 0, 100},
+			{"a000000000000002", "a000000000000001", chat("STOP"), 1, 50},
+			{"a000000000000003", "a000000000000002", tool(""), 10, 20},
+		},
 		"gemini STOP before a tool": {
 			{"a000000000000001", "", nil, 0, 100},
 			{"a000000000000002", "a000000000000001", chat("STOP"), 1, 2},
@@ -352,5 +362,27 @@ func TestCheck_RemoteParentIsTheRoot(t *testing.T) {
 	}
 	if tr.Metadata == nil || tr.Metadata.LatencyMS == nil || *tr.Metadata.LatencyMS != 5 {
 		t.Errorf("latency from the remote-parented root = %+v, want 5ms", tr.Metadata)
+	}
+}
+
+func TestCheck_NestedToolUnderStopModelHasNoWarning(t *testing.T) {
+	data := otlpDoc(
+		`{"traceId":"4bf92f3577b34da6a3ce929d0e0e4736","spanId":"a000000000000001","name":"root","startTimeUnixNano":"0","endTimeUnixNano":"100"}`,
+		`{"traceId":"4bf92f3577b34da6a3ce929d0e0e4736","spanId":"a000000000000002","parentSpanId":"a000000000000001","name":"chat","startTimeUnixNano":"1","endTimeUnixNano":"50","attributes":[{"key":"gen_ai.operation.name","value":{"stringValue":"chat"}},{"key":"gen_ai.response.finish_reasons","value":{"stringValue":"STOP"}}]}`,
+		`{"traceId":"4bf92f3577b34da6a3ce929d0e0e4736","spanId":"a000000000000003","parentSpanId":"a000000000000002","name":"t","startTimeUnixNano":"10","endTimeUnixNano":"20","attributes":[{"key":"gen_ai.operation.name","value":{"stringValue":"execute_tool"}}]}`,
+	)
+	if r := checkData(t, data); len(r.Issues) != 0 {
+		t.Errorf("issues = %+v, want none", r.Issues)
+	}
+}
+
+func TestCheck_OrphanToolIsReportedOnce(t *testing.T) {
+	data := otlpDoc(
+		`{"traceId":"4bf92f3577b34da6a3ce929d0e0e4736","spanId":"a000000000000001","name":"root","startTimeUnixNano":"0","endTimeUnixNano":"100"}`,
+		`{"traceId":"4bf92f3577b34da6a3ce929d0e0e4736","spanId":"a000000000000003","parentSpanId":"deadbeefdeadbeef","name":"t","startTimeUnixNano":"10","endTimeUnixNano":"20","attributes":[{"key":"gen_ai.operation.name","value":{"stringValue":"execute_tool"}}]}`,
+	)
+	r := checkData(t, data)
+	if errs := r.Errors(); len(errs) != 1 || errs[0].Code != IssueOrphanSpan {
+		t.Errorf("errors = %+v, want only orphan_span", errs)
 	}
 }

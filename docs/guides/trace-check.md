@@ -34,11 +34,11 @@ Each error names the span id it concerns.
 
 | Code | Meaning |
 | --- | --- |
-| `orphan_span` | The span's `parentSpanId` is not in the trace. (When the export has no root and exactly one span's parent is missing, that span is the local root of a distributed trace: a `remote_parent` warning, not an error.) |
+| `orphan_span` | The span's `parentSpanId` is not in the trace. (When no span in the export is a root, the export is one service's part of a distributed trace: each span whose parent is missing is a local root and gets a `remote_parent` warning, not an error.) Orphaned spans are left out of tool pairing, so one orphan is reported once. |
 | `parent_cycle` | Following parents from the span leads back to it. |
 | `duplicate_span_id` | Two spans share an id. |
 | `unpaired_tool_call` | A model call finished with a tool request (`gen_ai.response.finish_reasons` contains `tool_calls`, `tool_call`, `tool_use` or `function_call`) but no tool span follows it before the next model call in the same agent, or a tool call id requested in its recorded `gen_ai.output.messages` has no tool span with that `gen_ai.tool.call.id`. |
-| `unpaired_tool_result` | A tool span has no model call before it in the same agent, or follows a model call with recorded output messages that did not request its `gen_ai.tool.call.id`. |
+| `unpaired_tool_result` | A tool span has no model call before it in the same agent (a tool span nested under a model call belongs to it), or follows a model call with recorded output messages that did not request its `gen_ai.tool.call.id`. |
 | `multiple_traces` | The file holds more than one trace id; check one trace per file. |
 | `conversion_failed` | The spans cannot become an Attest trace, for example a non-numeric `gen_ai.usage.input_tokens`. |
 
