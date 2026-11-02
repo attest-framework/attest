@@ -91,25 +91,47 @@
             "enum": [
               "openai",
               "anthropic",
-              "gemini"
+              "gemini",
+              "acp"
             ]
           },
           "model": {
             "type": "string",
             "minLength": 1
-          },
-          "base_url": {
-            "type": "string",
-            "pattern": "^https?://"
-          },
-          "api_key_source": {
-            "enum": [
-              "ATTEST_JUDGE_API_KEY",
-              "OPENAI_API_KEY",
-              "ANTHROPIC_API_KEY",
-              "GEMINI_API_KEY",
-              "GOOGLE_API_KEY"
-            ]
+          }
+        },
+        "if": {
+          "properties": {
+            "provider": {
+              "const": "acp"
+            }
+          }
+        },
+        "then": {
+          "properties": {
+            "base_url": {
+              "type": "null"
+            },
+            "api_key_source": {
+              "type": "null"
+            }
+          }
+        },
+        "else": {
+          "properties": {
+            "base_url": {
+              "type": "string",
+              "pattern": "^https?://"
+            },
+            "api_key_source": {
+              "enum": [
+                "ATTEST_JUDGE_API_KEY",
+                "OPENAI_API_KEY",
+                "ANTHROPIC_API_KEY",
+                "GEMINI_API_KEY",
+                "GOOGLE_API_KEY"
+              ]
+            }
           }
         }
       },

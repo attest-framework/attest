@@ -25,7 +25,7 @@ const (
 var providerEnv = []string{
 	"ATTEST_JUDGE_PROVIDER", "ATTEST_JUDGE_MODEL", "ATTEST_JUDGE_BASE_URL", "ATTEST_JUDGE_API_KEY",
 	"OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY",
-	"ATTEST_EMBEDDING_PROVIDER", "ATTEST_SIMULATION",
+	"ATTEST_EMBEDDING_PROVIDER", "ATTEST_SIMULATION", "ATTEST_JUDGE_ACP_COMMAND", "CI",
 }
 
 func engineEnv(cacheDir string, extra ...string) []string {
@@ -191,6 +191,11 @@ func TestDoctorJSON_MatchesSchemaAndInitialize(t *testing.T) {
 			wantSource: "GOOGLE_API_KEY",
 			wantBase:   "https://generativelanguage.googleapis.com",
 		},
+		{
+			name:      "acp",
+			extra:     []string{"ATTEST_JUDGE_PROVIDER=acp", "ATTEST_JUDGE_ACP_COMMAND=" + bin, "ATTEST_JUDGE_API_KEY=judge-secret-value"},
+			wantJudge: true,
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -222,7 +227,10 @@ func TestDoctorJSON_MatchesSchemaAndInitialize(t *testing.T) {
 			if d.Judge.Configured != tc.wantJudge || d.SimulationMode != tc.wantSim {
 				t.Errorf("judge.configured=%v simulation_mode=%v, want %v %v", d.Judge.Configured, d.SimulationMode, tc.wantJudge, tc.wantSim)
 			}
-			if tc.wantJudge && (*d.Judge.APIKeySource != tc.wantSource || *d.Judge.BaseURL != tc.wantBase) {
+			if tc.wantJudge && tc.wantSource == "" && (d.Judge.APIKeySource != nil || d.Judge.BaseURL != nil) {
+				t.Errorf("acp judge reports base_url/api_key_source; it has neither")
+			}
+			if tc.wantJudge && tc.wantSource != "" && (*d.Judge.APIKeySource != tc.wantSource || *d.Judge.BaseURL != tc.wantBase) {
 				t.Errorf("api_key_source=%q base_url=%q, want %q %q", *d.Judge.APIKeySource, *d.Judge.BaseURL, tc.wantSource, tc.wantBase)
 			}
 			if got := initializeCapabilities(t, bin, env); !slices.Equal(got, d.Capabilities) {
@@ -247,8 +255,19 @@ func TestDoctor_TextOutputAndConfigError(t *testing.T) {
 	}
 
 	_, stderr, code := runDoctor(t, bin, engineEnv(t.TempDir(), "ATTEST_JUDGE_PROVIDER=bogus"), "--json")
-	if code != 1 || !strings.Contains(stderr, "supported: openai, anthropic, gemini") {
+	if code != 1 || !strings.Contains(stderr, "supported: openai, anthropic, gemini, acp") {
 		t.Fatalf("config error: exit %d stderr %q, want 1 naming supported providers", code, stderr)
+	}
+
+	acpEnv := engineEnv(t.TempDir(), "ATTEST_JUDGE_PROVIDER=acp", "ATTEST_JUDGE_ACP_COMMAND="+bin)
+	stdout, _, code = runDoctor(t, bin, acpEnv)
+	if code != 0 || !strings.Contains(stdout, "judge (L6):      acp, model acp:attest-engine, local agent") {
+		t.Fatalf("acp text doctor: exit %d\n%s", code, stdout)
+	}
+
+	_, stderr, code = runDoctor(t, bin, append(acpEnv, "CI=true"), "--json")
+	if code != 1 || !strings.Contains(stderr, "CI is set") || !strings.Contains(stderr, "local use only") {
+		t.Fatalf("acp under CI: exit %d stderr %q, want 1 explaining the refusal", code, stderr)
 	}
 
 	_, _, code = runDoctor(t, bin, engineEnv(t.TempDir()), "extra")
