@@ -10,6 +10,7 @@ Layer 6 (`llm_judge`) asks a model to score agent output against a rubric. The e
 | `openai` + `ATTEST_JUDGE_BASE_URL` | Any OpenAI-compatible server (vLLM, Ollama `/v1`, LiteLLM) | `ATTEST_JUDGE_API_KEY` only | the server's model name | the URL you set |
 | `anthropic` | Messages (`/v1/messages`) | `ATTEST_JUDGE_API_KEY`, `ANTHROPIC_API_KEY` | required | `https://api.anthropic.com` |
 | `gemini` | `generateContent` (`/v1beta/models/<model>:generateContent`) | `ATTEST_JUDGE_API_KEY`, `GOOGLE_API_KEY`, `GEMINI_API_KEY` | required | `https://generativelanguage.googleapis.com` |
+| `acp` (local only) | Agent Client Protocol over stdio, through `ATTEST_JUDGE_ACP_COMMAND` | none: the agent's own login | optional label | none |
 
 Anthropic and Gemini have no built-in default model: a judge whose model silently changes is not the judge you calibrated, so `ATTEST_JUDGE_MODEL` is required and its absence is a startup error.
 
@@ -28,15 +29,33 @@ With no key for the selected provider, the judge is not configured and every jud
 
 Anthropic requests use the model's default sampling (current Claude models reject a non-default `temperature`); OpenAI and Gemini requests use temperature 0. Anthropic and Gemini requests carry an output budget of at least 4096 tokens, because their current models count reasoning against it and a budget sized for the JSON verdict alone would end before any text.
 
+## Local judges on your Claude Code or Codex subscription (ACP)
+
+`ATTEST_JUDGE_PROVIDER=acp` runs judges through a local [Agent Client Protocol](https://agentclientprotocol.com) agent, such as an ACP adapter for Claude Code or Codex, on the subscription you are already logged in with. No API key is involved.
+
+```bash
+export ATTEST_JUDGE_PROVIDER=acp
+export ATTEST_JUDGE_ACP_COMMAND="npx -y @zed-industries/claude-code-acp"   # or your agent's ACP command
+export ATTEST_JUDGE_TIMEOUT_S=120    # agents start slower than an HTTP call
+attest doctor
+```
+
+- **Never in CI.** A personal subscription is not a CI credential, so the engine refuses to start (and `doctor` exits 1) when `CI` is set to any value, with a message naming the API-key providers to use instead.
+- **Command.** `ATTEST_JUDGE_ACP_COMMAND` is split on whitespace and run directly, without a shell: no quoting, globbing or variable expansion. The executable must be on `PATH` or given as a path. `ATTEST_JUDGE_BASE_URL` does not apply and is a startup error with `acp`.
+- **One agent per judgment.** Each judge call starts the agent in a new empty temporary directory, opens one session, sends the rubric and the agent output as one prompt, collects the agent's message text and stops the agent. Thought chunks and tool output are ignored.
+- **The agent cannot act on the prompt.** The prompt contains output from the agent under test, which is untrusted. The engine advertises no file-system or terminal capability, refuses file-system and terminal requests, and rejects every permission request. Tools the agent runs without asking still run inside the empty temporary directory, so prefer an agent configuration that asks before using tools. The engine does not pass `ATTEST_JUDGE_API_KEY` to the agent.
+- **Model.** ACP has no stable way to choose a model, so the agent uses its own configured model. Results record provider `acp` and the model label `ATTEST_JUDGE_MODEL`, or `acp:<command name>` when it is unset; set `ATTEST_JUDGE_MODEL` to the model your agent uses so calibration stays per model.
+- **Limits and failures.** `ATTEST_RATE_LIMIT_ACP` and `ATTEST_RATE_LIMIT_ACP_BURST` bound how often agents start; each judge call, including bias probes and repeated samples, starts one. An agent that fails to start, errors, exits early, ends the turn with anything but `end_turn` or sends no text is retried, then reported as `not_evaluated: provider_unavailable`.
+
 ## Rate limits and outages
 
-Each provider has its own token-bucket limiter, read from `ATTEST_RATE_LIMIT_<PROVIDER>` (requests per minute, default 60) and `ATTEST_RATE_LIMIT_<PROVIDER>_BURST` (default 10): `ATTEST_RATE_LIMIT_OPENAI`, `ATTEST_RATE_LIMIT_ANTHROPIC`, `ATTEST_RATE_LIMIT_GEMINI`. A failed call, including HTTP 429 and 5xx, is retried up to three times with exponential backoff.
+Each provider has its own token-bucket limiter, read from `ATTEST_RATE_LIMIT_<PROVIDER>` (requests per minute, default 60) and `ATTEST_RATE_LIMIT_<PROVIDER>_BURST` (default 10): `ATTEST_RATE_LIMIT_OPENAI`, `ATTEST_RATE_LIMIT_ANTHROPIC`, `ATTEST_RATE_LIMIT_GEMINI`, `ATTEST_RATE_LIMIT_ACP`. A failed call, including HTTP 429 and 5xx, is retried up to three times with exponential backoff.
 
 When the provider is still unavailable after the retries, or its reply cannot be parsed as a score, the assertion is `not_evaluated` with reason `provider_unavailable`. An outage never becomes a pass or a failure: the test is skipped with the reason (`--attest-strict` turns it into a failure), and `attest policy evaluate` warns with exit 2 unless the policy sets `not_evaluated: block`. See [verdicts](verdicts.md).
 
 ## What a result records
 
-Every judge result carries `judge_metadata` with `provider` (`openai`, `anthropic`, `gemini`) and `model`, alongside the rubric name and version, prompt hash and sample scores. Reports print them (`judge: anthropic/<model> / default @ v1`), so a score can always be traced to the model that produced it. Judge responses are cached per endpoint, rubric and model, so switching provider or model never reuses another judge's scores.
+Every judge result carries `judge_metadata` with `provider` (`openai`, `anthropic`, `gemini`, `acp`) and `model`, alongside the rubric name and version, prompt hash and sample scores. Reports print them (`judge: anthropic/<model> / default @ v1`), so a score can always be traced to the model that produced it. Judge responses are cached per endpoint (the ACP command for `acp`), rubric and model, so switching provider or model never reuses another judge's scores.
 
 ## Calibration is per model
 

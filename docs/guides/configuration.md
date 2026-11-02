@@ -41,21 +41,23 @@ The output never contains an API key. It shows only which variable the judge key
 
 ## LLM judge (Layer 6)
 
-The judge runs natively on OpenAI, Anthropic and Gemini, and on any OpenAI-compatible endpoint (vLLM, Ollama's `/v1` API, LiteLLM, Azure-compatible gateways). Provider setup, rate limits and calibration per model: [Judges](judges.md).
+The judge runs natively on OpenAI, Anthropic and Gemini, on any OpenAI-compatible endpoint (vLLM, Ollama's `/v1` API, LiteLLM, Azure-compatible gateways), and locally through an ACP agent on your Claude Code or Codex subscription. Provider setup, rate limits and calibration per model: [Judges](judges.md).
 
 | Variable | Purpose | Default |
 |---|---|---|
-| `ATTEST_JUDGE_PROVIDER` | `openai` (also OpenAI-compatible endpoints), `anthropic` or `gemini`. Any other value is a startup error. | `openai` |
+| `ATTEST_JUDGE_PROVIDER` | `openai` (also OpenAI-compatible endpoints), `anthropic`, `gemini`, or `acp` (local only). Any other value is a startup error. | `openai` |
+| `ATTEST_JUDGE_ACP_COMMAND` | With `acp`: the command that starts the ACP agent, split on whitespace and run without a shell. | unset |
+| `CI` | When set to any value, `ATTEST_JUDGE_PROVIDER=acp` is a startup error. | unset |
 | `ATTEST_JUDGE_API_KEY` | Judge API key. Takes precedence over the provider's standard key variable, and is required with `ATTEST_JUDGE_BASE_URL`. For an endpoint without authentication, set any non-empty value. | unset |
 | `OPENAI_API_KEY` | OpenAI's standard key variable. Used for the `openai` judge when `ATTEST_JUDGE_API_KEY` is unset and no `ATTEST_JUDGE_BASE_URL` is set, and for OpenAI embeddings. Never sent to a custom base URL. | unset |
 | `ANTHROPIC_API_KEY` | Anthropic's standard key variable, used for the `anthropic` judge under the same rules. | unset |
 | `GOOGLE_API_KEY`, `GEMINI_API_KEY` | Gemini's standard key variables (in that order, as in Google's SDK), used for the `gemini` judge under the same rules. | unset |
 | `ATTEST_JUDGE_BASE_URL` | Base URL of the selected provider's API, e.g. `http://localhost:11434/v1` for an OpenAI-compatible server (include `/v1`), or the root of an Anthropic or Gemini gateway without a version segment (the engine appends `/v1/messages` or `/v1beta/models/...`). Requires `ATTEST_JUDGE_API_KEY`. Must be `http`/`https` without credentials, query or fragment; use `https` for anything other than a local endpoint, because the key is sent with every request. | `https://api.openai.com/v1`, `https://api.anthropic.com`, `https://generativelanguage.googleapis.com` |
-| `ATTEST_JUDGE_MODEL` | Judge model name. Required for `anthropic` and `gemini`. | `gpt-4.1` for `openai` |
+| `ATTEST_JUDGE_MODEL` | Judge model name. Required for `anthropic` and `gemini`; for `acp` a label recorded on results. | `gpt-4.1` for `openai`, `acp:<command name>` for `acp` |
 | `ATTEST_JUDGE_TIMEOUT_S` | Per-evaluation judge timeout in seconds. | `30` |
 | `ATTEST_JUDGE_META_EVAL` | `true` runs each judge assertion three times and takes the median. | unset |
 | `ATTEST_JUDGE_CACHE_MAX_MB` | Judge response cache size, clamped to 10–10000. | `100` |
-| `ATTEST_RATE_LIMIT_<PROVIDER>` | Judge requests per minute for the selected provider (`ATTEST_RATE_LIMIT_OPENAI`, `ATTEST_RATE_LIMIT_ANTHROPIC`, `ATTEST_RATE_LIMIT_GEMINI`); must be > 0. | `60` |
+| `ATTEST_RATE_LIMIT_<PROVIDER>` | Judge requests per minute for the selected provider (`ATTEST_RATE_LIMIT_OPENAI`, `ATTEST_RATE_LIMIT_ANTHROPIC`, `ATTEST_RATE_LIMIT_GEMINI`, `ATTEST_RATE_LIMIT_ACP`); must be > 0. | `60` |
 | `ATTEST_RATE_LIMIT_<PROVIDER>_BURST` | Judge request burst size for the selected provider; must be > 0. | `10` |
 
 Point the judge at a local OpenAI-compatible server:
