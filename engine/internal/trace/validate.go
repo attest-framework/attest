@@ -14,7 +14,7 @@ const (
 	MaxOutputLength      = 500000
 	MaxStepPayload       = 1048576 // 1 MB
 	MaxSubTraceDepth     = 5
-	CurrentSchemaVersion = 1
+	CurrentSchemaVersion = 2
 	MinSchemaVersion     = 0
 )
 
@@ -155,6 +155,11 @@ func validateAtDepth(t *types.Trace, depth int, traceSize int) *types.RPCError {
 		}
 	}
 
+	// 4b. Trace v2 references point at existing steps.
+	if rpcErr := validateStepRefs(t); rpcErr != nil {
+		return rpcErr
+	}
+
 	// 5. Sub-trace depth: recursively check agent_call sub_traces, max depth 5
 	if depth >= MaxSubTraceDepth {
 		return types.NewRPCError(
@@ -174,5 +179,39 @@ func validateAtDepth(t *types.Trace, depth int, traceSize int) *types.RPCError {
 		}
 	}
 
+	return nil
+}
+
+// validateStepRefs checks that trace v2 step indices (retry_of, turn
+// step_indices, handoff step_index) refer to existing steps; retry_of must
+// point at an earlier step.
+func validateStepRefs(t *types.Trace) *types.RPCError {
+	invalid := func(msg string) *types.RPCError {
+		return types.NewRPCError(
+			types.ErrInvalidTrace,
+			msg,
+			types.ErrTypeInvalidTrace,
+			false,
+			"Step references in retry_of, turns[].step_indices and handoffs[].step_index must index existing steps.",
+		)
+	}
+	n := len(t.Steps)
+	for i, step := range t.Steps {
+		if step.RetryOf != nil && (*step.RetryOf < 0 || *step.RetryOf >= i) {
+			return invalid(fmt.Sprintf("trace step %d retry_of %d must reference an earlier step", i, *step.RetryOf))
+		}
+	}
+	for ti, turn := range t.Turns {
+		for _, si := range turn.StepIndices {
+			if si < 0 || si >= n {
+				return invalid(fmt.Sprintf("trace turn %d references step %d; the trace has %d steps", ti, si, n))
+			}
+		}
+	}
+	for hi, h := range t.Handoffs {
+		if h.StepIndex < 0 || h.StepIndex >= n {
+			return invalid(fmt.Sprintf("trace handoff %d references step %d; the trace has %d steps", hi, h.StepIndex, n))
+		}
+	}
 	return nil
 }

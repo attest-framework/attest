@@ -592,6 +592,11 @@ The canonical trace format represents a single agent execution from input to out
 | `output` | object | yes | Agent output. Must contain at least one field. |
 | `metadata` | object | no | Trace-level metadata: tokens, cost, latency, model, timestamp. |
 | `parent_trace_id` | string \| null | no | Set when this trace is a sub-agent invocation from a parent trace. |
+| `conversation_id` | string | no | v2. Conversation the trace belongs to (`gen_ai.conversation.id`). |
+| `turns` | []Turn | no | v2. Conversation turns: `index`, optional `span_id`, `input`, `output`, and `step_indices` into `steps`. |
+| `handoffs` | []Handoff | no | v2. Agent handoffs: `from_agent`, `to_agent`, and `step_index` of the `agent_call` step that starts `to_agent`'s work. |
+
+`schema_version` 2 ("trace v2") adds the optional fields marked v2 here and in §3.4; the engine accepts versions 0–2 and a version 1 trace is unchanged. JSON Schema: `proto/attest/v1/trace-v2.schema.json`. `attest-engine trace convert <otlp.json>` produces a v2 trace from an OTLP/JSON export, and `attest-engine trace check` reports the export's integrity and evidence coverage (see `docs/guides/trace-check.md`).
 
 ### 3.3 Step Types
 
@@ -700,6 +705,12 @@ A sub-agent delegation. Contains a nested sub-trace for multi-agent evaluation.
 | `result` | object | no | Output from the step |
 | `sub_trace` | Trace | no | Only for `agent_call`. Nested trace of the sub-agent. |
 | `metadata` | object | no | Step-level timing and cost |
+| `span_id` | string | no | v2. 16-hex-character OTLP span id of the step. |
+| `parent_span_id` | string | no | v2. OTLP parent span id. |
+| `tool_call_id` | string | no | v2. Tool call id (`gen_ai.tool.call.id`) on `tool_call` steps. |
+| `retry_of` | int | no | v2. Index of the earlier failed step this step repeats. |
+| `error` | object | no | v2. `{ "type": string, "message"?: string }` when the step ended in error. |
+| `exchange` | object | no | v2. Recorded model `request` and `response` objects. |
 
 ---
 
