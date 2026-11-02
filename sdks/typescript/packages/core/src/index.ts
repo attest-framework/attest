@@ -24,6 +24,7 @@ export { AttestClient, requireSimulationCapability } from "./client.js";
 export type { AttestClientOptions } from "./client.js";
 export { TraceBuilder } from "./trace.js";
 export { AgentResult } from "./result.js";
+export { addUsage, formatUsage, parseUsage, sumUsage, usageSummaryLine, zeroUsage } from "./usage.js";
 export {
   renderAssertionFailure,
   renderDiagnostics,

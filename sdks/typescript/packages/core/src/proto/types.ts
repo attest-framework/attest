@@ -343,15 +343,47 @@ export interface InitializeResult {
   readonly max_steps_per_trace?: number;
 }
 
+/**
+ * Limits for one evaluate_batch call on top of the session budget. A judge or
+ * embedding call that cannot reserve against them is not sent and its
+ * assertion is not_evaluated with reason "budget_exhausted".
+ */
+export interface BatchBudget {
+  readonly max_judge_calls?: number;
+  readonly max_cost_usd?: number;
+}
+
 export interface EvaluateBatchParams {
   readonly trace: Trace;
   readonly assertions: readonly Assertion[];
+  /** Omitted when no per-batch budget applies. */
+  readonly budget?: BatchBudget;
+}
+
+/**
+ * Attest-initiated model usage (embeddings, judges, judge repeats, bias
+ * probes, simulated-user messages). Agent calls not routed through attest
+ * are not counted.
+ */
+export interface Usage {
+  readonly model_calls: number;
+  /** Judge-provider requests, the part of model_calls that max_judge_calls limits. */
+  readonly judge_calls: number;
+  readonly input_tokens: number;
+  readonly output_tokens: number;
+  readonly cached_tokens: number;
+  readonly cost_usd: number;
+  readonly retry_cost_usd: number;
+  readonly unpriced_calls: number;
+  readonly budget_refused: number;
 }
 
 export interface EvaluateBatchResult {
   readonly results: readonly AssertionResult[];
   readonly total_cost?: number;
   readonly total_duration_ms?: number;
+  /** Always sent by the engine; validated by AttestClient.evaluateBatch. */
+  readonly usage: Usage;
   /**
    * True when this result was produced by an SDK simulation shim rather
    * than a real engine evaluation. Engine-produced results always carry

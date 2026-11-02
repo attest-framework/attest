@@ -90,6 +90,9 @@ Plain `http` to a host other than `localhost` or a loopback address is allowed f
 | `ATTEST_SIMULATION` | `1`/`true`/`yes`: Layers 5–6 return `not_evaluated(simulation)` and no provider is called. | unset |
 | `ATTEST_MAX_SOFT_FAILURES` | Maximum soft failures allowed in one engine session, counted across batches; `0` allows none. Exceeding it fails the batch. | unset (no limit) |
 | `ATTEST_EVAL_CONCURRENCY` | Layer 5–6 worker pool size per batch; `0` or a negative value uses the default. | `8` |
+| `ATTEST_MAX_JUDGE_CALLS` | Maximum judge-provider requests in one engine session (judges, `repeat` runs, bias probes, simulated-user messages, retries). Each request reserves one call before it is sent; a request that cannot reserve is not sent and its assertion is `not_evaluated: budget_exhausted`. ACP judge calls count. | unset (no limit) |
+| `ATTEST_BUDGET_USD` | Maximum USD for attest-initiated model calls (layer 5 OpenAI embeddings and every judge request) in one engine session. Each call reserves its worst-case cost (price × prompt bytes + price × output-token limit) before it is sent and is reconciled to the reported token usage when it returns; a call that fails after it was sent keeps its reservation, since the provider may have billed it. A default judge model or embedding model without a price is a startup error, and so is the `acp` judge, which reports no token usage; an assertion that names an unpriced `model` is refused at run time (`budget_exhausted`). | unset (no limit) |
+| `ATTEST_JUDGE_PRICE_IN`, `ATTEST_JUDGE_PRICE_OUT` | Judge price in USD per 1M input and output tokens, set together. Overrides the built-in table (`gpt-4.1`, `gpt-4.1-mini`, `gpt-4.1-nano`) for every judge call; required for `ATTEST_BUDGET_USD` with any other judge model. | unset |
 
 ## Cache and history
 

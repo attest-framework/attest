@@ -30,6 +30,13 @@ const (
 	// ReasonShortCircuited: an L5/L6 assertion was not run because a
 	// deterministic layer (L1–L4) already hard-failed in the same batch.
 	ReasonShortCircuited = "short_circuited"
+	// ReasonBudgetExhausted: an attest-initiated model call (embedding,
+	// judge, judge repeat or bias probe) could not reserve its cost or
+	// call count against the session or per-test budget, so it was not sent.
+	ReasonBudgetExhausted = "budget_exhausted"
+	// ReasonJudgeAbstained: the judge answered {"abstain": true} because
+	// the evidence was insufficient to score the rubric.
+	ReasonJudgeAbstained = "judge_abstained"
 
 	TypeSchema     = "schema"
 	TypeConstraint = "constraint"
@@ -173,4 +180,8 @@ type AssertionResult struct {
 	// stochastic_variance). Empty on passes and on results the
 	// heuristic declined to label. See ClassifyFailure for the rules.
 	FailureClass string `json:"failure_class,omitempty"`
+	// Trial is the 1-based trial index when the SDK ran the test as fixed-N
+	// trials (pytest --attest-trials, Vitest trials). Zero on single runs.
+	// Rows of one assertion across trials share AssertionID.
+	Trial int `json:"trial,omitempty"`
 }

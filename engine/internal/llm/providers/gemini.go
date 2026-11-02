@@ -51,6 +51,10 @@ func (p *Gemini) Name() string { return "gemini" }
 // DefaultModel returns the configured model.
 func (p *Gemini) DefaultModel() string { return p.model }
 
+// MaxOutputTokens returns the output budget actually sent for a request
+// asking for requested tokens (see outputBudget).
+func (p *Gemini) MaxOutputTokens(requested int) int { return outputBudget(requested) }
+
 type geminiPart struct {
 	Text string `json:"text"`
 }
@@ -79,6 +83,11 @@ type geminiResponse struct {
 	UsageMetadata struct {
 		PromptTokenCount     int `json:"promptTokenCount"`
 		CandidatesTokenCount int `json:"candidatesTokenCount"`
+		// CachedContentTokenCount is included in PromptTokenCount.
+		CachedContentTokenCount int `json:"cachedContentTokenCount"`
+		// ThoughtsTokenCount is billed at the output price but not
+		// included in CandidatesTokenCount.
+		ThoughtsTokenCount int `json:"thoughtsTokenCount"`
 	} `json:"usageMetadata"`
 	ModelVersion string `json:"modelVersion"`
 }
@@ -160,10 +169,11 @@ func (p *Gemini) Complete(ctx context.Context, req *llm.CompletionRequest) (*llm
 		respModel = model
 	}
 	return &llm.CompletionResponse{
-		Content:      text.String(),
-		Model:        respModel,
-		InputTokens:  resp.UsageMetadata.PromptTokenCount,
-		OutputTokens: resp.UsageMetadata.CandidatesTokenCount,
-		DurationMS:   time.Since(start).Milliseconds(),
+		Content:           text.String(),
+		Model:             respModel,
+		InputTokens:       resp.UsageMetadata.PromptTokenCount,
+		OutputTokens:      resp.UsageMetadata.CandidatesTokenCount + resp.UsageMetadata.ThoughtsTokenCount,
+		CachedInputTokens: resp.UsageMetadata.CachedContentTokenCount,
+		DurationMS:        time.Since(start).Milliseconds(),
 	}, nil
 }
