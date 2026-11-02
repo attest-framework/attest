@@ -45,3 +45,14 @@ export class ProtocolDesyncError extends Error {
     this.diagnostics = diagnostics;
   }
 }
+
+/**
+ * The engine rejected an OTLP/JSON export (`attest-engine trace convert`). The message is
+ * the engine's error, which names the offending span or field.
+ */
+export class OTLPConversionError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "OTLPConversionError";
+  }
+}

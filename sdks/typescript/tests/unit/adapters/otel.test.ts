@@ -1,241 +1,159 @@
-import { describe, it, expect } from "vitest";
-import { OTelAdapter } from "../../../packages/core/src/adapters/otel.js";
-import { STEP_LLM_CALL, STEP_TOOL_CALL } from "../../../packages/core/src/proto/constants.js";
+/**
+ * OTelAdapter: OTLP/JSON encoding and the engine call contract. The OTLP → trace mapping
+ * lives in the engine and is tested there (engine/internal/trace);
+ * tests/conformance/trace-v2-conformance.test.ts runs the real engine.
+ */
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { OTelAdapter, spansToOtlp, type OTelSpan } from "../../../packages/core/src/adapters/otel.js";
+import { OTLPConversionError } from "../../../packages/core/src/index.js";
+import { ENGINE_VERSION } from "../../../packages/core/src/version.js";
 
-function makeSpan(overrides: {
-  name: string;
-  startTime?: [number, number];
-  endTime?: [number, number];
-  attributes?: Record<string, unknown>;
-  parentSpanId?: string;
-  traceId?: string;
-}) {
+const TRACE_ID = "4bf92f3577b34da6a3ce929d0e0e4736";
+
+function span(overrides: Partial<OTelSpan> & { name: string; spanId: string }): OTelSpan {
   return {
-    name: overrides.name,
-    startTime: overrides.startTime ?? [1000, 0],
-    endTime: overrides.endTime ?? [1001, 0],
-    attributes: overrides.attributes ?? {},
-    parentSpanId: overrides.parentSpanId,
-    spanContext: () => ({ traceId: overrides.traceId ?? "abcdef1234567890abcdef1234567890" }),
+    startTime: [1, 500],
+    endTime: [2, 0],
+    attributes: {},
+    ...overrides,
+    spanContext: () => ({ traceId: TRACE_ID, spanId: overrides.spanId }),
   };
 }
 
-describe("OTelAdapter.fromSpans()", () => {
-  it("builds a trace from a single LLM span", () => {
-    const span = makeSpan({
-      name: "chat",
-      attributes: {
-        "gen_ai.operation.name": "chat",
-        "gen_ai.completion": "Hello!",
-        "gen_ai.request.model": "gpt-4.1",
-        "gen_ai.usage.input_tokens": 10,
-        "gen_ai.usage.output_tokens": 20,
+function encodedSpans(doc: Record<string, unknown>): Record<string, unknown>[] {
+  const resource = (doc["resourceSpans"] as Record<string, unknown>[])[0]!;
+  const scope = (resource["scopeSpans"] as Record<string, unknown>[])[0]!;
+  return scope["spans"] as Record<string, unknown>[];
+}
+
+describe("spansToOtlp()", () => {
+  it("encodes ids, nanosecond times, parent, status and attribute values", () => {
+    const doc = spansToOtlp([
+      span({ name: "invoke_agent a", spanId: "0000000000000001", attributes: { "gen_ai.agent.name": "a" } }),
+      span({
+        name: "chat m",
+        spanId: "0000000000000002",
+        parentSpanContext: { spanId: "0000000000000001" },
+        status: { code: 2, message: "rate limited" },
+        attributes: {
+          int: 3,
+          double: 0.5,
+          flag: true,
+          reasons: ["stop", 1],
+          dropped: undefined,
+        },
+      }),
+    ]);
+
+    const [root, child] = encodedSpans(doc);
+    expect(root).toEqual({
+      traceId: TRACE_ID,
+      spanId: "0000000000000001",
+      name: "invoke_agent a",
+      startTimeUnixNano: "1000000500",
+      endTimeUnixNano: "2000000000",
+      attributes: [{ key: "gen_ai.agent.name", value: { stringValue: "a" } }],
+    });
+    expect(child!["parentSpanId"]).toBe("0000000000000001");
+    expect(child!["status"]).toEqual({ code: 2, message: "rate limited" });
+    expect(child!["attributes"]).toEqual([
+      { key: "int", value: { intValue: "3" } },
+      { key: "double", value: { doubleValue: 0.5 } },
+      { key: "flag", value: { boolValue: true } },
+      {
+        key: "reasons",
+        value: { arrayValue: { values: [{ stringValue: "stop" }, { intValue: "1" }] } },
       },
-    });
-
-    const trace = OTelAdapter.fromSpans([span], "otel-agent");
-    expect(trace.agent_id).toBe("otel-agent");
-    expect(trace.output.message).toBe("Hello!");
+    ]);
   });
 
-  it("derives trace_id from root span", () => {
-    const root = makeSpan({
-      name: "root",
-      traceId: "deadbeefdeadbeefdeadbeefdeadbeef",
-      attributes: { "gen_ai.operation.name": "chat", "gen_ai.completion": "hi" },
-    });
-
-    const trace = OTelAdapter.fromSpans([root]);
-    expect(trace.trace_id).toBe("otel_deadbeefdeadbeef");
+  it("reads the 1.x parentSpanId field", () => {
+    const [encoded] = encodedSpans(
+      spansToOtlp([span({ name: "x", spanId: "0000000000000002", parentSpanId: "0000000000000001" })]),
+    );
+    expect(encoded!["parentSpanId"]).toBe("0000000000000001");
   });
 
-  it("identifies root span as the span without parentSpanId", () => {
-    const root = makeSpan({
-      name: "root",
-      startTime: [1000, 0],
-      endTime: [1002, 0],
-      attributes: { "gen_ai.operation.name": "chat", "gen_ai.completion": "root response" },
-    });
-    const child = makeSpan({
-      name: "child",
-      startTime: [1000, 500_000_000],
-      endTime: [1001, 0],
-      parentSpanId: "span123",
-      attributes: { "gen_ai.operation.name": "chat", "gen_ai.completion": "child" },
-    });
+  it("rejects non-finite numbers", () => {
+    expect(() =>
+      spansToOtlp([span({ name: "x", spanId: "0000000000000001", attributes: { cost: Number.NaN } })]),
+    ).toThrow(RangeError);
+  });
+});
 
-    const trace = OTelAdapter.fromSpans([child, root]);
-    expect(trace.output.message).toBe("child"); // last llm_call wins for output
+describe("OTelAdapter engine call", () => {
+  let dir: string;
+  const savedPath = process.env["ATTEST_ENGINE_PATH"];
+
+  function scriptEngine(response: string, exitCode = 0, stderr = ""): void {
+    fs.writeFileSync(path.join(dir, "response"), response);
+    const engine = path.join(dir, "attest-engine");
+    fs.writeFileSync(
+      engine,
+      [
+        "#!/bin/sh",
+        'case "$1" in',
+        `  version) echo "attest-engine ${ENGINE_VERSION}" ;;`,
+        `  trace) printf '%s\\n' "$@" > "${dir}/args"; cat > "${dir}/stdin"; cat "${dir}/response"`,
+        `         printf '%s' "${stderr}" >&2; exit ${exitCode} ;;`,
+        "esac",
+      ].join("\n"),
+    );
+    fs.chmodSync(engine, 0o755);
+    process.env["ATTEST_ENGINE_PATH"] = engine;
+  }
+
+  beforeEach(() => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), "attest-otel-"));
   });
 
-  it("adds llm_call step for chat operation", () => {
-    const span = makeSpan({
-      name: "my-chat",
-      attributes: {
-        "gen_ai.operation.name": "chat",
-        "gen_ai.request.model": "gpt-4.1",
-        "gen_ai.completion": "response text",
-        "gen_ai.usage.input_tokens": 15,
-        "gen_ai.usage.output_tokens": 25,
-      },
-    });
-
-    const trace = OTelAdapter.fromSpans([span]);
-    const llmStep = trace.steps.find((s) => s.type === STEP_LLM_CALL);
-    expect(llmStep).toBeDefined();
-    expect(llmStep?.name).toBe("my-chat");
-    expect(llmStep?.args?.model).toBe("gpt-4.1");
-    expect(llmStep?.result?.completion).toBe("response text");
-    expect(llmStep?.result?.input_tokens).toBe(15);
-    expect(llmStep?.result?.output_tokens).toBe(25);
+  afterEach(() => {
+    if (savedPath === undefined) delete process.env["ATTEST_ENGINE_PATH"];
+    else process.env["ATTEST_ENGINE_PATH"] = savedPath;
+    fs.rmSync(dir, { recursive: true, force: true });
   });
 
-  it("adds tool_call step for tool operation", () => {
-    const span = makeSpan({
-      name: "tool-span",
-      attributes: {
-        "gen_ai.operation.name": "tool",
-        "gen_ai.tool.name": "search",
-        "gen_ai.tool.parameters": { q: "test" },
-        "gen_ai.tool.output": "results",
-      },
-    });
+  it("sends the export to `trace convert -` and returns the engine's trace", async () => {
+    const trace = {
+      schema_version: 2,
+      trace_id: "otel_4bf92f3577b34da6",
+      agent_id: "custom",
+      input: {},
+      output: { message: "ok" },
+      steps: [{ type: "tool_call", name: "t", args: {}, result: {}, tool_call_id: "c1" }],
+    };
+    scriptEngine(JSON.stringify(trace));
+    const otlp = { resourceSpans: [] };
 
-    const trace = OTelAdapter.fromSpans([span]);
-    const toolStep = trace.steps.find((s) => s.type === STEP_TOOL_CALL);
-    expect(toolStep).toBeDefined();
-    expect(toolStep?.name).toBe("search");
-    expect(toolStep?.args?.parameters).toEqual({ q: "test" });
-    expect(toolStep?.result?.output).toBe("results");
+    const result = await OTelAdapter.fromOtlp(otlp, "custom");
+
+    expect(fs.readFileSync(path.join(dir, "args"), "utf8").trim().split("\n")).toEqual([
+      "trace",
+      "convert",
+      "--agent-id",
+      "custom",
+      "-",
+    ]);
+    expect(JSON.parse(fs.readFileSync(path.join(dir, "stdin"), "utf8"))).toEqual(otlp);
+    expect(result).toEqual(trace);
   });
 
-  it("accumulates total_tokens across multiple LLM spans", () => {
-    const span1 = makeSpan({
-      name: "call-1",
-      startTime: [1000, 0],
-      endTime: [1001, 0],
-      attributes: {
-        "gen_ai.operation.name": "chat",
-        "gen_ai.completion": "first",
-        "gen_ai.usage.input_tokens": 10,
-        "gen_ai.usage.output_tokens": 20,
-      },
-    });
-    const span2 = makeSpan({
-      name: "call-2",
-      startTime: [1001, 0],
-      endTime: [1002, 0],
-      attributes: {
-        "gen_ai.operation.name": "chat",
-        "gen_ai.completion": "second",
-        "gen_ai.usage.input_tokens": 5,
-        "gen_ai.usage.output_tokens": 15,
-      },
-    });
+  it("fromSpans encodes spans before converting", async () => {
+    scriptEngine(JSON.stringify({ schema_version: 2, trace_id: "t", output: { message: "" }, steps: [] }));
 
-    const trace = OTelAdapter.fromSpans([span1, span2]);
-    expect(trace.metadata?.total_tokens).toBe(50); // 30 + 20
+    await OTelAdapter.fromSpans([span({ name: "chat", spanId: "0000000000000001" })]);
+
+    const sent = JSON.parse(fs.readFileSync(path.join(dir, "stdin"), "utf8")) as Record<string, unknown>;
+    expect(encodedSpans(sent)[0]!["name"]).toBe("chat");
   });
 
-  it("uses response model over request model in metadata", () => {
-    const span = makeSpan({
-      name: "completion",
-      attributes: {
-        "gen_ai.operation.name": "chat",
-        "gen_ai.request.model": "gpt-4.1",
-        "gen_ai.response.model": "gpt-4.1-2025-04-14",
-        "gen_ai.completion": "hi",
-      },
-    });
+  it("raises OTLPConversionError with the engine's message on rejection", async () => {
+    scriptEngine("", 1, "trace convert: traceId is not hex");
 
-    const trace = OTelAdapter.fromSpans([span]);
-    expect(trace.metadata?.model).toBe("gpt-4.1-2025-04-14");
-  });
-
-  it("falls back to request model when response model absent", () => {
-    const span = makeSpan({
-      name: "completion",
-      attributes: {
-        "gen_ai.operation.name": "chat",
-        "gen_ai.request.model": "gpt-4.1",
-        "gen_ai.completion": "hi",
-      },
-    });
-
-    const trace = OTelAdapter.fromSpans([span]);
-    expect(trace.metadata?.model).toBe("gpt-4.1");
-  });
-
-  it("computes latency_ms from root span start/end", () => {
-    const root = makeSpan({
-      name: "root",
-      startTime: [1000, 0],
-      endTime: [1000, 500_000_000], // 500ms
-      attributes: { "gen_ai.operation.name": "chat", "gen_ai.completion": "hi" },
-    });
-
-    const trace = OTelAdapter.fromSpans([root]);
-    expect(trace.metadata?.latency_ms).toBe(500);
-  });
-
-  it("classifies spans by name when no gen_ai.operation.name attribute", () => {
-    const span = makeSpan({
-      name: "openai-completion",
-      attributes: {
-        "gen_ai.completion": "by name",
-      },
-    });
-
-    const trace = OTelAdapter.fromSpans([span]);
-    const llmStep = trace.steps.find((s) => s.type === STEP_LLM_CALL);
-    expect(llmStep).toBeDefined();
-  });
-
-  it("ignores spans that cannot be classified", () => {
-    const span = makeSpan({
-      name: "http-request",
-      attributes: { "http.status_code": 200 },
-    });
-
-    const trace = OTelAdapter.fromSpans([span]);
-    expect(trace.steps).toHaveLength(0);
-  });
-
-  it("handles empty spans array", () => {
-    const trace = OTelAdapter.fromSpans([]);
-    expect(trace.output.message).toBe("");
-    expect(trace.steps).toHaveLength(0);
-    expect(trace.metadata?.total_tokens).toBeUndefined();
-  });
-
-  it("processes spans in chronological order", () => {
-    const later = makeSpan({
-      name: "second",
-      startTime: [1001, 0],
-      endTime: [1002, 0],
-      attributes: { "gen_ai.operation.name": "chat", "gen_ai.completion": "second" },
-    });
-    const earlier = makeSpan({
-      name: "first",
-      startTime: [1000, 0],
-      endTime: [1001, 0],
-      attributes: { "gen_ai.operation.name": "chat", "gen_ai.completion": "first" },
-    });
-
-    const trace = OTelAdapter.fromSpans([later, earlier]);
-    expect(trace.steps[0].name).toBe("first");
-    expect(trace.steps[1].name).toBe("second");
-  });
-
-  it("step metadata includes duration_ms", () => {
-    const span = makeSpan({
-      name: "chat",
-      startTime: [1000, 0],
-      endTime: [1000, 200_000_000], // 200ms
-      attributes: { "gen_ai.operation.name": "chat", "gen_ai.completion": "hi" },
-    });
-
-    const trace = OTelAdapter.fromSpans([span]);
-    expect(trace.steps[0].metadata?.duration_ms).toBe(200);
+    await expect(OTelAdapter.fromOtlp("{}")).rejects.toThrow(OTLPConversionError);
+    await expect(OTelAdapter.fromOtlp("{}")).rejects.toThrow("traceId is not hex");
   });
 });

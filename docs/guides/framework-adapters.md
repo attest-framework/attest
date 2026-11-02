@@ -256,7 +256,16 @@ trace = OTelAdapter.from_spans(collected_spans, agent_id="my-agent")
 trace = OTelAdapter.from_otlp(Path("incident.otlp.json"))
 ```
 
-The conversion runs in the engine (`attest-engine trace convert`), the same mapping the TypeScript adapter and `attest trace check` use, so every SDK produces the same trace v2 for the same spans. It follows the current OpenTelemetry GenAI semantic conventions: `chat`, `text_completion`, `generate_content` and `embeddings` spans become `llm_call` steps, `execute_tool` spans `tool_call` steps with `args` and `result` from `gen_ai.tool.call.arguments` / `gen_ai.tool.call.result`, nested `invoke_agent` spans `agent_call` steps with handoffs, and top-level `invoke_agent` spans conversation turns. Spans without GenAI attributes are skipped. Malformed input raises `attest.exceptions.OTLPConversionError` with the engine's message. The full mapping, and `attest trace check` for integrity and coverage, are in [trace-check.md](trace-check.md).
+TypeScript (`@attest-ai/core`) has the same adapter; both methods are async because they resolve the engine:
+
+```typescript
+import { OTelAdapter } from "@attest-ai/core";
+
+const trace = await OTelAdapter.fromSpans(exporter.getFinishedSpans(), "my-agent");
+const fromExport = await OTelAdapter.fromOtlp(readFileSync("incident.otlp.json", "utf8"));
+```
+
+The conversion runs in the engine (`attest-engine trace convert`), the same mapping the TypeScript adapter and `attest trace check` use, so every SDK produces the same trace v2 for the same spans. It follows the current OpenTelemetry GenAI semantic conventions: `chat`, `text_completion`, `generate_content` and `embeddings` spans become `llm_call` steps, `execute_tool` spans `tool_call` steps with `args` and `result` from `gen_ai.tool.call.arguments` / `gen_ai.tool.call.result`, nested `invoke_agent` spans `agent_call` steps with handoffs, and top-level `invoke_agent` spans conversation turns. Spans without GenAI attributes are skipped. Malformed input raises `attest.exceptions.OTLPConversionError` (TypeScript: rejects with `OTLPConversionError`) with the engine's message. The full mapping, and `attest trace check` for integrity and coverage, are in [trace-check.md](trace-check.md).
 
 `attest.adapters.otel.to_otel_spans(trace)` exports a trace as OTLP-shaped span dicts under an `invoke_agent` root; `OTelAdapter.from_otel_span_dicts` converts them back.
 
