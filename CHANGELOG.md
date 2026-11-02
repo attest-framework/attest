@@ -6,6 +6,22 @@ All notable changes to Attest are documented in this file. The format follows [K
 
 ### Added
 
+- Native Anthropic (Messages API) and Gemini (`generateContent`) judges: `ATTEST_JUDGE_PROVIDER=anthropic` or `gemini`, with keys from `ATTEST_JUDGE_API_KEY`, `ANTHROPIC_API_KEY`, or `GOOGLE_API_KEY` then `GEMINI_API_KEY`, `ATTEST_JUDGE_MODEL` required, and `ATTEST_JUDGE_BASE_URL` for gateways. Each provider has its own rate limit (`ATTEST_RATE_LIMIT_ANTHROPIC[_BURST]`, `ATTEST_RATE_LIMIT_GEMINI[_BURST]`); an outage is `not_evaluated: provider_unavailable`. `doctor` reports the new providers and key sources. See `docs/guides/judges.md`.
+- Judge results record the provider in `judge_metadata.provider` next to `model`; reports print `judge: <provider>/<model>`.
+- `attest calibrate --persist` stores labels keyed by judge provider and model (`--judge-provider`, `--judge-model`), so calibration is never pooled across judges.
+
+### Changed
+
+- **BREAKING:** `attest calibrate --persist` requires `--judge-provider` and `--judge-model`. The calibration table in `$ATTEST_CACHE_DIR/attest.db` gains `judge_provider` and `judge_model` columns on first use; labels stored before have neither and are not counted for any provider.
+
+## [1.0.0-rc.1] — 2026-11-02
+
+First release candidate, themed "Trust": a red result means a real failure, the SDKs run only an engine of their own version, and `attest init` goes from an empty project to a CI merge gate without an API key.
+
+### Added
+
+- `ATTEST_SIMULATION=1` runs the engine with providers disabled: layers 1–4 evaluate for real, layers 5–6 report `not_evaluated: simulation`.
+- `inspect()` (Python `attest.inspect()`, `@attest-ai/vitest` `inspect()`) evaluates without enforcing. Python `attest.enforce(verdict)` applies the session's strict setting to an `AgentResult`, `RepeatResult` or `ScenarioResult`: it fails with the failing trials' diagnostics or skips with the not-evaluated reasons summed across trials. `--attest-strict` (pytest), `strict: true` (Vitest) and `ATTEST_STRICT=1` turn not-evaluated skips into failures.
 - `attest init` (Python and TypeScript) writes a sample test that passes with no API key: a refund agent's run built with `TraceBuilder`, checked by schema, constraint, trace and content assertions, with one line marked `ATTEST-DEMO` that turns it red with the layer, expected and actual value. It also writes `attest.policy.yaml` (block on hard failures, warn on not-evaluated assertions). The Python sample test defines the `my_agent_result` fixture it uses (the old sample used it without defining it), so an existing `tests/conftest.py` does not affect it.
 - `attest init --ci github` writes `.github/workflows/attest.yml`: the test step continues on failure, the report upload and `attest policy evaluate` always run, the `pr-annotate` action always runs for pull requests from the same repository (a fork's read-only token cannot post reviews), a policy warning (exit 2) does not fail the job, and a final step fails the job when the tests failed. See `docs/guides/merge-gate.md`.
 - report-v2 (`proto/attest/v1/report-v2.schema.json`, fixtures in `protocol-tests/report-v2/` checked in Go, Python and TypeScript): every assertion row carries the `test_id`, `file` and `line` of its test, a `tests` list gives each test's outcome (`passed`, `failed`, `skipped`) and not-evaluated reasons, and `summary.not_evaluated` counts not-evaluated rows.
@@ -16,17 +32,19 @@ All notable changes to Attest are documented in this file. The format follows [K
 - `CHANGELOG.md` is the single changelog; `scripts/release-notes.sh <version>` prints one version's section.
 - `attest-engine doctor [--json]` reports the engine and protocol versions, the capabilities `initialize` would advertise, the judge provider, model, base URL and key source (never the key), the embedding provider, simulation mode and the cache directory. JSON follows `proto/attest/v1/doctor.schema.json`. A configuration error exits 1 with the server's startup message; a plain-http judge endpoint on a non-loopback host is flagged as insecure.
 - `ATTEST_JUDGE_BASE_URL` points the LLM judge at any OpenAI-compatible endpoint. `ATTEST_JUDGE_API_KEY` overrides `OPENAI_API_KEY` for the judge. See `docs/guides/configuration.md`.
-- Native Anthropic (Messages API) and Gemini (`generateContent`) judges: `ATTEST_JUDGE_PROVIDER=anthropic` or `gemini`, with keys from `ATTEST_JUDGE_API_KEY`, `ANTHROPIC_API_KEY`, or `GOOGLE_API_KEY` then `GEMINI_API_KEY`, `ATTEST_JUDGE_MODEL` required, and `ATTEST_JUDGE_BASE_URL` for gateways. Each provider has its own rate limit (`ATTEST_RATE_LIMIT_ANTHROPIC[_BURST]`, `ATTEST_RATE_LIMIT_GEMINI[_BURST]`); an outage is `not_evaluated: provider_unavailable`. `doctor` reports the new providers and key sources. See `docs/guides/judges.md`.
-- Judge results record the provider in `judge_metadata.provider` next to `model`; reports print `judge: <provider>/<model>`.
-- `attest calibrate --persist` stores labels keyed by judge provider and model (`--judge-provider`, `--judge-model`), so calibration is never pooled across judges.
 - `attest-engine --help` lists every command; each command is one file registered through a command registry.
 - `attest` console script for the Python SDK (`uv run attest`), matching `npx attest`. Both implement `attest init` and forward every other command (`doctor`, `baseline`, `policy`, `cache`, `calibrate`, `version`) to a version-checked engine with arguments, output and exit code unchanged. A forwarded command must be listed by the engine's `help`; an engine that predates it (such as the `v1.0.0-rc` prerelease, which reports the same version but has no command registry) exits 1 before running. `attest --help` and bare `attest` always exit 0 and never download: they list `init`, plus the engine's commands when a matching engine is already available through `ATTEST_ENGINE_PATH`, `PATH` or the versioned cache, and otherwise print how to get one.
 - `EngineVersionMismatchError` (Python `attest.exceptions`, TypeScript `engine-manager`) names the engine path, where discovery found it, the version it reports and the version required.
 
 ### Changed
 
-- **BREAKING:** `attest calibrate --persist` requires `--judge-provider` and `--judge-model`. The calibration table in `$ATTEST_CACHE_DIR/attest.db` gains `judge_provider` and `judge_model` columns on first use; labels stored before have neither and are not counted for any provider.
-
+- **BREAKING:** the engine reports `not_evaluated` with a reason (`provider_unavailable`, `provider_not_configured`, `simulation`, `missing_evidence`, `short_circuited`) instead of failing or dropping assertions it cannot judge. Judge and embedding outages and missing keys no longer show as `broken_code`.
+- **BREAKING:** `attest-engine policy evaluate` warns (exit 2) on `not_evaluated` assertions; set `not_evaluated: block` in the policy to block instead.
+- **BREAKING (Python):** `attest.evaluate()` fails the test on any hard failure and skips it with `not evaluated: <reason>` when an assertion could not be evaluated.
+- **BREAKING (TypeScript):** `@attest-ai/vitest` `evaluate()` fails the test on any hard failure and skips it with `not evaluated: <reason>` when an assertion could not be evaluated.
+- **BREAKING:** simulation mode in both SDKs runs the real engine with providers disabled instead of returning fabricated passes; TypeScript `simulationEvaluateBatch` is removed. `config(simulation=True)` / `config({ simulation: true })` requires an engine that advertises `simulation_mode`, so it can never reach a real provider.
+- Python diagnostics count failures, not rows, and list not-evaluated assertions with their reason.
+- The `pr-annotate` action places each failed assertion at the `file` and `line` its report-v2 row carries (the test that requested it): an inline review comment when that line is in the pull request diff, an entry with `file:line` in the review body otherwise, and an `::error` (hard failure) or `::warning` (soft failure) workflow annotation at that file and line either way. It no longer guesses line 1 from test ids in the explanation; rows without a location are listed in the review body. Its unit tests run in GitHub Config CI. When the `policy` input is set, a policy evaluator exit code other than 0, 1 or 2 (for example 127, `engine-binary` not found) now fails the step with an error naming the code; it previously counted as a pass.
 - **BREAKING:** `@attest-ai/vitest` requires Vitest 3 or later (`AttestReporter` uses the Vitest 3 reporter API), and its `@attest-ai/core` peer range is `>=1.0.0-rc`; the old `>=0.3.0` range excluded 1.0.0 prereleases, so `npm install` of the two packages failed.
 - **BREAKING:** under `test.concurrent`, `inspect()` and `evaluate()` require the test context (`{ context }`) and throw without it, so results are never attached to another test.
 - The TypeScript sample test written by `attest init` is `tests/my-agent.test.ts` (was `tests/test_my_agent.test.ts`).
@@ -52,6 +70,10 @@ All notable changes to Attest are documented in this file. The format follows [K
 - **BREAKING:** `ATTEST_JUDGE_RPM` and `ATTEST_JUDGE_BURST`; use `ATTEST_RATE_LIMIT_OPENAI` and `ATTEST_RATE_LIMIT_OPENAI_BURST`.
 - **BREAKING:** the deprecated Python adapter Protocols `attest.adapters.TraceAdapter`, `ProviderAdapter` and `FrameworkAdapter`; subclass `BaseAdapter` or `BaseProviderAdapter`. `Agent(adapter=...)` takes a `BaseAdapter`.
 - **BREAKING:** `attest validate` (Python and TypeScript) and the Python `attest run` / bare `attest` pytest pass-through; run `pytest` or `vitest` directly. `attest` with no arguments prints help.
+
+### Fixed
+
+- Vitest workers start their own engine when the `attestGlobalSetup()` client is not visible to them.
 
 ### Security
 
