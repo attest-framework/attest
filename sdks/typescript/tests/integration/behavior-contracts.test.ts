@@ -40,28 +40,32 @@ describe("behavior contracts on the frozen INC-1042 traces", () => {
     }
   });
 
-  it.each([
+  // it.each spreads array rows into arguments without the test context, so
+  // the per-trace tests are generated with a loop to keep ctx.skip().
+  for (const [label, path] of [
     ["py", "trace-v2/otlp/inc-1042-refund.trace.json"],
     ["ts", "contracts/traces/inc-1042-ts.trace.json"],
-  ])("reports the double refund in the %s trace", async (_, path, ctx) => {
-    if (skipReason || !client) {
-      ctx.skip();
-      return;
-    }
-    const trace = loadTrace(path);
-    const chain = attestExpect(trace).toolCardinality("issue_refund", {
-      per: "order_id",
-      atMost: 1,
+  ] as const) {
+    it(`reports the double refund in the ${label} trace`, async (ctx) => {
+      if (skipReason || !client) {
+        ctx.skip();
+        return;
+      }
+      const trace = loadTrace(path);
+      const chain = attestExpect(trace).toolCardinality("issue_refund", {
+        per: "order_id",
+        atMost: 1,
+      });
+
+      const result = await client.evaluateBatch(trace, chain.assertions);
+
+      expect(result.results).toHaveLength(1);
+      expect(result.results[0].status).toBe("hard_fail");
+      expect(result.results[0].explanation).toBe(
+        "issue_refund called 2× for order_id=O-1042 (max 1)",
+      );
     });
-
-    const result = await client.evaluateBatch(trace, chain.assertions);
-
-    expect(result.results).toHaveLength(1);
-    expect(result.results[0].status).toBe("hard_fail");
-    expect(result.results[0].explanation).toBe(
-      "issue_refund called 2× for order_id=O-1042 (max 1)",
-    );
-  });
+  }
 
   it("passes the corrected trace", async (ctx) => {
     if (skipReason || !client) {
