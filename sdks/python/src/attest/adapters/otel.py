@@ -1,26 +1,24 @@
 """OpenTelemetry trace adapter for Attest.
 
-Implements the ingest side of OpenTelemetry GenAI semantic conventions:
-maps spans tagged with `gen_ai.operation.name` (and related attributes) into
-Attest steps. The classifier uses an attribute-driven dispatch table; the
-span name is consulted only when the operation attribute is absent.
+OTLP → Attest trace conversion runs in the engine (``attest-engine trace
+convert``), the single implementation of the OpenTelemetry GenAI semantic
+convention mapping shared by every SDK. This module only encodes spans as
+OTLP/JSON, calls the engine and parses the trace v2 it returns; it holds no
+mapping of its own. See ``docs/guides/trace-check.md`` for the mapping.
 
-Supported operations (per OTel GenAI semantic conventions):
-
-    chat, text_completion, completion, generate_content  → llm_call
-    embeddings                                            → llm_call
-    invoke_agent                                          → agent_call
-    execute_tool, tool                                    → tool_call
-    retrieval (and `gen_ai.retrieval.*` attribute family) → retrieval
-
-Agent hierarchy attributes `gen_ai.agent.name` and `gen_ai.agent.id` are
-mapped onto Step.agent_role / Step.agent_id so TraceTree resolution sees
-the same parent/child structure that producers emit.
+``to_otel_spans`` is the export side: it writes an Attest trace as OTLP-shaped
+span dicts with ``gen_ai.*`` attributes that the engine converts back.
 """
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+import base64
+import hashlib
+import json
+import math
+import os
+import subprocess
+from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING, Any
 
 from attest._proto.types import (
@@ -28,34 +26,19 @@ from attest._proto.types import (
     STEP_LLM_CALL,
     STEP_RETRIEVAL,
     STEP_TOOL_CALL,
-    Step,
     Trace,
 )
 from attest.adapters._base import BaseAdapter
+from attest.exceptions import OTLPConversionError
 
 if TYPE_CHECKING:
     from opentelemetry.sdk.trace import ReadableSpan
 
+# Upper bound for one `attest-engine trace convert` run.
+_CONVERT_TIMEOUT_S = 60
 
-# OTel GenAI operation.name → Attest step type. Authoritative when the
-# attribute is present; the span name is only consulted as fallback.
-_OPERATION_TO_STEP: dict[str, str] = {
-    # LLM operations
-    "chat": STEP_LLM_CALL,
-    "completion": STEP_LLM_CALL,
-    "text_completion": STEP_LLM_CALL,
-    "generate_content": STEP_LLM_CALL,
-    "embeddings": STEP_LLM_CALL,
-    # Tool operations
-    "execute_tool": STEP_TOOL_CALL,
-    "tool": STEP_TOOL_CALL,
-    # Agent operations
-    "invoke_agent": STEP_AGENT_CALL,
-    "create_agent": STEP_AGENT_CALL,
-    # Retrieval (GenAI conventions reserve a retrieval span family)
-    "retrieval": STEP_RETRIEVAL,
-    "retrieve": STEP_RETRIEVAL,
-}
+# OTLP status code for an error span.
+_STATUS_CODE_ERROR = 2
 
 
 def _require_otel() -> None:
@@ -66,34 +49,8 @@ def _require_otel() -> None:
         raise ImportError("Install otel extras: uv add 'attest-ai[otel]'")
 
 
-def _require_numeric_attr(attrs: dict[str, Any], key: str) -> int:
-    """Return ``int(attrs[key])`` when present, ``0`` when missing.
-
-    Raises ``TypeError`` if the attribute is set to a non-numeric value such
-    as a sequence — the OTel GenAI semantic conventions type usage counters
-    as scalar ints, so anything else is a producer bug that should surface
-    rather than be silently coerced.
-    """
-    value = attrs.get(key)
-    if value is None:
-        return 0
-    if isinstance(value, bool) or not isinstance(value, int | float):
-        raise TypeError(
-            f"OTel attribute {key!r} must be numeric per gen_ai semantic "
-            f"conventions; got {type(value).__name__}"
-        )
-    return int(value)
-
-
 class OTelAdapter(BaseAdapter):
-    """Maps OpenTelemetry spans to Attest traces using gen_ai.* semantic conventions.
-
-    Span classification is attribute-driven: `gen_ai.operation.name` is the
-    primary signal, with span name falling back only when no operation
-    attribute is set. Agent hierarchy attributes (`gen_ai.agent.name`,
-    `gen_ai.agent.id`) propagate to Step.agent_role and Step.agent_id so
-    downstream TraceTree consumers see the same parent/child structure.
-    """
+    """Builds Attest traces from OpenTelemetry spans through the engine conversion."""
 
     @classmethod
     def from_spans(
@@ -101,383 +58,175 @@ class OTelAdapter(BaseAdapter):
         spans: Sequence[ReadableSpan],
         agent_id: str | None = None,
     ) -> Trace:
-        """Build an Attest Trace from a sequence of OpenTelemetry ReadableSpans.
+        """Build an Attest Trace from opentelemetry-sdk ReadableSpans of one trace.
 
         Args:
-            spans: Sequence of ReadableSpan objects from opentelemetry-sdk.
-            agent_id: Optional agent identifier for the trace.
+            spans: Finished spans, for example from an ``InMemorySpanExporter``.
+            agent_id: Trace agent_id; defaults to the first turn's ``gen_ai.agent.name``.
 
-        Returns:
-            Attest Trace populated from the spans.
+        Raises:
+            OTLPConversionError: The engine rejected the spans.
         """
         _require_otel()
-
-        adapter = cls(agent_id=agent_id)
-        return adapter._build_trace(spans)
+        return cls.from_otlp(_readable_spans_to_otlp(spans), agent_id=agent_id)
 
     @classmethod
     def from_otel_span_dicts(
         cls,
-        span_dicts: Sequence[dict[str, Any]],
+        span_dicts: Sequence[Mapping[str, Any]],
         agent_id: str | None = None,
     ) -> Trace:
-        """Build an Attest Trace from OTLP-shaped span dicts.
+        """Build an Attest Trace from span dicts in the shape :func:`to_otel_spans` writes.
 
-        Inverse of :func:`to_otel_spans`. Accepts the dict shape produced by
-        the export side (or any equivalent OTLP/JSON serialization) so
-        consumers can verify round-trip fidelity without instantiating
-        opentelemetry-sdk ReadableSpan objects.
+        Each dict carries ``trace_id`` and ``span_id`` (hex), optional
+        ``parent_span_id``, ``name``, ``start_time_unix_nano``,
+        ``end_time_unix_nano``, ``attributes`` (mapping) and optional
+        ``status`` (``{"code": 2, "message": ...}`` for errors).
 
-        The dicts must carry ``attributes`` (mapping), ``name`` (str),
-        ``start_time_unix_nano`` and ``end_time_unix_nano`` (ints), plus
-        ``trace_id``/``span_id``/``parent_span_id`` for hierarchy. Other
-        fields are ignored.
+        Raises:
+            OTLPConversionError: The engine rejected the spans.
+        """
+        return cls.from_otlp(_span_dicts_to_otlp(span_dicts), agent_id=agent_id)
+
+    @classmethod
+    def from_otlp(
+        cls,
+        otlp: Mapping[str, Any] | str | bytes | os.PathLike[str],
+        agent_id: str | None = None,
+    ) -> Trace:
+        """Convert an OTLP/JSON export (``resourceSpans`` → ``scopeSpans`` → ``spans``).
 
         Args:
-            span_dicts: Sequence of OTLP-shaped span dicts.
-            agent_id: Optional agent identifier for the trace.
+            otlp: The export as a parsed mapping, JSON text or bytes, or a file path.
+            agent_id: Trace agent_id; defaults to the first turn's ``gen_ai.agent.name``.
 
-        Returns:
-            Attest Trace populated from the spans.
+        Raises:
+            OTLPConversionError: The engine rejected the export (malformed JSON, invalid
+                ids or timestamps, more than one trace, non-numeric token counts, ...).
         """
-        adapter = cls(agent_id=agent_id)
-        wrapped = [_DictSpan(d) for d in span_dicts]
-        return adapter._build_trace(wrapped)
-
-    def _build_trace(self, spans: Sequence[Any]) -> Trace:
-        """Internal trace builder from spans."""
-        sorted_spans = sorted(spans, key=lambda s: s.start_time or 0)
-
-        builder = self._create_builder()
-        root_span = self._find_root_span(sorted_spans)
-
-        if root_span is not None:
-            trace_id_hex = format(root_span.context.trace_id, "032x") if root_span.context else ""
-            if trace_id_hex:
-                builder.set_trace_id(f"otel_{trace_id_hex[:16]}")
-
-        output_message = ""
-        total_tokens: int | None = None
-        cost_usd: float | None = None
-        latency_ms: int | None = None
-        model: str | None = None
-
-        for span in sorted_spans:
-            attrs = dict(span.attributes or {})
-            step_type = self._classify_span(attrs, span.name)
-            if step_type is None:
-                continue
-
-            agent_id, agent_role = self._extract_agent_identity(attrs)
-
-            if step_type == STEP_LLM_CALL:
-                step_args, step_result = self._extract_llm_step(attrs)
-                builder.add_llm_call(
-                    name=span.name,
-                    args=step_args,
-                    result=step_result,
-                    metadata=self._span_metadata(span),
-                    agent_id=agent_id,
-                    agent_role=agent_role,
-                )
-                completion = attrs.get("gen_ai.completion", "")
-                if completion:
-                    output_message = str(completion)
-
-                input_tokens = _require_numeric_attr(attrs, "gen_ai.usage.input_tokens")
-                output_tokens = _require_numeric_attr(attrs, "gen_ai.usage.output_tokens")
-                span_tokens = input_tokens + output_tokens
-                if span_tokens > 0:
-                    total_tokens = (total_tokens or 0) + span_tokens
-
-                if model is None:
-                    model = self._extract_model(attrs)
-
-            elif step_type == STEP_TOOL_CALL:
-                step_args, step_result = self._extract_tool_step(attrs)
-                tool_name = str(attrs.get("gen_ai.tool.name", span.name))
-                builder.add_tool_call(
-                    name=tool_name,
-                    args=step_args,
-                    result=step_result,
-                    metadata=self._span_metadata(span),
-                    agent_id=agent_id,
-                    agent_role=agent_role,
-                )
-
-            elif step_type == STEP_AGENT_CALL:
-                step_args, step_result = self._extract_agent_step(attrs)
-                builder.add_step(
-                    self._build_agent_step(
-                        name=str(attrs.get("gen_ai.agent.name", span.name)),
-                        args=step_args,
-                        result=step_result,
-                        metadata=self._span_metadata(span),
-                        agent_id=agent_id,
-                        agent_role=agent_role,
-                    )
-                )
-
-            elif step_type == STEP_RETRIEVAL:
-                step_args, step_result = self._extract_retrieval_step(attrs)
-                builder.add_retrieval(
-                    name=span.name,
-                    args=step_args,
-                    result=step_result,
-                    metadata=self._span_metadata(span),
-                    agent_id=agent_id,
-                    agent_role=agent_role,
-                )
-
-        if (
-            root_span is not None
-            and root_span.start_time is not None
-            and root_span.end_time is not None
-        ):
-            latency_ms = int((root_span.end_time - root_span.start_time) / 1_000_000)
-
-        builder.set_output(message=output_message)
-        builder.set_metadata(
-            total_tokens=total_tokens,
-            cost_usd=cost_usd,
-            latency_ms=latency_ms,
-            model=model,
-        )
-
-        return builder.build()
-
-    def _find_root_span(self, spans: Sequence[Any]) -> Any | None:
-        """Return the span with no valid parent, or the first span."""
-        for span in spans:
-            if span.parent is None:
-                return span
-        return spans[0] if spans else None
-
-    def _classify_span(self, attrs: dict[str, Any], name: str) -> str | None:
-        """Classify a span as llm_call/tool_call/agent_call/retrieval, or None.
-
-        Dispatch order:
-        1. `gen_ai.operation.name` attribute (authoritative per spec).
-        2. Presence of operation-specific attributes (`gen_ai.tool.name`,
-           `gen_ai.agent.name`, `gen_ai.completion`, retrieval families).
-        3. Span name fallback for producers that emit only the legacy span
-           name (`chat <model>`, `completion <model>`, etc.) without the
-           operation attribute. This branch is intentionally narrow: it
-           accepts only the canonical operation tokens, not any substring.
-        """
-        op = str(attrs.get("gen_ai.operation.name", "")).strip().lower()
-        if op:
-            mapped = _OPERATION_TO_STEP.get(op)
-            if mapped is not None:
-                return mapped
-
-        if "gen_ai.tool.name" in attrs:
-            return STEP_TOOL_CALL
-        if "gen_ai.agent.name" in attrs or "gen_ai.agent.id" in attrs:
-            return STEP_AGENT_CALL
-        if any(k.startswith("gen_ai.retrieval.") for k in attrs):
-            return STEP_RETRIEVAL
-        if "gen_ai.completion" in attrs or "gen_ai.prompt" in attrs:
-            return STEP_LLM_CALL
-
-        first_token = name.strip().split(None, 1)[0].lower() if name else ""
-        if first_token in _OPERATION_TO_STEP:
-            return _OPERATION_TO_STEP[first_token]
-        return None
-
-    def _extract_agent_identity(self, attrs: dict[str, Any]) -> tuple[str | None, str | None]:
-        """Return (agent_id, agent_role) from gen_ai.agent.* attributes."""
-        agent_id_raw = attrs.get("gen_ai.agent.id")
-        agent_name_raw = attrs.get("gen_ai.agent.name")
-        agent_id = str(agent_id_raw) if agent_id_raw is not None else None
-        agent_role = str(agent_name_raw) if agent_name_raw is not None else None
-        return agent_id, agent_role
-
-    def _extract_model(self, attrs: dict[str, Any]) -> str | None:
-        """Resolve model id, preferring response.model over request.model."""
-        if "gen_ai.response.model" in attrs:
-            return str(attrs["gen_ai.response.model"])
-        if "gen_ai.request.model" in attrs:
-            return str(attrs["gen_ai.request.model"])
-        return None
-
-    def _extract_llm_step(self, attrs: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
-        """Extract args and result dicts from LLM span attributes."""
-        args: dict[str, Any] = {}
-        result: dict[str, Any] = {}
-
-        if "gen_ai.request.model" in attrs:
-            args["model"] = str(attrs["gen_ai.request.model"])
-        if "gen_ai.system" in attrs:
-            args["system"] = str(attrs["gen_ai.system"])
-        if "gen_ai.prompt" in attrs:
-            args["prompt"] = str(attrs["gen_ai.prompt"])
-        op = str(attrs.get("gen_ai.operation.name", "")).strip().lower()
-        if op:
-            args["operation"] = op
-
-        if "gen_ai.completion" in attrs:
-            result["completion"] = str(attrs["gen_ai.completion"])
-        if "gen_ai.usage.input_tokens" in attrs:
-            result["input_tokens"] = _require_numeric_attr(attrs, "gen_ai.usage.input_tokens")
-        if "gen_ai.usage.output_tokens" in attrs:
-            result["output_tokens"] = _require_numeric_attr(attrs, "gen_ai.usage.output_tokens")
-        if "gen_ai.response.model" in attrs:
-            result["model"] = str(attrs["gen_ai.response.model"])
-
-        return args, result
-
-    def _extract_tool_step(self, attrs: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
-        """Extract args and result dicts from tool call span attributes."""
-        args: dict[str, Any] = {}
-        result: dict[str, Any] = {}
-
-        if "gen_ai.tool.call.id" in attrs:
-            args["call_id"] = str(attrs["gen_ai.tool.call.id"])
-        if "gen_ai.tool.parameters" in attrs:
-            args["parameters"] = attrs["gen_ai.tool.parameters"]
-        if "gen_ai.tool.output" in attrs:
-            result["output"] = attrs["gen_ai.tool.output"]
-
-        return args, result
-
-    def _extract_agent_step(self, attrs: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
-        """Extract args and result dicts from invoke_agent span attributes."""
-        args: dict[str, Any] = {}
-        result: dict[str, Any] = {}
-
-        if "gen_ai.agent.id" in attrs:
-            args["agent_id"] = str(attrs["gen_ai.agent.id"])
-        if "gen_ai.agent.name" in attrs:
-            args["agent_name"] = str(attrs["gen_ai.agent.name"])
-        if "gen_ai.agent.description" in attrs:
-            args["description"] = str(attrs["gen_ai.agent.description"])
-        if "gen_ai.prompt" in attrs:
-            args["prompt"] = str(attrs["gen_ai.prompt"])
-
-        if "gen_ai.completion" in attrs:
-            result["completion"] = str(attrs["gen_ai.completion"])
-        return args, result
-
-    def _extract_retrieval_step(
-        self, attrs: dict[str, Any]
-    ) -> tuple[dict[str, Any], dict[str, Any]]:
-        """Extract args and result dicts from retrieval span attributes."""
-        args: dict[str, Any] = {}
-        result: dict[str, Any] = {}
-
-        if "gen_ai.retrieval.query" in attrs:
-            args["query"] = str(attrs["gen_ai.retrieval.query"])
-        if "gen_ai.retrieval.source" in attrs:
-            args["source"] = str(attrs["gen_ai.retrieval.source"])
-        if "gen_ai.retrieval.documents.count" in attrs:
-            result["documents_count"] = int(attrs["gen_ai.retrieval.documents.count"])
-        if "gen_ai.retrieval.documents" in attrs:
-            result["documents"] = attrs["gen_ai.retrieval.documents"]
-        return args, result
-
-    def _build_agent_step(
-        self,
-        *,
-        name: str,
-        args: dict[str, Any],
-        result: dict[str, Any],
-        metadata: dict[str, Any],
-        agent_id: str | None,
-        agent_role: str | None,
-    ) -> Step:
-        """Construct an agent_call Step."""
-        return Step(
-            type=STEP_AGENT_CALL,
-            name=name,
-            args=args,
-            result=result,
-            metadata=metadata,
-            agent_id=agent_id,
-            agent_role=agent_role,
-        )
-
-    def _span_metadata(self, span: Any) -> dict[str, Any]:
-        """Extract duration metadata from a span."""
-        meta: dict[str, Any] = {}
-        if span.start_time is not None and span.end_time is not None:
-            meta["duration_ms"] = int((span.end_time - span.start_time) / 1_000_000)
-        return meta
+        if isinstance(otlp, Mapping):
+            payload = json.dumps(otlp, allow_nan=False).encode("utf-8")
+        elif isinstance(otlp, bytes):
+            payload = otlp
+        elif isinstance(otlp, str):
+            payload = otlp.encode("utf-8")
+        else:
+            with open(otlp, "rb") as f:
+                payload = f.read()
+        return _engine_convert(payload, agent_id)
 
 
-class _DictSpan:
-    """Minimal ReadableSpan-shaped wrapper around an OTLP span dict.
+def _engine_convert(payload: bytes, agent_id: str | None) -> Trace:
+    """Run ``attest-engine trace convert -`` on an OTLP/JSON payload."""
+    # Imported here: engine_manager imports the attest package, which imports
+    # this module.
+    from attest.engine_manager import resolve_engine
 
-    Exposes the attribute surface that ``OTelAdapter._build_trace`` reads
-    from a real ``opentelemetry.sdk.trace.ReadableSpan``: ``name``,
-    ``attributes``, ``start_time``, ``end_time``, ``parent``, ``context``.
-    Used internally by :meth:`OTelAdapter.from_otel_span_dicts` so the
-    round-trip path does not require opentelemetry-sdk to be importable.
+    cmd = [resolve_engine(), "trace", "convert"]
+    if agent_id is not None:
+        cmd += ["--agent-id", agent_id]
+    cmd.append("-")
+    proc = subprocess.run(
+        cmd, input=payload, capture_output=True, timeout=_CONVERT_TIMEOUT_S, check=False
+    )
+    if proc.returncode != 0:
+        message = proc.stderr.decode("utf-8", errors="replace").strip()
+        if not message:
+            message = f"attest-engine trace convert exited {proc.returncode}"
+        raise OTLPConversionError(message)
+    data: dict[str, Any] = json.loads(proc.stdout)
+    return Trace.from_dict(data)
 
-    Required keys: ``name``, ``trace_id``, ``span_id``, plus
-    ``start_time_unix_nano``, ``end_time_unix_nano``. Trace and span IDs
-    must be hex strings (32-char and 16-char, but any hex length is
-    accepted). Bad input raises ``ValueError`` with the offending key —
-    no silent fallback to zero, since the dict source is normally our
-    own ``to_otel_spans`` and a parse error means the data is malformed.
-    """
 
-    __slots__ = ("name", "attributes", "start_time", "end_time", "parent", "context")
+# ---------------------------------------------------------------------------
+# OTLP/JSON encoding
+# ---------------------------------------------------------------------------
 
-    def __init__(self, data: dict[str, Any]) -> None:
-        self.name: str = str(data.get("name", ""))
-        attrs = data.get("attributes") or {}
-        if not isinstance(attrs, dict):
+
+def _otlp_document(spans: list[dict[str, Any]]) -> dict[str, Any]:
+    return {"resourceSpans": [{"scopeSpans": [{"spans": spans}]}]}
+
+
+def _any_value(value: Any) -> dict[str, Any]:
+    """Encode an attribute value as an OTLP AnyValue."""
+    if isinstance(value, bool):
+        return {"boolValue": value}
+    if isinstance(value, int):
+        return {"intValue": str(value)}
+    if isinstance(value, float):
+        if not math.isfinite(value):
+            raise ValueError(f"OTel attribute value must be finite, got {value!r}")
+        return {"doubleValue": value}
+    if isinstance(value, str):
+        return {"stringValue": value}
+    if isinstance(value, bytes):
+        return {"bytesValue": base64.b64encode(value).decode("ascii")}
+    if isinstance(value, Mapping):
+        return {"kvlistValue": {"values": _key_values(value)}}
+    if isinstance(value, Sequence):
+        return {"arrayValue": {"values": [_any_value(v) for v in value]}}
+    raise TypeError(f"OTel attribute value of type {type(value).__name__} is not supported")
+
+
+def _key_values(attrs: Mapping[str, Any]) -> list[dict[str, Any]]:
+    return [{"key": str(k), "value": _any_value(v)} for k, v in attrs.items()]
+
+
+def _readable_spans_to_otlp(spans: Sequence[ReadableSpan]) -> dict[str, Any]:
+    out: list[dict[str, Any]] = []
+    for span in spans:
+        ctx = span.context
+        if ctx is None:
+            raise ValueError(f"span {span.name!r} has no span context")
+        encoded: dict[str, Any] = {
+            "traceId": format(ctx.trace_id, "032x"),
+            "spanId": format(ctx.span_id, "016x"),
+            "name": span.name,
+            "startTimeUnixNano": str(span.start_time or 0),
+            "endTimeUnixNano": str(span.end_time or 0),
+            "attributes": _key_values(span.attributes or {}),
+        }
+        if span.parent is not None:
+            encoded["parentSpanId"] = format(span.parent.span_id, "016x")
+        if span.status.status_code.value == _STATUS_CODE_ERROR:
+            encoded["status"] = {
+                "code": _STATUS_CODE_ERROR,
+                "message": span.status.description or "",
+            }
+        out.append(encoded)
+    return _otlp_document(out)
+
+
+def _span_dicts_to_otlp(span_dicts: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+    out: list[dict[str, Any]] = []
+    for d in span_dicts:
+        attrs = d.get("attributes") or {}
+        if not isinstance(attrs, Mapping):
             raise ValueError(
                 f"OTLP span dict 'attributes' must be a mapping; got {type(attrs).__name__}"
             )
-        self.attributes: dict[str, Any] = dict(attrs)
-        self.start_time: int | None = data.get("start_time_unix_nano")
-        self.end_time: int | None = data.get("end_time_unix_nano")
-
-        parent_id = data.get("parent_span_id")
-        self.parent = _DictSpanParent(parent_id) if parent_id else None
-
-        trace_id_hex = data.get("trace_id")
-        self.context = _DictSpanContext(_parse_hex_id(trace_id_hex, "trace_id"))
-
-
-def _parse_hex_id(value: Any, field: str) -> int:
-    """Parse a hex-encoded ID. Empty/None → 0. Invalid hex → ValueError.
-
-    Distinguishes "absent" (acceptable, returns 0 for downstream
-    ``format(..., "032x")``) from "present but malformed" (a producer
-    bug worth surfacing).
-    """
-    if value is None or value == "":
-        return 0
-    if not isinstance(value, str):
-        raise ValueError(
-            f"OTLP span dict {field!r} must be a hex string; got {type(value).__name__}"
-        )
-    try:
-        return int(value, 16)
-    except ValueError as exc:
-        raise ValueError(f"OTLP span dict {field!r} is not valid hex: {value!r}") from exc
+        encoded: dict[str, Any] = {
+            "traceId": d.get("trace_id") or "",
+            "spanId": d.get("span_id") or "",
+            "name": str(d.get("name", "")),
+            "startTimeUnixNano": str(d.get("start_time_unix_nano", 0)),
+            "endTimeUnixNano": str(d.get("end_time_unix_nano", 0)),
+            "attributes": _key_values(attrs),
+        }
+        if d.get("parent_span_id"):
+            encoded["parentSpanId"] = d["parent_span_id"]
+        if d.get("status"):
+            encoded["status"] = d["status"]
+        out.append(encoded)
+    return _otlp_document(out)
 
 
-class _DictSpanParent:
-    __slots__ = ("span_id",)
+# ---------------------------------------------------------------------------
+# Export
+# ---------------------------------------------------------------------------
 
-    def __init__(self, span_id_hex: Any) -> None:
-        self.span_id = _parse_hex_id(span_id_hex, "parent_span_id")
-
-
-class _DictSpanContext:
-    __slots__ = ("trace_id",)
-
-    def __init__(self, trace_id: int) -> None:
-        self.trace_id = trace_id
-
-
-# Inverse of _OPERATION_TO_STEP, used by the export side. Picks the canonical
-# operation name for each step type (e.g. STEP_LLM_CALL → "chat" by default).
-# Producers may override with the original operation via Step.args["operation"].
+# Canonical operation name per step type for the export side. A producer may
+# override it with the original operation in Step.args["operation"].
 _STEP_TO_OPERATION: dict[str, str] = {
     STEP_LLM_CALL: "chat",
     STEP_TOOL_CALL: "execute_tool",
@@ -485,83 +234,73 @@ _STEP_TO_OPERATION: dict[str, str] = {
     STEP_RETRIEVAL: "retrieval",
 }
 
+_ROOT_SPAN_ID = f"{1:016x}"
+
 
 def to_otel_spans(trace: Trace) -> list[dict[str, Any]]:
-    """Export an Attest Trace as OTLP-compatible span dicts with gen_ai.* attrs.
+    """Export an Attest Trace as OTLP-shaped span dicts with gen_ai.* attributes.
 
-    Returned spans are JSON-serializable dicts modeled on the OTLP/JSON span
-    shape (``trace_id``, ``span_id``, ``parent_span_id``, ``name``,
-    ``start_time_unix_nano``, ``end_time_unix_nano``, ``attributes``). They
-    can be handed to an OTLP exporter, written to a file, or replayed back
-    through ``OTelAdapter.from_spans`` for round-trip verification.
+    The first span is an ``invoke_agent`` root for the trace's agent
+    (``gen_ai.agent.name`` = ``trace.agent_id`` when set); every step becomes
+    a child span. Steps run back to back from time 0 using
+    ``metadata["duration_ms"]``. Each dict has ``trace_id``, ``span_id``,
+    ``parent_span_id``, ``name``, ``kind``, ``start_time_unix_nano``,
+    ``end_time_unix_nano``, ``attributes`` and, for failed steps, ``status``.
+    :meth:`OTelAdapter.from_otel_span_dicts` converts them back.
 
-    The mapping inverts the ingest path:
-      - llm_call    → ``gen_ai.operation.name = chat`` (or original op when
-                      the trace was ingested with a different op such as
-                      ``embeddings``, recorded in ``args["operation"]``)
-      - tool_call   → ``gen_ai.operation.name = execute_tool``
-      - agent_call  → ``gen_ai.operation.name = invoke_agent``
-      - retrieval   → ``gen_ai.operation.name = retrieval``
+    Mapping (current GenAI semantic conventions):
+      - llm_call   → ``chat`` (or ``args["operation"]``), request/response
+        model, ``gen_ai.usage.*`` tokens and ``gen_ai.usage.cost``
+      - tool_call  → ``execute_tool``, ``gen_ai.tool.name``,
+        ``gen_ai.tool.call.id``, ``gen_ai.tool.call.arguments`` /
+        ``gen_ai.tool.call.result`` (JSON of ``args`` / ``result``)
+      - agent_call → ``invoke_agent`` with ``gen_ai.agent.*``
+      - retrieval  → ``retrieval`` with ``gen_ai.retrieval.*``
+      - ``Step.error`` → status code 2 and ``error.type``
 
-    Step.agent_id / Step.agent_role round-trip via ``gen_ai.agent.id`` /
-    ``gen_ai.agent.name``. Token usage and model identity round-trip via
-    the standard ``gen_ai.usage.*`` and ``gen_ai.{request,response}.model``
-    attribute families.
-
-    What does NOT round-trip (by design — the contract is step-level):
-      - ``Trace.input`` is not represented in OTLP spans.
-      - ``Trace.metadata.latency_ms`` is recomputed from root-span duration
-        on re-ingest, which equals the first step's ``duration_ms``. If
-        the original Trace had a separately-set ``latency_ms``, it is lost.
-      - Producers must keep ``args["operation"]`` consistent with
-        ``step.type`` (e.g. ``embeddings`` is a valid override on an
-        ``llm_call`` step, but ``execute_tool`` is not). A contradictory
-        override produces an OTLP span that re-ingests with a different
-        step type.
-
-    Args:
-        trace: Attest Trace to export.
-
-    Returns:
-        List of OTLP-compatible span dicts. Order matches Step order; each
-        non-root span carries the root's span_id as ``parent_span_id``.
+    Not exported: ``Trace.input``, ``Trace.output``, turns, handoffs, retries
+    and recorded exchanges; the engine derives turns, handoffs and retries
+    again from the span structure.
     """
-    spans: list[dict[str, Any]] = []
-    if not trace.steps:
-        return spans
-
     trace_id_hex = _derive_trace_id_hex(trace.trace_id)
-    root_span_id_hex = f"{1:016x}"
-    cumulative_start_ns = 0
-
-    for index, step in enumerate(trace.steps, start=1):
+    children: list[dict[str, Any]] = []
+    cursor_ns = 0
+    for index, step in enumerate(trace.steps, start=2):
         attrs = _step_to_attributes(step)
-        span_name = _step_to_span_name(step, attrs)
-
         duration_ns = 0
         meta = step.metadata or {}
-        if isinstance(meta, dict):
-            duration_ms = meta.get("duration_ms")
-            if isinstance(duration_ms, int) and duration_ms > 0:
-                duration_ns = duration_ms * 1_000_000
-
-        start_ns = cumulative_start_ns
-        end_ns = start_ns + duration_ns
-        cumulative_start_ns = end_ns
-
+        duration_ms = meta.get("duration_ms") if isinstance(meta, dict) else None
+        if isinstance(duration_ms, int) and duration_ms > 0:
+            duration_ns = duration_ms * 1_000_000
         span: dict[str, Any] = {
             "trace_id": trace_id_hex,
             "span_id": f"{index:016x}",
-            "parent_span_id": None if index == 1 else root_span_id_hex,
-            "name": span_name,
+            "parent_span_id": _ROOT_SPAN_ID,
+            "name": _step_to_span_name(step, attrs),
             "kind": "INTERNAL",
-            "start_time_unix_nano": start_ns,
-            "end_time_unix_nano": end_ns,
+            "start_time_unix_nano": cursor_ns,
+            "end_time_unix_nano": cursor_ns + duration_ns,
             "attributes": attrs,
         }
-        spans.append(span)
+        if step.error is not None:
+            span["status"] = {"code": _STATUS_CODE_ERROR, "message": step.error.message or ""}
+        children.append(span)
+        cursor_ns += duration_ns
 
-    return spans
+    root_attrs: dict[str, Any] = {"gen_ai.operation.name": "invoke_agent"}
+    if trace.agent_id:
+        root_attrs["gen_ai.agent.name"] = trace.agent_id
+    root: dict[str, Any] = {
+        "trace_id": trace_id_hex,
+        "span_id": _ROOT_SPAN_ID,
+        "parent_span_id": None,
+        "name": f"invoke_agent {trace.agent_id}" if trace.agent_id else "invoke_agent",
+        "kind": "INTERNAL",
+        "start_time_unix_nano": 0,
+        "end_time_unix_nano": cursor_ns,
+        "attributes": root_attrs,
+    }
+    return [root, *children]
 
 
 def _derive_trace_id_hex(trace_id: str) -> str:
@@ -576,86 +315,91 @@ def _derive_trace_id_hex(trace_id: str) -> str:
         clean = "".join(c for c in suffix if c in "0123456789abcdef")
         if len(clean) >= 16:
             return (clean + "0" * 32)[:32]
-    import hashlib
-
     return hashlib.sha256(trace_id.encode("utf-8")).hexdigest()[:32]
+
+
+def _copy(attrs: dict[str, Any], source: Mapping[str, Any], mapping: Mapping[str, str]) -> None:
+    """Copy present keys of ``source`` into ``attrs`` under their attribute names."""
+    for key, attr in mapping.items():
+        if key in source:
+            attrs[attr] = source[key]
 
 
 def _step_to_attributes(step: Any) -> dict[str, Any]:
     """Build the gen_ai.* attribute dict for a single Step."""
     attrs: dict[str, Any] = {}
-
-    args = step.args or {}
-    result = step.result or {}
-
-    operation = args.get("operation") if isinstance(args, dict) else None
-    if not operation:
-        operation = _STEP_TO_OPERATION.get(step.type, "chat")
-    attrs["gen_ai.operation.name"] = operation
-
+    args = step.args if isinstance(step.args, dict) else {}
+    result = step.result if isinstance(step.result, dict) else {}
+    attrs["gen_ai.operation.name"] = args.get("operation") or _STEP_TO_OPERATION.get(
+        step.type, "chat"
+    )
     if step.agent_id is not None:
         attrs["gen_ai.agent.id"] = step.agent_id
     if step.agent_role is not None:
         attrs["gen_ai.agent.name"] = step.agent_role
+    if step.error is not None:
+        attrs["error.type"] = step.error.type
 
     if step.type == STEP_LLM_CALL:
-        if isinstance(args, dict):
-            if "model" in args:
-                attrs["gen_ai.request.model"] = args["model"]
-            if "system" in args:
-                attrs["gen_ai.system"] = args["system"]
-            if "prompt" in args:
-                attrs["gen_ai.prompt"] = args["prompt"]
-        if isinstance(result, dict):
-            if "completion" in result:
-                attrs["gen_ai.completion"] = result["completion"]
-            if "input_tokens" in result:
-                attrs["gen_ai.usage.input_tokens"] = result["input_tokens"]
-            if "output_tokens" in result:
-                attrs["gen_ai.usage.output_tokens"] = result["output_tokens"]
-            if "model" in result:
-                attrs["gen_ai.response.model"] = result["model"]
-
+        _copy(
+            attrs,
+            args,
+            {
+                "model": "gen_ai.request.model",
+                "system": "gen_ai.system",
+                "provider": "gen_ai.provider.name",
+                "prompt": "gen_ai.prompt",
+            },
+        )
+        _copy(
+            attrs,
+            result,
+            {
+                "completion": "gen_ai.completion",
+                "input_tokens": "gen_ai.usage.input_tokens",
+                "output_tokens": "gen_ai.usage.output_tokens",
+                "cost_usd": "gen_ai.usage.cost",
+                "model": "gen_ai.response.model",
+                "finish_reasons": "gen_ai.response.finish_reasons",
+            },
+        )
     elif step.type == STEP_TOOL_CALL:
         attrs["gen_ai.tool.name"] = step.name
-        if isinstance(args, dict):
-            if "call_id" in args:
-                attrs["gen_ai.tool.call.id"] = args["call_id"]
-            if "parameters" in args:
-                attrs["gen_ai.tool.parameters"] = args["parameters"]
-        if isinstance(result, dict) and "output" in result:
-            attrs["gen_ai.tool.output"] = result["output"]
-
+        if step.tool_call_id:
+            attrs["gen_ai.tool.call.id"] = step.tool_call_id
+        attrs["gen_ai.tool.call.arguments"] = json.dumps(args, sort_keys=True)
+        attrs["gen_ai.tool.call.result"] = json.dumps(result, sort_keys=True)
     elif step.type == STEP_AGENT_CALL:
-        if isinstance(args, dict):
-            if "agent_id" in args:
-                attrs["gen_ai.agent.id"] = args["agent_id"]
-            if "agent_name" in args:
-                attrs["gen_ai.agent.name"] = args["agent_name"]
-            if "description" in args:
-                attrs["gen_ai.agent.description"] = args["description"]
-            if "prompt" in args:
-                attrs["gen_ai.prompt"] = args["prompt"]
-        if isinstance(result, dict) and "completion" in result:
-            attrs["gen_ai.completion"] = result["completion"]
-
+        _copy(
+            attrs,
+            args,
+            {
+                "agent_id": "gen_ai.agent.id",
+                "agent_name": "gen_ai.agent.name",
+                "description": "gen_ai.agent.description",
+                "prompt": "gen_ai.prompt",
+            },
+        )
+        _copy(attrs, result, {"completion": "gen_ai.completion"})
     elif step.type == STEP_RETRIEVAL:
-        if isinstance(args, dict):
-            if "query" in args:
-                attrs["gen_ai.retrieval.query"] = args["query"]
-            if "source" in args:
-                attrs["gen_ai.retrieval.source"] = args["source"]
-        if isinstance(result, dict):
-            if "documents_count" in result:
-                attrs["gen_ai.retrieval.documents.count"] = result["documents_count"]
-            if "documents" in result:
-                attrs["gen_ai.retrieval.documents"] = result["documents"]
-
+        _copy(
+            attrs,
+            args,
+            {"query": "gen_ai.retrieval.query", "source": "gen_ai.retrieval.source"},
+        )
+        _copy(
+            attrs,
+            result,
+            {
+                "documents_count": "gen_ai.retrieval.documents.count",
+                "documents": "gen_ai.retrieval.documents",
+            },
+        )
     return attrs
 
 
 def _step_to_span_name(step: Any, attrs: dict[str, Any]) -> str:
-    """Pick a span name following OTel GenAI legacy ``<op> <model>`` convention."""
+    """Span name following the GenAI ``<operation> <target>`` convention."""
     op = attrs.get("gen_ai.operation.name", step.type)
     if step.type == STEP_LLM_CALL:
         model = attrs.get("gen_ai.request.model") or attrs.get("gen_ai.response.model")

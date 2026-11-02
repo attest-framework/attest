@@ -70,4 +70,4 @@ Go checks the wire format and `policyExit` (`engine/internal/policy/verdict_conf
 - `otlp/<name>.otlp.json` with `otlp/<name>.trace.json`: an OTLP/JSON export and the exact trace `attest-engine trace convert` produces for it. The golden traces must also match the schema. `inc-1042-refund` is the refund-desk INC-1042 incident export.
 - `otlp-invalid/`: malformed OTLP/JSON inputs that conversion must reject with an error. They also seed the engine fuzz target.
 
-The engine tests in `engine/internal/trace/` (`trace_v2_schema_test.go`, `otlp_test.go`, `fuzz_test.go`) check them.
+The engine tests in `engine/internal/trace/` (`trace_v2_schema_test.go`, `otlp_test.go`, `fuzz_test.go`) check them. Python checks the schema fixtures and that every golden trace survives `Trace.from_dict(...).to_dict()` unchanged (`tests/test_trace_v2.py`), and that `OTelAdapter.from_otlp` returns each golden trace and rejects each malformed input (`tests/integration/test_otel_engine.py`, with the engine built by `make engine`).
