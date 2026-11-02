@@ -1,8 +1,11 @@
 package assertion
 
 import (
+	"bytes"
 	"fmt"
+	"math/big"
 	"reflect"
+	"sort"
 	"strings"
 
 	"github.com/segmentio/encoding/json"
@@ -60,29 +63,89 @@ func stepIndices(calls []indexedStep) string {
 	return strings.Join(parts, ", ")
 }
 
-// resolveArg reads a dot-separated argument path from a step's args.
+// resolveArg reads a dot-separated argument path from a step's args. A
+// missing path or a JSON null is absent evidence.
 func resolveArg(step *types.Step, path string) (json.RawMessage, bool) {
 	var args map[string]json.RawMessage
 	if err := json.Unmarshal(step.Args, &args); err != nil || args == nil {
 		return nil, false
 	}
 	val, err := navigateDotPath(args, path, "args")
-	if err != nil {
+	if err != nil || string(bytes.TrimSpace(val)) == "null" {
 		return nil, false
 	}
 	return val, true
 }
 
-// displayJSON renders a JSON value for an explanation: strings unquoted,
-// everything else as compact JSON.
-func displayJSON(raw json.RawMessage) string {
-	var s string
-	if err := json.Unmarshal(raw, &s); err == nil {
-		return s
-	}
+// decodeExact decodes JSON keeping numbers as json.Number, so large integers
+// and decimals are compared exactly rather than through float64.
+func decodeExact(raw []byte) (any, error) {
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.UseNumber()
 	var v any
-	if err := json.Unmarshal(raw, &v); err != nil {
+	if err := dec.Decode(&v); err != nil {
+		return nil, err
+	}
+	return v, nil
+}
+
+func numberRat(v any) (*big.Rat, bool) {
+	n, ok := v.(json.Number)
+	if !ok {
+		return nil, false
+	}
+	return new(big.Rat).SetString(string(n))
+}
+
+// canonicalJSON renders a decoded value so that equal JSON values render
+// identically: object keys sorted, numbers in exact lowest terms, strings
+// quoted (so "7" and 7 differ).
+func canonicalJSON(v any) string {
+	switch x := v.(type) {
+	case json.Number:
+		if r, ok := numberRat(x); ok {
+			return r.RatString()
+		}
+		return string(x)
+	case map[string]any:
+		keys := make([]string, 0, len(x))
+		for k := range x {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		parts := make([]string, len(keys))
+		for i, k := range keys {
+			parts[i] = canonicalJSON(k) + ":" + canonicalJSON(x[k])
+		}
+		return "{" + strings.Join(parts, ",") + "}"
+	case []any:
+		parts := make([]string, len(x))
+		for i, item := range x {
+			parts[i] = canonicalJSON(item)
+		}
+		return "[" + strings.Join(parts, ",") + "]"
+	default:
+		out, err := json.Marshal(x)
+		if err != nil {
+			return fmt.Sprint(x)
+		}
+		return string(out)
+	}
+}
+
+func jsonEqual(a, b any) bool {
+	return canonicalJSON(a) == canonicalJSON(b)
+}
+
+// displayJSON renders a JSON value for an explanation: strings unquoted,
+// everything else as compact JSON with number literals kept as written.
+func displayJSON(raw json.RawMessage) string {
+	v, err := decodeExact(raw)
+	if err != nil {
 		return string(raw)
+	}
+	if s, ok := v.(string); ok {
+		return s
 	}
 	out, err := json.Marshal(v)
 	if err != nil {
@@ -135,8 +198,11 @@ func cardinality(tool string, calls []indexedStep, per string, minN, maxN *int) 
 		return checkOutcome{passed: !outOfBounds(n, minN, maxN), explanation: text}
 	}
 
+	// Groups are keyed by canonical JSON, so "7" and 7 stay apart while 7 and
+	// 7.0 merge; the explanation shows the first value seen for each group.
 	var keys []string
 	counts := map[string]int{}
+	shown := map[string]string{}
 	var missing []string
 	for _, c := range calls {
 		raw, ok := resolveArg(c.step, per)
@@ -144,9 +210,15 @@ func cardinality(tool string, calls []indexedStep, per string, minN, maxN *int) 
 			missing = append(missing, fmt.Sprint(c.index))
 			continue
 		}
-		key := displayJSON(raw)
+		v, err := decodeExact(raw)
+		if err != nil {
+			missing = append(missing, fmt.Sprint(c.index))
+			continue
+		}
+		key := canonicalJSON(v)
 		if _, seen := counts[key]; !seen {
 			keys = append(keys, key)
+			shown[key] = displayJSON(raw)
 		}
 		counts[key]++
 	}
@@ -154,8 +226,11 @@ func cardinality(tool string, calls []indexedStep, per string, minN, maxN *int) 
 	var violations []string
 	for _, key := range keys {
 		if outOfBounds(counts[key], minN, maxN) {
-			violations = append(violations, fmt.Sprintf("%s called %d× for %s=%s (%s)", tool, counts[key], per, key, bounds))
+			violations = append(violations, fmt.Sprintf("%s called %d× for %s=%s (%s)", tool, counts[key], per, shown[key], bounds))
 		}
+	}
+	if len(calls) == 0 && outOfBounds(0, minN, maxN) {
+		violations = append(violations, fmt.Sprintf("%s called 0× (%s)", tool, bounds))
 	}
 	if len(violations) > 0 {
 		return checkOutcome{explanation: strings.Join(violations, "; ")}
@@ -247,6 +322,9 @@ func partialOrder(trace *types.Trace, actual []string, spec *traceSpec) (checkOu
 		}
 		required = append(required, edge[0], edge[1])
 	}
+	if cyc := orderCycle(spec.Order); cyc != "" {
+		return checkOutcome{}, fmt.Errorf("trajectory 'order' is contradictory: %s", cyc)
+	}
 	got := countNames(actual)
 	var absent []string
 	seen := map[string]bool{}
@@ -269,6 +347,52 @@ func partialOrder(trace *types.Trace, actual []string, spec *traceSpec) (checkOu
 		return checkOutcome{explanation: "trajectory (partial_order): " + strings.Join(broken, "; ")}, nil
 	}
 	return checkOutcome{passed: true, explanation: fmt.Sprintf("trajectory (partial_order) satisfies %v", spec.Order)}, nil
+}
+
+// orderCycle returns a cycle in the order edges ("a → b → a"), or "" when
+// the edges form a partial order.
+func orderCycle(edges [][]string) string {
+	next := map[string][]string{}
+	for _, e := range edges {
+		next[e[0]] = append(next[e[0]], e[1])
+	}
+	const (
+		unvisited = iota
+		active
+		done
+	)
+	state := map[string]int{}
+	var path []string
+	var visit func(n string) string
+	visit = func(n string) string {
+		state[n] = active
+		path = append(path, n)
+		for _, m := range next[n] {
+			switch state[m] {
+			case active:
+				for i, p := range path {
+					if p == m {
+						return strings.Join(append(append([]string(nil), path[i:]...), m), " → ")
+					}
+				}
+			case unvisited:
+				if c := visit(m); c != "" {
+					return c
+				}
+			}
+		}
+		path = path[:len(path)-1]
+		state[n] = done
+		return ""
+	}
+	for _, e := range edges {
+		if state[e[0]] == unvisited {
+			if c := visit(e[0]); c != "" {
+				return c
+			}
+		}
+	}
+	return ""
 }
 
 // ── tool_order ──
@@ -411,11 +535,11 @@ func runArgPredicate(trace *types.Trace, spec *traceSpec) (checkOutcome, error) 
 	if !argPredicateOps[spec.Op] {
 		return checkOutcome{}, fmt.Errorf("arg_predicate 'op' must be one of eq, ne, lt, lte, gt, gte, in, not_in, got %q", spec.Op)
 	}
-	var want any
-	if err := json.Unmarshal(spec.Value, &want); err != nil {
+	want, err := decodeExact(spec.Value)
+	if err != nil {
 		return checkOutcome{}, fmt.Errorf("arg_predicate 'value' is not valid JSON: %v", err)
 	}
-	if _, isNum := want.(float64); !isNum && isNumericOp(spec.Op) {
+	if _, isNum := numberRat(want); !isNum && isNumericOp(spec.Op) {
 		return checkOutcome{}, fmt.Errorf("arg_predicate op %q requires a numeric 'value'", spec.Op)
 	}
 	if _, isList := want.([]any); !isList && (spec.Op == "in" || spec.Op == "not_in") {
@@ -431,8 +555,8 @@ func runArgPredicate(trace *types.Trace, spec *traceSpec) (checkOutcome, error) 
 			missing = append(missing, fmt.Sprint(c.index))
 			continue
 		}
-		var got any
-		if err := json.Unmarshal(raw, &got); err != nil {
+		got, err := decodeExact(raw)
+		if err != nil {
 			return checkOutcome{}, fmt.Errorf("step %d argument %q is not valid JSON: %v", c.index, spec.Arg, err)
 		}
 		if !argSatisfies(got, spec.Op, want) {
@@ -456,36 +580,37 @@ func isNumericOp(op string) bool {
 }
 
 // argSatisfies applies op to a decoded argument. Numeric operators fail on a
-// non-numeric argument; equality is JSON value equality.
+// non-numeric argument; equality is exact JSON value equality.
 func argSatisfies(got any, op string, want any) bool {
 	switch op {
 	case "eq":
-		return reflect.DeepEqual(got, want)
+		return jsonEqual(got, want)
 	case "ne":
-		return !reflect.DeepEqual(got, want)
+		return !jsonEqual(got, want)
 	case "in", "not_in":
 		found := false
 		for _, item := range want.([]any) {
-			if reflect.DeepEqual(got, item) {
+			if jsonEqual(got, item) {
 				found = true
 				break
 			}
 		}
 		return found == (op == "in")
 	}
-	g, ok := got.(float64)
+	g, ok := numberRat(got)
 	if !ok {
 		return false
 	}
-	w := want.(float64)
+	w, _ := numberRat(want)
+	c := g.Cmp(w)
 	switch op {
 	case "lt":
-		return g < w
+		return c < 0
 	case "lte":
-		return g <= w
+		return c <= 0
 	case "gt":
-		return g > w
+		return c > 0
 	default:
-		return g >= w
+		return c >= 0
 	}
 }
