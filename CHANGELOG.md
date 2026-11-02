@@ -4,6 +4,18 @@ All notable changes to Attest are documented in this file. The format follows [K
 
 ## [Unreleased]
 
+### Added
+
+- Native Anthropic (Messages API) and Gemini (`generateContent`) judges: `ATTEST_JUDGE_PROVIDER=anthropic` or `gemini`, with keys from `ATTEST_JUDGE_API_KEY`, `ANTHROPIC_API_KEY`, or `GOOGLE_API_KEY` then `GEMINI_API_KEY`, `ATTEST_JUDGE_MODEL` required, and `ATTEST_JUDGE_BASE_URL` for gateways. Each provider has its own rate limit (`ATTEST_RATE_LIMIT_ANTHROPIC[_BURST]`, `ATTEST_RATE_LIMIT_GEMINI[_BURST]`); an outage is `not_evaluated: provider_unavailable`. `doctor` reports the new providers and key sources. See `docs/guides/judges.md`.
+- Judge results record the provider in `judge_metadata.provider` next to `model`; reports print `judge: <provider>/<model>`.
+- `attest calibrate --persist` stores labels keyed by judge provider and model (`--judge-provider`, `--judge-model`), so calibration is never pooled across judges.
+
+### Changed
+
+- **BREAKING:** `attest calibrate --persist` requires `--judge-provider` and `--judge-model`. The calibration table in `$ATTEST_CACHE_DIR/attest.db` gains `judge_provider` and `judge_model` columns on first use; labels stored before have neither and are not counted for any provider.
+- Cached judge scores are scoped by judge provider as well as endpoint, rubric and model, so two providers behind the same gateway with the same model name never share a score. Entries cached by earlier versions are misses and are judged again.
+- Judge provider error messages have any echoed API key replaced by `[redacted]` and control and Unicode format characters (bidi overrides, zero-width) removed before they reach results and reports.
+
 ## [1.0.0-rc.1] — 2026-11-02
 
 First release candidate, themed "Trust": a red result means a real failure, the SDKs run only an engine of their own version, and `attest init` goes from an empty project to a CI merge gate without an API key.

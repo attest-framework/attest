@@ -88,6 +88,7 @@ type Assertion struct {
 // version, and how stable the score is across repeated samples. Only
 // populated for llm_judge results.
 type JudgeMetadata struct {
+	Provider         string          `json:"provider,omitempty"`
 	Model            string          `json:"model,omitempty"`
 	RubricName       string          `json:"rubric_name,omitempty"`
 	RubricVersion    string          `json:"rubric_version,omitempty"`

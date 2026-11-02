@@ -315,9 +315,12 @@ class JudgeMetadata:
     high_variance: bool = False
     bias_probes: list[BiasProbe] = field(default_factory=list)
     calibration: JudgeAgreement | None = None
+    provider: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         d: dict[str, Any] = {}
+        if self.provider is not None:
+            d["provider"] = self.provider
         if self.model is not None:
             d["model"] = self.model
         if self.rubric_name is not None:
@@ -345,6 +348,7 @@ class JudgeMetadata:
         raw_probes = data.get("bias_probes", [])
         raw_cal = data.get("calibration")
         return cls(
+            provider=data.get("provider"),
             model=data.get("model"),
             rubric_name=data.get("rubric_name"),
             rubric_version=data.get("rubric_version"),

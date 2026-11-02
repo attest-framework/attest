@@ -35,7 +35,14 @@ func NewOpenAIProvider(apiKey, model, baseURL string) (*OpenAIProvider, error) {
 		baseURL = OpenAIDefaultBaseURL
 	}
 	return &OpenAIProvider{
-		client:  &http.Client{Timeout: 60 * time.Second},
+		// Redirects are not followed, so a redirecting endpoint cannot
+		// receive a replay of the judge prompt.
+		client: &http.Client{
+			Timeout: 60 * time.Second,
+			CheckRedirect: func(*http.Request, []*http.Request) error {
+				return http.ErrUseLastResponse
+			},
+		},
 		apiKey:  apiKey,
 		model:   model,
 		baseURL: baseURL,

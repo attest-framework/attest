@@ -99,6 +99,7 @@ func (e *JudgeEvaluator) Evaluate(trace *types.Trace, assertion *types.Assertion
 		if cached, cErr := e.cache.Get(contentHash, rubricName, model); cErr == nil && cached != nil {
 			durationMS := time.Since(start).Milliseconds()
 			meta := &types.JudgeMetadata{
+				Provider:      e.provider.Name(),
 				Model:         model,
 				RubricName:    rubricName,
 				RubricVersion: rubric.Version,
@@ -290,6 +291,7 @@ func (e *JudgeEvaluator) evaluateSinglePass(
 	probeResults, probeCost := runBiasProbes(ctx, e.provider, rubric, model, userContent, scoreResult.Score, probes)
 	totalCost := resp.Cost + probeCost
 	meta := &types.JudgeMetadata{
+		Provider:      e.provider.Name(),
 		Model:         model,
 		RubricName:    rubricName,
 		RubricVersion: rubric.Version,
@@ -419,6 +421,7 @@ func (e *JudgeEvaluator) evaluateRepeated(
 
 	mean, stddev := scoreVarianceStats(scores)
 	meta := &types.JudgeMetadata{
+		Provider:         e.provider.Name(),
 		Model:            model,
 		RubricName:       rubricName,
 		RubricVersion:    rubric.Version,

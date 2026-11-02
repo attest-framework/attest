@@ -24,7 +24,8 @@ const (
 // provider; engineEnv blanks them so the host environment cannot leak in.
 var providerEnv = []string{
 	"ATTEST_JUDGE_PROVIDER", "ATTEST_JUDGE_MODEL", "ATTEST_JUDGE_BASE_URL", "ATTEST_JUDGE_API_KEY",
-	"OPENAI_API_KEY", "ATTEST_EMBEDDING_PROVIDER", "ATTEST_SIMULATION",
+	"OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY",
+	"ATTEST_EMBEDDING_PROVIDER", "ATTEST_SIMULATION",
 }
 
 func engineEnv(cacheDir string, extra ...string) []string {
@@ -176,6 +177,20 @@ func TestDoctorJSON_MatchesSchemaAndInitialize(t *testing.T) {
 			wantSource: "OPENAI_API_KEY",
 			wantBase:   "https://api.openai.com/v1",
 		},
+		{
+			name:       "anthropic",
+			extra:      []string{"ATTEST_JUDGE_PROVIDER=anthropic", "ANTHROPIC_API_KEY=std-secret-value", "ATTEST_JUDGE_MODEL=judge-model"},
+			wantJudge:  true,
+			wantSource: "ANTHROPIC_API_KEY",
+			wantBase:   "https://api.anthropic.com",
+		},
+		{
+			name:       "gemini",
+			extra:      []string{"ATTEST_JUDGE_PROVIDER=gemini", "GOOGLE_API_KEY=std-secret-value", "ATTEST_JUDGE_MODEL=judge-model"},
+			wantJudge:  true,
+			wantSource: "GOOGLE_API_KEY",
+			wantBase:   "https://generativelanguage.googleapis.com",
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -231,8 +246,8 @@ func TestDoctor_TextOutputAndConfigError(t *testing.T) {
 		t.Fatalf("insecure endpoint text doctor: exit %d\n%s", code, stdout)
 	}
 
-	_, stderr, code := runDoctor(t, bin, engineEnv(t.TempDir(), "ATTEST_JUDGE_PROVIDER=gemini"), "--json")
-	if code != 1 || !strings.Contains(stderr, "supported: openai") {
+	_, stderr, code := runDoctor(t, bin, engineEnv(t.TempDir(), "ATTEST_JUDGE_PROVIDER=bogus"), "--json")
+	if code != 1 || !strings.Contains(stderr, "supported: openai, anthropic, gemini") {
 		t.Fatalf("config error: exit %d stderr %q, want 1 naming supported providers", code, stderr)
 	}
 
