@@ -30,11 +30,11 @@ During a trial, `evaluate()` records the result without failing or skipping the 
 
 | Trials | Test outcome |
 |---|---|
-| no trial evaluated an assertion | skipped with the not-evaluated reasons (failed with `--attest-strict`) |
+| no trial evaluated an assertion | skipped with the not-evaluated reasons, or `no assertions in N trials` (failed with `--attest-strict`) |
 | no evaluated trial passed | failed, with the diagnostics of the failing trials |
 | at least one trial passed | passed; the summary prints `<test>: <passed>/<evaluated> trials passed (<n> not evaluated)` |
 
-A trial that raises (for example when the agent's model call fails) counts as a failed trial: the report gets a `hard_fail` row, with the exception in the explanation, for each of the test's assertions that the trial did not evaluate before raising. A pytest `skip` or `fail` inside a trial ends the test as usual.
+A trial that raises (for example when the agent's model call fails) is a failed trial: its rows are replaced by one `hard_fail` row per assertion of the test, with the exception in the explanation (and the engine's status when the trial had already evaluated that assertion), so every trial contributes exactly one row per assertion. A pytest `skip` or `fail` inside a trial ends the test as usual.
 
 Within a test, assertion ids are derived from the test id and the assertion's position, so the rows of one assertion share an id across trials and across runs. Each report row carries its 1-based `trial`, and the test row carries `trials`. Trials run one after another; pytest supports synchronous tests only (use `attest.simulation.repeat` with `inspect_async()` in `async` tests).
 

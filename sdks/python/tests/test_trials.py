@@ -36,6 +36,8 @@ from attest.trials import (
     run_trials,
 )
 
+pytest_plugins = ["pytester"]
+
 _SCHEMA: dict[str, Any] = json.loads(
     (
         Path(__file__).resolve().parents[3] / "proto" / "attest" / "v1" / "report-v2.schema.json"
@@ -77,9 +79,13 @@ def run() -> Generator[TestRun, None, None]:
     end_run()
 
 
+def _no_count(count: int) -> None:
+    return None
+
+
 def _trials(run: TestRun, bodies: list[Callable[[], object]]) -> TrialsResult:
     calls = iter(bodies)
-    return run_trials(run, lambda: next(calls)(), len(bodies), lambda r: None)
+    return run_trials(run, lambda: next(calls)(), len(bodies), lambda old, new: None, _no_count)
 
 
 # ── Deterministic assertion IDs ──
@@ -151,13 +157,18 @@ def test_budget_marker_invalid_arguments_raise(
 
 
 def test_batch_budget_without_marker_is_none() -> None:
-    assert TestRun(test_id="t").batch_budget() is None
-    assert TestRun(test_id="t", budget=TestBudget()).batch_budget() is None
+    trace = Trace(trace_id="t", output={})
+
+    assert TestRun(test_id="t").batch_budget(trace) is None
+    assert TestRun(test_id="t", budget=TestBudget()).batch_budget(trace) is None
 
 
 def test_batch_budget_sends_remainder_of_judge_calls_and_cost_with_agent_spend() -> None:
     test_run = TestRun(test_id="t", budget=TestBudget(max_judge_calls=5, max_cost_usd=1.0))
+    trace_a = _result(trace_id="a", agent_cost=0.5).trace
 
+    # The trace about to be evaluated counts before the remainder is computed.
+    assert test_run.batch_budget(trace_a) == BatchBudget(max_judge_calls=5, max_cost_usd=0.5)
     test_run.record(
         _result(usage=Usage(judge_calls=2, cost_usd=0.25), trace_id="a", agent_cost=0.5)
     )
@@ -166,7 +177,7 @@ def test_batch_budget_sends_remainder_of_judge_calls_and_cost_with_agent_spend()
         _result(usage=Usage(judge_calls=1, cost_usd=0.05), trace_id="a", agent_cost=0.5)
     )
 
-    assert test_run.batch_budget() == BatchBudget(
+    assert test_run.batch_budget(trace_a) == BatchBudget(
         max_judge_calls=2, max_cost_usd=pytest.approx(0.2)
     )
 
@@ -176,15 +187,18 @@ def test_batch_budget_floors_remainder_at_zero() -> None:
 
     test_run.record(_result(usage=Usage(judge_calls=4, cost_usd=0.3)))
 
-    assert test_run.batch_budget() == BatchBudget(max_judge_calls=0, max_cost_usd=0.0)
+    assert test_run.batch_budget(Trace(trace_id="t", output={})) == BatchBudget(
+        max_judge_calls=0, max_cost_usd=0.0
+    )
     assert test_run.cost_budget_spent()
 
 
 def test_plugin_batch_budget_follows_running_test(run: TestRun) -> None:
-    assert plugin._batch_budget() is None
+    trace = Trace(trace_id="t", output={})
+    assert plugin._batch_budget(trace) is None
     run.budget = TestBudget(max_judge_calls=2)
 
-    assert plugin._batch_budget() == BatchBudget(max_judge_calls=2)
+    assert plugin._batch_budget(trace) == BatchBudget(max_judge_calls=2)
 
 
 # ── Fixed-N trials ──
@@ -207,7 +221,7 @@ def test_run_trials_tags_rows_and_passes_when_some_trial_passes(run: TestRun) ->
 
 
 def test_run_trials_raised_trial_adds_hard_fail_row_per_seen_assertion_id(run: TestRun) -> None:
-    recorded: list[AgentResult] = []
+    replaced: list[tuple[list[AgentResult], AgentResult]] = []
 
     def boom() -> None:
         raise ConnectionError("HTTP 500")
@@ -218,38 +232,92 @@ def test_run_trials_raised_trial_adds_hard_fail_row_per_seen_assertion_id(run: T
         lambda: run.record(_result(_row("a", "pass"), _row("b", "hard_fail"))),
     ]
     calls = iter(bodies)
-    result = run_trials(run, lambda: next(calls)(), 3, recorded.append)
+    result = run_trials(
+        run,
+        lambda: next(calls)(),
+        3,
+        lambda old, new: replaced.append((old, new)),
+        _no_count,
+    )
 
-    rows = recorded[0].assertion_results
+    removed, replacement = replaced[0]
+    rows = replacement.assertion_results
+    assert removed == []
     assert [(r.assertion_id, r.status, r.trial, r.failure_class) for r in rows] == [
         ("a", "hard_fail", 2, "broken_code"),
         ("b", "hard_fail", 2, "broken_code"),
     ]
     assert rows[0].score == 0.0
     assert rows[0].explanation == "trial 2 raised ConnectionError: HTTP 500"
-    assert result.trials[1] == recorded
+    assert result.trials[1] == [replacement]
+    assert result.raised == frozenset({2})
     assert (result.passed, result.evaluated) == (1, 3)
     assert result.outcome() == OUTCOME_PASS
 
 
-def test_run_trials_raise_after_evaluating_adds_rows_only_for_unreached_ids(
+def test_run_trials_raise_after_passing_evaluation_replaces_rows_and_fails_trial(
     run: TestRun,
 ) -> None:
-    recorded: list[AgentResult] = []
+    replaced: list[tuple[list[AgentResult], AgentResult]] = []
 
-    def partial_then_raise() -> None:
+    def evaluate_then_raise() -> None:
         run.record(_result(_row("a", "pass")))
-        raise ConnectionError("HTTP 500")
+        raise AssertionError("checked after evaluate")
 
-    bodies: list[Callable[[], object]] = [
-        lambda: run.record(_result(_row("a", "pass"), _row("b", "pass"))),
-        partial_then_raise,
+    calls = iter([evaluate_then_raise] * 3)
+    result = run_trials(
+        run,
+        lambda: next(calls)(),
+        3,
+        lambda old, new: replaced.append((old, new)),
+        _no_count,
+    )
+
+    assert [len(old) for old, _ in replaced] == [1, 1, 1]
+    rows = [row for t in result.trials for r in t for row in r.assertion_results]
+    assert [(r.assertion_id, r.status, r.trial) for r in rows] == [
+        ("a", "hard_fail", 1),
+        ("a", "hard_fail", 2),
+        ("a", "hard_fail", 3),
     ]
-    calls = iter(bodies)
-    run_trials(run, lambda: next(calls)(), 2, recorded.append)
+    assert rows[0].explanation == (
+        "trial 1 raised AssertionError: checked after evaluate"
+        " (engine status before the error: pass)"
+    )
+    assert (result.passed, result.evaluated) == (0, 3)
+    assert result.outcome() == OUTCOME_FAIL
 
-    rows = [r for agent_result in recorded for r in agent_result.assertion_results]
-    assert [(r.assertion_id, r.status, r.trial) for r in rows] == [("b", "hard_fail", 2)]
+
+def test_run_trials_reports_trials_run_when_reraising(run: TestRun) -> None:
+    counts: list[int] = []
+
+    def boom() -> None:
+        raise KeyError("x")
+
+    with pytest.raises(KeyError):
+        run_trials(run, boom, 2, lambda old, new: None, counts.append)
+
+    assert counts == [2]
+
+
+def test_replace_test_results_drops_stale_rows_of_raised_trial() -> None:
+    plugin._take_test_results()
+    kept, stale = _result(_row("a", "pass")), _result(_row("b", "pass"))
+    replacement = _result(_row("b", "hard_fail"))
+    plugin._record_result(kept)
+    plugin._record_result(stale)
+
+    plugin._replace_test_results([stale], replacement)
+
+    assert plugin._take_test_results() == [kept, replacement]
+
+
+def test_trials_without_assertions_skip_with_no_assertions_reason() -> None:
+    result = TrialsResult(trials=[[], []], planned=2)
+
+    assert result.outcome() == OUTCOME_SKIP
+    assert result.outcome(strict=True) == OUTCOME_FAIL
+    assert result.skip_reason() == "not evaluated: no assertions in 2 trials"
 
 
 def test_run_trials_none_passed_fails_with_failing_trial_diagnostics(run: TestRun) -> None:
@@ -432,3 +500,19 @@ def test_report_single_run_omits_trial_fields() -> None:
     assert "trial" not in report["results"][0]
     assert "trials" not in report["tests"][0]
     assert report["summary"]["usage"]["model_calls"] == 0
+
+
+def test_nested_session_keeps_outer_usage_and_running_test(pytester: pytest.Pytester) -> None:
+    outer = TestRun(test_id="outer")
+    begin_run(outer)
+    plugin._session_usage = Usage(model_calls=7)
+    try:
+        pytester.makepyfile(test_inner="def test_ok():\n    pass\n")
+
+        pytester.runpytest_inprocess("-p", "no:cacheprovider").assert_outcomes(passed=1)
+
+        assert current_run() is outer
+        assert plugin._session_usage == Usage(model_calls=7)
+    finally:
+        end_run()
+        plugin._session_usage = Usage()

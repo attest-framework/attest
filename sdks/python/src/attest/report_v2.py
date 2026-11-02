@@ -76,7 +76,8 @@ def build_report(tests: list[TestRecord], *, simulated: bool, usage: Usage) -> d
                         "line": test.line,
                     }
                 )
-                assertion_ids.append(result.assertion_id)
+                if result.assertion_id not in assertion_ids:
+                    assertion_ids.append(result.assertion_id)
                 if result.status == STATUS_NOT_EVALUATED and result.reason not in reasons:
                     reasons.append(str(result.reason))
         test_row: dict[str, Any] = {

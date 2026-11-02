@@ -129,9 +129,25 @@ class TestRun:
         """Attest cost plus agent spend so far in this test."""
         return self.usage.cost_usd + self.agent_spend_usd
 
-    def batch_budget(self) -> BatchBudget | None:
-        """The remainder of the test budget for the next ``evaluate_batch``,
-        floored at 0; ``None`` when the test has no budget."""
+    def count_agent_spend(self, trace: Trace) -> None:
+        """Add ``trace.metadata.cost_usd`` to the agent spend, once per trace id."""
+        with self._lock:
+            self._count_agent_spend(trace)
+
+    def _count_agent_spend(self, trace: Trace) -> None:
+        if (
+            trace.metadata is not None
+            and trace.metadata.cost_usd is not None
+            and trace.trace_id not in self._spent_trace_ids
+        ):
+            self._spent_trace_ids.add(trace.trace_id)
+            self.agent_spend_usd += trace.metadata.cost_usd
+
+    def batch_budget(self, trace: Trace) -> BatchBudget | None:
+        """The remainder of the test budget for the ``evaluate_batch`` of
+        ``trace``, after counting that trace's agent spend, floored at 0;
+        ``None`` when the test has no budget."""
+        self.count_agent_spend(trace)
         if self.budget is None:
             return None
         judge = self.budget.max_judge_calls
@@ -156,14 +172,7 @@ class TestRun:
         every row."""
         with self._lock:
             self.usage = self.usage + agent_result.usage
-            trace = agent_result.trace
-            if (
-                trace.metadata is not None
-                and trace.metadata.cost_usd is not None
-                and trace.trace_id not in self._spent_trace_ids
-            ):
-                self._spent_trace_ids.add(trace.trace_id)
-                self.agent_spend_usd += trace.metadata.cost_usd
+            self._count_agent_spend(agent_result.trace)
             if self.trial is not None:
                 for row in agent_result.assertion_results:
                     row.trial = self.trial
@@ -206,7 +215,8 @@ class TrialsResult:
     is pass; a trial that raised carries ``hard_fail`` rows and fails.
 
     Test outcome: no trial evaluated → skip with the summed not-evaluated
-    reasons (fail when ``strict``); otherwise no trial passed → fail;
+    reasons, or ``no assertions in N trials`` when no trial produced a row
+    (fail when ``strict``); otherwise no trial passed → fail;
     otherwise pass. Use ``attest policy evaluate --baseline <tag>`` with a
     ``regression`` rule for the statistical verdict against a baseline.
     """
@@ -217,9 +227,17 @@ class TrialsResult:
     planned: int
     #: True when the test's cost budget stopped the loop early.
     stopped_by_budget: bool = False
+    #: 1-based indices of the trials that raised; each is a failed trial.
+    raised: frozenset[int] = frozenset()
 
     def _outcomes(self) -> list[str]:
-        return [_trial_outcome(t) for t in self.trials]
+        return [
+            OUTCOME_FAIL if i in self.raised else _trial_outcome(t)
+            for i, t in enumerate(self.trials, start=1)
+        ]
+
+    def _any_rows(self) -> bool:
+        return any(r.assertion_results for t in self.trials for r in t)
 
     @property
     def passed(self) -> int:
@@ -243,9 +261,6 @@ class TrialsResult:
         return [RepeatResult(results=list[Verdict](t)) for t in self.trials]
 
     def outcome(self, *, strict: bool = False) -> str:
-        if not any(r.assertion_results for t in self.trials for r in t):
-            # No trial produced a row: the test does not evaluate (today's N=1 behavior).
-            return OUTCOME_PASS
         if self.evaluated == 0:
             return OUTCOME_FAIL if strict else OUTCOME_SKIP
         if self.passed == 0:
@@ -253,6 +268,8 @@ class TrialsResult:
         return OUTCOME_PASS
 
     def skip_reason(self) -> str:
+        if not self._any_rows():
+            return f"not evaluated: no assertions in {len(self.trials)} trials"
         return format_skip_reason(self.not_evaluated_reasons)
 
     def render_diagnostics(self, *, color: bool = False) -> str:
@@ -274,26 +291,37 @@ class TrialsResult:
 
 
 def raised_trial_result(
-    test_id: str, trial: int, exc: Exception, seen: Mapping[str, AssertionResult]
+    test_id: str,
+    trial: int,
+    exc: Exception,
+    seen: Mapping[str, AssertionResult],
+    evaluated: Mapping[str, AssertionResult],
 ) -> AgentResult:
-    """One ``hard_fail`` row per assertion id in ``seen`` for a trial that raised,
-    so pass rates count the trial. ``seen`` maps each id to its first row,
-    whose layer and type the new row copies. The trial produced no trace; the
-    result carries an empty one."""
-    explanation = f"trial {trial} raised {type(exc).__name__}: {exc}"
-    rows = [
-        AssertionResult(
-            assertion_id=aid,
-            status=STATUS_HARD_FAIL,
-            score=0.0,
-            explanation=explanation,
-            layer=first.layer,
-            type=first.type,
-            failure_class=FAILURE_CLASS_BROKEN_CODE,
-            trial=trial,
+    """The replacement rows of a trial that raised: exactly one ``hard_fail``
+    row per assertion id in ``seen`` (each id's first row in the test, whose
+    layer and type the new row copies). ``evaluated`` maps the ids this trial
+    evaluated before raising to their last row; the explanation keeps that
+    engine status. The result carries the trial's last trace, or an empty one
+    when it evaluated nothing."""
+    base = f"trial {trial} raised {type(exc).__name__}: {exc}"
+    rows = []
+    for aid, first in seen.items():
+        before = evaluated.get(aid)
+        explanation = (
+            base if before is None else f"{base} (engine status before the error: {before.status})"
         )
-        for aid, first in seen.items()
-    ]
+        rows.append(
+            AssertionResult(
+                assertion_id=aid,
+                status=STATUS_HARD_FAIL,
+                score=0.0,
+                explanation=explanation,
+                layer=first.layer,
+                type=first.type,
+                failure_class=FAILURE_CLASS_BROKEN_CODE,
+                trial=trial,
+            )
+        )
     return AgentResult(
         trace=Trace(trace_id=f"{test_id}#trial{trial}", output={}),
         assertion_results=rows,
@@ -304,16 +332,20 @@ def run_trials(
     run: TestRun,
     body: Callable[[], object],
     n: int,
-    on_raised: Callable[[AgentResult], None],
+    on_replace: Callable[[list[AgentResult], AgentResult], None],
+    on_trials_run: Callable[[int], None],
 ) -> TrialsResult:
     """Run ``body`` as trials 1..n of ``run`` and return the aggregate.
 
     Before each trial after the first, stop when the test's cost budget is
-    spent. A trial raising an ``Exception`` counts as failed (pytest outcome
-    exceptions such as skip and fail are ``BaseException`` and propagate):
-    after the loop it gets one ``hard_fail`` row per assertion id seen in the
-    test's trials that it did not evaluate itself, passed to ``on_raised``. When no trial
-    produced any assertion, the first exception is re-raised.
+    spent; ``on_trials_run`` receives the number of trials run (also when an
+    exception is re-raised). A trial raising an ``Exception`` is a failed
+    trial (pytest outcome exceptions such as skip and fail are
+    ``BaseException`` and propagate): after the loop its recorded evaluations
+    are replaced by one ``hard_fail`` row per assertion id seen in the test's
+    trials, and ``on_replace(removed, replacement)`` lets the caller update
+    its own records. When no trial produced any assertion, the first
+    exception is re-raised.
     """
     if n < 1:
         raise ValueError(f"trials must be >= 1, got {n}")
@@ -331,6 +363,7 @@ def run_trials(
                 raised[i] = exc
     finally:
         run.trial = None
+        on_trials_run(len(run.results_by_trial))
 
     seen: dict[str, AssertionResult] = {}
     for i in sorted(run.results_by_trial):
@@ -340,21 +373,14 @@ def run_trials(
     if raised and not seen:
         raise raised[min(raised)]
     for i in sorted(raised):
-        # Assertions the trial evaluated before raising keep their rows; only
-        # the ones it never reached become hard_fail, so no trial counts twice.
-        done = {
-            row.assertion_id
-            for agent_result in run.results_by_trial.get(i, [])
-            for row in agent_result.assertion_results
-        }
-        missing = {aid: row for aid, row in seen.items() if aid not in done}
-        if not missing:
-            continue
-        result = raised_trial_result(run.test_id, i, raised[i], missing)
-        run.results_by_trial[i].append(result)
-        on_raised(result)
+        removed = run.results_by_trial[i]
+        evaluated = {row.assertion_id: row for r in removed for row in r.assertion_results}
+        replacement = raised_trial_result(run.test_id, i, raised[i], seen, evaluated)
+        run.results_by_trial[i] = [replacement]
+        on_replace(removed, replacement)
     return TrialsResult(
         trials=[run.results_by_trial[i] for i in sorted(run.results_by_trial)],
         planned=n,
         stopped_by_budget=stopped,
+        raised=frozenset(raised),
     )

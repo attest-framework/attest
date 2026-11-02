@@ -61,34 +61,38 @@ function describeError(error: unknown): string {
 }
 
 /** A trial's own outcome: raised or any hard_fail fails; else not_evaluated (or nothing evaluated) skips. */
-function trialOutcome(trial: TrialRecord, strict: boolean): TrialOutcome {
+function trialOutcome(trial: TrialRecord): TrialOutcome {
   if (trial.error !== undefined) return "fail";
   const rows = trial.results.flatMap((r) => r.assertionResults);
   if (rows.some((r) => r.status === STATUS_HARD_FAIL)) return "fail";
   if (rows.length === 0) return "skip";
-  if (rows.some((r) => r.status === STATUS_NOT_EVALUATED)) return strict ? "fail" : "skip";
+  if (rows.some((r) => r.status === STATUS_NOT_EVALUATED)) return "skip";
   return "pass";
 }
 
 /**
- * Add one hard_fail row per assertion ID of the test to each trial that threw,
- * so pass rates count the trial as failed. A thrown trial that already has a row
- * for an ID (it threw after evaluating) keeps that row instead.
+ * Replace the rows of each trial that threw with exactly one hard_fail row per
+ * assertion ID of the test, so pass rates count the trial as failed once per ID.
+ * When the trial had evaluated the ID before throwing, the explanation keeps
+ * the engine's status.
  */
 function thrownTrialRows(test: RunningTest, trials: readonly TrialRecord[]): void {
   const meta = attemptMeta(test);
   const ids = [...new Set(trials.flatMap((t) => t.results.flatMap((r) => r.assertionResults)).map((r) => r.assertion_id))];
   for (const trial of trials) {
     if (trial.error === undefined) continue;
-    const seen = new Set(trial.results.flatMap((r) => r.assertionResults.map((row) => row.assertion_id)));
-    const explanation = `trial ${trial.index} raised ${describeError(trial.error.value)}`;
+    const before = new Map(
+      trial.results.flatMap((r) => r.assertionResults.map((row) => [row.assertion_id, row.status] as const)),
+    );
+    meta.results = meta.results.filter((row) => row.trial !== trial.index);
+    const raised = `trial ${trial.index} raised ${describeError(trial.error.value)}`;
     for (const id of ids) {
-      if (seen.has(id)) continue;
+      const status = before.get(id);
       const row: RecordedResult = {
         assertion_id: id,
         status: STATUS_HARD_FAIL,
         score: 0,
-        explanation,
+        explanation: status === undefined ? raised : `${raised} (engine status before the error: ${status})`,
         failure_class: FailureClass.BrokenCode,
         trial: trial.index,
       };
@@ -97,18 +101,17 @@ function thrownTrialRows(test: RunningTest, trials: readonly TrialRecord[]): voi
   }
 }
 
-function failureMessage(summary: TrialsMeta, trials: readonly TrialRecord[], strict: boolean): string {
+function failureMessage(summary: TrialsMeta, trials: readonly TrialRecord[]): string {
   const parts = [`0/${summary.evaluated} trials passed (${summary.notEvaluated} not evaluated)`];
   for (const trial of trials) {
-    if (trialOutcome(trial, strict) !== "fail") continue;
+    if (trialOutcome(trial) !== "fail") continue;
     if (trial.error !== undefined) {
       parts.push(`trial ${trial.index} raised ${describeError(trial.error.value)}`);
       continue;
     }
     for (const result of trial.results) {
-      if (result.outcome({ strict }) !== "fail") continue;
-      const header = result.hardFailures.length === 0 ? ` strict: ${result.skipReason()}` : "";
-      parts.push(`trial ${trial.index}:${header}${renderDiagnostics(result)}`);
+      if (result.hardFailures.length === 0) continue;
+      parts.push(`trial ${trial.index}:${renderDiagnostics(result)}`);
     }
   }
   return parts.join("\n");
@@ -123,9 +126,10 @@ function failureMessage(summary: TrialsMeta, trials: readonly TrialRecord[], str
  * (it behaves as inspect()), enforceOutcome() returns its argument, every
  * result row is reported with `trial = i`, and assertion IDs restart so each
  * assertion keeps its ID across trials. A trial that throws counts as failed:
- * it gets a hard_fail row (failure_class broken_code) for each assertion ID
- * the test evaluated; when no trial evaluated anything, the first error is
- * rethrown. After the last trial the test is skipped when no trial was
+ * its rows are replaced by one hard_fail row (failure_class broken_code) per
+ * assertion ID the test evaluated; when no trial evaluated anything, the first
+ * error is rethrown. A trial whose own outcome is skip counts as not evaluated,
+ * also under ATTEST_STRICT. After the last trial the test is skipped when no trial was
  * evaluated (failed under ATTEST_STRICT), fails when no trial passed, and
  * passes otherwise. AttestReporter prints "<test_id>: <passed>/<evaluated>
  * trials passed (<n> not evaluated)".
@@ -175,7 +179,7 @@ export async function trials(
   thrownTrialRows(test, records);
 
   const strict = strictFromEnv();
-  const outcomes = records.map((r) => trialOutcome(r, strict));
+  const outcomes = records.map((r) => trialOutcome(r));
   const passed = outcomes.filter((o) => o === "pass").length;
   const failed = outcomes.filter((o) => o === "fail").length;
   const summary: TrialsMeta = {
@@ -200,5 +204,5 @@ export async function trials(
     (options?.context ?? test.context).skip(reason);
     return;
   }
-  if (passed === 0) throw new Error(failureMessage(summary, records, strict));
+  if (passed === 0) throw new Error(failureMessage(summary, records));
 }

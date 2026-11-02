@@ -20,6 +20,7 @@ import {
   inTrial,
   recordAgentSpend,
   recordOnTest,
+  recordUnattachedUsage,
   remainingBudget,
   resolveTest,
   strictFromEnv,
@@ -211,6 +212,7 @@ export class AttestEngineFixture {
       result.usage,
     );
     if (test !== undefined) recordOnTest(test, agentResult, trial);
+    else recordUnattachedUsage(agentResult.usage);
     if (scope !== undefined && scope.test === test) scope.results.push(agentResult);
 
     // Track non-passing AgentResults so AttestCostReporter can render the

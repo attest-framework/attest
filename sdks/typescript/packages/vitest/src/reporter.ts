@@ -1,8 +1,17 @@
-import { mkdirSync, writeFileSync } from "node:fs";
-import { dirname, relative, resolve, sep } from "node:path";
-import { isSimulationMode, renderDiagnostics, renderSummary } from "@attest-ai/core";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join, relative, resolve, sep } from "node:path";
+import {
+  isSimulationMode,
+  parseUsage,
+  renderDiagnostics,
+  renderSummary,
+  sumUsage,
+  type Usage,
+} from "@attest-ai/core";
 import type { Reporter, TestModule, Vitest } from "vitest/node";
 import { buildReport, summaryLines, type TestRecord } from "./report.js";
+import { ROOT_ENV, USAGE_DIR_ENV } from "./test-state.js";
 
 interface ReporterContext {
   printInfo: (message: string) => void;
@@ -87,6 +96,7 @@ export class AttestReporter implements Reporter {
   private outputFile: string | undefined;
   private root = process.cwd();
   private vitest: Vitest | undefined;
+  private usageDir: string | undefined;
 
   constructor(options: AttestReporterOptions = {}) {
     this.outputFile = options.outputFile;
@@ -100,6 +110,25 @@ export class AttestReporter implements Reporter {
       this.outputFile = configured["attest"];
     }
     vitest.config.includeTaskLocation = true;
+    // Workers inherit these: test ids hash paths relative to this root, and
+    // evaluations outside any test drop their usage in usageDir.
+    this.usageDir = mkdtempSync(join(tmpdir(), "attest-usage-"));
+    process.env[ROOT_ENV] = this.root;
+    process.env[USAGE_DIR_ENV] = this.usageDir;
+  }
+
+  onTestRunStart(): void {
+    if (this.usageDir !== undefined) mkdirSync(this.usageDir, { recursive: true });
+  }
+
+  /** Sum and remove the usage files workers wrote for evaluations outside any test. */
+  private takeUnattachedUsage(): Usage {
+    const dir = this.usageDir;
+    if (dir === undefined) return sumUsage([]);
+    const files = readdirSync(dir).filter((f) => f.endsWith(".json"));
+    const usage = sumUsage(files.map((f) => parseUsage(JSON.parse(readFileSync(join(dir, f), "utf8")))));
+    rmSync(dir, { recursive: true, force: true });
+    return usage;
   }
 
   onTestRunEnd(testModules: ReadonlyArray<TestModule>): void {
@@ -129,12 +158,13 @@ export class AttestReporter implements Reporter {
         });
       }
     }
-    const lines = summaryLines(tests);
+    const unattached = this.takeUnattachedUsage();
+    const lines = summaryLines(tests, unattached);
     if (lines.length > 0) this.vitest?.logger.log(lines.join("\n"));
     if (outputFile === undefined) return;
     const path = resolve(this.root, outputFile);
     mkdirSync(dirname(path), { recursive: true });
-    writeFileSync(path, `${JSON.stringify(buildReport(tests, isSimulationMode()), null, 2)}\n`);
+    writeFileSync(path, `${JSON.stringify(buildReport(tests, isSimulationMode(), unattached), null, 2)}\n`);
   }
 }
 

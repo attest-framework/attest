@@ -21,6 +21,7 @@ import type { AttestTaskMeta } from "../src/report.js";
 import {
   deterministicAssertionId,
   remainingBudget,
+  ROOT_ENV,
   testIdOf,
   validateBudget,
   type RunningTest,
@@ -102,6 +103,19 @@ describe("deterministic assertion IDs", () => {
 
   it("use the report's test_id: file > suites > name", () => {
     expect(testIdOf(fakeTest("issues refunds").task)).toBe("tests/agent.test.ts > refunds > issues refunds");
+  });
+
+  it("hash the file path relative to the Vitest root AttestReporter publishes", () => {
+    const t = fakeTest("issues refunds");
+    // A project rooted at packages/api: Vitest names the file relative to the
+    // project, the report relative to the Vitest root.
+    Object.assign(t.task.file, { name: "tests/agent.test.ts", filepath: "/repo/packages/api/tests/agent.test.ts" });
+    process.env[ROOT_ENV] = "/repo";
+    try {
+      expect(testIdOf(t.task)).toBe("packages/api/tests/agent.test.ts > refunds > issues refunds");
+    } finally {
+      delete process.env[ROOT_ENV];
+    }
   });
 
   it("match the running test's report test_id", (context) => {
@@ -237,6 +251,31 @@ describe("trials()", () => {
     expect(t.meta().trials).toMatchObject({ passed: 2, evaluated: 3, notEvaluated: 0 });
   });
 
+  it("replaces the rows a trial evaluated before throwing, one hard_fail row per ID", async () => {
+    scriptedClient(["pass", "pass", "pass"]);
+    const t = fakeTest("thrown late");
+    await trials(async (i) => {
+      await evaluate(chain());
+      if (i === 2) throw new Error("HTTP 500");
+    }, { n: 3, context: t.context });
+
+    const rows = t.meta().results;
+    expect(rows).toHaveLength(6);
+    expect(rows.filter((r) => r.trial === 2).map((r) => [r.status, r.explanation])).toEqual([
+      ["hard_fail", "trial 2 raised Error: HTTP 500 (engine status before the error: pass)"],
+      ["hard_fail", "trial 2 raised Error: HTTP 500 (engine status before the error: pass)"],
+    ]);
+    expect(t.meta().trials).toMatchObject({ passed: 2, evaluated: 3, notEvaluated: 0 });
+  });
+
+  it("skips with 'no assertions in N trials' when no trial evaluated or threw", async () => {
+    scriptedClient([]);
+    const t = fakeTest("empty");
+    await trials(() => undefined, { n: 2, context: t.context });
+    expect(t.skip).toHaveBeenCalledWith("not evaluated: no assertions in 2 trials");
+    expect(t.meta().trials).toMatchObject({ passed: 0, evaluated: 0, notEvaluated: 2 });
+  });
+
   it("fails with the failing trials' diagnostics when no trial passed", async () => {
     scriptedClient(["hard_fail"]);
     const t = fakeTest("none passed");
@@ -273,8 +312,10 @@ describe("trials()", () => {
     const run = trials(async () => {
       await evaluate(judged());
     }, { n: 2, context: t.context });
-    await expect(run).rejects.toThrow("0/2 trials passed");
+    await expect(run).rejects.toThrow("strict: not evaluated: provider_not_configured ×2");
     expect(t.skip).not.toHaveBeenCalled();
+    // Strict fails the aggregate but a skipped trial still counts as not evaluated.
+    expect(t.meta().trials).toMatchObject({ passed: 0, evaluated: 0, notEvaluated: 2 });
   });
 
   it("stops before a trial once attest cost plus agent spend reaches maxCostUsd", async () => {

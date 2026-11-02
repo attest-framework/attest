@@ -13,6 +13,7 @@ import {
   STATUS_SOFT_FAIL,
   sumUsage,
   usageSummaryLine,
+  zeroUsage,
   type AssertionResult,
   type Usage,
 } from "@attest-ai/core";
@@ -67,7 +68,15 @@ export interface TestRecord {
   attest: AttestTaskMeta | undefined;
 }
 
-export function buildReport(tests: readonly TestRecord[], simulated: boolean): Record<string, unknown> {
+/**
+ * `unattached` is the usage of evaluations that belong to no test (beforeAll,
+ * scripts); it counts in `summary.usage`.
+ */
+export function buildReport(
+  tests: readonly TestRecord[],
+  simulated: boolean,
+  unattached: Usage = zeroUsage(),
+): Record<string, unknown> {
   const rows: Record<string, unknown>[] = [];
   const testRows: Record<string, unknown>[] = [];
   let totalCost = 0;
@@ -108,7 +117,7 @@ export function buildReport(tests: readonly TestRecord[], simulated: boolean): R
       soft_fail: count(STATUS_SOFT_FAIL),
       hard_fail: count(STATUS_HARD_FAIL),
       not_evaluated: count(STATUS_NOT_EVALUATED),
-      usage: sessionUsage(tests),
+      usage: sessionUsage(tests, unattached),
     },
     results: rows,
     tests: testRows,
@@ -117,9 +126,9 @@ export function buildReport(tests: readonly TestRecord[], simulated: boolean): R
   };
 }
 
-/** Attest usage summed over every test of the run. */
-export function sessionUsage(tests: readonly TestRecord[]): Usage {
-  return sumUsage(tests.flatMap((t) => (t.attest === undefined ? [] : [t.attest.usage])));
+/** Attest usage summed over every test of the run plus the evaluations that belong to no test. */
+export function sessionUsage(tests: readonly TestRecord[], unattached: Usage = zeroUsage()): Usage {
+  return sumUsage([unattached, ...tests.flatMap((t) => (t.attest === undefined ? [] : [t.attest.usage]))]);
 }
 
 /**
@@ -128,7 +137,7 @@ export function sessionUsage(tests: readonly TestRecord[]): Usage {
  * note when the test budget stopped it early), then the "attest usage: …" line
  * when the session made or refused a model call.
  */
-export function summaryLines(tests: readonly TestRecord[]): string[] {
+export function summaryLines(tests: readonly TestRecord[], unattached: Usage = zeroUsage()): string[] {
   const lines: string[] = [];
   for (const test of tests) {
     const trials = test.attest?.trials;
@@ -142,7 +151,7 @@ export function summaryLines(tests: readonly TestRecord[]): string[] {
       );
     }
   }
-  const usage = usageSummaryLine(sessionUsage(tests));
+  const usage = usageSummaryLine(sessionUsage(tests, unattached));
   if (usage !== undefined) lines.push(usage);
   return lines;
 }

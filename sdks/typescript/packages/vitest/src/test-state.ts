@@ -3,7 +3,9 @@
  * IDs, the per-test budget remainder, and the results recorded on task meta.
  */
 import { AsyncLocalStorage } from "node:async_hooks";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { join, relative, sep } from "node:path";
 import * as vitest from "vitest";
 import type { TestContext } from "vitest";
 import {
@@ -102,15 +104,43 @@ export async function resolveTest(context: TestContext | undefined): Promise<Run
 }
 
 /**
- * The report's test_id of `test`: "<file relative to the root> > <suites> > <name>",
- * the same string AttestReporter writes.
+ * Set by AttestReporter in the main process before workers start: the Vitest
+ * root its report paths are relative to, and the directory where workers drop
+ * the usage of evaluations that belong to no test.
+ */
+export const ROOT_ENV = "ATTEST_VITEST_ROOT";
+export const USAGE_DIR_ENV = "ATTEST_VITEST_USAGE_DIR";
+
+/**
+ * The report's test_id of `test`: "<file> > <suites> > <name>", the same string
+ * AttestReporter writes. The file is relative to the Vitest root AttestReporter
+ * publishes (in a multi-project setup, not the project root); without
+ * AttestReporter it is the file task's name, relative to the project root.
  */
 export function testIdOf(test: RunningTest): string {
   const names = [test.name];
   for (let suite = test.suite; suite !== undefined && suite !== test.file; suite = suite.suite) {
     names.unshift(suite.name);
   }
-  return `${test.file.name} > ${names.join(" > ")}`;
+  const root = process.env[ROOT_ENV];
+  const file =
+    root === undefined || test.file.filepath === undefined
+      ? test.file.name
+      : relative(root, test.file.filepath).split(sep).join("/");
+  return `${file} > ${names.join(" > ")}`;
+}
+
+/**
+ * Hand the usage of an evaluation that belongs to no test (beforeAll, a script)
+ * to AttestReporter: one file per evaluation in its usage directory, so the
+ * session usage counts it once. Without AttestReporter there is no report to add it to.
+ */
+export function recordUnattachedUsage(usage: Usage): void {
+  const dir = process.env[USAGE_DIR_ENV];
+  if (dir === undefined) return;
+  if (Object.values(usage).every((v) => v === 0)) return;
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, `${randomUUID()}.json`), JSON.stringify(usage));
 }
 
 /** `assert_` + the first 12 hex chars of sha256("<test_id>#<ordinal>"). */

@@ -1,7 +1,7 @@
 // Run by attest-trials.test.ts in a vitest subprocess against the real engine.
-import { describe, it } from "vitest";
+import { beforeAll, describe, it } from "vitest";
 import { attestExpect, TraceBuilder } from "@attest-ai/core";
-import { evaluate, trials } from "../../src/index.js";
+import { evaluate, inspect, trials } from "../../src/index.js";
 
 function reply(message: string) {
   return new TraceBuilder("refund-agent")
@@ -12,6 +12,11 @@ function reply(message: string) {
 }
 
 describe("refund desk", () => {
+  // Belongs to no test: its usage (one call refused by budget) still counts in summary.usage.
+  beforeAll(async () => {
+    await inspect(attestExpect(reply("warm-up")).passesJudge("Is it polite?"), { testBudget: { maxJudgeCalls: 0 } });
+  });
+
   it("refunds once", async (context) => {
     await trials(
       async (trial) => {

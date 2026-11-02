@@ -89,10 +89,11 @@ describe.skipIf(!existsSync(engine))("trials() (real engine)", () => {
       "budget_exhausted",
     ]);
 
-    expect(report.summary.usage).toMatchObject({ model_calls: 0, judge_calls: 0, budget_refused: 2 });
+    // Two refusals in the judge test plus one in beforeAll, outside any test.
+    expect(report.summary.usage).toMatchObject({ model_calls: 0, judge_calls: 0, budget_refused: 3 });
     expect(output).toContain(`${refunds.test_id}: 2/4 trials passed (0 not evaluated)`);
     expect(output).toContain(
-      "attest usage: 0 model calls · 0 tokens (0 cached) · $0.0000 · retry cost $0.0000 · 2 calls refused by budget",
+      "attest usage: 0 model calls · 0 tokens (0 cached) · $0.0000 · retry cost $0.0000 · 3 calls refused by budget",
     );
   }, 60_000);
 });

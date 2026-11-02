@@ -8,12 +8,13 @@ import logging
 import os
 import threading
 from collections.abc import Generator
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, TypeVar
 
 import pytest
 
-from attest._proto.types import BatchBudget, Usage
+from attest._proto.types import BatchBudget, Trace, Usage
 from attest.cli.diagnostics import render_diagnostics
 from attest.client import AttestClient, require_simulation_capability
 from attest.config import is_simulation_mode
@@ -72,6 +73,14 @@ def _record_result(agent_result: AgentResult) -> None:
     when the call phase ends."""
     with _test_results_lock:
         _test_results.append(agent_result)
+
+
+def _replace_test_results(removed: list[AgentResult], replacement: AgentResult) -> None:
+    """Swap the stashed evaluations of a trial that raised for its hard_fail
+    replacement, so the report and session records hold no stale rows."""
+    with _test_results_lock:
+        _test_results[:] = [r for r in _test_results if all(r is not x for x in removed)]
+        _test_results.append(replacement)
 
 
 def _take_test_results() -> list[AgentResult]:
@@ -297,8 +306,12 @@ def pytest_pyfunc_call(pyfuncitem: pytest.Function) -> bool | None:
         raise TypeError(f"attest_engine fixture is {type(fixture).__name__}")
     testfunction = pyfuncitem.obj
     testargs = {arg: pyfuncitem.funcargs[arg] for arg in pyfuncitem._fixtureinfo.argnames}
-    result = run_trials(run, lambda: testfunction(**testargs), n, _record_result)
-    _session_trials_run[pyfuncitem.nodeid] = len(result.trials)
+    nodeid = pyfuncitem.nodeid
+
+    def trials_run(count: int) -> None:
+        _session_trials_run[nodeid] = count
+
+    result = run_trials(run, lambda: testfunction(**testargs), n, _replace_test_results, trials_run)
     _session_trial_lines[pyfuncitem.nodeid] = result.summary_lines(pyfuncitem.nodeid)
     fixture.enforce(result)
     return True
@@ -380,16 +393,69 @@ def _record_test_phase(item: pytest.Item, report: pytest.TestReport) -> TestReco
     return record
 
 
+@dataclass
+class _SessionState:
+    """Module state of an enclosing session, saved while a nested in-process
+    session (pytester) runs."""
+
+    tests: dict[str, TestRecord]
+    trials_run: dict[str, int]
+    trial_lines: dict[str, list[str]]
+    usage: Usage
+    test_results: list[AgentResult]
+    run: TestRun | None
+
+
+_saved_sessions: list[_SessionState] = []
+
+
 def pytest_sessionstart(session: pytest.Session) -> None:
-    """Start each session with an empty report (pytester runs share this module)."""
+    """Start each session with an empty report and usage; the enclosing
+    session's state (pytester runs share this module) is restored when this
+    session finishes."""
     global _session_usage
+    with _test_results_lock:
+        stashed = list(_test_results)
+        _test_results.clear()
+    _saved_sessions.append(
+        _SessionState(
+            tests=dict(_session_tests),
+            trials_run=dict(_session_trials_run),
+            trial_lines=dict(_session_trial_lines),
+            usage=_session_usage,
+            test_results=stashed,
+            run=current_run(),
+        )
+    )
     _session_tests.clear()
     _session_trials_run.clear()
     _session_trial_lines.clear()
     _session_usage = Usage()
+    end_run()
 
 
-def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
+@pytest.hookimpl(hookwrapper=True, tryfirst=True)
+def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> Generator[None, Any, None]:
+    """Write the --attest-report file, let the terminal summary run, then
+    restore the enclosing session's state."""
+    yield
+    _write_session_report(session)
+    global _session_usage
+    saved = _saved_sessions.pop()
+    _session_tests.clear()
+    _session_tests.update(saved.tests)
+    _session_trials_run.clear()
+    _session_trials_run.update(saved.trials_run)
+    _session_trial_lines.clear()
+    _session_trial_lines.update(saved.trial_lines)
+    _session_usage = saved.usage
+    with _test_results_lock:
+        _test_results[:] = saved.test_results
+    if saved.run is not None:
+        begin_run(saved.run)
+
+
+def _write_session_report(session: pytest.Session) -> None:
     """Write the --attest-report file once every test has run."""
     target: str | None = session.config.getoption("--attest-report", default=None)
     if not target:
@@ -415,10 +481,10 @@ def soft_failure_lines(soft_counts: dict[str, int], outcomes: dict[str, str]) ->
     ]
 
 
-def _batch_budget() -> BatchBudget | None:
-    """The running test's remaining ``attest_budget`` for the next batch."""
+def _batch_budget(trace: Trace) -> BatchBudget | None:
+    """The running test's remaining ``attest_budget`` for the batch of ``trace``."""
     run = current_run()
-    return run.batch_budget() if run is not None else None
+    return run.batch_budget(trace) if run is not None else None
 
 
 class AttestEngineFixture:
@@ -578,7 +644,9 @@ class AttestEngineFixture:
         """
         assert self._client is not None
         result = self._run_on_engine_loop(
-            self._client.evaluate_batch(chain.trace, chain.assertions, budget=_batch_budget())
+            self._client.evaluate_batch(
+                chain.trace, chain.assertions, budget=_batch_budget(chain.trace)
+            )
         )
         return self._process_result(chain, result, budget)
 
@@ -597,7 +665,9 @@ class AttestEngineFixture:
         assert self._loop is not None
         assert self._client is not None
         future = asyncio.run_coroutine_threadsafe(
-            self._client.evaluate_batch(chain.trace, chain.assertions, budget=_batch_budget()),
+            self._client.evaluate_batch(
+                chain.trace, chain.assertions, budget=_batch_budget(chain.trace)
+            ),
             self._loop,
         )
         result = await asyncio.wrap_future(future)

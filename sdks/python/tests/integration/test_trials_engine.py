@@ -49,6 +49,12 @@ def test_always_wrong(attest):
     attest.evaluate(expect(refund_agent(order_id="ORD-2")).output_contains("apology"))
 
 
+def test_assert_after_evaluate(attest):
+    result = refund_agent(order_id="ORD-4")
+    attest.evaluate(expect(result).output_contains("refund"))
+    assert False, "checked after evaluate"
+
+
 @pytest.mark.attest_budget(max_cost_usd=0.001)
 def test_budget_stops(attest):
     attest.evaluate(expect(refund_agent(order_id="ORD-3")).output_contains("refund"))
@@ -86,7 +92,7 @@ def test_trials_rows_ids_and_usage_reach_report(scratch: pytest.Pytester) -> Non
         "-p", "no:cacheprovider", "--attest-trials=3", "--attest-report=r.json"
     )
 
-    run.assert_outcomes(passed=2, failed=3)
+    run.assert_outcomes(passed=2, failed=4)
     run.stdout.fnmatch_lines(
         [
             "*test_refund.py::test_flaky: 2/3 trials passed (0 not evaluated)*",
@@ -104,6 +110,19 @@ def test_trials_rows_ids_and_usage_reach_report(scratch: pytest.Pytester) -> Non
     assert tests["test_flaky"]["outcome"] == "passed"
     assert tests["test_always_wrong"]["outcome"] == "failed"
     assert tests["test_budget_stops"]["trials"] == 1
+    assert tests["test_assert_after_evaluate"]["outcome"] == "failed"
+    assert tests["test_assert_after_evaluate"]["trials"] == 3
+    assert len(tests["test_assert_after_evaluate"]["assertion_ids"]) == 1
+    after = [r for r in report["results"] if r["test_id"].endswith("::test_assert_after_evaluate")]
+    assert [(r["trial"], r["status"]) for r in after] == [
+        (1, "hard_fail"),
+        (2, "hard_fail"),
+        (3, "hard_fail"),
+    ]
+    assert after[0]["explanation"] == (
+        "trial 1 raised AssertionError: checked after evaluate\nassert False"
+        " (engine status before the error: pass)"
+    )
 
     flaky = [r for r in report["results"] if r["test_id"].endswith("::test_flaky")]
     assert sorted({r["trial"] for r in flaky}) == [1, 2, 3]
