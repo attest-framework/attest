@@ -11,6 +11,7 @@ import (
 	"text/tabwriter"
 	"unicode"
 
+	"github.com/attest-ai/attest/engine/internal/capture"
 	"github.com/attest-ai/attest/engine/internal/trace"
 )
 
@@ -18,7 +19,7 @@ func init() {
 	register(command{name: "trace", summary: "check or convert an OTLP/JSON trace export (check|convert)", run: handleTraceCommand})
 }
 
-const traceUsage = `usage: attest-engine trace check [--json] <otlp.json|->
+const traceUsage = `usage: attest-engine trace check [--json] <otlp.json|fixture.attest.json|->
        attest-engine trace convert [--agent-id <id>] <otlp.json|->`
 
 func handleTraceCommand(args []string) {
@@ -111,12 +112,18 @@ func runTraceCheck(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "trace check: %s\n", terminalSafe(err.Error()))
 		return 1
 	}
-	spans, err := trace.ParseOTLP(data)
-	if err != nil {
-		fmt.Fprintf(stderr, "trace check: %s\n", terminalSafe(err.Error()))
-		return 1
+	var report *trace.CheckReport
+	fixture := capture.IsFixture(data)
+	if fixture {
+		report = capture.CheckFixture(data)
+	} else {
+		spans, err := trace.ParseOTLP(data)
+		if err != nil {
+			fmt.Fprintf(stderr, "trace check: %s\n", terminalSafe(err.Error()))
+			return 1
+		}
+		report = trace.Check(spans)
 	}
-	report := trace.Check(spans)
 	exit := 0
 	if !report.OK {
 		exit = 1
@@ -128,13 +135,17 @@ func runTraceCheck(args []string, stdout, stderr io.Writer) int {
 		}
 		return exit
 	}
-	writeCheckText(stdout, path, report)
+	writeCheckText(stdout, path, report, fixture)
 	return exit
 }
 
-func writeCheckText(w io.Writer, path string, r *trace.CheckReport) {
+func writeCheckText(w io.Writer, path string, r *trace.CheckReport, fixture bool) {
 	fmt.Fprintf(w, "trace check %s\n", terminalSafe(path))
-	fmt.Fprintf(w, "trace %s: %d spans, attest trace schema v%d\n", r.TraceID, r.Spans, r.SchemaVersion)
+	if fixture {
+		fmt.Fprintf(w, "trace %s: capture fixture, attest trace schema v%d\n", terminalSafe(r.TraceID), r.SchemaVersion)
+	} else {
+		fmt.Fprintf(w, "trace %s: %d spans, attest trace schema v%d\n", r.TraceID, r.Spans, r.SchemaVersion)
+	}
 	fmt.Fprintf(w, "steps: %s; %s, %s, %s\n", stepSummary(r.Steps),
 		count(r.Turns, "turn", "turns"), count(r.Handoffs, "handoff", "handoffs"), count(r.Retries, "retry", "retries"))
 

@@ -4,6 +4,16 @@ All notable changes to Attest are documented in this file. The format follows [K
 
 ## [Unreleased]
 
+### Added
+
+- `attest capture --name <name> -- <command>` turns a run into a regression fixture. The engine starts a loopback listener hosting a recording proxy for OpenAI Chat Completions, OpenAI Responses and Anthropic Messages (streaming and not) and an OTLP/HTTP trace receiver (`http/protobuf` and `http/json`, optionally gzip), runs the command with `OPENAI_BASE_URL`, `ANTHROPIC_BASE_URL` and `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` pointing at it, forwards model calls to the upstreams set by those variables in the capture's own environment (default `https://api.openai.com/v1` and `https://api.anthropic.com`), and writes `tests/attest/fixtures/<name>.attest.json` (`--out-dir` to change). Request headers are never recorded; values of environment variables whose names end in `KEY`, `TOKEN`, `SECRET` or `PASSWORD` and key-shaped strings (`sk-…`, `AKIA…`, `ghp_…`, bearer credentials, private keys) are replaced by `[redacted]` in keys and values. Trace and span ids, provider response and tool-call ids, timestamps, durations and emails are templated to stable placeholders across the trace, the exchanges and their replay keys, so capturing the same scripted run twice writes the same bytes. `--from <otlp.json>` builds a trace-only fixture (not replay-capable) from an export; `--serve` hosts the listeners for in-process helpers. `attest capture --check-redaction <fixture>` exits 1, naming the JSON path, when a fixture holds a secret.
+- Capture drafts deterministic contracts from the run (the tools called, the order of their first calls, at most one call per `id` / `*_id` argument for each tool, the structured output's shape, and a cost ceiling at 1.5× the observed cost) and marks the fixture verified only when they all pass and the captured trace passes trace check; otherwise it exits 1 naming the failing contracts. `--expect-fail` saves an incident reproduction: verified when drafted contracts fail, which are recorded as expected failures.
+- Fixture schema v1 (`proto/attest/v1/fixture-v1.schema.json`, fixtures in `protocol-tests/fixture-v1/`): the trace-v2 trace, the exchanges with a replay key (model, parameters, prompt hash, tool-schema hash), the drafted contracts, their verification and a `world` section reserved for simulated-world state. `attest trace check` accepts a fixture.
+
+### Security
+
+- The capture listener binds `127.0.0.1` on an ephemeral port, serves only the provider prefixes and `/v1/traces`, rejects requests whose `Host` is not a loopback name, bounds request and recorded response bodies at 32 MiB and OTLP input at the trace converter's limits, and closes when the command exits. Provider credentials pass through to the upstream in memory only.
+
 ## [1.0.0-rc.2] — 2026-11-02
 
 Second release candidate, themed "Evidence": check a trace's integrity, write behavior contracts over what the agent did, get statistical verdicts and judge budgets, and judge with OpenAI, Anthropic, Gemini or a local ACP agent.
