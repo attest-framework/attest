@@ -31,6 +31,32 @@ const TracesPath = "/v1/traces"
 type Receiver struct {
 	mu    sync.Mutex
 	spans []trace.Span
+	// budget is charged each request's decoded size.
+	budget *byteBudget
+	// inflight counts export requests being handled; failed counts export
+	// requests that were rejected or cut off. Either leaves the trace partial.
+	inflight int
+	failed   int
+}
+
+// Incomplete returns the export requests still in flight and those that
+// failed: their spans are missing from the trace.
+func (r *Receiver) Incomplete() (inflight, failed int) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.inflight, r.failed
+}
+
+func (r *Receiver) track(delta int) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.inflight += delta
+}
+
+func (r *Receiver) fail() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.failed++
 }
 
 // Spans returns every span received so far, numbered in arrival order.
@@ -51,6 +77,28 @@ func (r *Receiver) serve(w http.ResponseWriter, req *http.Request) {
 		http.Error(w, "attest capture: POST only", http.StatusMethodNotAllowed)
 		return
 	}
+	r.track(1)
+	defer r.track(-1)
+	rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
+	r.export(rec, req)
+	if rec.status != http.StatusOK {
+		r.fail()
+	}
+}
+
+// statusRecorder notes the status a handler wrote.
+type statusRecorder struct {
+	http.ResponseWriter
+	status int
+}
+
+func (s *statusRecorder) WriteHeader(code int) {
+	s.status = code
+	s.ResponseWriter.WriteHeader(code)
+}
+
+// export handles one OTLP export request.
+func (r *Receiver) export(w http.ResponseWriter, req *http.Request) {
 	mediaType, _, err := mime.ParseMediaType(req.Header.Get("Content-Type"))
 	if err != nil || (mediaType != "application/json" && mediaType != "application/x-protobuf") {
 		http.Error(w, "attest capture: Content-Type must be application/json or application/x-protobuf", http.StatusUnsupportedMediaType)
@@ -79,6 +127,10 @@ func (r *Receiver) serve(w http.ResponseWriter, req *http.Request) {
 	spans, err := trace.ParseOTLP(doc)
 	if err != nil {
 		http.Error(w, "attest capture: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if !r.budget.charge(len(body)) {
+		http.Error(w, fmt.Sprintf("attest capture: the session recorded more than %d bytes", MaxSessionBytes), http.StatusRequestEntityTooLarge)
 		return
 	}
 	if err := r.add(spans); err != nil {

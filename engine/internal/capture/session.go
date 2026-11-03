@@ -44,7 +44,7 @@ func Start(up Upstreams) (*Session, error) {
 	if _, err := rand.Read(raw); err != nil {
 		return nil, fmt.Errorf("capture token: %w", err)
 	}
-	s := &Session{proxy: proxy, receiver: &Receiver{}, served: make(chan error, 1), token: hex.EncodeToString(raw)}
+	s := &Session{proxy: proxy, receiver: &Receiver{budget: proxy.budget}, served: make(chan error, 1), token: hex.EncodeToString(raw)}
 	mux := http.NewServeMux()
 	proxy.Register(mux, "/"+s.token)
 	s.receiver.Register(mux, "/"+s.token)
@@ -103,6 +103,9 @@ func (s *Session) Recorded() ([]trace.Span, []rawExchange, int, error) {
 	ex, incomplete, err := s.proxy.Exchanges()
 	if err != nil {
 		return nil, nil, 0, err
+	}
+	if inflight, failed := s.receiver.Incomplete(); inflight+failed > 0 {
+		return nil, nil, 0, fmt.Errorf("trace export incomplete: %d OTLP export requests unfinished and %d rejected; no fixture written", inflight, failed)
 	}
 	return s.receiver.Spans(), ex, incomplete, nil
 }

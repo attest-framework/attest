@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"mime"
 	"net/url"
+	"regexp"
 	"strings"
 
 	"github.com/attest-ai/attest/engine/internal/redact"
@@ -135,7 +136,6 @@ func apiOf(provider, path string) string {
 	}
 }
 
-// exchangeDoc is the generic (pre-template) form of one exchange.
 // exchangeDoc is the generic form of one exchange. An event-stream body has
 // secrets that span deltas redacted here, before the per-string redaction of
 // the whole fixture; a stream that does not parse fails the capture.
@@ -148,18 +148,20 @@ func exchangeDoc(ex rawExchange, r *redact.Redactor) (map[string]any, error) {
 	if err != nil {
 		return nil, fmt.Errorf("exchange %d response: %w", ex.seq, err)
 	}
-	stream := false
+	requested := false
 	if m, ok := req.(map[string]any); ok {
-		stream, _ = m["stream"].(bool)
+		requested, _ = m["stream"].(bool)
 	}
-	ct, _, _ := mime.ParseMediaType(ex.contentType)
-	if ct == "text/event-stream" {
-		stream = true
-		if text, ok := resp.(string); ok && text != "" {
-			if resp, err = redactSSE(text, r); err != nil {
-				return nil, fmt.Errorf("exchange %d (%s %s): unparseable event stream, no fixture written: %w", ex.seq, ex.method, ex.path, err)
-			}
+	stream := isEventStream(ex.contentType, requested)
+	// A failed streaming request answers with a JSON error, not a stream.
+	_, jsonError := resp.(map[string]any)
+	jsonError = jsonError && (ex.status < 200 || ex.status > 299)
+	if stream && !jsonError && len(ex.response) > 0 {
+		text, err := redactSSE(string(ex.response), r)
+		if err != nil {
+			return nil, fmt.Errorf("exchange %d (%s %s): unparseable event stream, no fixture written: %w", ex.seq, ex.method, ex.path, err)
 		}
+		resp = text
 	}
 	path, err := redactPath(ex.path)
 	if err != nil {
@@ -189,9 +191,10 @@ var secretQueryParams = map[string]bool{
 	"key": true, "api_key": true, "apikey": true, "token": true, "access_token": true, "sig": true, "signature": true,
 }
 
-// redactPath percent-decodes an exchange path and query, so encoded secrets
-// meet the redactor's patterns, and replaces the values of credential query
-// parameters with the marker.
+// redactPath takes an exchange path as recorded, still percent-escaped,
+// decodes it once so encoded secrets meet the redactor's patterns, and
+// replaces the values of credential query parameters with the marker. The
+// decoded form is stored; a literal % (escaped as %25) decodes to %.
 func redactPath(raw string) (string, error) {
 	p, q, hasQuery := strings.Cut(raw, "?")
 	path, err := url.PathUnescape(p)
@@ -220,19 +223,32 @@ func redactPath(raw string) (string, error) {
 	return path + "?" + strings.Join(parts, "&"), nil
 }
 
-// redactArgv replaces the values of secret-named flags: --flag=value, and the
-// argument after a bare --flag. Key-shaped arguments are left to the
-// fixture-wide redaction.
+// envAssignment matches an argv entry of the form NAME=value, as given to
+// env(1) or a shell.
+var envAssignment = regexp.MustCompile(`^([A-Za-z_][A-Za-z0-9_]*)=`)
+
+// redactArgv replaces the values of secret-named flags (--flag=value, and the
+// argument after a bare --flag) and of NAME=value entries whose NAME marks a
+// secret by the environment-name rule. Key-shaped values anywhere are left to
+// the fixture-wide redaction. One-letter flags (-p value) are recorded as
+// they are: secrets belong in the environment.
 func redactArgv(argv []string) []string {
 	out := make([]string, len(argv))
 	copy(out, argv)
-	for i := 1; i < len(out); i++ {
+	for i := 0; i < len(out); i++ {
 		a := out[i]
-		if !strings.HasPrefix(a, "-") || a == "-" || a == "--" {
+		if m := envAssignment.FindStringSubmatch(a); m != nil {
+			if redact.IsSecretEnvName(m[1]) {
+				out[i] = m[0] + redact.Marker
+			}
+			continue
+		}
+		if i == 0 || !strings.HasPrefix(a, "-") || a == "-" || a == "--" {
 			continue
 		}
 		name, _, hasValue := strings.Cut(strings.TrimLeft(a, "-"), "=")
-		if !redact.IsSecretArgName(name) {
+		// A one-letter flag (-p) is a short flag: recorded as is.
+		if len(name) <= 1 || !redact.IsSecretArgName(name) {
 			continue
 		}
 		if hasValue {

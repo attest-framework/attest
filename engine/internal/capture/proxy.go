@@ -61,11 +61,10 @@ type rawExchange struct {
 // exchange. Credentials pass through to the upstream in the request headers;
 // the proxy never stores request headers, so they never reach a fixture.
 type Proxy struct {
-	routes   []route
-	mu       sync.Mutex
-	log      []*rawExchange
-	recorded int64
-	overflow bool
+	routes []route
+	mu     sync.Mutex
+	log    []*rawExchange
+	budget *byteBudget
 }
 
 // Upstreams holds the provider base URLs the proxy forwards to.
@@ -98,7 +97,7 @@ const (
 
 // NewProxy returns a recording proxy for the given upstreams.
 func NewProxy(up Upstreams) (*Proxy, error) {
-	p := &Proxy{}
+	p := &Proxy{budget: &byteBudget{}}
 	for _, r := range []struct{ provider, prefix, base string }{
 		{"openai", OpenAIPrefix, up.OpenAI},
 		{"anthropic", AnthropicPrefix, up.Anthropic},
@@ -177,7 +176,8 @@ func (p *Proxy) forward(r route, prefix string) http.Handler {
 			http.Error(w, fmt.Sprintf("attest capture: request body exceeds %d bytes", MaxRequestBytes), http.StatusRequestEntityTooLarge)
 			return
 		}
-		path := strings.TrimPrefix(req.URL.Path, prefix)
+		// The escaped path, decoded once when the fixture is built.
+		path := strings.TrimPrefix(req.URL.EscapedPath(), prefix)
 		if req.URL.RawQuery != "" {
 			path += "?" + req.URL.RawQuery
 		}
@@ -203,15 +203,8 @@ func (p *Proxy) begin(provider, method, path string, body []byte) (*rawExchange,
 	return ex, true
 }
 
-// account adds n recorded bytes; past MaxSessionBytes the session overflows
-// and the capture fails. Callers hold p.mu.
-func (p *Proxy) account(n int) bool {
-	p.recorded += int64(n)
-	if p.recorded > MaxSessionBytes {
-		p.overflow = true
-	}
-	return !p.overflow
-}
+// account charges n recorded bytes to the session budget.
+func (p *Proxy) account(n int) bool { return p.budget.charge(n) }
 
 func (p *Proxy) finish(ex *rawExchange, status int, contentType string, body []byte, truncated bool) {
 	p.mu.Lock()
@@ -229,7 +222,7 @@ func (p *Proxy) finish(ex *rawExchange, status int, contentType string, body []b
 func (p *Proxy) Exchanges() ([]rawExchange, int, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if p.overflow {
+	if p.budget.exceeded() {
 		return nil, 0, fmt.Errorf("the session recorded more than %d bytes of model exchanges; no fixture written", MaxSessionBytes)
 	}
 	out := make([]rawExchange, 0, len(p.log))
@@ -326,4 +319,4 @@ func exchangeOf(ctx context.Context) *rawExchange {
 }
 
 // shutdownTimeout bounds how long Close waits for in-flight requests.
-const shutdownTimeout = 5 * time.Second
+var shutdownTimeout = 5 * time.Second

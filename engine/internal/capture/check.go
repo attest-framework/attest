@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"sort"
 	"strconv"
-	"strings"
 
 	"github.com/attest-ai/attest/engine/internal/redact"
 	"github.com/attest-ai/attest/engine/internal/trace"
@@ -72,10 +71,12 @@ func CheckRedaction(data []byte, r *redact.Redactor) ([]RedactionHit, error) {
 func checkStreams(doc any, r *redact.Redactor) ([]RedactionHit, error) {
 	var hits []RedactionHit
 	for i, e := range asSlice(asMap(doc)["exchanges"]) {
-		resp := asMap(asMap(e)["response"])
+		ex := asMap(e)
+		resp := asMap(ex["response"])
 		ct, _ := resp["content_type"].(string)
+		requested, _ := ex["stream"].(bool)
 		body, ok := resp["body"].(string)
-		if !ok || !strings.HasPrefix(strings.ToLower(ct), "text/event-stream") {
+		if !ok || !isEventStream(ct, requested) {
 			continue
 		}
 		texts, err := streamTexts(body)

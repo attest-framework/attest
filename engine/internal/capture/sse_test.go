@@ -2,9 +2,13 @@ package capture
 
 import (
 	"bytes"
+	"io"
+	"net/http"
 	"sort"
 	"strings"
 	"testing"
+
+	"github.com/attest-ai/attest/engine/internal/redact"
 )
 
 // chunks splits s into n nearly equal pieces.
@@ -65,6 +69,37 @@ func TestRedactSSE_EachDeltaShape_KeyAcrossDeltasRedacted(t *testing.T) {
 		},
 		"anthropic partial_json": func(p string) string {
 			return ev(`{"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"` + p + `"}}`)
+		},
+		"chat refusal": func(p string) string { return ev(`{"choices":[{"index":0,"delta":{"refusal":"` + p + `"}}]}`) },
+		"chat reasoning_content": func(p string) string {
+			return ev(`{"choices":[{"index":0,"delta":{"reasoning_content":"` + p + `"}}]}`)
+		},
+		"chat function_call": func(p string) string {
+			return ev(`{"choices":[{"index":0,"delta":{"function_call":{"arguments":"` + p + `"}}}]}`)
+		},
+		"chat audio transcript": func(p string) string {
+			return ev(`{"choices":[{"index":0,"delta":{"audio":{"transcript":"` + p + `"}}}]}`)
+		},
+		"responses refusal": func(p string) string {
+			return ev(`{"type":"response.refusal.delta","item_id":"m","output_index":0,"content_index":0,"delta":"` + p + `"}`)
+		},
+		"responses function_call_arguments": func(p string) string {
+			return ev(`{"type":"response.function_call_arguments.delta","item_id":"fc","output_index":1,"delta":"` + p + `"}`)
+		},
+		"responses reasoning_summary_text": func(p string) string {
+			return ev(`{"type":"response.reasoning_summary_text.delta","item_id":"rs","output_index":0,"summary_index":0,"delta":"` + p + `"}`)
+		},
+		"responses reasoning_text": func(p string) string {
+			return ev(`{"type":"response.reasoning_text.delta","item_id":"rs","output_index":0,"content_index":0,"delta":"` + p + `"}`)
+		},
+		"responses audio_transcript": func(p string) string {
+			return ev(`{"type":"response.audio_transcript.delta","item_id":"a","output_index":0,"delta":"` + p + `"}`)
+		},
+		"anthropic thinking": func(p string) string {
+			return ev(`{"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"` + p + `"}}`)
+		},
+		"anthropic citations": func(p string) string {
+			return ev(`{"type":"content_block_delta","index":0,"delta":{"type":"citations_delta","citation":{"type":"char_location","cited_text":"` + p + `"}}}`)
 		},
 	} {
 		var body strings.Builder
@@ -166,4 +201,139 @@ func mapValues(m map[string]string) []string {
 		out[i] = m[k]
 	}
 	return out
+}
+
+func streamExchange(contentType, body string) rawExchange {
+	return rawExchange{provider: "openai", method: "POST", path: "/chat/completions", request: []byte(`{"stream":true}`),
+		status: 200, contentType: contentType, response: []byte(body)}
+}
+
+func splitKeyStream() string {
+	var b strings.Builder
+	for _, p := range chunks(plantedKey, 5) {
+		b.WriteString(`data: {"choices":[{"index":0,"delta":{"content":"` + p + `"}}]}` + "\n\n")
+	}
+	return b.String()
+}
+
+func TestExchangeDoc_EventStreamWithCharset_Redacted(t *testing.T) {
+	d, err := exchangeDoc(streamExchange("text/event-stream; charset=utf-8", splitKeyStream()), redactorFor(plantedKey))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	body := d["response"].(map[string]any)["body"].(string)
+	if strings.Contains(body, chunks(plantedKey, 5)[2]) || !strings.Contains(body, redact.Marker) {
+		t.Fatalf("body %q", body)
+	}
+}
+
+func TestExchangeDoc_StreamRequestedWrongContentType_TreatedAsStream(t *testing.T) {
+	d, err := exchangeDoc(streamExchange("application/json", splitKeyStream()), redactorFor(plantedKey))
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := d["response"].(map[string]any)["body"].(string)
+	if strings.Contains(body, chunks(plantedKey, 5)[2]) {
+		t.Fatalf("body %q", body)
+	}
+
+	_, err = exchangeDoc(streamExchange("text/plain", "partial "+plantedKey), redactorFor(plantedKey))
+	if err == nil || !strings.Contains(err.Error(), "unparseable event stream") {
+		t.Fatalf("non-SSE body to a stream request: err %v", err)
+	}
+}
+
+func TestExchangeDoc_StreamRequestedJSONError_KeptAsJSON(t *testing.T) {
+	ex := streamExchange("application/json", `{"error":{"message":"bad key"}}`)
+	ex.status = 401
+
+	d, err := exchangeDoc(ex, redactorFor(plantedKey))
+
+	if _, isObj := d["response"].(map[string]any)["body"].(map[string]any); err != nil || !isObj {
+		t.Fatalf("err %v doc %v", err, d)
+	}
+}
+
+// The working directory is not a secret, so the replay key of a prompt that
+// mentions a path does not depend on where the capture ran.
+func TestBuildFixture_PromptHashStableAcrossWorkingDirectories(t *testing.T) {
+	ex := rawExchange{provider: "openai", method: "POST", path: "/chat/completions", status: 200, contentType: "application/json",
+		request:  []byte(`{"model":"m","messages":[{"role":"user","content":"read /home/runner/work/app/src/x.py"}]}`),
+		response: []byte(`{"choices":[]}`)}
+	hash := func(cwd string) string {
+		d, err := exchangeDoc(ex, redact.FromEnviron([]string{"PWD=" + cwd}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		doc, err := redactTree(d, redact.FromEnviron([]string{"PWD=" + cwd}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		req := doc.(map[string]any)["request"]
+		if !strings.Contains(mustCanonical(t, req), "/home/runner/work/app/src/x.py") {
+			t.Fatalf("path redacted with PWD=%s", cwd)
+		}
+		k, err := keyOf("chat_completions", req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return k.PromptHash
+	}
+
+	if a, b := hash("/home/runner/work/app"), hash("/tmp/elsewhere-dir"); a != b {
+		t.Fatalf("prompt hash depends on the working directory: %s vs %s", a, b)
+	}
+}
+
+func TestRedactArgv_EnvAssignmentsAndShortFlags(t *testing.T) {
+	got := redactArgv([]string{"env", "DB_PASSWORD=x1", "PATH=/bin", "API_TOKEN=x2", "cmd", "-p", "short", "--api-key=x3"})
+
+	want := "env DB_PASSWORD=[redacted] PATH=/bin API_TOKEN=[redacted] cmd -p short --api-key=[redacted]"
+	if strings.Join(got, " ") != want {
+		t.Fatalf("got %v", got)
+	}
+}
+
+func TestRedactPath_LiteralPercent_DecodedOnce(t *testing.T) {
+	got, err := redactPath("/files/a%25b%2Fc?q=100%25&token=t%2B1")
+
+	if err != nil || got != "/files/a%b/c?q=100%&token=[redacted]" {
+		t.Fatalf("got %q err %v", got, err)
+	}
+}
+
+func TestSession_PathWithLiteralPercent_RecordedDecoded(t *testing.T) {
+	up := newFakeUpstream(t)
+	s, err := Start(Upstreams{OpenAI: up.OpenAIBase(), Anthropic: up.AnthropicBase()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := http.Post(s.Env()["OPENAI_BASE_URL"]+"/chat/completions?tag=50%25off", "application/json",
+		strings.NewReader(`{"model":"m","messages":[]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	io.Copy(io.Discard, resp.Body)
+	resp.Body.Close()
+	s.Close()
+	_, exchanges, _, err := s.Recorded()
+	if err != nil || len(exchanges) != 1 {
+		t.Fatalf("exchanges %d err %v", len(exchanges), err)
+	}
+
+	d, err := exchangeDoc(exchanges[0], redact.New())
+
+	if err != nil || d["path"] != "/chat/completions?tag=50%off" {
+		t.Fatalf("path %v err %v", d["path"], err)
+	}
+}
+
+func mustCanonical(t *testing.T, v any) string {
+	t.Helper()
+	b, err := canonical(v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(b)
 }

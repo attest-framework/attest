@@ -19,7 +19,7 @@ import (
 
 func receiverServer(t *testing.T) (*Receiver, string) {
 	t.Helper()
-	r := &Receiver{}
+	r := &Receiver{budget: &byteBudget{}}
 	mux := http.NewServeMux()
 	r.Register(mux, "")
 	srv := httptest.NewServer(mux)
@@ -149,5 +149,56 @@ func TestReceiver_SpanOverAttributeCap_413(t *testing.T) {
 
 	if status := postGzipProtobuf(t, url, attrBomb(1, trace.MaxAttrsPerSpan+1)); status != http.StatusRequestEntityTooLarge {
 		t.Fatalf("status %d, want 413", status)
+	}
+}
+
+// eventBomb is one span with `events` empty Span.Event entries (field 11).
+func eventBomb(events int) []byte {
+	span := bytes.Repeat([]byte{0x5a, 0x00}, events)
+	var scope []byte
+	scope = protowire.AppendTag(scope, 2, protowire.BytesType)
+	scope = protowire.AppendBytes(scope, span)
+	var rs []byte
+	rs = protowire.AppendTag(rs, 2, protowire.BytesType)
+	rs = protowire.AppendBytes(rs, scope)
+	var req []byte
+	req = protowire.AppendTag(req, 1, protowire.BytesType)
+	return protowire.AppendBytes(req, rs)
+}
+
+func TestReceiver_GzipEventBomb_RejectedBeforeDecoding(t *testing.T) {
+	_, url := receiverServer(t)
+	body := eventBomb(3_000_000) // 3M empty events in ~6 MB
+	var before, after runtime.MemStats
+	runtime.GC()
+	runtime.ReadMemStats(&before)
+	start := time.Now()
+
+	status := postGzipProtobuf(t, url, body)
+
+	runtime.ReadMemStats(&after)
+	if status != http.StatusRequestEntityTooLarge {
+		t.Fatalf("status %d, want 413", status)
+	}
+	if d := time.Since(start); d > 2*time.Second {
+		t.Errorf("took %v", d)
+	}
+	if alloc := after.TotalAlloc - before.TotalAlloc; alloc > 64<<20 {
+		t.Errorf("allocated %d MiB; the body must not be decoded", alloc>>20)
+	}
+}
+
+func TestReceiver_OTLPBytesChargedToSessionBudget(t *testing.T) {
+	r, url := receiverServer(t)
+	r.budget.used = MaxSessionBytes - 10
+	body, _ := proto.Marshal(exportRequest(oneSpan()))
+
+	status := postGzipProtobuf(t, url, body)
+
+	if status != http.StatusRequestEntityTooLarge || !r.budget.exceeded() || len(r.Spans()) != 0 {
+		t.Fatalf("status %d exceeded %v spans %d", status, r.budget.exceeded(), len(r.Spans()))
+	}
+	if _, failed := r.Incomplete(); failed != 1 {
+		t.Fatalf("failed = %d, want 1", failed)
 	}
 }

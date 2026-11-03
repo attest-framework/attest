@@ -5,9 +5,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
+	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/attest-ai/attest/engine/internal/redact"
 )
@@ -344,12 +348,60 @@ func TestProxy_SessionByteCap_RefusesAndFails(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	p.recorded = MaxSessionBytes - 10
+	p.budget.used = MaxSessionBytes - 10
 
 	_, ok := p.begin("openai", "POST", "/chat/completions", make([]byte, 11))
 	_, _, exErr := p.Exchanges()
 
 	if ok || exErr == nil || !strings.Contains(exErr.Error(), "no fixture written") {
 		t.Fatalf("ok %v err %v", ok, exErr)
+	}
+}
+
+func TestSession_OTLPExportCutOffAtClose_CaptureFails(t *testing.T) {
+	old := shutdownTimeout
+	shutdownTimeout = 200 * time.Millisecond
+	defer func() { shutdownTimeout = old }()
+	s, err := Start(Upstreams{OpenAI: "http://127.0.0.1:1/v1", Anthropic: "http://127.0.0.1:1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	u, _ := url.Parse(s.Env()["OTEL_EXPORTER_OTLP_TRACES_ENDPOINT"])
+	conn, err := net.Dial("tcp", u.Host)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	// Headers and half the declared body, then nothing: the exporter is cut
+	// off mid-request.
+	fmt.Fprintf(conn, "POST %s HTTP/1.1\r\nHost: %s\r\nContent-Type: application/json\r\nContent-Length: 100\r\n\r\n{\"resourceSpans\":", u.Path, u.Host)
+	time.Sleep(100 * time.Millisecond)
+
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	_, _, _, err = s.Recorded()
+
+	if err == nil || !strings.Contains(err.Error(), "trace export incomplete") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestSession_OTLPExportRejected_CaptureFails(t *testing.T) {
+	s, err := Start(Upstreams{OpenAI: "http://127.0.0.1:1/v1", Anthropic: "http://127.0.0.1:1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := http.Post(s.Env()["OTEL_EXPORTER_OTLP_TRACES_ENDPOINT"], "application/json", strings.NewReader("{"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	s.Close()
+
+	_, _, _, err = s.Recorded()
+
+	if err == nil || !strings.Contains(err.Error(), "1 rejected") {
+		t.Fatalf("err = %v", err)
 	}
 }

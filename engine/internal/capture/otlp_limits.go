@@ -34,7 +34,8 @@ const (
 	fieldKVListValues  = 1 // KeyValueList
 )
 
-// limitWalker counts spans and attribute values in raw protobuf without
+// limitWalker counts every message it visits (resource spans, scope spans,
+// spans, events, links, attributes and nested values) in raw protobuf without
 // decoding it, so a small compressed body that would expand into millions of
 // messages is refused before any of them is allocated.
 type limitWalker struct {
@@ -50,6 +51,9 @@ func checkOTLPLimits(body []byte) error {
 	return w.message(body, func(num protowire.Number, b []byte) error {
 		if num != fieldResourceSpans {
 			return nil
+		}
+		if err := w.count(0); err != nil {
+			return err
 		}
 		return w.resourceSpans(b)
 	})
@@ -89,6 +93,9 @@ func (w *limitWalker) resourceSpans(b []byte) error {
 		case fieldResource:
 			return w.attrsIn(v, fieldResourceAttrs)
 		case fieldScopeSpans:
+			if err := w.count(0); err != nil {
+				return err
+			}
 			return w.scopeSpans(v)
 		}
 		return nil
@@ -104,6 +111,9 @@ func (w *limitWalker) scopeSpans(b []byte) error {
 			w.spans++
 			if w.spans > trace.MaxOTLPSpans {
 				return fmt.Errorf("%w: more than %d spans", errOverLimit, trace.MaxOTLPSpans)
+			}
+			if err := w.count(0); err != nil {
+				return err
 			}
 			return w.span(v)
 		}
@@ -122,8 +132,14 @@ func (w *limitWalker) span(b []byte) error {
 			}
 			return w.keyValue(v, 1)
 		case fieldSpanEvents:
+			if err := w.count(0); err != nil {
+				return err
+			}
 			return w.attrsIn(v, fieldEventAttrs)
 		case fieldSpanLinks:
+			if err := w.count(0); err != nil {
+				return err
+			}
 			return w.attrsIn(v, fieldLinkAttrs)
 		}
 		return nil
@@ -143,7 +159,7 @@ func (w *limitWalker) attrsIn(b []byte, num protowire.Number) error {
 func (w *limitWalker) count(depth int) error {
 	w.values++
 	if w.values > trace.MaxOTLPValues {
-		return fmt.Errorf("%w: more than %d attribute values", errOverLimit, trace.MaxOTLPValues)
+		return fmt.Errorf("%w: more than %d messages and attribute values", errOverLimit, trace.MaxOTLPValues)
 	}
 	if depth > trace.MaxAnyValueDepth {
 		return fmt.Errorf("%w: attribute values nested deeper than %d", errOverLimit, trace.MaxAnyValueDepth)

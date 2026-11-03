@@ -152,3 +152,36 @@ func TestRanges_OverlappingSecrets_Merged(t *testing.T) {
 		t.Fatalf("ranges %+v", rs)
 	}
 }
+
+func TestUserinfo_NeverCrossesJSONStringBoundaries(t *testing.T) {
+	r := New()
+	doc := `{"u":"http://h:1","n":{"x":"a@b"}}`
+
+	if got := r.String(doc); got != doc {
+		t.Fatalf("JSON changed:\n%s", got)
+	}
+	if got := r.String(`{"url":"https://user:pw@host/x"}`); got != `{"url":"https://user:[redacted]@host/x"}` {
+		t.Fatalf("got %s", got)
+	}
+}
+
+func TestIsSecretEnvName_WorkingDirectoryAndAskpass_NotSecret(t *testing.T) {
+	for _, name := range []string{"PWD", "OLDPWD", "GIT_ASKPASS", "SSH_ASKPASS", "SUDO_ASKPASS", "ASKPASS", "BYPASS", "COMPASS"} {
+		if IsSecretEnvName(name) {
+			t.Errorf("%s: want not secret", name)
+		}
+	}
+	for _, name := range []string{"DB_PASS", "MYSQL_PWD", "SMTP_PASSWORD", "PASSWORD", "FTP_PASSWD"} {
+		if !IsSecretEnvName(name) {
+			t.Errorf("%s: want secret", name)
+		}
+	}
+}
+
+func TestFromEnviron_PWD_PathsIntact(t *testing.T) {
+	r := FromEnviron([]string{"PWD=/repo/workdir", "OLDPWD=/home/someone/previous", "GIT_ASKPASS=/usr/lib/git-core/askpass"})
+
+	if got := r.String("open /repo/workdir/src/x.py"); got != "open /repo/workdir/src/x.py" {
+		t.Fatalf("got %q", got)
+	}
+}

@@ -2,6 +2,7 @@ package capture
 
 import (
 	"fmt"
+	"mime"
 	"strings"
 
 	"github.com/attest-ai/attest/engine/internal/redact"
@@ -62,6 +63,18 @@ func parseSSE(body string) (*sseStream, error) {
 	return s, nil
 }
 
+// hasData reports whether any event carries data.
+func (s *sseStream) hasData() bool {
+	for _, ev := range s.events {
+		for _, line := range ev.lines {
+			if strings.HasPrefix(line, "data:") {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // String re-encodes the stream; changed events get one canonical data line.
 func (s *sseStream) String() (string, error) {
 	blocks := make([]string, 0, len(s.events))
@@ -101,13 +114,20 @@ type deltaPiece struct {
 func (p deltaPiece) text() string { return p.holder[p.key].(string) }
 
 // deltaStreams groups the delta strings of a stream by the text they build,
-// in order: Chat Completions content, refusal and tool-call arguments per
-// choice; Responses *.delta events per item and part; Anthropic
-// content_block_delta text, partial_json and thinking per block.
+// in order:
+//   - Chat Completions, per choice: delta.content, refusal, reasoning_content,
+//     function_call.arguments, audio.transcript, and tool_calls[].function.arguments;
+//   - Responses: every event whose type ends in ".delta" with a string delta,
+//     per type, item, output and content index;
+//   - Anthropic content_block_delta, per block: text, partial_json, thinking,
+//     and a citations_delta citation's cited_text.
 func (s *sseStream) deltaStreams() ([]string, map[string][]deltaPiece) {
 	var order []string
 	streams := map[string][]deltaPiece{}
 	add := func(id string, ev *sseEvent, holder map[string]any, key string) {
+		if holder == nil {
+			return
+		}
 		if _, ok := holder[key].(string); !ok {
 			return
 		}
@@ -128,8 +148,11 @@ func (s *sseStream) deltaStreams() ([]string, map[string][]deltaPiece) {
 				continue
 			}
 			ci := fmt.Sprint(choice["index"])
-			add("choice "+ci+" content", ev, delta, "content")
-			add("choice "+ci+" refusal", ev, delta, "refusal")
+			for _, k := range []string{"content", "refusal", "reasoning_content"} {
+				add("choice "+ci+" "+k, ev, delta, k)
+			}
+			add("choice "+ci+" function_call arguments", ev, asMap(delta["function_call"]), "arguments")
+			add("choice "+ci+" audio transcript", ev, asMap(delta["audio"]), "transcript")
 			for _, tc := range asSlice(delta["tool_calls"]) {
 				call := asMap(tc)
 				add(fmt.Sprintf("choice %s tool %v arguments", ci, call["index"]), ev, asMap(call["function"]), "arguments")
@@ -142,11 +165,20 @@ func (s *sseStream) deltaStreams() ([]string, map[string][]deltaPiece) {
 			for _, k := range []string{"text", "partial_json", "thinking"} {
 				add(fmt.Sprintf("block %v %s", o["index"], k), ev, delta, k)
 			}
+			add(fmt.Sprintf("block %v citation", o["index"]), ev, asMap(delta["citation"]), "cited_text")
 		case strings.HasSuffix(typ, ".delta"):
 			add(fmt.Sprintf("%s item %v output %v content %v", typ, o["item_id"], o["output_index"], o["content_index"]), ev, o, "delta")
 		}
 	}
 	return order, streams
+}
+
+// isEventStream reports whether a recorded response is a server-sent event
+// stream: its media type is text/event-stream (parameters allowed), or the
+// request asked for a stream, whatever the response's content type says.
+func isEventStream(contentType string, requestStream bool) bool {
+	ct, _, err := mime.ParseMediaType(contentType)
+	return requestStream || (err == nil && ct == "text/event-stream")
 }
 
 // streamTexts returns each delta stream's rebuilt text, by stream id.
@@ -174,6 +206,9 @@ func redactSSE(body string, r *redact.Redactor) (string, error) {
 	s, err := parseSSE(body)
 	if err != nil {
 		return "", err
+	}
+	if !s.hasData() {
+		return "", fmt.Errorf("no data events")
 	}
 	order, streams := s.deltaStreams()
 	for _, id := range order {

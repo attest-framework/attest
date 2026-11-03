@@ -38,16 +38,25 @@ func IsSecretHeader(name string) bool {
 }
 
 // secretEnvSuffixes mark environment variables whose values are secrets.
+// PASS and PWD count only after an underscore (DB_PASS, MYSQL_PWD), so the
+// working directory (PWD, OLDPWD) is not one.
 var secretEnvSuffixes = []string{
-	"KEY", "TOKEN", "SECRET", "PASSWORD", "PASS", "PWD", "PASSWD",
+	"KEY", "TOKEN", "SECRET", "PASSWORD", "_PASS", "_PWD", "PASSWD",
 	"CREDENTIALS", "CREDENTIAL", "DSN", "AUTH",
 }
 
+// notSecretEnvNames name programs or places, not secrets.
+var notSecretEnvNames = map[string]bool{"PWD": true, "OLDPWD": true, "ASKPASS": true}
+
 // IsSecretEnvName reports whether an environment variable name marks a secret
-// value: its name ends in KEY, TOKEN, SECRET, PASSWORD, PASS, PWD, PASSWD,
-// CREDENTIALS, CREDENTIAL, DSN or AUTH.
+// value: its name ends in KEY, TOKEN, SECRET, PASSWORD, _PASS, _PWD, PASSWD,
+// CREDENTIALS, CREDENTIAL, DSN or AUTH. PWD, OLDPWD and *_ASKPASS (a helper
+// program's path) are not secrets.
 func IsSecretEnvName(name string) bool {
 	upper := strings.ToUpper(name)
+	if notSecretEnvNames[upper] || strings.HasSuffix(upper, "_ASKPASS") {
+		return false
+	}
 	for _, s := range secretEnvSuffixes {
 		if strings.HasSuffix(upper, s) {
 			return true
@@ -88,8 +97,10 @@ var keyPatterns = []*regexp.Regexp{
 }
 
 // userinfoPattern matches scheme://user:password@ anywhere in text; only the
-// password (group 1) is redacted.
-var userinfoPattern = regexp.MustCompile(`\b[A-Za-z][A-Za-z0-9+.-]*://[^\s/:@]*:([^\s/@]+)@`)
+// password (group 2) is redacted. User and password exclude quotes, commas,
+// braces, backslashes, angle brackets and whitespace, so a match never
+// crosses a JSON string boundary.
+var userinfoPattern = regexp.MustCompile(`\b[A-Za-z][A-Za-z0-9+.-]*://([^\s/:@"',{}\\<>]*):([^\s/@"',{}\\<>]+)@`)
 
 // Range is a half-open byte range [Start, End) of a secret in a string.
 type Range struct {
@@ -153,7 +164,7 @@ func userinfoPassword(value string) string {
 	if m == nil {
 		return ""
 	}
-	return m[1]
+	return m[2]
 }
 
 // FromEnviron returns a Redactor holding every secret found in environ
@@ -191,7 +202,7 @@ func (r *Redactor) Ranges(s string) []Range {
 		}
 	}
 	for _, loc := range userinfoPattern.FindAllStringSubmatchIndex(s, -1) {
-		rs = append(rs, Range{Start: loc[2], End: loc[3], Kind: "pattern"})
+		rs = append(rs, Range{Start: loc[4], End: loc[5], Kind: "pattern"})
 	}
 	return merge(rs)
 }
