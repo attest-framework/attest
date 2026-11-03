@@ -54,7 +54,6 @@ type Contract struct {
 // Mutant is one altered copy of a subject.
 type Mutant struct {
 	// ID is <fixture>:<operator>:<site>, stable for a given fixture.
-	// ID is <fixture>:<operator>:<site>, stable for a given fixture.
 	ID          string
 	Fixture     string
 	Operator    Operator

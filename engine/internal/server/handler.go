@@ -436,18 +436,6 @@ func handleEvaluateBatch(pipeline *assertion.Pipeline, historyStore *cache.Histo
 			}
 		}
 
-		if recorder != nil {
-			if err := recorder.Record(p.Context, p.Assertions); err != nil {
-				return nil, types.NewRPCError(
-					types.ErrEngineError,
-					fmt.Sprintf("%s: %v", contractlog.EnvDir, err),
-					types.ErrTypeEngineError,
-					false,
-					"Fix the directory named by ATTEST_CONTRACTS_DIR or unset it.",
-				)
-			}
-		}
-
 		trace.Normalize(&p.Trace)
 		// Compute trace size once to avoid re-serialization in Validate.
 		traceBytes, marshalErr := json.Marshal(&p.Trace)
@@ -485,6 +473,25 @@ func handleEvaluateBatch(pipeline *assertion.Pipeline, historyStore *cache.Histo
 		if rpcErr := validateBatchBudget(p.Budget); rpcErr != nil {
 			return nil, rpcErr
 		}
+		if recorder != nil {
+			// Only validated batches, and only assertion types the engine knows.
+			var known []types.Assertion
+			for _, a := range p.Assertions {
+				if types.LayerForType(a.Type) != 0 {
+					known = append(known, a)
+				}
+			}
+			if err := recorder.Record(p.Context, known); err != nil {
+				return nil, types.NewRPCError(
+					types.ErrEngineError,
+					fmt.Sprintf("%s: %v", contractlog.EnvDir, err),
+					types.ErrTypeEngineError,
+					false,
+					"Fix the directory named by ATTEST_CONTRACTS_DIR or unset it.",
+				)
+			}
+		}
+
 		scope := budgets.ledger.NewScope(p.Budget)
 		ctx := assertion.WithBudgetScope(context.Background(), scope)
 		result, err := pipeline.EvaluateBatchWithBudget(ctx, &p.Trace, p.Assertions, budgets.softFail)

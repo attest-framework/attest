@@ -98,6 +98,7 @@ Plain `http` to a host other than `localhost` or a loopback address is allowed f
 
 | Variable | Purpose | Default |
 |---|---|---|
+| `ATTEST_CONTRACTS_DIR` | Directory where each engine process records the assertion specs it evaluates (one `0600` NDJSON file per process, no traces or outputs), for `attest mutate --contracts`. Off when unset. See [mutation](mutation.md). | unset |
 | `ATTEST_CACHE_DIR` | Cache, baseline and history database directory. | `~/.attest/cache` |
 | `ATTEST_HISTORY_MAX_ROWS` | Result history row limit (enables pruning). | `10000` when pruning is enabled |
 | `ATTEST_HISTORY_MAX_AGE_DAYS` | Result history age limit in days (enables pruning). | `30` when pruning is enabled |

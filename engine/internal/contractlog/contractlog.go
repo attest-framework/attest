@@ -129,32 +129,43 @@ func Load(dir string) ([]Entry, error) {
 		}
 		all = append(all, entries...)
 	}
-	sort.SliceStable(all, func(i, j int) bool { return less(all[i], all[j]) })
+	keyed := make([]keyedEntry, len(all))
+	for i, e := range all {
+		keyed[i] = keyedEntry{e: e, spec: canonical(e.Assertion.Spec)}
+	}
+	sort.SliceStable(keyed, func(i, j int) bool { return less(keyed[i], keyed[j]) })
 	seen := map[string]bool{}
 	var out []Entry
-	for _, e := range all {
-		key := e.TestID + "\x00" + e.Assertion.Type + "\x00" + canonical(e.Assertion.Spec)
+	for _, k := range keyed {
+		key := k.e.TestID + "\x00" + k.e.Assertion.Type + "\x00" + k.spec
 		if seen[key] {
 			continue
 		}
 		seen[key] = true
-		out = append(out, e)
+		out = append(out, k.e)
 	}
 	return out, nil
+}
+
+// keyedEntry pairs an entry with its canonical spec, computed once.
+type keyedEntry struct {
+	e    Entry
+	spec string
 }
 
 // less orders entries by test, type and spec, then by the fields that tell
 // two recordings of the same spec apart, so the entry kept by Load is the
 // same whichever process recorded it first.
-func less(a, b Entry) bool {
+func less(ka, kb keyedEntry) bool {
+	a, b := ka.e, kb.e
 	if a.TestID != b.TestID {
 		return a.TestID < b.TestID
 	}
 	if a.Assertion.Type != b.Assertion.Type {
 		return a.Assertion.Type < b.Assertion.Type
 	}
-	if as, bs := canonical(a.Assertion.Spec), canonical(b.Assertion.Spec); as != bs {
-		return as < bs
+	if ka.spec != kb.spec {
+		return ka.spec < kb.spec
 	}
 	if a.Assertion.AssertionID != b.Assertion.AssertionID {
 		return a.Assertion.AssertionID < b.Assertion.AssertionID

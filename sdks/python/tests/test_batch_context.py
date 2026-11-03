@@ -76,3 +76,22 @@ def test_runtest_call_hook_sets_file_and_one_based_line_of_the_test(tmp_path: Pa
         outcome.get_result.return_value = None
         with pytest.raises(StopIteration):
             hook.send(outcome)
+
+
+def test_runtest_call_hook_omits_line_when_pytest_has_none() -> None:
+    item = MagicMock()
+    item.nodeid = "tests/test_a.py::test_b"
+    item.fixturenames = ["attest"]
+    item.location = ("tests/test_a.py", None, "test_b")
+    item.get_closest_marker.return_value = None
+    hook = plugin.pytest_runtest_call(item)
+    next(hook)
+    try:
+        context = plugin._batch_context()
+        assert context == BatchContext(test_id="tests/test_a.py::test_b", file="tests/test_a.py")
+        assert context is not None and "line" not in context.to_dict()
+    finally:
+        outcome = MagicMock()
+        outcome.get_result.return_value = None
+        with pytest.raises(StopIteration):
+            hook.send(outcome)

@@ -23,6 +23,17 @@ func recordBatch(t *testing.T, bin, dir string, ctx *types.BatchContext, asserti
 	if err != nil {
 		t.Fatal(err)
 	}
+	results, rpcErr := recordBatchTrace(t, bin, dir, ctx, fx.Trace, assertions)
+	if rpcErr != nil {
+		t.Fatalf("evaluate_batch: %+v", rpcErr)
+	}
+	return results
+}
+
+// recordBatchTrace is recordBatch for an arbitrary trace; it returns the
+// engine's error instead of failing the test.
+func recordBatchTrace(t *testing.T, bin, dir string, ctx *types.BatchContext, tr *types.Trace, assertions []types.Assertion) ([]types.AssertionResult, *types.RPCError) {
+	t.Helper()
 	cmd := exec.Command(bin, "--log-level=error")
 	cmd.Env = engineEnv(t.TempDir(), "ATTEST_CONTRACTS_DIR="+dir)
 	stdin, err := cmd.StdinPipe()
@@ -37,7 +48,7 @@ func recordBatch(t *testing.T, bin, dir string, ctx *types.BatchContext, asserti
 		t.Fatal(err)
 	}
 	rd := bufio.NewReader(stdout)
-	call := func(id int, method string, params any) json.RawMessage {
+	call := func(id int, method string, params any) (json.RawMessage, *types.RPCError) {
 		req, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": id, "method": method, "params": params})
 		if _, err := stdin.Write(append(req, '\n')); err != nil {
 			t.Fatal(err)
@@ -53,22 +64,25 @@ func recordBatch(t *testing.T, bin, dir string, ctx *types.BatchContext, asserti
 		if err := json.Unmarshal(line, &resp); err != nil {
 			t.Fatalf("%s: decode %s: %v", method, line, err)
 		}
-		if resp.Error != nil {
-			t.Fatalf("%s: %+v", method, resp.Error)
-		}
-		return resp.Result
+		return resp.Result, resp.Error
 	}
-	call(1, "initialize", types.InitializeParams{SDKName: "mutate-test", SDKVersion: "0", ProtocolVersion: 1})
-	params := types.EvaluateBatchParams{Trace: *fx.Trace, Assertions: assertions, Context: ctx}
-	var result types.EvaluateBatchResult
-	if err := json.Unmarshal(call(2, "evaluate_batch", params), &result); err != nil {
-		t.Fatal(err)
+	if _, rpcErr := call(1, "initialize", types.InitializeParams{SDKName: "mutate-test", SDKVersion: "0", ProtocolVersion: 1}); rpcErr != nil {
+		t.Fatalf("initialize: %+v", rpcErr)
 	}
+	params := types.EvaluateBatchParams{Trace: *tr, Assertions: assertions, Context: ctx}
+	raw, rpcErr := call(2, "evaluate_batch", params)
 	stdin.Close()
 	if err := cmd.Wait(); err != nil {
 		t.Fatalf("engine exit: %v", err)
 	}
-	return result.Results
+	if rpcErr != nil {
+		return nil, rpcErr
+	}
+	var result types.EvaluateBatchResult
+	if err := json.Unmarshal(raw, &result); err != nil {
+		t.Fatal(err)
+	}
+	return result.Results, nil
 }
 
 func recordedFiles(t *testing.T, dir string) []string {
@@ -395,5 +409,39 @@ func TestMutate_ApplicableSpecsButNoMutants_ExitsZeroWithNullScore(t *testing.T)
 
 	if doc.Score != nil || len(doc.Mutants) != 0 || doc.Applicable != 1 {
 		t.Errorf("score %v, %d mutants, %d applicable", doc.Score, len(doc.Mutants), doc.Applicable)
+	}
+}
+
+func TestEvaluateBatch_InvalidTraceOrUnknownType_RecordsOnlyValidBatchesOfKnownTypes(t *testing.T) {
+	bin := buildEngineBinary(t)
+	fx, err := capture.LoadFixture(mutateFixture)
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec := json.RawMessage(`{"target":"output","schema":{"type":"object"}}`)
+
+	bad := *fx.Trace
+	bad.Steps = append([]types.Step(nil), fx.Trace.Steps...)
+	five := 5
+	bad.Steps[0].RetryOf = &five
+	rejected := filepath.Join(t.TempDir(), "rejected")
+	if _, rpcErr := recordBatchTrace(t, bin, rejected, nil, &bad, []types.Assertion{{AssertionID: "x", Type: "schema", Spec: spec}}); rpcErr == nil {
+		t.Fatal("the invalid trace was accepted")
+	}
+	for _, f := range recordedFiles(t, rejected) {
+		if data, _ := os.ReadFile(f); len(strings.TrimSpace(string(data))) != 0 {
+			t.Errorf("a rejected batch was recorded: %s", data)
+		}
+	}
+
+	mixed := filepath.Join(t.TempDir(), "mixed")
+	recordBatchTrace(t, bin, mixed, nil, fx.Trace, []types.Assertion{{AssertionID: "ok", Type: "schema", Spec: spec}, {AssertionID: "odd", Type: "no_such_type", Spec: spec}})
+	files := recordedFiles(t, mixed)
+	if len(files) != 1 {
+		t.Fatalf("files = %v", files)
+	}
+	data, _ := os.ReadFile(files[0])
+	if !strings.Contains(string(data), `"ok"`) || strings.Contains(string(data), "no_such_type") {
+		t.Errorf("recorded: %s", data)
 	}
 }

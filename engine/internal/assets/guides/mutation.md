@@ -15,7 +15,7 @@ Mutants are enumerated in this fixed order, so the same fixtures give the same m
 | Operator | What it does | Suggested contract |
 |---|---|---|
 | `drop_tool_call` | Removes one tool call | `required_tools`, or `tool_cardinality` with a minimum when the tool is called more than once |
-| `duplicate_tool_call` | Repeats one tool call right after itself | `tool_cardinality` on that tool per its business key (the first argument called `id` or ending in `_id`) |
+| `duplicate_tool_call` | Repeats one tool call right after itself | `tool_cardinality` on that tool per its business key (the first argument, in alphabetical order, called `id` or ending in `_id`) |
 | `reorder_tool_calls` | Swaps two neighbouring tool calls | `tool_order` |
 | `perturb_argument` | Changes one scalar argument: a string gets a suffix, a number doubles, a bool flips | `arg_predicate` pinning the argument to the captured values |
 | `inject_tool_error` | Marks a tool call failed with an error message (trace-v2 fixtures) | `failure_streak` with `max: 0` |
@@ -43,7 +43,7 @@ Without `--contracts`, mutate uses the contracts drafted into each fixture by `a
 
 Only deterministic specs run: trace, schema, constraint, content, trace-tree and effect. Judge, embedding and plugin specs are skipped and counted in `skipped_specs`. No model is called.
 
-A spec counts for a fixture only if it passes on the unmutated fixture. A spec recorded from another test's trace drops out; an effect spec applies when its world has the same `definition_sha256` as the fixture's, and is then evaluated on the fixture's snapshot in place of the one it embeds. A mutant is **killed** when any applicable spec hard-fails on it (a `soft` spec does not kill) and **survived** when none does. A mutant of a fixture with no applicable spec is `no_applicable_specs` and is left out of the score.
+A spec counts for a fixture only if it passes on the unmutated fixture. A spec that fails on the fixture (for example one recorded from another test's trace) drops out; an effect spec applies when its world has the same `definition_sha256` as the fixture's, and is then evaluated on the fixture's snapshot in place of the one it embeds. A mutant is **killed** when any applicable spec hard-fails on it (a `soft` spec does not kill) and **survived** when none does. A mutant of a fixture with no applicable spec is `no_applicable_specs` and is left out of the score.
 
 ```text
 score = killed / (killed + survived)
@@ -69,7 +69,7 @@ Each suggested contract was checked before it was reported: it passes on the unm
 
 ## Example: the double refund
 
-A fixture captured from the fixed refund agent has one `issue_refund` for `O-1042`. A suite that only reads the reply (`output_contains("refund of $84.00")`) lets the `duplicate issue_refund` mutant survive: the reply is the same whether the customer was refunded once or twice. Add the suggested `tool_cardinality` contract, or an effect `count` on the `refunds` resource, and the mutant is killed.
+A fixture captured from the fixed refund agent has one `issue_refund` for `O-1042`. A suite that only reads the reply (`output_contains("refund of $84.00")`) lets the `duplicate issue_refund` mutant survive: the reply is the same whether the customer was refunded once or twice. Trace mutants keep the fixture's world, so an effect check cannot see them: the suggested `tool_cardinality` contract kills the duplicate call. The world mutant `duplicate refunds record 0` is the one an effect `count` or `idempotent` check on the `refunds` resource kills.
 
 ## Gate on the score
 

@@ -361,7 +361,7 @@ def pytest_runtest_call(item: pytest.Item) -> Generator[None, Any, None]:
             budget=budget,
             min_pass_rate=min_pass_rate,
             file=Path(item.location[0]).as_posix(),
-            line=(item.location[1] or 0) + 1,
+            line=None if item.location[1] is None else item.location[1] + 1,
         )
         if _uses_attest(item)
         else None

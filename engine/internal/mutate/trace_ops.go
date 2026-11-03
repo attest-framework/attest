@@ -41,6 +41,15 @@ func toolSteps(t *types.Trace) []int {
 // same steps.
 func removeStep(t *types.Trace, i int) {
 	t.Steps = append(t.Steps[:i], t.Steps[i+1:]...)
+	remapRetries(t, func(k int) int {
+		switch {
+		case k == i:
+			return -1
+		case k > i:
+			return k - 1
+		}
+		return k
+	})
 	for k := range t.Turns {
 		kept := make([]int, 0, len(t.Turns[k].StepIndices))
 		for _, s := range t.Turns[k].StepIndices {
@@ -60,12 +69,37 @@ func removeStep(t *types.Trace, i int) {
 	}
 }
 
+// remapRetries rewrites every retry_of through m, which maps an old step
+// index to its new one (-1 when the step is gone). A retry whose target is
+// gone, or no longer precedes it, becomes a plain call, so the trace still
+// passes validation.
+func remapRetries(t *types.Trace, m func(int) int) {
+	for i := range t.Steps {
+		r := t.Steps[i].RetryOf
+		if r == nil {
+			continue
+		}
+		n := m(*r)
+		if n < 0 || n >= i {
+			t.Steps[i].RetryOf = nil
+			continue
+		}
+		t.Steps[i].RetryOf = &n
+	}
+}
+
 // insertAfter places a copy of step i at i+1; the copy joins the turn that
 // holds step i.
 func insertAfter(t *types.Trace, i int, step types.Step) {
 	t.Steps = append(t.Steps, types.Step{})
 	copy(t.Steps[i+2:], t.Steps[i+1:])
 	t.Steps[i+1] = step
+	remapRetries(t, func(k int) int {
+		if k > i {
+			return k + 1
+		}
+		return k
+	})
 	for k := range t.Turns {
 		var next []int
 		for _, s := range t.Turns[k].StepIndices {
@@ -274,12 +308,26 @@ func genReorder(s Subject, add func(Mutant) error) error {
 	idx := toolSteps(s.Trace)
 	for k := 0; k+1 < len(idx); k++ {
 		i, j := idx[k], idx[k+1]
+		if s.Trace.Steps[i].Name == s.Trace.Steps[j].Name {
+			// Two calls of one tool (a retry, a repeat) swap into a trace no
+			// tool_order contract can tell apart.
+			continue
+		}
 		t, err := cloneTrace(s.Trace)
 		if err != nil {
 			return err
 		}
 		first, second := t.Steps[i].Name, t.Steps[j].Name
 		t.Steps[i], t.Steps[j] = t.Steps[j], t.Steps[i]
+		remapRetries(t, func(k int) int {
+			switch k {
+			case i:
+				return j
+			case j:
+				return i
+			}
+			return k
+		})
 		cands := []Contract{{
 			Type:        types.TypeTrace,
 			Spec:        rawJSON(map[string]any{"check": "tool_order", "before": first, "after": second, "soft": false}),
@@ -382,6 +430,16 @@ func genInjectError(s Subject, add func(Mutant) error) error {
 		// Step errors are a trace-v2 field; contracts read none from v1.
 		return nil
 	}
+	streak, run := 0, 0
+	for _, i := range toolSteps(s.Trace) {
+		if s.Trace.Steps[i].Error == nil {
+			run = 0
+			continue
+		}
+		if run++; run > streak {
+			streak = run
+		}
+	}
 	for _, i := range toolSteps(s.Trace) {
 		if s.Trace.Steps[i].Error != nil {
 			continue
@@ -394,8 +452,8 @@ func genInjectError(s Subject, add func(Mutant) error) error {
 		t.Steps[i].Result = json.RawMessage("null")
 		cands := []Contract{{
 			Type:        types.TypeTrace,
-			Spec:        rawJSON(map[string]any{"check": "failure_streak", "max": 0, "soft": false}),
-			Description: "no tool call fails",
+			Spec:        rawJSON(map[string]any{"check": "failure_streak", "max": streak, "soft": false}),
+			Description: fmt.Sprintf("no more than %d tool call(s) fail in a row", streak),
 		}}
 		desc := describeCall("inject error into", &t.Steps[i])
 		if err := add(Mutant{site: strconv.Itoa(i), Operator: InjectToolError, Description: desc, Trace: t, candidates: cands}); err != nil {

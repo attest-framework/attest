@@ -9,6 +9,7 @@ import (
 
 	"github.com/attest-ai/attest/engine/internal/capture"
 	"github.com/attest-ai/attest/engine/internal/mutate"
+	"github.com/attest-ai/attest/engine/internal/trace"
 	"github.com/attest-ai/attest/engine/pkg/types"
 )
 
@@ -356,5 +357,98 @@ func TestGenerate_ArgumentThatOverflowsWhenDoubled_IsNotPerturbed(t *testing.T) 
 	}
 	if big != 0 || small == 0 {
 		t.Errorf("big mutants %d (want 0), small mutants %d (want > 0)", big, small)
+	}
+}
+
+// retryTrace calls lookup twice in a row, then issue fails once and is
+// retried, then notify.
+func retryTrace() mutate.Subject {
+	one := func(name, args string) types.Step {
+		return types.Step{Type: types.StepTypeToolCall, Name: name, Args: json.RawMessage(args), Result: json.RawMessage(`{"ok":true}`)}
+	}
+	steps := []types.Step{
+		one("lookup", `{"order_id":"A"}`),
+		one("lookup", `{"order_id":"A"}`),
+		one("issue", `{"order_id":"A"}`),
+		one("issue", `{"order_id":"A"}`),
+		one("notify", `{"order_id":"A"}`),
+	}
+	steps[2].Error = &types.StepError{Type: "tool_error", Message: "boom"}
+	zero := 2
+	steps[3].RetryOf = &zero
+	return mutate.Subject{Name: "retry", Trace: &types.Trace{
+		SchemaVersion: 2, TraceID: "trc_retry", AgentID: "a", Input: json.RawMessage(`{}`), Output: json.RawMessage(`{"message":"done"}`),
+		Steps: steps, Turns: []types.Turn{{Index: 0, StepIndices: []int{0, 1, 2, 3, 4}}},
+	}}
+}
+
+func TestGenerate_AdjacentCallsOfOneTool_AreNotSwapped(t *testing.T) {
+	ms, err := mutate.Generate([]mutate.Subject{retryTrace()}, mutate.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var swaps []string
+	for _, m := range ms {
+		if m.Operator == mutate.ReorderToolCalls {
+			swaps = append(swaps, m.Description)
+		}
+	}
+	// Pairs: lookup/lookup, lookup/issue, issue/issue (a failure and its
+	// retry), issue/notify. Only the two across tools remain.
+	if len(swaps) != 2 || swaps[0] != "swap lookup and issue" || swaps[1] != "swap issue and notify" {
+		t.Errorf("reorder mutants = %v", swaps)
+	}
+}
+
+func TestGenerate_EveryMutantTrace_PassesTraceValidation(t *testing.T) {
+	inc, _ := loadSubject(t)
+	for _, s := range []mutate.Subject{inc, retryTrace()} {
+		if rpcErr := trace.Validate(s.Trace, 1); rpcErr != nil {
+			t.Fatalf("%s: original trace is invalid: %v", s.Name, rpcErr.Message)
+		}
+		ms, err := mutate.Generate([]mutate.Subject{s}, mutate.Options{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(ms) == 0 {
+			t.Fatalf("%s: no mutants", s.Name)
+		}
+		for _, m := range ms {
+			if rpcErr := trace.Validate(m.Trace, 1); rpcErr != nil {
+				t.Errorf("%s: %s: %s", s.Name, m.ID, rpcErr.Message)
+			}
+		}
+	}
+}
+
+func TestGenerate_DroppedRetryTarget_ClearsRetryOf(t *testing.T) {
+	ms, err := mutate.Generate([]mutate.Subject{retryTrace()}, mutate.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, m := range ms {
+		if m.ID == "retry:drop_tool_call:2" && m.Trace.Steps[2].RetryOf != nil {
+			t.Fatalf("retry of a dropped step still points at %d", *m.Trace.Steps[2].RetryOf)
+		}
+	}
+}
+
+func TestRun_InjectErrorSuggestion_PassesOnTraceThatAlreadyHasFailures(t *testing.T) {
+	s := retryTrace()
+	rep, err := mutate.Run([]mutate.Subject{s}, []mutate.Spec{{AssertionID: "o", Type: "schema", Spec: json.RawMessage(`{"target":"output","schema":{"type":"object"}}`)}}, mutate.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, sg := range rep.SurvivorsSuggestions {
+		if strings.Contains(sg.MutantID, ":inject_tool_error:") {
+			found = true
+			if !strings.Contains(string(sg.Contract.Spec), `"max":1`) {
+				t.Errorf("suggestion = %s, want max 1 (the original's longest streak)", sg.Contract.Spec)
+			}
+		}
+	}
+	if !found {
+		t.Error("no inject_tool_error suggestion")
 	}
 }
