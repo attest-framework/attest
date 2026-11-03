@@ -91,6 +91,10 @@ def test_inc_1042_reproduces_incident(attest: AttestEngineFixture) -> None:
 
 For an incident reproduction the test uses `inspect()` and asserts each contract's recorded status, so it stays green while it proves the contract catches the incident. For a verified run it uses `evaluate()` and enforces every contract. The TypeScript file does the same with `attestExpect`, `loadFixture` and `inspect` / `evaluate` from `@attest-ai/vitest`.
 
+## Refresh a fixture
+
+`attest capture --refresh inc-1042` re-runs the command recorded in the fixture, with the flags it was captured with (`--expect-fail` included), and overwrites the fixture. Run it from the directory the original capture ran in, with the environment the command needs. It refuses with an explanation when the command's arguments were redacted (a secret passed as an argument), and for fixtures captured with `--from` or in process, which have no command; re-run those captures yourself. A replay miss names this command (see `attest-engine replay`).
+
 ## Capture in process
 
 When the agent runs inside your own process (a notebook, a script, a test), capture a block of code:
