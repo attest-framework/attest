@@ -83,16 +83,60 @@ type templater struct {
 // Template rewrites doc (decoded with json.Decoder.UseNumber) in place and
 // returns the result. Placeholder numbering depends only on the document's
 // content and shape.
-func Template(doc any) any {
-	t := &templater{
+func Template(doc any) any { return newTemplater().template(doc) }
+
+func newTemplater() *templater {
+	return &templater{
 		traceIDs: map[string]string{},
 		spanIDs:  map[string]string{},
 		strs:     map[string]string{},
 		knownIDs: map[string]bool{},
 		counts:   map[string]int{},
 	}
+}
+
+func (t *templater) template(doc any) any {
 	t.collect(doc, "")
 	return t.rewrite(doc, "")
+}
+
+// emails rewrites only the email addresses in v's keys and string values with
+// this templater's placeholders, so an address that appears in the templated
+// document gets the same {{email_N}} here. Other values are kept as they are:
+// a world's state is evidence that is read literally.
+func (t *templater) emails(v any) (any, error) {
+	sub := func(s string) string {
+		return emailPattern.ReplaceAllStringFunc(s, func(m string) string { return t.placeholder("email", m) })
+	}
+	switch x := v.(type) {
+	case map[string]any:
+		out := make(map[string]any, len(x))
+		for _, k := range sortedKeys(x) {
+			nk := sub(k)
+			if _, dup := out[nk]; dup {
+				return nil, fmt.Errorf("two object keys template to %q; rename the keys that hold email addresses", nk)
+			}
+			e, err := t.emails(x[k])
+			if err != nil {
+				return nil, err
+			}
+			out[nk] = e
+		}
+		return out, nil
+	case []any:
+		out := make([]any, len(x))
+		for i, e := range x {
+			r, err := t.emails(e)
+			if err != nil {
+				return nil, err
+			}
+			out[i] = r
+		}
+		return out, nil
+	case string:
+		return sub(x), nil
+	}
+	return v, nil
 }
 
 // keyRole places a key in the walk: start-like keys first, end-like keys

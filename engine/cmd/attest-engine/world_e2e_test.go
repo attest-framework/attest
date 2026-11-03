@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -34,6 +35,15 @@ func TestWorldHelperClient(t *testing.T) {
 		}
 	}
 	base := os.Getenv("PAYMENTS_BASE_URL")
+	if os.Getenv("ATTEST_WORLD_HELPER_EMAIL") == "1" {
+		note := `{"order_id":"O-1042","message":"refund sent to ` + e2ePlantedEmail + `"}`
+		resp, err := http.Post(base+"/notifications", "application/json", strings.NewReader(note))
+		if err != nil || resp.StatusCode != http.StatusCreated {
+			fmt.Fprintf(os.Stderr, "notification: %v %v\n", err, resp)
+			os.Exit(3)
+		}
+		resp.Body.Close()
+	}
 	body := `{"order_id":"O-1042","amount_cents":4999}`
 	for i, timeout := range []time.Duration{300 * time.Millisecond, 5 * time.Second} {
 		c := &http.Client{Timeout: timeout}
@@ -218,6 +228,48 @@ func TestCaptureWorld_StoresFinalStateInTheFixture(t *testing.T) {
 	}
 	if string(fx.World) == "null" || refundCount(t, fx.World) != 2 {
 		t.Fatalf("fixture world section: %s", fx.World)
+	}
+}
+
+func TestCaptureWorld_EmailInRecord_TemplatedLikeTheTrace(t *testing.T) {
+	bin := buildEngineBinary(t)
+	dir := t.TempDir()
+	args := append([]string{"capture", "--name", "scripted", "--out-dir", filepath.Join(dir, "fixtures"), "--expect-fail", "--world", mustAbs(t, worldYAML), "--"}, worldHelper...)
+
+	run := engineRun(t, bin, dir, worldHelperEnv("ATTEST_WORLD_HELPER_EMAIL=1", "ATTEST_WORLD_HELPER_MODEL=1", "ATTEST_CAPTURE_HELPER=1", "OPENAI_BASE_URL="+fakeModel(t), "OPENAI_API_KEY="+e2ePlantedKey), args...)
+
+	if run.code != 0 {
+		t.Fatalf("capture: exit %d\n%s", run.code, run.stderr)
+	}
+	raw, _ := os.ReadFile(filepath.Join(dir, "fixtures", "scripted.attest.json"))
+	if strings.Contains(string(raw), e2ePlantedEmail) {
+		t.Fatal("clear-text address in the fixture file")
+	}
+	var fx struct {
+		Trace json.RawMessage
+		World json.RawMessage
+	}
+	if err := json.Unmarshal(raw, &fx); err != nil {
+		t.Fatal(err)
+	}
+	var snap world.Snapshot
+	if err := json.Unmarshal(fx.World, &snap); err != nil {
+		t.Fatal(err)
+	}
+	notes := snap.State["notifications"]
+	if len(notes) != 1 {
+		t.Fatalf("world notifications: %v", notes)
+	}
+	msg, _ := notes[0]["message"].(string)
+	token := regexp.MustCompile(`\{\{email_\d+\}\}`).FindString(msg)
+	if token == "" || msg != "refund sent to "+token {
+		t.Fatalf("world message %q is not templated", msg)
+	}
+	if !strings.Contains(string(fx.Trace), token) {
+		t.Fatalf("trace does not carry the world's token %s:\n%s", token, fx.Trace)
+	}
+	if n := refundCount(t, fx.World); n != 2 {
+		t.Fatalf("%d refunds, want 2", n)
 	}
 }
 

@@ -261,7 +261,8 @@ func BuildFixture(in BuildInput) (*Fixture, error) {
 	if err != nil {
 		return nil, err
 	}
-	doc = Template(doc)
+	tpl := newTemplater()
+	doc = tpl.template(doc)
 	m := doc.(map[string]any)
 
 	f := &Fixture{
@@ -300,23 +301,27 @@ func BuildFixture(in BuildInput) (*Fixture, error) {
 		return nil, err
 	}
 	if in.World != nil {
-		if f.World, err = worldSection(in.World, in.Redactor); err != nil {
+		if f.World, err = worldSection(in.World, in.Redactor, tpl); err != nil {
 			return nil, err
 		}
 	}
 	return f, nil
 }
 
-// worldSection redacts the snapshot like the rest of the fixture. It is not
-// templated: the state is the evidence, and the effect contracts read it
-// literally.
-func worldSection(snap *world.Snapshot, r *redact.Redactor) (json.RawMessage, error) {
+// worldSection redacts the snapshot like the rest of the fixture and templates
+// email addresses with the trace's templater, so one address is one
+// {{email_N}} across the fixture. Ids and timestamps stay as the world held
+// them: the state is evidence that effect contracts read literally.
+func worldSection(snap *world.Snapshot, r *redact.Redactor, tpl *templater) (json.RawMessage, error) {
 	doc, err := toGeneric(snap)
 	if err != nil {
 		return nil, err
 	}
 	doc, err = redactTree(doc, r)
 	if err != nil {
+		return nil, err
+	}
+	if doc, err = tpl.emails(doc); err != nil {
 		return nil, err
 	}
 	raw, err := canonical(doc)
