@@ -2,10 +2,13 @@ name: Python SDK CI
 
 on:
   push:
-    paths: ["sdks/python/**", "proto/**", ".github/workflows/ci-sdk-python.yml"]
+    paths: ["sdks/python/**", "engine/**", "proto/**", ".github/workflows/ci-sdk-python.yml"]
     branches: [main]
   pull_request:
-    paths: ["sdks/python/**", "proto/**", ".github/workflows/ci-sdk-python.yml"]
+    paths: ["sdks/python/**", "engine/**", "proto/**", ".github/workflows/ci-sdk-python.yml"]
+
+permissions:
+  contents: read
 
 jobs:
   test:
@@ -15,6 +18,8 @@ jobs:
         python-version: ["3.10", "3.11", "3.12"]
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       - uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python-version }}
@@ -24,6 +29,13 @@ jobs:
           cd sdks/python
           uv venv .venv
           uv pip install -e ".[dev]"
+      - uses: actions/setup-go@v7
+        with:
+          go-version: "1.27"
+          cache-dependency-path: engine/go.sum
+      - name: Build engine
+        # Engine-backed tests (judge replay, capture, replay) skip without bin/attest-engine.
+        run: make engine
       - name: Run tests
         run: |
           cd sdks/python
@@ -58,6 +70,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
+          persist-credentials: false
           fetch-depth: 2
       - name: Check for SDK source changes
         id: changes

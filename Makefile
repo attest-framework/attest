@@ -1,4 +1,4 @@
-.PHONY: all engine engine-test engine-lint engine-benchmark sdk-python sdk-python-test sdk-python-lint security protocol-benchmark test clean dev-setup verify-versions
+.PHONY: record-judge-fixtures all engine engine-test engine-lint engine-benchmark sdk-python sdk-python-test sdk-python-lint security protocol-benchmark test clean dev-setup verify-versions
 
 # ── Version source-of-truth ──
 verify-versions:
@@ -26,6 +26,14 @@ sdk-python-test:
 
 sdk-python-lint:
 	cd sdks/python && uv run ruff check src/ && uv run mypy src/attest/
+
+# ── Judge replay fixtures ──
+# Re-record sdks/python/tests/integration/fixtures/judge/ against a real provider.
+# Needs ATTEST_JUDGE_API_KEY (or OPENAI_API_KEY) and ATTEST_JUDGE_MODEL, and refuses without them.
+# The committed fixtures were recorded against the scripted judge:
+#   cd sdks/python && uv run python -m tests.integration.record_judge_fixtures --scripted
+record-judge-fixtures: engine
+	cd sdks/python && ATTEST_ENGINE_PATH=$(CURDIR)/bin/attest-engine uv run python -m tests.integration.record_judge_fixtures --real
 
 # ── Security ──
 security:

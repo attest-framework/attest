@@ -261,6 +261,7 @@ def test_soft_failures_counted_across_every_trial_of_a_test(
     monkeypatch.setattr(plugin, "_session_soft_counts", {})
 
     class _Item:
+        stash = pytest.Stash()
         nodeid = "t::loop"
         location = ("t.py", 0, "loop")
         path = "t.py"

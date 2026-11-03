@@ -155,6 +155,7 @@ export class AttestReporter implements Reporter {
           outcome: state === "passed" || state === "failed" ? state : "skipped",
           durationMs: testCase.diagnostic()?.duration ?? 0,
           attest: testCase.meta().attest,
+          replay: testCase.meta().attestReplay,
         });
       }
     }

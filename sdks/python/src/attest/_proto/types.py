@@ -33,6 +33,7 @@ REASON_MISSING_EVIDENCE: str = "missing_evidence"
 REASON_SHORT_CIRCUITED: str = "short_circuited"
 REASON_BUDGET_EXHAUSTED: str = "budget_exhausted"
 REASON_JUDGE_ABSTAINED: str = "judge_abstained"
+REASON_REPLAY_MISS: str = "replay_miss"
 
 # ---------------------------------------------------------------------------
 # Assertion type constants

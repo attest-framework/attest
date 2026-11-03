@@ -7,6 +7,7 @@
  * places inline comments with `file` and `line`.
  */
 import {
+  REASON_REPLAY_MISS,
   STATUS_HARD_FAIL,
   STATUS_NOT_EVALUATED,
   STATUS_PASS,
@@ -17,6 +18,9 @@ import {
   type AssertionResult,
   type Usage,
 } from "@attest-ai/core";
+
+import type { ReplayMeta } from "./replay.js";
+import { liveLine } from "@attest-ai/core";
 
 export const REPORT_VERSION = 2;
 
@@ -53,6 +57,7 @@ export interface AttestTaskMeta {
 declare module "vitest" {
   interface TaskMeta {
     attest?: AttestTaskMeta;
+    attestReplay?: ReplayMeta;
   }
 }
 
@@ -66,6 +71,7 @@ export interface TestRecord {
   outcome: TestOutcome;
   durationMs: number;
   attest: AttestTaskMeta | undefined;
+  replay?: ReplayMeta;
 }
 
 /**
@@ -94,6 +100,23 @@ export function buildReport(
         reasons.push(String(result.reason));
       }
     }
+    const replay = test.replay;
+    if (replay?.notEvaluated === true) {
+      rows.push({
+        assertion_id: `replay_${replay.fixtures[0] ?? "fixture"}`,
+        status: STATUS_NOT_EVALUATED,
+        reason: REASON_REPLAY_MISS,
+        score: 0,
+        explanation: replay.miss ?? "replay miss",
+        cost: 0,
+        duration_ms: 0,
+        test_id: test.testId,
+        file: test.file,
+        line: test.line,
+      });
+      assertionIds.add(`replay_${replay.fixtures[0] ?? "fixture"}`);
+      if (!reasons.includes(REASON_REPLAY_MISS)) reasons.push(REASON_REPLAY_MISS);
+    }
     testRows.push({
       test_id: test.testId,
       name: test.name,
@@ -104,6 +127,18 @@ export function buildReport(
       assertion_ids: [...assertionIds],
       duration_ms: Math.round(test.durationMs),
       ...(test.attest?.trials !== undefined ? { trials: test.attest.trials.run } : {}),
+      ...(replay !== undefined
+        ? {
+            replay: {
+              fixtures: replay.fixtures,
+              mode: replay.mode,
+              replayed: replay.replayed,
+              live: replay.live,
+              misses: replay.misses,
+              ...(replay.miss !== undefined ? { miss: replay.miss } : {}),
+            },
+          }
+        : {}),
     });
   }
   const count = (status: string) => rows.filter((r) => r["status"] === status).length;
@@ -118,11 +153,28 @@ export function buildReport(
       hard_fail: count(STATUS_HARD_FAIL),
       not_evaluated: count(STATUS_NOT_EVALUATED),
       usage: sessionUsage(tests, unattached),
+      ...replaySummary(tests),
     },
     results: rows,
     tests: testRows,
     total_cost: totalCost,
     total_duration_ms: totalDurationMs,
+  };
+}
+
+/** `summary.replay` for the tests that ran in replay mode; absent when none did. */
+function replaySummary(tests: readonly TestRecord[]): { replay?: Record<string, number> } {
+  const replays = tests.flatMap((t) => (t.replay === undefined ? [] : [t.replay]));
+  if (replays.length === 0) return {};
+  const sum = (f: (r: ReplayMeta) => number) => replays.reduce((n, r) => n + f(r), 0);
+  return {
+    replay: {
+      replayed: sum((r) => r.replayed),
+      live: sum((r) => r.live),
+      misses: sum((r) => r.misses),
+      live_cost_usd: sum((r) => r.liveCostUsd),
+      unpriced_live_calls: sum((r) => r.unpricedLiveCalls),
+    },
   };
 }
 
@@ -153,5 +205,14 @@ export function summaryLines(tests: readonly TestRecord[], unattached: Usage = z
   }
   const usage = usageSummaryLine(sessionUsage(tests, unattached));
   if (usage !== undefined) lines.push(usage);
+  const replays = tests.flatMap((t) => (t.replay === undefined ? [] : [t.replay]));
+  if (replays.length > 0) {
+    const n = (f: (r: ReplayMeta) => number) => replays.reduce((a, r) => a + f(r), 0);
+    lines.push(
+      `attest replay: ${String(n((r) => r.replayed))} replayed · ` +
+        liveLine(n((r) => r.live), n((r) => r.liveCostUsd), n((r) => r.unpricedLiveCalls)) +
+        (n((r) => r.misses) > 0 ? ` · ${String(n((r) => r.misses))} missed` : ""),
+    );
+  }
   return lines;
 }

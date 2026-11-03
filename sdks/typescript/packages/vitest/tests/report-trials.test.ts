@@ -136,3 +136,29 @@ describe("summaryLines", () => {
     expect(summaryLines([record("none", undefined)])).toEqual([]);
   });
 });
+
+describe("replay summary line", () => {
+  const replayed = (misses: number, live: number): TestRecord => ({
+    ...record("replayed", undefined),
+    replay: {
+      fixtures: ["inc-1042"],
+      mode: "strict",
+      replayed: 2,
+      live,
+      misses,
+      liveCostUsd: 0,
+      unpricedLiveCalls: 0,
+      notEvaluated: false,
+    },
+  });
+
+  it("matches the pytest line: zero live calls, no missed suffix", () => {
+    expect(summaryLines([replayed(0, 0)])).toContain("attest replay: 2 replayed · 0 live model calls · $0.00");
+  });
+
+  it("appends the missed count like pytest does", () => {
+    expect(summaryLines([replayed(1, 0)])).toContain(
+      "attest replay: 2 replayed · 0 live model calls · $0.00 · 1 missed",
+    );
+  });
+});

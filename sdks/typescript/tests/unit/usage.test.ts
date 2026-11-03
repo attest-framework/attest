@@ -3,6 +3,7 @@ import {
   AttestClient,
   REASON_BUDGET_EXHAUSTED,
   REASON_JUDGE_ABSTAINED,
+  REASON_REPLAY_MISS,
   addUsage,
   formatUsage,
   parseUsage,
@@ -29,6 +30,7 @@ describe("reason constants", () => {
   it("name the engine's budget and abstain reasons", () => {
     expect(REASON_BUDGET_EXHAUSTED).toBe("budget_exhausted");
     expect(REASON_JUDGE_ABSTAINED).toBe("judge_abstained");
+    expect(REASON_REPLAY_MISS).toBe("replay_miss");
   });
 });
 

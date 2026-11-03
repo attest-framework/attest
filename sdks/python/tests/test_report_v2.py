@@ -197,6 +197,7 @@ def test_rerun_test_reports_only_the_last_attempt() -> None:
     from attest import plugin
 
     class _Item:
+        stash = pytest.Stash()
         nodeid = "tests/test_a.py::test_flaky"
         name = "test_flaky"
         location = ("tests/test_a.py", 2, "test_flaky")
@@ -233,6 +234,7 @@ def test_setup_and_teardown_results_count_in_soft_failure_summary(report_path: s
     from attest import plugin
 
     class _Item:
+        stash = pytest.Stash()
         nodeid = "tests/test_a.py::test_fixture_evaluates"
         name = "test_fixture_evaluates"
         location = ("tests/test_a.py", 0, "test_fixture_evaluates")
