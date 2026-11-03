@@ -7,6 +7,9 @@ on:
   pull_request:
     paths: ["sdks/typescript/**", "engine/**", ".github/workflows/ci-sdk-typescript.yml"]
 
+permissions:
+  contents: read
+
 defaults:
   run:
     working-directory: sdks/typescript
@@ -19,6 +22,8 @@ jobs:
         node-version: ["20", "22"]
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       - uses: pnpm/action-setup@v6
         with:
           package_json_file: sdks/typescript/package.json
@@ -54,6 +59,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
+          persist-credentials: false
           fetch-depth: 2
       - name: Check for SDK source changes
         id: changes
