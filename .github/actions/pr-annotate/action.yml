@@ -1,20 +1,23 @@
 name: 'Attest PR Annotate'
 description: |
-  Annotate a pull request with each failed Attest assertion in a report-v2
-  file (pytest --attest-report, Vitest AttestReporter). Each failure is
-  placed at the file and line of the test that requested it: an inline
-  review comment when that line is in the diff, an entry in the review body
-  otherwise, and an ::error (hard failure) or ::warning (soft failure)
-  workflow annotation either way. Failures without
-  a source location are listed in the review body. Uses the GitHub REST API;
-  needs `pull-requests: write` and `contents: read`. Optionally evaluates a
-  policy file and fails the step (exit 1) on a blocking violation; a warning
-  (exit 2) does not fail it. Any other evaluator exit code (e.g. 127, engine
-  not found) fails the step after the annotations are posted.
+  Summarise one or more report-v2 files (pytest --attest-report, Vitest
+  AttestReporter) on a pull request. Posts one summary comment per PR,
+  created on the first run and updated in place afterwards (hidden marker
+  `<!-- attest:pr-annotate -->`), rendered by `attest-engine report summary`.
+  It is posted only for pull requests from the same repository; fork PRs and
+  tokens that cannot write get the summary in the job summary and a warning.
+  The summary is always written to the job summary. Each failure and replay
+  miss becomes a workflow annotation (::error / ::warning) at the file and
+  line of its test, shown in the checks list and inline in the diff. Needs
+  `pull-requests: write` for the comment and `contents: read`. Optionally
+  evaluates a policy file per report and fails the step (exit 1) on a
+  blocking violation; a warning (exit 2) does not fail it. Any other
+  evaluator exit code (e.g. 127, engine not found) fails the step after the
+  annotations are emitted.
 
 inputs:
   report:
-    description: 'Path to the report-v2 file (proto/attest/v1/report-v2.schema.json).'
+    description: 'Path to the report-v2 file (proto/attest/v1/report-v2.schema.json), or several paths separated by newlines or spaces. Row paths are resolved against the directory containing each report.'
     required: true
   policy:
     description: 'Optional path to attest.policy.yaml. When set, a blocking violation (exit 1) fails the step if fail-on-violation is true, a warning (exit 2) does not, and any other non-zero evaluator exit (e.g. 127, engine not found) always fails it.'
@@ -29,7 +32,7 @@ inputs:
     required: false
     default: 'attest-engine'
   github-token:
-    description: 'GitHub token with pull-requests:write. Defaults to the workflow token.'
+    description: 'GitHub token with pull-requests:write, used only for the summary comment. Defaults to the workflow token.'
     required: false
     default: ${{ github.token }}
   fail-on-violation:
@@ -45,53 +48,22 @@ outputs:
 runs:
   using: 'composite'
   steps:
-    - name: Verify inputs
-      shell: bash
-      run: |
-        if [[ ! -f "${{ inputs.report }}" ]]; then
-          echo "::error::Attest report not found at ${{ inputs.report }}"
-          exit 1
-        fi
-
-    - name: Evaluate policy
+    - name: Summarise and annotate
       id: evaluate
       shell: bash
       env:
+        ATTEST_REPORT: ${{ inputs.report }}
         ATTEST_POLICY: ${{ inputs.policy }}
         ATTEST_BASELINE_TAG: ${{ inputs.baseline-tag }}
-        ATTEST_REPORT: ${{ inputs.report }}
         ATTEST_ENGINE_BIN: ${{ inputs.engine-binary }}
-      run: |
-        set +e
-        if [[ -z "$ATTEST_POLICY" ]]; then
-          echo "exit_code=0" >> "$GITHUB_OUTPUT"
-          exit 0
-        fi
-        args=(policy evaluate --policy "$ATTEST_POLICY" --report "$ATTEST_REPORT")
-        if [[ -n "$ATTEST_BASELINE_TAG" ]]; then
-          args+=(--baseline "$ATTEST_BASELINE_TAG")
-        fi
-        "$ATTEST_ENGINE_BIN" "${args[@]}" > policy-result.json
-        code=$?
-        echo "exit_code=$code" >> "$GITHUB_OUTPUT"
-        cat policy-result.json
-        exit 0
-
-    - name: Post inline review comments
-      if: github.event_name == 'pull_request'
-      shell: bash
-      env:
-        ATTEST_REPORT: ${{ inputs.report }}
         GITHUB_TOKEN: ${{ inputs.github-token }}
-        GITHUB_REPOSITORY: ${{ github.repository }}
-        PR_NUMBER: ${{ github.event.pull_request.number }}
-        COMMIT_SHA: ${{ github.event.pull_request.head.sha }}
+        ACTION_PATH: ${{ github.action_path }}
       run: |
-        python3 "${{ github.action_path }}/post_annotations.py" \
+        python3 "$ACTION_PATH/post_annotations.py" \
           --report "$ATTEST_REPORT" \
-          --repo "$GITHUB_REPOSITORY" \
-          --pr "$PR_NUMBER" \
-          --commit "$COMMIT_SHA"
+          --policy "$ATTEST_POLICY" \
+          --baseline-tag "$ATTEST_BASELINE_TAG" \
+          --engine "$ATTEST_ENGINE_BIN"
 
     - name: Fail on blocking policy violation
       if: inputs.fail-on-violation == 'true' && steps.evaluate.outputs.exit_code == '1'
