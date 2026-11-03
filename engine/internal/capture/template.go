@@ -3,11 +3,9 @@ package capture
 import (
 	"encoding/json"
 	"fmt"
-	"math/big"
 	"regexp"
 	"sort"
 	"strings"
-	"time"
 	"unicode"
 )
 
@@ -25,18 +23,19 @@ var (
 	spanIDKeys  = map[string]bool{"span_id": true, "parent_span_id": true, "spanId": true, "parentSpanId": true}
 )
 
-// timestampKeys hold points in time: numbers (seconds, ms, µs or ns since the
-// epoch, told apart by magnitude) or digit strings. ISO-8601 strings anywhere
-// are timestamps too.
+// timestampKeys hold points in time, as numbers or digit strings. ISO-8601
+// strings anywhere, and the created/created_at/completed_at fields of JSON
+// held as text (an event stream), are timestamps too.
 //
-// Every timestamp occurrence in the fixture gets its own sequence number:
-// occurrences are sorted by their original instant, then by role (start-like
-// keys before others before end-like keys, so a zero-length step still starts
-// before it ends), then by position in the sorted-key walk, and numbered
-// 1, 2, 3, ... Numbers keep the original order, so every start stays before
-// its end. Equal instants are never merged: whether two events land in the
-// same millisecond or second in one run and not in the next cannot change the
-// output. ISO strings become {{timestamp_N}} from the same numbering.
+// Timestamps are numbered by position, never by value: the document is
+// walked in a fixed order (arrays by index; in each object start-like keys,
+// then the other keys by name, then end-like keys) and each timestamp
+// occurrence takes the next number, 1, 2, 3, ... The output depends only on
+// the document's shape, so two runs whose events are 1 ms apart in one and
+// coincide in the other give the same bytes. Every object's start is
+// numbered before its end, and a parent's start before its children, which
+// come before the parent's end. Numeric fields become the number; ISO
+// strings become {{timestamp_N}}.
 var timestampKeys = map[string]bool{
 	"started_at_ms": true, "ended_at_ms": true, "timestamp": true, "timestamp_ms": true,
 	"created": true, "created_at": true, "completed_at": true,
@@ -68,22 +67,11 @@ type templater struct {
 	spanIDs  map[string]string
 	strs     map[string]string // provider id or email → placeholder
 	counts   map[string]int
-	// stamps are the timestamp occurrences in walk order; numbers[i] is the
-	// sequence number of stamps[i]. next is the rewrite pass's cursor.
-	stamps  []stamp
-	numbers []int
-	next    int
-}
-
-// stamp is one timestamp occurrence.
-type stamp struct {
-	instant *big.Rat // nanoseconds since the epoch
-	role    int      // 0 start-like key, 1 other, 2 end-like key
 }
 
 // Template rewrites doc (decoded with json.Decoder.UseNumber) in place and
-// returns the result. Map keys are visited in sorted order, so placeholder
-// numbering depends only on the document's content.
+// returns the result. Placeholder numbering depends only on the document's
+// content and shape.
 func Template(doc any) any {
 	t := &templater{
 		traceIDs: map[string]string{},
@@ -92,32 +80,12 @@ func Template(doc any) any {
 		counts:   map[string]int{},
 	}
 	t.collect(doc, "")
-	t.numberStamps()
 	return t.rewrite(doc, "")
 }
 
-// numberStamps orders the occurrences by (instant, role, position) and gives
-// each its 1-based rank.
-func (t *templater) numberStamps() {
-	order := make([]int, len(t.stamps))
-	for i := range order {
-		order[i] = i
-	}
-	sort.SliceStable(order, func(a, b int) bool {
-		x, y := t.stamps[order[a]], t.stamps[order[b]]
-		if c := x.instant.Cmp(y.instant); c != 0 {
-			return c < 0
-		}
-		return x.role < y.role
-	})
-	t.numbers = make([]int, len(t.stamps))
-	for rank, i := range order {
-		t.numbers[i] = rank + 1
-	}
-}
-
-// roleOf ranks a key: start-like keys before others before end-like keys.
-func roleOf(key string) int {
+// keyRole places a key in the walk: start-like keys first, end-like keys
+// last.
+func keyRole(key string) int {
 	k := strings.ToLower(key)
 	switch {
 	case strings.HasPrefix(k, "start"):
@@ -129,93 +97,19 @@ func roleOf(key string) int {
 	}
 }
 
-// epochNanos reads a number of seconds, ms, µs or ns since the epoch,
-// telling the unit apart by magnitude.
-func epochNanos(num string) (*big.Rat, bool) {
-	r, ok := new(big.Rat).SetString(num)
-	if !ok {
-		return nil, false
-	}
-	abs := new(big.Rat).Abs(r)
-	var unit int64
-	switch {
-	case abs.Cmp(big.NewRat(1e11, 1)) < 0:
-		unit = 1e9
-	case abs.Cmp(big.NewRat(1e14, 1)) < 0:
-		unit = 1e6
-	case abs.Cmp(big.NewRat(1e17, 1)) < 0:
-		unit = 1e3
-	default:
-		unit = 1
-	}
-	return r.Mul(r, big.NewRat(unit, 1)), true
+// walkKeys orders an object's keys: start-like, then the rest, then
+// end-like, each group by name.
+func walkKeys(m map[string]any) []string {
+	keys := sortedKeys(m)
+	sort.SliceStable(keys, func(i, j int) bool { return keyRole(keys[i]) < keyRole(keys[j]) })
+	return keys
 }
 
-var (
-	zoneNoColon = regexp.MustCompile(`[+-]\d{4}$`)
-	zoneColon   = regexp.MustCompile(`[+-]\d{2}:\d{2}$`)
-)
-
-// isoNanos parses an ISO-8601 match: a space for T, no zone (UTC) and a
-// +hhmm zone are accepted.
-func isoNanos(s string) (*big.Rat, bool) {
-	v := strings.Replace(s, " ", "T", 1)
-	if m := zoneNoColon.FindStringIndex(v); m != nil {
-		v = v[:m[0]+3] + ":" + v[m[0]+3:]
-	}
-	if !strings.HasSuffix(v, "Z") && !zoneColon.MatchString(v) {
-		v += "Z"
-	}
-	tm, err := time.Parse(time.RFC3339Nano, v)
-	if err != nil {
-		return nil, false
-	}
-	return new(big.Rat).SetInt(big.NewInt(0).Add(big.NewInt(tm.Unix()*1e9), big.NewInt(int64(tm.Nanosecond())))), true
-}
-
-// stampsIn rewrites the timestamps held by a string: the whole string under
-// a timestamp key when it is digits, else ISO-8601 matches and the timestamp
-// fields of JSON held as text (an event stream), in that order. Pass 1
-// records occurrences; pass 2 (numbered) replaces them.
-func (t *templater) stampsIn(s, key string, numbered bool) string {
-	if timestampKeys[key] && isDigits(s) {
-		if ns, ok := epochNanos(s); ok {
-			return t.stampAt(stamp{ns, roleOf(key)}, numbered, func(n int) string { return fmt.Sprint(n) }, s)
-		}
-	}
-	s = isoTimePattern.ReplaceAllStringFunc(s, func(m string) string {
-		ns, ok := isoNanos(m)
-		if !ok {
-			return m
-		}
-		return t.stampAt(stamp{ns, roleOf(key)}, numbered, func(n int) string { return fmt.Sprintf("{{timestamp_%d}}", n) }, m)
-	})
-	return sseTimestampPattern.ReplaceAllStringFunc(s, func(m string) string {
-		sub := sseTimestampPattern.FindStringSubmatch(m)
-		ns, ok := epochNanos(sub[2])
-		if !ok {
-			return m
-		}
-		return t.stampAt(stamp{ns, roleOf(sub[1])}, numbered, func(n int) string { return `"` + sub[1] + `":` + fmt.Sprint(n) }, m)
-	})
-}
-
-// stampAt records an occurrence (pass 1) or returns its replacement (pass 2).
-func (t *templater) stampAt(st stamp, numbered bool, render func(int) string, original string) string {
-	if !numbered {
-		t.stamps = append(t.stamps, st)
-		return original
-	}
-	n := t.numbers[t.next]
-	t.next++
-	return render(n)
-}
-
-// collect assigns trace and span id placeholders in visit order.
+// collect assigns trace and span id placeholders in walk order.
 func (t *templater) collect(v any, key string) {
 	switch x := v.(type) {
 	case map[string]any:
-		for _, k := range sortedKeys(x) {
+		for _, k := range walkKeys(x) {
 			t.collect(x[k], k)
 		}
 	case []any:
@@ -228,14 +122,6 @@ func (t *templater) collect(v any, key string) {
 			t.idFor(t.traceIDs, x, "trace", 32)
 		case spanIDKeys[key] && x != "":
 			t.idFor(t.spanIDs, x, "span", 16)
-		default:
-			t.stampsIn(x, key, false)
-		}
-	case json.Number:
-		if timestampKeys[key] {
-			if ns, ok := epochNanos(x.String()); ok {
-				t.stampAt(stamp{ns, roleOf(key)}, false, nil, "")
-			}
 		}
 	}
 }
@@ -260,10 +146,16 @@ func (t *templater) idFor(m map[string]string, v, kind string, width int) string
 // prefixedHexID splits an id into an optional word prefix and a hex tail.
 var prefixedHexID = regexp.MustCompile(`^([A-Za-z]+_)?([0-9a-f]{8,})$`)
 
+// nextStamp returns the next timestamp number.
+func (t *templater) nextStamp() int {
+	t.counts["timestamp"]++
+	return t.counts["timestamp"]
+}
+
 func (t *templater) rewrite(v any, key string) any {
 	switch x := v.(type) {
 	case map[string]any:
-		for _, k := range sortedKeys(x) {
+		for _, k := range walkKeys(x) {
 			x[k] = t.rewrite(x[k], k)
 		}
 		return x
@@ -277,9 +169,7 @@ func (t *templater) rewrite(v any, key string) any {
 		case durationKeys[key]:
 			return json.Number("0")
 		case timestampKeys[key]:
-			if ns, ok := epochNanos(x.String()); ok {
-				return json.Number(t.stampAt(stamp{ns, roleOf(key)}, true, func(n int) string { return fmt.Sprint(n) }, ""))
-			}
+			return json.Number(fmt.Sprint(t.nextStamp()))
 		}
 		return x
 	case string:
@@ -299,9 +189,16 @@ func (t *templater) rewriteString(s, key string) string {
 		if p, ok := t.spanIDs[s]; ok {
 			return p
 		}
+	case timestampKeys[key] && isDigits(s):
+		return fmt.Sprint(t.nextStamp())
 	}
-	// Timestamps first, on the string pass 1 saw.
-	s = t.stampsIn(s, key, true)
+	s = isoTimePattern.ReplaceAllStringFunc(s, func(string) string {
+		return fmt.Sprintf("{{timestamp_%d}}", t.nextStamp())
+	})
+	s = sseTimestampPattern.ReplaceAllStringFunc(s, func(m string) string {
+		sub := sseTimestampPattern.FindStringSubmatch(m)
+		return `"` + sub[1] + `":` + fmt.Sprint(t.nextStamp())
+	})
 	s = providerIDPattern.ReplaceAllStringFunc(s, func(m string) string {
 		sub := providerIDPattern.FindStringSubmatch(m)
 		if !strings.ContainsFunc(sub[2], unicode.IsDigit) {

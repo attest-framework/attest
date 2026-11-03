@@ -105,7 +105,7 @@
           "model": "refund-desk-scripted",
           "operation": "chat"
         },
-        "ended_at_ms": 3,
+        "ended_at_ms": 2,
         "metadata": {
           "duration_ms": 0
         },
@@ -127,7 +127,7 @@
         "args": {
           "order_id": "O-1042"
         },
-        "ended_at_ms": 5,
+        "ended_at_ms": 4,
         "metadata": {
           "duration_ms": 0
         },
@@ -140,7 +140,7 @@
           "status": "delivered"
         },
         "span_id": "0000000000000003",
-        "started_at_ms": 2,
+        "started_at_ms": 3,
         "tool_call_id": "call_1",
         "type": "tool_call"
       },
@@ -149,7 +149,7 @@
           "model": "refund-desk-scripted",
           "operation": "chat"
         },
-        "ended_at_ms": 7,
+        "ended_at_ms": 6,
         "metadata": {
           "duration_ms": 0
         },
@@ -164,7 +164,7 @@
           "output_tokens": 58
         },
         "span_id": "0000000000000004",
-        "started_at_ms": 4,
+        "started_at_ms": 5,
         "type": "llm_call"
       },
       {
@@ -173,7 +173,7 @@
           "order_id": "O-1042",
           "reason": "item arrived damaged"
         },
-        "ended_at_ms": 9,
+        "ended_at_ms": 8,
         "error": {
           "type": "payments_timeout"
         },
@@ -187,7 +187,7 @@
           "order_id": "O-1042"
         },
         "span_id": "0000000000000005",
-        "started_at_ms": 6,
+        "started_at_ms": 7,
         "tool_call_id": "call_2",
         "type": "tool_call"
       },
@@ -196,7 +196,7 @@
           "model": "refund-desk-scripted",
           "operation": "chat"
         },
-        "ended_at_ms": 11,
+        "ended_at_ms": 10,
         "metadata": {
           "duration_ms": 0
         },
@@ -211,7 +211,7 @@
           "output_tokens": 58
         },
         "span_id": "0000000000000006",
-        "started_at_ms": 8,
+        "started_at_ms": 9,
         "type": "llm_call"
       },
       {
@@ -220,7 +220,7 @@
           "order_id": "O-1042",
           "reason": "item arrived damaged"
         },
-        "ended_at_ms": 13,
+        "ended_at_ms": 12,
         "metadata": {
           "duration_ms": 0
         },
@@ -234,7 +234,7 @@
         },
         "retry_of": 3,
         "span_id": "0000000000000007",
-        "started_at_ms": 10,
+        "started_at_ms": 11,
         "tool_call_id": "call_3",
         "type": "tool_call"
       },
@@ -243,7 +243,7 @@
           "model": "refund-desk-scripted",
           "operation": "chat"
         },
-        "ended_at_ms": 15,
+        "ended_at_ms": 14,
         "metadata": {
           "duration_ms": 0
         },
@@ -258,7 +258,7 @@
           "output_tokens": 63
         },
         "span_id": "0000000000000008",
-        "started_at_ms": 12,
+        "started_at_ms": 13,
         "type": "llm_call"
       },
       {
@@ -266,7 +266,7 @@
           "message": "Your refund of $84.00 for order O-1042 has been processed.",
           "order_id": "O-1042"
         },
-        "ended_at_ms": 17,
+        "ended_at_ms": 16,
         "metadata": {
           "duration_ms": 0
         },
@@ -277,7 +277,7 @@
           "status": "sent"
         },
         "span_id": "0000000000000009",
-        "started_at_ms": 14,
+        "started_at_ms": 15,
         "tool_call_id": "call_4",
         "type": "tool_call"
       },
@@ -301,7 +301,7 @@
           "output_tokens": 20
         },
         "span_id": "000000000000000a",
-        "started_at_ms": 16,
+        "started_at_ms": 17,
         "type": "llm_call"
       }
     ],

@@ -47,16 +47,15 @@ func TestTemplate_ProviderIDsAndEmails_SamePlaceholderEverywhere(t *testing.T) {
 	}
 }
 
-func TestTemplate_TimestampsNumberedByOriginalOrder_DurationsZero(t *testing.T) {
+func TestTemplate_TimestampsNumberedStructurally_DurationsZero(t *testing.T) {
 	got := templated(t, `{"a":{"created":1700000300,"latency_ms":812},
-		"b":[{"started_at_ms":1700000000500,"ended_at_ms":1700000000900},{"started_at_ms":1700000000900}],
+		"b":[{"started_at_ms":1700000000900,"ended_at_ms":1700000000500},{"started_at_ms":1700000000100}],
 		"c":"data: {\"created\": 1700000300, \"n\":1}\n\n","d":"2023-11-14T22:18:20.950Z"}`)
 
-	// Instants: b[0] start 1700000000.5s; b[1] start and b[0] end at .9s
-	// (start before end at one instant); a.created and c's created at
-	// 1700000300s (walk order between equals); d at 1700000300.95s.
+	// Walk order: a.created, then b[0] start before end whatever the values,
+	// b[1] start, c's created, d.
 	for _, want := range []string{
-		`{"ended_at_ms":3,"started_at_ms":1}`, `{"started_at_ms":2}`, `"created":4`,
+		`"created":1`, `{"ended_at_ms":3,"started_at_ms":2}`, `{"started_at_ms":4}`,
 		`data: {\"created\":5, \"n\":1}`, `"d":"{{timestamp_6}}"`, `"latency_ms":0`,
 	} {
 		if !strings.Contains(got, want) {
@@ -65,60 +64,76 @@ func TestTemplate_TimestampsNumberedByOriginalOrder_DurationsZero(t *testing.T) 
 	}
 }
 
-// (a) Templated steps and spans keep start before end, a zero-length step
-// and span included.
-func TestTemplate_StartBeforeEnd_StepsAndSpans_ZeroDuration(t *testing.T) {
-	doc := `{"steps":[{"started_at_ms":1700000000100,"ended_at_ms":1700000000300},
-		{"started_at_ms":1700000000200,"ended_at_ms":1700000000200},
-		{"started_at_ms":1700000000300,"ended_at_ms":1700000000400}],
-		"spans":[{"startTimeUnixNano":"1700000000100000000","endTimeUnixNano":"1700000000100000000"},
-		{"startTimeUnixNano":"1700000000050000000","endTimeUnixNano":"1700000000500000000"}]}`
+// (a) Every object's start precedes its end, zero-length steps and nested
+// spans included, and a parent's start and end bracket its children.
+func TestTemplate_StartBeforeEnd_StepsNestedSpans_ZeroDuration(t *testing.T) {
+	doc := `{"steps":[{"started_at_ms":1700000000100,"ended_at_ms":1700000000300,
+			"sub_trace":{"steps":[{"started_at_ms":1700000000150,"ended_at_ms":1700000000150}]}},
+		{"started_at_ms":1700000000200,"ended_at_ms":1700000000200}],
+		"spans":[{"startTimeUnixNano":"1700000000100000000","endTimeUnixNano":"1700000000100000000",
+			"children":[{"startTimeUnixNano":"1700000000100000000","endTimeUnixNano":"1700000000100000000"}]}]}`
 	var parsed struct {
-		Steps []map[string]json.Number `json:"steps"`
-		Spans []map[string]string      `json:"spans"`
+		Steps []struct {
+			Start json.Number `json:"started_at_ms"`
+			End   json.Number `json:"ended_at_ms"`
+			Sub   *struct {
+				Steps []struct {
+					Start json.Number `json:"started_at_ms"`
+					End   json.Number `json:"ended_at_ms"`
+				} `json:"steps"`
+			} `json:"sub_trace"`
+		} `json:"steps"`
+		Spans []struct {
+			Start    string `json:"startTimeUnixNano"`
+			End      string `json:"endTimeUnixNano"`
+			Children []struct {
+				Start string `json:"startTimeUnixNano"`
+				End   string `json:"endTimeUnixNano"`
+			} `json:"children"`
+		} `json:"spans"`
 	}
 	if err := json.Unmarshal([]byte(templated(t, doc)), &parsed); err != nil {
 		t.Fatal(err)
 	}
+	n := func(v json.Number) int64 { i, _ := v.Int64(); return i }
+	a := func(s string) int { i, _ := strconv.Atoi(s); return i }
 	for i, s := range parsed.Steps {
-		start, _ := s["started_at_ms"].Int64()
-		end, _ := s["ended_at_ms"].Int64()
-		if start >= end {
-			t.Errorf("step %d: started %d, ended %d", i, start, end)
+		if n(s.Start) >= n(s.End) {
+			t.Errorf("step %d: started %s, ended %s", i, s.Start, s.End)
+		}
+		if s.Sub != nil {
+			c := s.Sub.Steps[0]
+			if !(n(s.Start) < n(c.Start) && n(c.Start) < n(c.End) && n(c.End) < n(s.End)) {
+				t.Errorf("step %d does not bracket its child: %s %s %s %s", i, s.Start, c.Start, c.End, s.End)
+			}
 		}
 	}
 	for i, s := range parsed.Spans {
-		start, _ := strconv.Atoi(s["startTimeUnixNano"])
-		end, _ := strconv.Atoi(s["endTimeUnixNano"])
-		if start >= end {
-			t.Errorf("span %d: start %d, end %d", i, start, end)
+		c := s.Children[0]
+		if !(a(s.Start) < a(c.Start) && a(c.Start) < a(c.End) && a(c.End) < a(s.End)) {
+			t.Errorf("span %d: %s %s %s %s", i, s.Start, c.Start, c.End, s.End)
 		}
 	}
 }
 
-// (b) Different absolute times with the same ordering, and same-role events
-// that coincide in one run and are 1 ms (or 1 s) apart in the other, give
-// the same output.
-func TestTemplate_SameOrderingDifferentTimes_SameOutput(t *testing.T) {
+// (b) Runs that differ only in timing give the same bytes: different absolute
+// times, two coincident events vs 1 ms apart, a step end equal to the next
+// start vs 1 ms apart, and coincident ISO seconds vs 1 s apart.
+func TestTemplate_TimingDifferencesOnly_SameOutput(t *testing.T) {
 	runA := templated(t, `{"x":{"created":1700000000},"y":{"created":1700000000},
-		"z":[{"started_at_ms":1700000000100,"ended_at_ms":1700000000200},{"started_at_ms":1700000000250,"ended_at_ms":1700000000300}],
-		"e":[{"timestamp_ms":1700000000400},{"timestamp_ms":1700000000400}]}`)
+		"z":[{"started_at_ms":1700000000100,"ended_at_ms":1700000000200},{"started_at_ms":1700000000200,"ended_at_ms":1700000000300}],
+		"e":[{"timestamp_ms":1700000000400},{"timestamp_ms":1700000000400}],
+		"i":["at 2026-11-03T10:00:00Z","at 2026-11-03T10:00:00Z"]}`)
 	runB := templated(t, `{"x":{"created":1800000000},"y":{"created":1800000001},
-		"z":[{"started_at_ms":1800000001100,"ended_at_ms":1800000001250},{"started_at_ms":1800000001300,"ended_at_ms":1800000001900}],
-		"e":[{"timestamp_ms":1800000001950},{"timestamp_ms":1800000001951}]}`)
+		"z":[{"started_at_ms":1800000001100,"ended_at_ms":1800000001250},{"started_at_ms":1800000001251,"ended_at_ms":1800000001900}],
+		"e":[{"timestamp_ms":1800000001950},{"timestamp_ms":1800000001951}],
+		"i":["at 2027-01-01T00:00:00Z","at 2027-01-01T00:00:01Z"]}`)
 
 	if runA != runB {
 		t.Fatalf("A %s\nB %s", runA, runB)
 	}
-}
-
-// (c) ISO timestamps to the second that coincide still get distinct numbers.
-func TestTemplate_CoincidentISOSeconds_DistinctPlaceholders(t *testing.T) {
-	got := templated(t, `{"a":"at 2026-11-03T10:00:00Z","b":"at 2026-11-03T10:00:00Z","c":"2026-11-03 09:59:59"}`)
-
-	want := `{"a":"at {{timestamp_2}}","b":"at {{timestamp_3}}","c":"{{timestamp_1}}"}`
-	if got != want {
-		t.Fatalf("got  %s\nwant %s", got, want)
+	if !strings.Contains(runA, `"i":["at {{timestamp_3}}","at {{timestamp_4}}"]`) {
+		t.Fatalf("coincident ISO seconds not numbered apart: %s", runA)
 	}
 }
 
