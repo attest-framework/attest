@@ -15,7 +15,7 @@ from typing import Any, TypeVar
 import pytest
 
 from attest import egress
-from attest._proto.types import BatchBudget, Trace, Usage
+from attest._proto.types import BatchBudget, BatchContext, Trace, Usage
 from attest.cli.diagnostics import render_diagnostics
 from attest.client import AttestClient, require_simulation_capability
 from attest.config import is_simulation_mode
@@ -356,7 +356,13 @@ def pytest_runtest_call(item: pytest.Item) -> Generator[None, Any, None]:
         except ValueError as exc:
             pytest.fail(f"{item.nodeid}: {exc}", pytrace=False)
     run = (
-        TestRun(test_id=item.nodeid, budget=budget, min_pass_rate=min_pass_rate)
+        TestRun(
+            test_id=item.nodeid,
+            budget=budget,
+            min_pass_rate=min_pass_rate,
+            file=Path(item.location[0]).as_posix(),
+            line=(item.location[1] or 0) + 1,
+        )
         if _uses_attest(item)
         else None
     )
@@ -767,6 +773,12 @@ def soft_failure_lines(soft_counts: dict[str, int], outcomes: dict[str, str]) ->
     ]
 
 
+def _batch_context() -> BatchContext | None:
+    """The running test's identity, sent with each ``evaluate_batch``."""
+    run = current_run()
+    return run.batch_context() if run is not None else None
+
+
 def _batch_budget(trace: Trace) -> BatchBudget | None:
     """The running test's remaining ``attest_budget`` for the batch of ``trace``."""
     run = current_run()
@@ -931,7 +943,10 @@ class AttestEngineFixture:
         assert self._client is not None
         result = self._run_on_engine_loop(
             self._client.evaluate_batch(
-                chain.trace, chain.assertions, budget=_batch_budget(chain.trace)
+                chain.trace,
+                chain.assertions,
+                budget=_batch_budget(chain.trace),
+                context=_batch_context(),
             )
         )
         return self._process_result(chain, result, budget)
@@ -952,7 +967,10 @@ class AttestEngineFixture:
         assert self._client is not None
         future = asyncio.run_coroutine_threadsafe(
             self._client.evaluate_batch(
-                chain.trace, chain.assertions, budget=_batch_budget(chain.trace)
+                chain.trace,
+                chain.assertions,
+                budget=_batch_budget(chain.trace),
+                context=_batch_context(),
             ),
             self._loop,
         )

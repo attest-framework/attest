@@ -765,6 +765,29 @@ class BatchBudget:
         return d
 
 
+@dataclass(frozen=True)
+class BatchContext:
+    """``evaluate_batch`` ``context`` param: the test the batch belongs to.
+
+    The engine records it next to each assertion spec when
+    ``ATTEST_CONTRACTS_DIR`` is set and uses it for nothing else.
+    """
+
+    test_id: str | None = None
+    file: str | None = None
+    line: int | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        d: dict[str, Any] = {}
+        if self.test_id is not None:
+            d["test_id"] = self.test_id
+        if self.file is not None:
+            d["file"] = self.file
+        if self.line is not None:
+            d["line"] = self.line
+        return d
+
+
 @dataclass
 class EvaluateBatchResult:
     results: list[AssertionResult]
