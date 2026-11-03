@@ -1,0 +1,26 @@
+# The INC-1042 payments system as a world: orders to read, refunds with
+# idempotency-key handling, and a first refund that commits but never answers.
+world_version: 1
+base_url_env: PAYMENTS_BASE_URL
+seed: 1042
+resources:
+  orders:
+    path: /orders
+    routes: [get]
+    seed:
+      - {id: O-1042, customer: C-77, total_cents: 4999, status: delivered}
+      - {id: O-2001, customer: C-12, total_cents: 1250, status: delivered}
+  refunds:
+    path: /refunds
+    id_field: refund_id
+    id_format: "R-%04d"
+    routes: [create, list, get]
+    filters: [order_id]
+    idempotency: {header: Idempotency-Key, field: idempotency_key}
+  notifications:
+    path: /notifications
+    id_field: notification_id
+    id_format: "N-%04d"
+    routes: [create]
+faults:
+  - {id: inc-1042, resource: refunds, route: create, fault: timeout_after_commit, on_requests: [1]}

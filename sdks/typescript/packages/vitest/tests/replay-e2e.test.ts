@@ -172,4 +172,15 @@ describe.skipIf(!existsSync(engine))("useReplay (real engine)", () => {
     expect(output).toContain("fetch failed");
     expect(report?.summary.replay).toBeUndefined();
   }, 60_000);
+
+  it("useWorld composes with useReplay in one test and the world ends with the test", () => {
+    const { proc, output } = run(
+      { ATTEST_REPLAY: "strict", WORLD_FILE: join(pkgDir, "../../tests/integration/data/payments.world.yaml") },
+      "tests/e2e/world.fixture.ts",
+    );
+
+    expect(proc.status, output).toBe(0);
+    expect(output).toContain("2 passed");
+    expect(output).toContain("0 live model calls · $0.00");
+  }, 60_000);
 });
