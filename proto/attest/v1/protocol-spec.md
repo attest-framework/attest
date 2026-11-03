@@ -1001,6 +1001,35 @@ At most one refund per order:
 
 ---
 
+### Layer 3 — Effect Checks (`effect`)
+
+Effect assertions check what an agent did to the external system it acts on, not what it said. They are deterministic, free, and part of Layer 3: there is no ninth layer. The engine does not consult the trace. The evidence is a world-v1 snapshot (`proto/attest/v1/world-v1.schema.json#/$defs/snapshot`) that the SDK reads from the world server (`GET <base URL>/_attest/state`) and embeds in the spec.
+
+```json
+{
+  "type": "effect",
+  "spec": {
+    "check": "count",
+    "world": { "world_version": 1, "definition_sha256": "…", "state": { "refunds": [ … ] }, "faults_fired": [] },
+    "resource": "refunds",
+    "where": { "order_id": "O-1042" },
+    "equals": 1
+  }
+}
+```
+
+| `check` | Fields | Fails when |
+|---|---|---|
+| `count` | `resource`, optional `where` (exact field matches), one of `equals` or `at_most` / `at_least` | the number of matching records is out of bounds |
+| `unique` | `resource`, `fields`, optional `where` | two matching records share the same values for `fields` |
+| `idempotent` | `resource`, `field` (the record field that stores the idempotency key), optional `where` | a matching record has no key, or two share one |
+
+A violation is a `hard_fail` whose explanation starts `effect violated:`. A `count` of two refunds where one is expected reads exactly `effect violated: 2 refunds for O-1042 (expected 1)`; a filter on several fields renders as `for amount_cents=4999, order_id=O-1042`, and a count of one drops the plural (`1 refund`). `target` is `world.<resource>`; `expected` and `actual` carry the counts.
+
+- A spec with `"world": null` is `not_evaluated` with reason `missing_evidence`: the test ran without a world helper.
+- A spec with no `world`, a snapshot that fails world-v1 validation, an unknown `resource`, an unknown `check`, or missing check fields is a `hard_fail` naming the problem.
+- `world.yaml` is not part of the JSON-RPC protocol; `attest-engine world` serves it. See `docs/guides/world-fixtures.md`.
+
 ### Layer 4 — Content Matching
 
 Text-based checks on agent output or step results. Supports substring matching, regex patterns, and keyword sets.
