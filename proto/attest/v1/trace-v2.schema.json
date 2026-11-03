@@ -1,0 +1,98 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://attest-framework.github.io/schemas/attest/v1/trace-v2.schema.json",
+  "title": "Attest trace v2",
+  "description": "Agent execution trace with schema_version 2, written by `attest trace convert` from an OTLP/JSON export and accepted by `evaluate_batch`. Version 2 adds optional conversation turns, agent handoffs, retries (`retry_of`), span provenance, step errors and recorded request/response exchanges to the version 1 trace. Every v2 field is optional; step references index `steps`.",
+  "type": "object",
+  "required": ["schema_version", "trace_id", "output", "steps"],
+  "properties": {
+    "schema_version": { "const": 2 },
+    "trace_id": { "type": "string", "minLength": 1, "pattern": "\\S" },
+    "agent_id": { "type": "string" },
+    "input": { "type": ["object", "null"] },
+    "steps": { "type": "array", "maxItems": 10000, "items": { "$ref": "#/$defs/step" } },
+    "output": { "type": "object", "minProperties": 1 },
+    "metadata": { "$ref": "#/$defs/metadata" },
+    "parent_trace_id": { "type": ["string", "null"] },
+    "conversation_id": { "type": "string", "minLength": 1 },
+    "turns": { "type": "array", "items": { "$ref": "#/$defs/turn" } },
+    "handoffs": { "type": "array", "items": { "$ref": "#/$defs/handoff" } }
+  },
+  "$defs": {
+    "step": {
+      "type": "object",
+      "required": ["type", "name"],
+      "properties": {
+        "type": { "enum": ["llm_call", "tool_call", "retrieval", "agent_call"] },
+        "name": { "type": "string", "minLength": 1, "pattern": "\\S" },
+        "args": { "type": ["object", "null"] },
+        "result": { "type": ["object", "null"] },
+        "sub_trace": { "type": "object" },
+        "metadata": { "type": ["object", "null"] },
+        "started_at_ms": { "type": "integer" },
+        "ended_at_ms": { "type": "integer" },
+        "agent_id": { "type": "string" },
+        "agent_role": { "type": "string" },
+        "span_id": { "$ref": "#/$defs/span_id" },
+        "parent_span_id": { "$ref": "#/$defs/span_id" },
+        "tool_call_id": { "type": "string", "minLength": 1 },
+        "retry_of": { "type": "integer", "minimum": 0 },
+        "error": {
+          "type": "object",
+          "required": ["type"],
+          "properties": {
+            "type": { "type": "string", "minLength": 1 },
+            "message": { "type": "string" }
+          },
+          "additionalProperties": false
+        },
+        "exchange": {
+          "type": "object",
+          "required": ["request", "response"],
+          "properties": {
+            "request": { "type": "object" },
+            "response": { "type": "object" }
+          },
+          "additionalProperties": false
+        }
+      }
+    },
+    "metadata": {
+      "type": "object",
+      "properties": {
+        "total_tokens": { "type": "integer", "minimum": 0 },
+        "cost_usd": { "type": "number", "minimum": 0 },
+        "latency_ms": { "type": "integer", "minimum": 0 },
+        "model": { "type": "string" },
+        "timestamp": { "type": "string" },
+        "aggregate_tokens": { "type": "integer", "minimum": 0 },
+        "aggregate_cost_usd": { "type": "number", "minimum": 0 },
+        "aggregate_latency_ms": { "type": "integer", "minimum": 0 },
+        "agent_count": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "turn": {
+      "type": "object",
+      "required": ["index", "step_indices"],
+      "properties": {
+        "index": { "type": "integer", "minimum": 0 },
+        "span_id": { "$ref": "#/$defs/span_id" },
+        "input": {},
+        "output": {},
+        "step_indices": { "type": "array", "items": { "type": "integer", "minimum": 0 } }
+      },
+      "additionalProperties": false
+    },
+    "handoff": {
+      "type": "object",
+      "required": ["from_agent", "to_agent", "step_index"],
+      "properties": {
+        "from_agent": { "type": "string", "minLength": 1 },
+        "to_agent": { "type": "string", "minLength": 1 },
+        "step_index": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": false
+    },
+    "span_id": { "type": "string", "pattern": "^[0-9a-f]{16}$" }
+  }
+}

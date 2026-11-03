@@ -18,7 +18,7 @@ func TestJudgeCache_SameModelDifferentEndpoints_DoNotShareScores(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer local.Close()
-	hash := JudgeContentHash("refund processed")
+	hash := JudgePromptKey("v2", "refund processed")
 
 	if err := openai.Put(hash, "default", "gpt-4.1", &JudgeCacheEntry{Score: 0.9, Explanation: "openai"}); err != nil {
 		t.Fatal(err)

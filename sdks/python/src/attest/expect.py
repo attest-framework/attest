@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import uuid
-from typing import Any
+from typing import Any, Literal
 
 from attest._proto.types import (
     TYPE_CONSTRAINT,
@@ -18,6 +18,10 @@ from attest._proto.types import (
     Trace,
 )
 from attest.result import AgentResult
+from attest.trials import current_run
+
+TrajectoryMode = Literal["strict", "unordered", "subset", "superset"]
+ArgOperator = Literal["eq", "ne", "lt", "lte", "gt", "gte", "in", "not_in"]
 
 
 class ExpectChain:
@@ -38,10 +42,19 @@ class ExpectChain:
         return self._result.trace
 
     def _add(self, assertion_type: str, spec: dict[str, Any]) -> ExpectChain:
-        """Add an assertion to the collection."""
+        """Add an assertion to the collection.
+
+        Inside a test using the ``attest`` fixture the ID is deterministic
+        (``attest.trials.assertion_id_for``), so trials and baselines match
+        rows by ``assertion_id``; elsewhere it is random.
+        """
+        run = current_run()
+        assertion_id = (
+            run.next_assertion_id() if run is not None else f"assert_{uuid.uuid4().hex[:8]}"
+        )
         self._assertions.append(
             Assertion(
-                assertion_id=f"assert_{uuid.uuid4().hex[:8]}",
+                assertion_id=assertion_id,
                 type=assertion_type,
                 spec=spec,
             )
@@ -235,6 +248,109 @@ class ExpectChain:
             {
                 "check": "forbidden_tools",
                 "tools": tools,
+                "soft": soft,
+            },
+        )
+
+    # ── Layer 3: Behavior contracts (tool calls only, retries counted) ──
+
+    def tool_cardinality(
+        self,
+        tool: str,
+        *,
+        per: str | None = None,
+        at_most: int | None = None,
+        at_least: int | None = None,
+        soft: bool = False,
+    ) -> ExpectChain:
+        """Assert how many times a tool is called, per value of argument ``per`` when set.
+
+        ``tool_cardinality("issue_refund", per="order_id", at_most=1)`` fails with
+        ``issue_refund called 2× for order_id=O-1042 (max 1)``.
+        """
+        if at_most is None and at_least is None:
+            raise ValueError("tool_cardinality needs at_most, at_least or both")
+        spec: dict[str, Any] = {"check": "tool_cardinality", "tool": tool}
+        if per is not None:
+            spec["per"] = per
+        if at_least is not None:
+            spec["min"] = at_least
+        if at_most is not None:
+            spec["max"] = at_most
+        spec["soft"] = soft
+        return self._add(TYPE_TRACE, spec)
+
+    def trajectory(
+        self, tools: list[str], *, mode: TrajectoryMode = "strict", soft: bool = False
+    ) -> ExpectChain:
+        """Assert the tool-call trajectory matches ``tools``.
+
+        Modes: ``strict`` (same sequence), ``unordered`` (same calls, any order),
+        ``subset`` (no call outside ``tools``), ``superset`` (every call in ``tools``
+        made). Use :meth:`trajectory_partial_order` for ordering constraints.
+        """
+        return self._add(
+            TYPE_TRACE, {"check": "trajectory", "mode": mode, "tools": tools, "soft": soft}
+        )
+
+    def trajectory_partial_order(
+        self,
+        order: list[tuple[str, str]],
+        *,
+        tools: list[str] | None = None,
+        soft: bool = False,
+    ) -> ExpectChain:
+        """Assert every tool in ``tools`` and ``order`` is called and each
+        ``(before, after)`` pair holds as in :meth:`tool_called_before`."""
+        spec: dict[str, Any] = {
+            "check": "trajectory",
+            "mode": "partial_order",
+            "order": [[before, after] for before, after in order],
+        }
+        if tools is not None:
+            spec["tools"] = tools
+        spec["soft"] = soft
+        return self._add(TYPE_TRACE, spec)
+
+    def tool_called_before(self, before: str, after: str, *, soft: bool = False) -> ExpectChain:
+        """Assert every call to ``after`` has an earlier call to ``before``.
+
+        Holds when ``after`` is never called.
+        """
+        return self._add(
+            TYPE_TRACE, {"check": "tool_order", "before": before, "after": after, "soft": soft}
+        )
+
+    def no_tool_cycles(
+        self, period: int, *, min_repeats: int = 2, soft: bool = False
+    ) -> ExpectChain:
+        """Assert no block of ``period`` (1–4) tool calls repeats ``min_repeats``
+        times in a row; A→B→A→B fails ``period=2``."""
+        return self._add(
+            TYPE_TRACE,
+            {"check": "cycle", "period": period, "min_repeats": min_repeats, "soft": soft},
+        )
+
+    def max_tool_failure_streak(self, max_streak: int, *, soft: bool = False) -> ExpectChain:
+        """Assert at most ``max_streak`` consecutive tool calls end in error (trace v2)."""
+        return self._add(TYPE_TRACE, {"check": "failure_streak", "max": max_streak, "soft": soft})
+
+    def tool_arg_satisfies(
+        self, tool: str, arg: str, op: ArgOperator, value: Any, *, soft: bool = False
+    ) -> ExpectChain:
+        """Assert every call to ``tool`` has argument ``arg`` satisfying ``op value``.
+
+        ``arg`` is a dot path into the call's arguments. Holds when ``tool`` is
+        never called.
+        """
+        return self._add(
+            TYPE_TRACE,
+            {
+                "check": "arg_predicate",
+                "tool": tool,
+                "arg": arg,
+                "op": op,
+                "value": value,
                 "soft": soft,
             },
         )

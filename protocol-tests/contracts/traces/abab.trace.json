@@ -1,0 +1,14 @@
+{
+  "schema_version": 2,
+  "trace_id": "trc_abab",
+  "agent_id": "cycle-agent",
+  "input": {"query": "find the order"},
+  "steps": [
+    {"type": "tool_call", "name": "search", "args": {"q": "O-1"}, "result": {"hits": 0}},
+    {"type": "llm_call", "name": "chat", "args": {"model": "scripted"}, "result": {}},
+    {"type": "tool_call", "name": "rephrase", "args": {"q": "O-1"}, "result": {"q": "order O-1"}},
+    {"type": "tool_call", "name": "search", "args": {"q": "order O-1"}, "result": {"hits": 0}, "error": {"type": "no_results"}},
+    {"type": "tool_call", "name": "rephrase", "args": {"q": "order O-1"}, "result": {"q": "O-1"}, "error": {"type": "no_progress"}}
+  ],
+  "output": {"message": "I could not find that order."}
+}

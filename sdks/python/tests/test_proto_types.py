@@ -27,6 +27,7 @@ from attest._proto.types import (
     Step,
     Trace,
     TraceMetadata,
+    Usage,
 )
 
 
@@ -254,6 +255,7 @@ def test_evaluate_batch_result_from_dict() -> None:
             },
         ],
         "total_cost": 0.0012,
+        "usage": Usage().to_dict(),
         "total_duration_ms": 1845,
     }
     result = EvaluateBatchResult.from_dict(sample)

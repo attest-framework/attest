@@ -313,6 +313,15 @@ Capabilities are additive. New capabilities never remove or alter old ones, with
 | `spec` | object | yes | Type-specific assertion parameters. See Section 4. |
 | `request_id` | string | no | Idempotency key. If the same `request_id` is submitted twice, the engine returns the cached result. |
 
+**Optional `budget` param:** `params.budget` limits the attest-initiated model calls of this batch on top of the session budget (`ATTEST_MAX_JUDGE_CALLS`, `ATTEST_BUDGET_USD`). SDKs send the remainder of a test's budget marker here.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `budget.max_judge_calls` | int ≥ 0 | Judge-provider requests this batch may send (judges, `repeat` runs, bias probes, retries). |
+| `budget.max_cost_usd` | number ≥ 0 | USD this batch may spend on judge and embedding calls. |
+
+Every model call reserves one call and its worst-case cost (price × prompt bytes + price × output-token limit) against both budgets before it is sent and is reconciled to the reported usage afterwards. A call that cannot reserve is not sent; its assertion returns `not_evaluated` with reason `budget_exhausted`. A negative limit is error 2001.
+
 #### Response
 
 ```json
@@ -377,10 +386,24 @@ Capabilities are additive. New capabilities never remove or alter old ones, with
       }
     ],
     "total_cost": 0.0012,
-    "total_duration_ms": 1845
+    "total_duration_ms": 1845,
+    "simulated": false,
+    "usage": {
+      "model_calls": 1,
+      "judge_calls": 1,
+      "input_tokens": 412,
+      "output_tokens": 38,
+      "cached_tokens": 0,
+      "cost_usd": 0.0012,
+      "retry_cost_usd": 0,
+      "unpriced_calls": 0,
+      "budget_refused": 0
+    }
   }
 }
 ```
+
+**`usage`** counts the batch's attest-initiated model calls: `model_calls` sent (failed requests included) and `judge_calls`, the judge-provider part of them that `max_judge_calls` limits, `input_tokens` / `output_tokens` / `cached_tokens` (provider prompt-cache reads, included in `input_tokens`), `cost_usd` reconciled from the reported tokens at the configured price, `retry_cost_usd` (the part of `cost_usd` spent on retried requests), `unpriced_calls` (calls whose model has no price, so `cost_usd` excludes them) and `budget_refused` (calls not sent because no budget remained). Judge-cache hits make no call. `generate_user_message` calls count against the session budget (a refusal is a non-retryable engine error) but are not part of any batch's `usage`.
 
 **Result object fields:**
 
@@ -388,7 +411,7 @@ Capabilities are additive. New capabilities never remove or alter old ones, with
 |-------|------|-------------|
 | `assertion_id` | string | Matches the assertion from the request |
 | `status` | string | `pass`, `soft_fail`, `hard_fail`, or `not_evaluated` (see [Assertion Status and Aggregation](#assertion-status-and-aggregation)) |
-| `reason` | string | Present only when `status` is `not_evaluated`: `provider_unavailable`, `provider_not_configured`, `simulation`, `missing_evidence`, or `short_circuited` |
+| `reason` | string | Present only when `status` is `not_evaluated`: `provider_unavailable`, `provider_not_configured`, `simulation`, `missing_evidence`, `short_circuited`, `budget_exhausted` or `judge_abstained` |
 | `score` | float | 0.0 to 1.0. For boolean checks: 0.0 or 1.0. For scored checks: continuous value. `0.0` when `not_evaluated`. |
 | `explanation` | string | Human-readable explanation of the result, including relevant values |
 | `cost` | float | USD cost for this assertion (non-zero for LLM-backed assertions) |
@@ -414,6 +437,8 @@ Every requested assertion appears exactly once in `results`, including assertion
 | `simulation` | The engine runs with `ATTEST_SIMULATION` set (capability `simulation_mode`). L1–L4 run normally; no provider is called. |
 | `missing_evidence` | The trace does not record the field the assertion checks (for example `metadata.cost_usd` unset). |
 | `short_circuited` | An L5/L6 assertion was not run because an L1–L4 assertion in the same batch returned `hard_fail`. |
+| `budget_exhausted` | An L5/L6 model call could not reserve its call count or cost against the session or batch budget, so it was not sent. |
+| `judge_abstained` | The judge answered `{"abstain": true, "reason": "..."}`: the output lacks the evidence the rubric needs. |
 
 SDKs aggregate a test's results after its whole batch:
 
@@ -592,6 +617,11 @@ The canonical trace format represents a single agent execution from input to out
 | `output` | object | yes | Agent output. Must contain at least one field. |
 | `metadata` | object | no | Trace-level metadata: tokens, cost, latency, model, timestamp. |
 | `parent_trace_id` | string \| null | no | Set when this trace is a sub-agent invocation from a parent trace. |
+| `conversation_id` | string | no | v2. Conversation the trace belongs to (`gen_ai.conversation.id`). |
+| `turns` | []Turn | no | v2. Conversation turns: `index`, optional `span_id`, `input`, `output`, and `step_indices` into `steps`. |
+| `handoffs` | []Handoff | no | v2. Agent handoffs: `from_agent`, `to_agent`, and `step_index` of the `agent_call` step that starts `to_agent`'s work. |
+
+`schema_version` 2 ("trace v2") adds the optional fields marked v2 here and in §3.4; the engine accepts versions 0–2 and a version 1 trace is unchanged. JSON Schema: `proto/attest/v1/trace-v2.schema.json`. A trace produced by `trace convert` always has `input` and `output` objects (`output.message` may be empty), `args` and `result` objects (never null), `metadata.duration_ms` (whole milliseconds, 0 when the span ends before it starts), `started_at_ms` and `ended_at_ms` on every step, and `step_indices` on every turn; `turns`, `handoffs`, `metadata` and every other optional field are omitted when empty. SDKs compare converted traces by parsed value, not bytes. `attest-engine trace convert <otlp.json>` produces a v2 trace from an OTLP/JSON export, and `attest-engine trace check` reports the export's integrity and evidence coverage (see `docs/guides/trace-check.md`).
 
 ### 3.3 Step Types
 
@@ -700,6 +730,12 @@ A sub-agent delegation. Contains a nested sub-trace for multi-agent evaluation.
 | `result` | object | no | Output from the step |
 | `sub_trace` | Trace | no | Only for `agent_call`. Nested trace of the sub-agent. |
 | `metadata` | object | no | Step-level timing and cost |
+| `span_id` | string | no | v2. 16-hex-character OTLP span id of the step. |
+| `parent_span_id` | string | no | v2. OTLP parent span id. |
+| `tool_call_id` | string | no | v2. Tool call id (`gen_ai.tool.call.id`) on `tool_call` steps. |
+| `retry_of` | int | no | v2. Index of the earlier failed step this step repeats. |
+| `error` | object | no | v2. `{ "type": string, "message"?: string }` when the step ended in error. |
+| `exchange` | object | no | v2. Recorded model `request` and `response` objects. |
 
 ---
 
@@ -880,6 +916,14 @@ Structural checks on the sequence and properties of steps in the trace. Detects 
 | `tools` | []string | depends | Tool names for ordering checks |
 | `tool` | string | depends | Tool name for per-tool checks |
 | `max_repetitions` | int | depends | Maximum times a step may repeat |
+| `per` | string | no | `tool_cardinality`: dot path of the argument that groups calls (for example `order_id`) |
+| `min`, `max` | int | depends | `tool_cardinality` bounds per group (at least one); `failure_streak` uses `max` |
+| `mode` | string | depends | `trajectory`: `strict`, `unordered`, `subset`, `superset` or `partial_order` |
+| `order` | [][2]string | depends | `trajectory` mode `partial_order`: `[before, after]` pairs |
+| `before`, `after` | string | depends | `tool_order` tool names |
+| `period` | int | depends | `cycle` period, 1–4 |
+| `min_repeats` | int | no | `cycle`: consecutive repetitions that count as a cycle. Default `2`. |
+| `arg`, `op`, `value` | string, string, any | depends | `arg_predicate`: argument dot path, operator (`eq`, `ne`, `lt`, `lte`, `gt`, `gte`, `in`, `not_in`) and JSON operand |
 | `transitions` | []Transition | depends | Expected state machine transitions |
 | `soft` | bool | no | If `true`, failure is `soft_fail`. Default: `false`. |
 
@@ -893,6 +937,14 @@ Structural checks on the sequence and properties of steps in the trace. Detects 
 | `no_duplicates` | No tool is called more than once | none |
 | `required_tools` | All listed tools were called at least once | `tools` |
 | `forbidden_tools` | None of the listed tools were called | `tools` |
+| `tool_cardinality` | `tool` is called between `min` and `max` times, counted per value of argument `per` when set. Explanation on failure: `issue_refund called 2× for order_id=O-1042 (max 1)`. Groups compare JSON values exactly (`"7"` and `7` differ; `7` and `7.0` match). With `per`, `min` also fails when the tool is never called. A call whose `per` argument is absent or `null` makes the check `not_evaluated: missing_evidence` unless another group already fails. | `tool`, `min` and/or `max` |
+| `trajectory` | The tool calls match `tools`: `strict` (same sequence), `unordered` (same calls, any order), `subset` (no call outside `tools`, counting repeats), `superset` (every call in `tools` made, counting repeats), or `partial_order` (every tool in `tools` and `order` called, each `order` pair holding as in `tool_order`; contradictory pairs are a spec error) | `mode`; `tools` (`partial_order`: `order`) |
+| `tool_order` | Every call to `after` has an earlier call to `before`; holds when `after` is never called | `before`, `after` |
+| `cycle` | No block of `period` tool calls repeats `min_repeats` or more times in a row (A→B→A→B fails `period: 2`). A block that is itself a shorter repetition (A A) is left to the shorter period. | `period` |
+| `failure_streak` | At most `max` consecutive tool calls end in `error`. Needs trace `schema_version` 2; an earlier trace is `not_evaluated: missing_evidence`. | `max` |
+| `arg_predicate` | Every call to `tool` has argument `arg` satisfying `op value`; holds when `tool` is never called. Comparisons are exact on JSON numbers. A call whose argument is absent or `null` is `not_evaluated: missing_evidence` unless another call already fails. | `tool`, `arg`, `op`, `value` |
+
+The original six checks match steps of every type by name. The behavior-contract checks (`tool_cardinality` through `arg_predicate`) match `tool_call` steps only, so model calls between tool calls do not affect them, and a retried call (`retry_of`) counts as a call.
 
 **Examples:**
 
@@ -928,6 +980,20 @@ No duplicate state changes:
   "type": "trace",
   "spec": {
     "check": "no_duplicates"
+  }
+}
+```
+
+At most one refund per order:
+```json
+{
+  "assertion_id": "one_refund_per_order",
+  "type": "trace",
+  "spec": {
+    "check": "tool_cardinality",
+    "tool": "issue_refund",
+    "per": "order_id",
+    "max": 1
   }
 }
 ```
@@ -1136,6 +1202,8 @@ Custom judge prompt:
   }
 }
 ```
+
+Built-in rubrics end with the response format: `{"score": <0.0–1.0>, "explanation": "..."}`, or `{"abstain": true, "reason": "<the evidence that is missing>"}` when the output does not contain enough information to apply the rubric. The engine reads the `abstain` field only (no phrase matching) and returns `not_evaluated` with reason `judge_abstained`. With `repeat: N`, runs that abstain or could not reserve budget are left out of the median and noted in the explanation; the assertion is not evaluated only when no run scored (reason precedence: `provider_unavailable`, then `judge_abstained`, then `budget_exhausted`).
 
 **Pass result:**
 ```json
@@ -1379,8 +1447,9 @@ The engine validates all traces before evaluation. Invalid traces return an `INV
 
 | schema_version | Status |
 |----------------|--------|
-| Current (1) | Fully supported |
-| Previous (0) | Supported with deprecation warning in engine logs |
+| Current (2) | Fully supported (trace v2: turns, handoffs, retries, recorded exchanges) |
+| 1 | Fully supported; v2 fields are optional, so a v1 trace is unchanged |
+| 0 | Supported with deprecation warning in engine logs |
 | Older | Rejected with `INVALID_TRACE` and migration message |
 
 ### Actionable Error Messages
@@ -1409,7 +1478,8 @@ The engine validates in this order and stops at the first failure:
 4. Size and count limits
 5. Field type and format validation
 6. Step-level validation (type, name, payload size)
-7. Sub-trace depth check
+7. Step references (`retry_of`, `turns[].step_indices`, `handoffs[].step_index` index existing steps; `retry_of` an earlier one)
+8. Sub-trace depth check
 
 This order ensures the most actionable error is surfaced first.
 

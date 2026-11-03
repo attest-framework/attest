@@ -1,0 +1,339 @@
+{
+  "schema_version": 2,
+  "trace_id": "otel_4bf92f3577b34da6",
+  "agent_id": "triage",
+  "input": {
+    "messages": [
+      {
+        "parts": [
+          {
+            "content": "Refund order O-7 please",
+            "type": "text"
+          }
+        ],
+        "role": "user"
+      }
+    ]
+  },
+  "steps": [
+    {
+      "type": "llm_call",
+      "name": "chat gpt-4.1",
+      "args": {
+        "model": "gpt-4.1",
+        "operation": "chat",
+        "provider": "openai"
+      },
+      "result": {
+        "cost_usd": 0.0012,
+        "finish_reasons": [
+          "tool_calls"
+        ],
+        "input_tokens": 120,
+        "model": "gpt-4.1-2025-04-14",
+        "output_tokens": 30
+      },
+      "metadata": {
+        "duration_ms": 9
+      },
+      "started_at_ms": 1793600000001,
+      "ended_at_ms": 1793600000010,
+      "span_id": "a000000000000002",
+      "parent_span_id": "a000000000000001",
+      "exchange": {
+        "request": {
+          "messages": [
+            {
+              "parts": [
+                {
+                  "content": "Refund order O-7 please",
+                  "type": "text"
+                }
+              ],
+              "role": "user"
+            }
+          ],
+          "model": "gpt-4.1",
+          "system_instructions": [
+            {
+              "content": "You are triage.",
+              "type": "text"
+            }
+          ]
+        },
+        "response": {
+          "finish_reasons": [
+            "tool_calls"
+          ],
+          "messages": [
+            {
+              "finish_reason": "tool_call",
+              "parts": [
+                {
+                  "arguments": {
+                    "order_id": "O-7"
+                  },
+                  "id": "call_a",
+                  "name": "lookup_order",
+                  "type": "tool_call"
+                }
+              ],
+              "role": "assistant"
+            }
+          ],
+          "model": "gpt-4.1-2025-04-14"
+        }
+      }
+    },
+    {
+      "type": "tool_call",
+      "name": "lookup_order",
+      "args": {
+        "order_id": "O-7"
+      },
+      "result": {
+        "amount_cents": 1200,
+        "order_id": "O-7"
+      },
+      "metadata": {
+        "duration_ms": 4
+      },
+      "started_at_ms": 1793600000011,
+      "ended_at_ms": 1793600000015,
+      "span_id": "a000000000000003",
+      "parent_span_id": "a000000000000001",
+      "tool_call_id": "call_a"
+    },
+    {
+      "type": "agent_call",
+      "name": "billing",
+      "args": {
+        "agent_name": "billing",
+        "description": "Issues refunds"
+      },
+      "result": {},
+      "metadata": {
+        "duration_ms": 44
+      },
+      "started_at_ms": 1793600000016,
+      "ended_at_ms": 1793600000060,
+      "agent_role": "billing",
+      "span_id": "a000000000000004",
+      "parent_span_id": "a000000000000001"
+    },
+    {
+      "type": "llm_call",
+      "name": "chat gpt-4.1",
+      "args": {
+        "model": "gpt-4.1",
+        "operation": "chat",
+        "provider": "openai"
+      },
+      "result": {
+        "input_tokens": 80,
+        "output_tokens": 0
+      },
+      "metadata": {
+        "duration_ms": 3
+      },
+      "started_at_ms": 1793600000017,
+      "ended_at_ms": 1793600000020,
+      "span_id": "a000000000000005",
+      "parent_span_id": "a000000000000004",
+      "error": {
+        "type": "rate_limited",
+        "message": "429 Too Many Requests"
+      }
+    },
+    {
+      "type": "llm_call",
+      "name": "chat gpt-4.1",
+      "args": {
+        "model": "gpt-4.1",
+        "operation": "chat",
+        "provider": "openai"
+      },
+      "result": {
+        "cost_usd": 0.0008,
+        "finish_reasons": [
+          "stop"
+        ],
+        "input_tokens": 80,
+        "model": "gpt-4.1-2025-04-14",
+        "output_tokens": 12
+      },
+      "metadata": {
+        "duration_ms": 19
+      },
+      "started_at_ms": 1793600000021,
+      "ended_at_ms": 1793600000040,
+      "span_id": "a000000000000006",
+      "parent_span_id": "a000000000000004",
+      "retry_of": 3,
+      "exchange": {
+        "request": {
+          "messages": [
+            {
+              "parts": [
+                {
+                  "content": "Refund order O-7 please",
+                  "type": "text"
+                }
+              ],
+              "role": "user"
+            }
+          ],
+          "model": "gpt-4.1"
+        },
+        "response": {
+          "finish_reasons": [
+            "stop"
+          ],
+          "messages": [
+            {
+              "finish_reason": "stop",
+              "parts": [
+                {
+                  "content": "Refund of $12.00 issued.",
+                  "type": "text"
+                }
+              ],
+              "role": "assistant"
+            }
+          ],
+          "model": "gpt-4.1-2025-04-14"
+        }
+      }
+    },
+    {
+      "type": "retrieval",
+      "name": "retrieval policies",
+      "args": {
+        "query": "refund policy"
+      },
+      "result": {
+        "documents_count": 2
+      },
+      "metadata": {
+        "duration_ms": 9
+      },
+      "started_at_ms": 1793600000061,
+      "ended_at_ms": 1793600000070,
+      "span_id": "a000000000000007",
+      "parent_span_id": "a000000000000001"
+    },
+    {
+      "type": "llm_call",
+      "name": "chat gpt-4.1",
+      "args": {
+        "model": "gpt-4.1",
+        "operation": "chat",
+        "provider": "openai"
+      },
+      "result": {
+        "cost_usd": 0.0011,
+        "finish_reasons": [
+          "stop"
+        ],
+        "input_tokens": 200,
+        "model": "gpt-4.1-2025-04-14",
+        "output_tokens": 8
+      },
+      "metadata": {
+        "duration_ms": 28
+      },
+      "started_at_ms": 1793600000071,
+      "ended_at_ms": 1793600000099,
+      "span_id": "a000000000000008",
+      "parent_span_id": "a000000000000001",
+      "exchange": {
+        "request": {
+          "messages": [
+            {
+              "parts": [
+                {
+                  "content": "Refund order O-7 please",
+                  "type": "text"
+                }
+              ],
+              "role": "user"
+            }
+          ],
+          "model": "gpt-4.1"
+        },
+        "response": {
+          "finish_reasons": [
+            "stop"
+          ],
+          "messages": [
+            {
+              "finish_reason": "stop",
+              "parts": [
+                {
+                  "content": "Refund approved.",
+                  "type": "text"
+                }
+              ],
+              "role": "assistant"
+            }
+          ],
+          "model": "gpt-4.1-2025-04-14"
+        }
+      }
+    }
+  ],
+  "output": {
+    "message": "Refund approved."
+  },
+  "metadata": {
+    "total_tokens": 530,
+    "cost_usd": 0.0031000000000000003,
+    "latency_ms": 100,
+    "model": "gpt-4.1-2025-04-14"
+  },
+  "conversation_id": "conv-7",
+  "turns": [
+    {
+      "index": 0,
+      "span_id": "a000000000000001",
+      "input": [
+        {
+          "parts": [
+            {
+              "content": "Refund order O-7 please",
+              "type": "text"
+            }
+          ],
+          "role": "user"
+        }
+      ],
+      "output": [
+        {
+          "parts": [
+            {
+              "content": "Refund approved.",
+              "type": "text"
+            }
+          ],
+          "role": "assistant"
+        }
+      ],
+      "step_indices": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+      ]
+    }
+  ],
+  "handoffs": [
+    {
+      "from_agent": "triage",
+      "to_agent": "billing",
+      "step_index": 2
+    }
+  ]
+}

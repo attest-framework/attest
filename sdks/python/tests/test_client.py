@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from attest._proto.types import Assertion, EvaluateBatchResult, Trace
+from attest._proto.types import Assertion, BatchBudget, EvaluateBatchResult, Trace, Usage
 from attest.client import AttestClient
 
 
@@ -152,6 +152,7 @@ async def test_evaluate_batch_parses_result() -> None:
                 }
             ],
             "total_cost": 0.0,
+            "usage": Usage().to_dict(),
             "total_duration_ms": 10,
         }
     )
@@ -174,6 +175,24 @@ async def test_evaluate_batch_parses_result() -> None:
     params = call_args[0][1]
     assert params["trace"]["trace_id"] == "trc_1"
     assert len(params["assertions"]) == 1
+    assert "budget" not in params
+
+
+@pytest.mark.asyncio
+async def test_evaluate_batch_with_budget_sends_set_limits_only() -> None:
+    engine = MagicMock()
+    engine.send_request = AsyncMock(
+        return_value={"results": [], "usage": Usage(judge_calls=2).to_dict()}
+    )
+    client = AttestClient(engine)
+
+    batch_result = await client.evaluate_batch(
+        Trace(trace_id="trc_1", output={}), [], budget=BatchBudget(max_cost_usd=0.25)
+    )
+
+    params = engine.send_request.call_args[0][1]
+    assert params["budget"] == {"max_cost_usd": 0.25}
+    assert batch_result.usage == Usage(judge_calls=2)
 
 
 @pytest.mark.asyncio

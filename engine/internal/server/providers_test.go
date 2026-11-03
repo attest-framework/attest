@@ -121,8 +121,10 @@ func TestResolveJudgeConfig_InvalidSettingsError(t *testing.T) {
 		env      map[string]string
 		wantPart string
 	}{
-		{"unimplemented provider", map[string]string{"ATTEST_JUDGE_PROVIDER": "anthropic"}, "supported: openai"},
-		{"unknown provider", map[string]string{"ATTEST_JUDGE_PROVIDER": "bogus"}, "supported: openai"},
+		{"unknown provider", map[string]string{"ATTEST_JUDGE_PROVIDER": "bogus"}, "supported: openai, anthropic, gemini, acp"},
+		{"anthropic without model", map[string]string{"ATTEST_JUDGE_PROVIDER": "anthropic", "ANTHROPIC_API_KEY": "secret-key"}, "requires ATTEST_JUDGE_MODEL"},
+		{"gemini without model", map[string]string{"ATTEST_JUDGE_PROVIDER": "gemini", "GEMINI_API_KEY": "secret-key"}, "requires ATTEST_JUDGE_MODEL"},
+		{"base URL with only anthropic key", map[string]string{"ATTEST_JUDGE_PROVIDER": "anthropic", "ATTEST_JUDGE_BASE_URL": "https://other.example", "ANTHROPIC_API_KEY": "secret-key"}, "ANTHROPIC_API_KEY is not sent"},
 		{"base URL without key", map[string]string{"ATTEST_JUDGE_BASE_URL": "http://localhost:8080/v1"}, "ATTEST_JUDGE_API_KEY"},
 		{"base URL with only standard key", map[string]string{"ATTEST_JUDGE_BASE_URL": "https://other.example/v1", "OPENAI_API_KEY": "secret-key"}, "OPENAI_API_KEY is not sent"},
 		{"credentials with bad scheme", map[string]string{"ATTEST_JUDGE_BASE_URL": "ftp://user:pw@host/v1", "ATTEST_JUDGE_API_KEY": "secret-key"}, "must not contain credentials"},
@@ -153,8 +155,8 @@ func TestResolveJudgeConfig_InvalidSettingsError(t *testing.T) {
 			if strings.Contains(err.Error(), "secret-key") || strings.Contains(err.Error(), "pw") {
 				t.Errorf("error leaks a credential: %q", err)
 			}
-			if strings.Contains(err.Error(), "anthropic,") || strings.Contains(err.Error(), "gemini") {
-				t.Errorf("error lists unimplemented providers: %q", err)
+			if strings.Contains(err.Error(), "ollama") {
+				t.Errorf("error lists an unimplemented provider: %q", err)
 			}
 		})
 	}

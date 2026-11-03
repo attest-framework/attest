@@ -51,7 +51,10 @@ func printDiagnosis(w io.Writer, d *server.Diagnosis) {
 	}
 	fmt.Fprintf(w, "simulation mode: %s\n", sim)
 
-	if d.Judge.Configured {
+	if d.Judge.Configured && d.Judge.BaseURL == nil {
+		fmt.Fprintf(w, "judge (L6):      %s, model %s, local agent from ATTEST_JUDGE_ACP_COMMAND\n",
+			*d.Judge.Provider, *d.Judge.Model)
+	} else if d.Judge.Configured {
 		fmt.Fprintf(w, "judge (L6):      %s, model %s, base URL %s, key from %s\n",
 			*d.Judge.Provider, *d.Judge.Model, *d.Judge.BaseURL, *d.Judge.APIKeySource)
 		if d.Judge.Warning != "" {

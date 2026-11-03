@@ -18,6 +18,13 @@ type BaselineEntry struct {
 	Cost        float64
 	DurationMS  int64
 	PinnedAt    time.Time
+	// Passes, Evaluated and NotEvaluated tally the pinned runs of this
+	// assertion: one run for a plain report, N for a fixed-N trials report.
+	// Evaluated excludes not_evaluated runs. Rows pinned before these
+	// columns existed are read as one run derived from Status.
+	Passes       int
+	Evaluated    int
+	NotEvaluated int
 }
 
 // BaselineSummary aggregates the rows of a single baseline tag for listing.
@@ -51,10 +58,16 @@ func NewBaselineStore(db *sql.DB) (*BaselineStore, error) {
 			cost          REAL    NOT NULL DEFAULT 0,
 			duration_ms   INTEGER NOT NULL DEFAULT 0,
 			pinned_at     INTEGER NOT NULL,
+			passes        INTEGER NOT NULL DEFAULT -1,
+			evaluated     INTEGER NOT NULL DEFAULT -1,
+			not_evaluated INTEGER NOT NULL DEFAULT 0,
 			PRIMARY KEY (tag, assertion_id)
 		)
 	`); err != nil {
 		return nil, fmt.Errorf("create baselines table: %w", err)
+	}
+	if err := addBaselineCountColumns(db); err != nil {
+		return nil, err
 	}
 	if _, err := db.Exec(`
 		CREATE INDEX IF NOT EXISTS idx_baselines_tag
@@ -88,8 +101,9 @@ func (b *BaselineStore) Pin(tag string, entries []BaselineEntry) error {
 
 	stmt, err := tx.Prepare(`
 		INSERT INTO baselines
-		(tag, assertion_id, assertion_type, status, score, cost, duration_ms, pinned_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		(tag, assertion_id, assertion_type, status, score, cost, duration_ms, pinned_at,
+		 passes, evaluated, not_evaluated)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`)
 	if err != nil {
 		return fmt.Errorf("prepare insert: %w", err)
@@ -98,6 +112,9 @@ func (b *BaselineStore) Pin(tag string, entries []BaselineEntry) error {
 
 	pinnedAt := time.Now().UnixNano()
 	for _, e := range entries {
+		if e.Evaluated == 0 && e.NotEvaluated == 0 {
+			e.Passes, e.Evaluated, e.NotEvaluated = legacyCounts(e.Status)
+		}
 		if _, err := stmt.Exec(
 			tag,
 			e.AssertionID,
@@ -107,6 +124,9 @@ func (b *BaselineStore) Pin(tag string, entries []BaselineEntry) error {
 			e.Cost,
 			e.DurationMS,
 			pinnedAt,
+			e.Passes,
+			e.Evaluated,
+			e.NotEvaluated,
 		); err != nil {
 			return fmt.Errorf("insert entry %s: %w", e.AssertionID, err)
 		}
@@ -122,7 +142,8 @@ func (b *BaselineStore) Pin(tag string, entries []BaselineEntry) error {
 // returns an empty slice with nil error so callers can check len(entries)==0.
 func (b *BaselineStore) Get(tag string) ([]BaselineEntry, error) {
 	rows, err := b.db.Query(`
-		SELECT tag, assertion_id, assertion_type, status, score, cost, duration_ms, pinned_at
+		SELECT tag, assertion_id, assertion_type, status, score, cost, duration_ms, pinned_at,
+		       passes, evaluated, not_evaluated
 		FROM baselines
 		WHERE tag = ?
 		ORDER BY assertion_id
@@ -145,10 +166,16 @@ func (b *BaselineStore) Get(tag string) ([]BaselineEntry, error) {
 			&e.Cost,
 			&e.DurationMS,
 			&pinnedAtNanos,
+			&e.Passes,
+			&e.Evaluated,
+			&e.NotEvaluated,
 		); err != nil {
 			return nil, fmt.Errorf("scan baseline row: %w", err)
 		}
 		e.PinnedAt = time.Unix(0, pinnedAtNanos).UTC()
+		if e.Evaluated < 0 {
+			e.Passes, e.Evaluated, e.NotEvaluated = legacyCounts(e.Status)
+		}
 		out = append(out, e)
 	}
 	if err := rows.Err(); err != nil {
@@ -218,4 +245,52 @@ func (b *BaselineStore) Delete(tag string) (int, error) {
 		return 0, fmt.Errorf("rows affected: %w", err)
 	}
 	return int(n), nil
+}
+
+// addBaselineCountColumns adds the passes/evaluated/not_evaluated columns
+// to a baselines table created before they existed. Existing rows get -1,
+// which Get reads as one run derived from status.
+func addBaselineCountColumns(db *sql.DB) error {
+	rows, err := db.Query(`SELECT name FROM pragma_table_info('baselines')`)
+	if err != nil {
+		return fmt.Errorf("inspect baselines table: %w", err)
+	}
+	have := make(map[string]bool)
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			rows.Close()
+			return fmt.Errorf("inspect baselines table: %w", err)
+		}
+		have[name] = true
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("inspect baselines table: %w", err)
+	}
+	for _, col := range []struct{ name, def string }{
+		{"passes", "INTEGER NOT NULL DEFAULT -1"},
+		{"evaluated", "INTEGER NOT NULL DEFAULT -1"},
+		{"not_evaluated", "INTEGER NOT NULL DEFAULT 0"},
+	} {
+		if have[col.name] {
+			continue
+		}
+		if _, err := db.Exec(`ALTER TABLE baselines ADD COLUMN ` + col.name + ` ` + col.def); err != nil {
+			return fmt.Errorf("add baselines column %s: %w", col.name, err)
+		}
+	}
+	return nil
+}
+
+// legacyCounts reads a row pinned without counts as one run.
+func legacyCounts(status string) (passes, evaluated, notEvaluated int) {
+	switch status {
+	case "pass":
+		return 1, 1, 0
+	case "soft_fail", "hard_fail":
+		return 0, 1, 0
+	default:
+		return 0, 0, 1
+	}
 }

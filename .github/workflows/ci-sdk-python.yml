@@ -50,7 +50,7 @@ jobs:
 
   # Notify docs site of SDK changes so it can rebuild
   # Requires DOCS_DEPLOY_TOKEN secret: GitHub PAT with repo scope
-  # for cross-repo repository_dispatch to attest-framework/attest-website
+  # for cross-repo repository_dispatch to attest-framework/attest-framework.github.io
   notify-docs:
     needs: test
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
@@ -74,5 +74,5 @@ jobs:
         uses: peter-evans/repository-dispatch@v4
         with:
           token: ${{ secrets.DOCS_DEPLOY_TOKEN }}
-          repository: attest-framework/attest-website
+          repository: attest-framework/attest-framework.github.io
           event-type: docs-update

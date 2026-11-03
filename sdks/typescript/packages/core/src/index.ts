@@ -24,6 +24,7 @@ export { AttestClient, requireSimulationCapability } from "./client.js";
 export type { AttestClientOptions } from "./client.js";
 export { TraceBuilder } from "./trace.js";
 export { AgentResult } from "./result.js";
+export { addUsage, formatUsage, parseUsage, sumUsage, usageSummaryLine, zeroUsage } from "./usage.js";
 export {
   renderAssertionFailure,
   renderDiagnostics,
@@ -32,6 +33,23 @@ export {
 export type { RenderOptions } from "./diagnostics.js";
 export { TraceTree } from "./trace-tree.js";
 export { ExpectChain, attestExpect } from "./expect.js";
+export {
+  CaptureError,
+  loadFixture,
+  record,
+  emitVitest,
+  renderVitest,
+  dslCall,
+  testPathFor,
+} from "./capture.js";
+export type {
+  Capture,
+  Contract,
+  ContractResult,
+  Fixture,
+  RecordOptions,
+  RecordResult,
+} from "./capture.js";
 export { Agent, agent } from "./agent.js";
 export { delegate } from "./delegate.js";
 export { activeBuilder } from "./context.js";

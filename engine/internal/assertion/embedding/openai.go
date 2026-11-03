@@ -57,6 +57,9 @@ type openAIEmbedResponse struct {
 	Data []struct {
 		Embedding []float32 `json:"embedding"`
 	} `json:"data"`
+	Usage struct {
+		PromptTokens int `json:"prompt_tokens"`
+	} `json:"usage"`
 	Error *struct {
 		Message string `json:"message"`
 		Type    string `json:"type"`
@@ -65,41 +68,48 @@ type openAIEmbedResponse struct {
 
 // Embed returns the embedding vector for the given text.
 func (e *OpenAIEmbedder) Embed(ctx context.Context, text string) ([]float32, error) {
+	vec, _, err := e.EmbedWithUsage(ctx, text)
+	return vec, err
+}
+
+// EmbedWithUsage returns the embedding vector and the input tokens the API
+// reported for it.
+func (e *OpenAIEmbedder) EmbedWithUsage(ctx context.Context, text string) ([]float32, int, error) {
 	body, err := json.Marshal(openAIEmbedRequest{Input: text, Model: e.model})
 	if err != nil {
-		return nil, fmt.Errorf("openai embed: marshal request: %w", err)
+		return nil, 0, fmt.Errorf("openai embed: marshal request: %w", err)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, e.baseURL+"/embeddings", bytes.NewReader(body))
 	if err != nil {
-		return nil, fmt.Errorf("openai embed: build request: %w", err)
+		return nil, 0, fmt.Errorf("openai embed: build request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+e.apiKey)
 
 	resp, err := e.client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("openai embed: http: %w", err)
+		return nil, 0, fmt.Errorf("openai embed: http: %w", err)
 	}
 	defer resp.Body.Close()
 
 	raw, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, fmt.Errorf("openai embed: read body: %w", err)
+		return nil, 0, fmt.Errorf("openai embed: read body: %w", err)
 	}
 
 	var result openAIEmbedResponse
 	if err := json.Unmarshal(raw, &result); err != nil {
-		return nil, fmt.Errorf("openai embed: unmarshal response: %w", err)
+		return nil, 0, fmt.Errorf("openai embed: unmarshal response: %w", err)
 	}
 
 	if result.Error != nil {
-		return nil, fmt.Errorf("openai embed: API error (%s): %s", result.Error.Type, result.Error.Message)
+		return nil, 0, fmt.Errorf("openai embed: API error (%s): %s", result.Error.Type, result.Error.Message)
 	}
 
 	if len(result.Data) == 0 || len(result.Data[0].Embedding) == 0 {
-		return nil, fmt.Errorf("openai embed: empty embedding in response")
+		return nil, 0, fmt.Errorf("openai embed: empty embedding in response")
 	}
 
-	return result.Data[0].Embedding, nil
+	return result.Data[0].Embedding, result.Usage.PromptTokens, nil
 }

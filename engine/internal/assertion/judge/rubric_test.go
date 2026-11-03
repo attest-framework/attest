@@ -150,3 +150,38 @@ func TestParseScoreResult_InvalidJSON(t *testing.T) {
 		t.Fatal("expected error for invalid JSON, got nil")
 	}
 }
+
+func TestParseScoreResult_AbstainObject_SetsAbstainAndReason(t *testing.T) {
+	got, err := judge.ParseScoreResult(`{"abstain": true, "reason": "cannot determine"}`)
+
+	if err != nil {
+		t.Fatalf("ParseScoreResult: %v", err)
+	}
+	if !got.Abstain || got.Reason != "cannot determine" {
+		t.Errorf("result = %+v, want abstain with reason", got)
+	}
+}
+
+func TestParseScoreResult_PhraseWithoutAbstainField_IsAScore(t *testing.T) {
+	got, err := judge.ParseScoreResult(`{"score": 0.2, "explanation": "cannot determine the refund amount"}`)
+
+	if err != nil {
+		t.Fatalf("ParseScoreResult: %v", err)
+	}
+	if got.Abstain || got.Score != 0.2 {
+		t.Errorf("result = %+v, want a plain score: abstention is the structured field only", got)
+	}
+}
+
+func TestRubricRegistry_BuiltinPrompts_InstructAbstain(t *testing.T) {
+	reg := judge.NewRubricRegistry()
+	for _, name := range []string{"default", "helpfulness", "accuracy", "safety"} {
+		r, err := reg.Get(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(r.SystemPrompt, `{"abstain": true, "reason":`) {
+			t.Errorf("rubric %s does not instruct the abstain response", name)
+		}
+	}
+}
