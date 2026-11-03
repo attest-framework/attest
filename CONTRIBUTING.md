@@ -4,7 +4,7 @@ Thank you for your interest in contributing to Attest, the test framework for AI
 
 ## Prerequisites
 
-- **Go 1.24+** — [Install Go](https://go.dev/dl/)
+- **Go 1.27+** — [Install Go](https://go.dev/dl/)
 - **Python 3.10+** — [Install Python](https://www.python.org/downloads/)
 - **uv** — [Install uv](https://docs.astral.sh/uv/getting-started/installation/)
 
