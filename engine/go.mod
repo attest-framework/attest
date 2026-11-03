@@ -3,7 +3,7 @@ module github.com/attest-ai/attest/engine
 go 1.25.0
 
 require (
-	github.com/santhosh-tekuri/jsonschema/v6 v6.0.2
+	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3
 	github.com/segmentio/encoding v0.5.4
 	github.com/yalue/onnxruntime_go v1.31.0
 	go.opentelemetry.io/proto/otlp v1.10.0
