@@ -264,6 +264,7 @@ def test_soft_failures_counted_across_every_trial_of_a_test(
         nodeid = "t::loop"
         location = ("t.py", 0, "loop")
         path = "t.py"
+        config = type("Config", (), {"getoption": lambda self, *a, **k: None})()
 
     plugin._take_test_results()
     for _ in range(3):

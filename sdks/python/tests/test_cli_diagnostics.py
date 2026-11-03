@@ -214,3 +214,27 @@ def test_assertion_result_diagnostic_fields_serialise_to_json() -> None:
     restored = AssertionResult.from_dict(json.loads(blob))
     assert restored.trace_node_path == "output"
     assert restored.suggested_action == "prompt update"
+
+
+def test_render_assertion_failure_judge_provider_prefixes_model() -> None:
+    r = AssertionResult(
+        assertion_id="judge_provider",
+        status=STATUS_HARD_FAIL,
+        score=0.4,
+        explanation="low",
+        type=TYPE_LLM_JUDGE,
+        judge_metadata=JudgeMetadata.from_dict(
+            {
+                "provider": "gemini",
+                "model": "judge-model",
+                "rubric_name": "default",
+                "rubric_version": "v1",
+            }
+        ),
+    )
+
+    block = render_assertion_failure(r)
+
+    assert "judge:      gemini/judge-model / default @ v1" in block
+    assert r.judge_metadata is not None
+    assert r.judge_metadata.to_dict()["provider"] == "gemini"

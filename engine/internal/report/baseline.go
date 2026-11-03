@@ -25,6 +25,9 @@ type BaselineDelta struct {
 	AssertionsRemoved []string              `json:"assertions_removed,omitempty"`
 	Regressions       []AssertionTransition `json:"regressions,omitempty"`
 	Improvements      []AssertionTransition `json:"improvements,omitempty"`
+	// BaselineCounts holds each baseline assertion's pinned pass tally for
+	// the policy regression rule. Not serialized.
+	BaselineCounts map[string]PassCount `json:"-"`
 }
 
 // AssertionTransition records a status change for a single assertion
@@ -61,12 +64,17 @@ func statusRank(status string) int {
 // that exist in the respective set. Per-assertion transitions are
 // classified into Regressions and Improvements; same-status entries are
 // dropped to keep the report focused on what changed.
+//
+// Trial rows (several rows per assertion id) are first folded into one
+// row per assertion, the same way `baseline pin` folds them.
 func ComputeBaselineDelta(tag string, baseline []cache.BaselineEntry, current []types.AssertionResult) BaselineDelta {
-	d := BaselineDelta{BaselineTag: tag}
+	d := BaselineDelta{BaselineTag: tag, BaselineCounts: make(map[string]PassCount, len(baseline))}
+	current, _ = FoldRuns(current)
 
 	baselineByID := make(map[string]cache.BaselineEntry, len(baseline))
 	for _, e := range baseline {
 		baselineByID[e.AssertionID] = e
+		d.BaselineCounts[e.AssertionID] = PassCount{Passes: e.Passes, Evaluated: e.Evaluated, NotEvaluated: e.NotEvaluated}
 		d.CostBaseline += e.Cost
 		d.DurationBaseline += e.DurationMS
 	}
@@ -232,4 +240,78 @@ func formatDurationDelta(d int64) string {
 		return "0ms"
 	}
 	return fmt.Sprintf("%+dms", d)
+}
+
+// FoldRuns folds result rows that share an assertion id (fixed-N trials)
+// into one representative row per assertion, in first-seen order, and
+// returns the pass tallies. The representative row has the worst status
+// observed (hard_fail > soft_fail > pass > not_evaluated), the mean score
+// of evaluated runs, summed cost and duration, and no trial index.
+func FoldRuns(results []types.AssertionResult) ([]types.AssertionResult, map[string]PassCount) {
+	counts := CountPasses(results)
+	index := make(map[string]int, len(counts))
+	folded := make([]types.AssertionResult, 0, len(counts))
+	scoreSum := make(map[string]float64, len(counts))
+	for _, r := range results {
+		if r.Status != types.StatusNotEvaluated {
+			scoreSum[r.AssertionID] += r.Score
+		}
+		i, seen := index[r.AssertionID]
+		if !seen {
+			row := r
+			row.Trial = 0
+			index[r.AssertionID] = len(folded)
+			folded = append(folded, row)
+			continue
+		}
+		row := &folded[i]
+		row.Cost += r.Cost
+		row.DurationMS += r.DurationMS
+		if foldRank(r.Status) > foldRank(row.Status) {
+			cost, dur := row.Cost, row.DurationMS
+			*row = r
+			row.Trial, row.Cost, row.DurationMS = 0, cost, dur
+		}
+	}
+	for i := range folded {
+		if c := counts[folded[i].AssertionID]; c.Evaluated > 0 {
+			folded[i].Score = scoreSum[folded[i].AssertionID] / float64(c.Evaluated)
+		}
+	}
+	return folded, counts
+}
+
+func foldRank(status string) int {
+	switch status {
+	case types.StatusHardFail:
+		return 3
+	case types.StatusSoftFail:
+		return 2
+	case types.StatusPass:
+		return 1
+	default:
+		return 0
+	}
+}
+
+// BaselineEntries builds the rows `baseline pin` stores for a report:
+// one per assertion, with its pass tally across trials.
+func BaselineEntries(results []types.AssertionResult) []cache.BaselineEntry {
+	folded, counts := FoldRuns(results)
+	out := make([]cache.BaselineEntry, 0, len(folded))
+	for _, r := range folded {
+		c := counts[r.AssertionID]
+		out = append(out, cache.BaselineEntry{
+			AssertionID:  r.AssertionID,
+			Type:         r.Type,
+			Status:       r.Status,
+			Score:        r.Score,
+			Cost:         r.Cost,
+			DurationMS:   r.DurationMS,
+			Passes:       c.Passes,
+			Evaluated:    c.Evaluated,
+			NotEvaluated: c.NotEvaluated,
+		})
+	}
+	return out
 }

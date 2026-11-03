@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -30,6 +31,8 @@ REASON_PROVIDER_NOT_CONFIGURED: str = "provider_not_configured"
 REASON_SIMULATION: str = "simulation"
 REASON_MISSING_EVIDENCE: str = "missing_evidence"
 REASON_SHORT_CIRCUITED: str = "short_circuited"
+REASON_BUDGET_EXHAUSTED: str = "budget_exhausted"
+REASON_JUDGE_ABSTAINED: str = "judge_abstained"
 
 # ---------------------------------------------------------------------------
 # Assertion type constants
@@ -123,6 +126,95 @@ class TraceMetadata:
 
 
 @dataclass
+class StepError:
+    """Trace v2: a step whose span ended in error."""
+
+    type: str
+    message: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        d: dict[str, Any] = {"type": self.type}
+        if self.message:
+            d["message"] = self.message
+        return d
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> StepError:
+        return cls(type=data["type"], message=data.get("message"))
+
+
+@dataclass
+class Exchange:
+    """Trace v2: a recorded model request/response pair."""
+
+    request: dict[str, Any]
+    response: dict[str, Any]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"request": _serialize(self.request), "response": _serialize(self.response)}
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> Exchange:
+        return cls(request=data["request"], response=data["response"])
+
+
+@dataclass
+class Turn:
+    """Trace v2: one conversation turn and the indices of its steps."""
+
+    index: int
+    step_indices: list[int] = field(default_factory=list)
+    span_id: str | None = None
+    input: Any = None
+    output: Any = None
+
+    def to_dict(self) -> dict[str, Any]:
+        d: dict[str, Any] = {"index": self.index}
+        if self.span_id:
+            d["span_id"] = self.span_id
+        if self.input is not None:
+            d["input"] = _serialize(self.input)
+        if self.output is not None:
+            d["output"] = _serialize(self.output)
+        d["step_indices"] = list(self.step_indices)
+        return d
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> Turn:
+        return cls(
+            index=data["index"],
+            step_indices=list(data.get("step_indices") or []),
+            span_id=data.get("span_id"),
+            input=data.get("input"),
+            output=data.get("output"),
+        )
+
+
+@dataclass
+class Handoff:
+    """Trace v2: control passing from one agent to another at an agent_call step."""
+
+    from_agent: str
+    to_agent: str
+    step_index: int
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "from_agent": self.from_agent,
+            "to_agent": self.to_agent,
+            "step_index": self.step_index,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> Handoff:
+        return cls(
+            from_agent=data["from_agent"],
+            to_agent=data["to_agent"],
+            step_index=data["step_index"],
+        )
+
+
+@dataclass
 class Step:
     type: str
     name: str
@@ -134,6 +226,13 @@ class Step:
     ended_at_ms: int | None = None
     agent_id: str | None = None
     agent_role: str | None = None
+    # Trace v2 (schema_version 2) fields.
+    span_id: str | None = None
+    parent_span_id: str | None = None
+    tool_call_id: str | None = None
+    retry_of: int | None = None
+    error: StepError | None = None
+    exchange: Exchange | None = None
 
     def to_dict(self) -> dict[str, Any]:
         d: dict[str, Any] = {"type": self.type, "name": self.name}
@@ -153,6 +252,18 @@ class Step:
             d["agent_id"] = self.agent_id
         if self.agent_role is not None:
             d["agent_role"] = self.agent_role
+        if self.span_id:
+            d["span_id"] = self.span_id
+        if self.parent_span_id:
+            d["parent_span_id"] = self.parent_span_id
+        if self.tool_call_id:
+            d["tool_call_id"] = self.tool_call_id
+        if self.retry_of is not None:
+            d["retry_of"] = self.retry_of
+        if self.error is not None:
+            d["error"] = self.error.to_dict()
+        if self.exchange is not None:
+            d["exchange"] = self.exchange.to_dict()
         return d
 
 
@@ -166,6 +277,10 @@ class Trace:
     steps: list[Step] = field(default_factory=list)
     metadata: TraceMetadata | None = None
     parent_trace_id: str | None = None
+    # Trace v2 (schema_version 2) fields.
+    conversation_id: str | None = None
+    turns: list[Turn] = field(default_factory=list)
+    handoffs: list[Handoff] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         d: dict[str, Any] = {
@@ -180,7 +295,14 @@ class Trace:
         d["steps"] = [s.to_dict() for s in self.steps]
         if self.metadata is not None:
             d["metadata"] = self.metadata.to_dict()
-        d["parent_trace_id"] = self.parent_trace_id
+        if self.parent_trace_id is not None:
+            d["parent_trace_id"] = self.parent_trace_id
+        if self.conversation_id:
+            d["conversation_id"] = self.conversation_id
+        if self.turns:
+            d["turns"] = [t.to_dict() for t in self.turns]
+        if self.handoffs:
+            d["handoffs"] = [h.to_dict() for h in self.handoffs]
         return d
 
     @classmethod
@@ -202,6 +324,12 @@ class Trace:
                     ended_at_ms=s.get("ended_at_ms"),
                     agent_id=s.get("agent_id"),
                     agent_role=s.get("agent_role"),
+                    span_id=s.get("span_id"),
+                    parent_span_id=s.get("parent_span_id"),
+                    tool_call_id=s.get("tool_call_id"),
+                    retry_of=s.get("retry_of"),
+                    error=StepError.from_dict(s["error"]) if s.get("error") else None,
+                    exchange=Exchange.from_dict(s["exchange"]) if s.get("exchange") else None,
                 )
             )
         raw_meta = data.get("metadata")
@@ -215,6 +343,9 @@ class Trace:
             steps=steps,
             metadata=metadata,
             parent_trace_id=data.get("parent_trace_id"),
+            conversation_id=data.get("conversation_id"),
+            turns=[Turn.from_dict(t) for t in data.get("turns") or []],
+            handoffs=[Handoff.from_dict(h) for h in data.get("handoffs") or []],
         )
 
 
@@ -315,9 +446,12 @@ class JudgeMetadata:
     high_variance: bool = False
     bias_probes: list[BiasProbe] = field(default_factory=list)
     calibration: JudgeAgreement | None = None
+    provider: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         d: dict[str, Any] = {}
+        if self.provider is not None:
+            d["provider"] = self.provider
         if self.model is not None:
             d["model"] = self.model
         if self.rubric_name is not None:
@@ -345,6 +479,7 @@ class JudgeMetadata:
         raw_probes = data.get("bias_probes", [])
         raw_cal = data.get("calibration")
         return cls(
+            provider=data.get("provider"),
             model=data.get("model"),
             rubric_name=data.get("rubric_name"),
             rubric_version=data.get("rubric_version"),
@@ -377,6 +512,8 @@ class AssertionResult:
     suggested_action: str | None = None
     judge_metadata: JudgeMetadata | None = None
     failure_class: str | None = None
+    # 1-based trial index, set by the SDK when the test ran as fixed-N trials.
+    trial: int | None = None
 
     def to_dict(self) -> dict[str, Any]:
         d: dict[str, Any] = {
@@ -409,6 +546,8 @@ class AssertionResult:
             d["judge_metadata"] = self.judge_metadata.to_dict()
         if self.failure_class is not None:
             d["failure_class"] = self.failure_class
+        if self.trial is not None:
+            d["trial"] = self.trial
         return d
 
     @classmethod
@@ -439,6 +578,7 @@ class AssertionResult:
             suggested_action=data.get("suggested_action"),
             judge_metadata=judge,
             failure_class=data.get("failure_class"),
+            trial=data.get("trial"),
         )
 
 
@@ -512,9 +652,121 @@ class EvaluateBatchParams:
         }
 
 
+USAGE_FIELDS: tuple[str, ...] = (
+    "model_calls",
+    "judge_calls",
+    "input_tokens",
+    "output_tokens",
+    "cached_tokens",
+    "cost_usd",
+    "retry_cost_usd",
+    "unpriced_calls",
+    "budget_refused",
+)
+
+
+@dataclass(frozen=True)
+class Usage:
+    """Attest-initiated model usage of one or more ``evaluate_batch`` calls.
+
+    Counts L5 embeddings, L6 judges, judge repeats, bias probes and
+    simulated-user messages; agent calls not routed through attest are not
+    counted. ``judge_calls`` is the judge-provider part of ``model_calls``.
+    ``retry_cost_usd`` is the part of ``cost_usd`` spent on retried calls;
+    ``unpriced_calls`` counts calls whose model has no price (``cost_usd``
+    understates the spend when it is non-zero); ``budget_refused`` counts
+    calls not sent because no budget remained.
+    """
+
+    model_calls: int = 0
+    judge_calls: int = 0
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cached_tokens: int = 0
+    cost_usd: float = 0.0
+    retry_cost_usd: float = 0.0
+    unpriced_calls: int = 0
+    budget_refused: int = 0
+
+    def __add__(self, other: Usage) -> Usage:
+        return Usage(
+            model_calls=self.model_calls + other.model_calls,
+            judge_calls=self.judge_calls + other.judge_calls,
+            input_tokens=self.input_tokens + other.input_tokens,
+            output_tokens=self.output_tokens + other.output_tokens,
+            cached_tokens=self.cached_tokens + other.cached_tokens,
+            cost_usd=self.cost_usd + other.cost_usd,
+            retry_cost_usd=self.retry_cost_usd + other.retry_cost_usd,
+            unpriced_calls=self.unpriced_calls + other.unpriced_calls,
+            budget_refused=self.budget_refused + other.budget_refused,
+        )
+
+    @classmethod
+    def total(cls, usages: Iterable[Usage]) -> Usage:
+        """Sum of ``usages`` (all-zero when empty)."""
+        acc = cls()
+        for u in usages:
+            acc = acc + u
+        return acc
+
+    def format(self) -> str:
+        """The run-summary text, identical to the engine's ``report.FormatUsage``:
+        model calls · tokens (cached) · $ · retry cost, with refused and unpriced
+        calls appended when present."""
+        line = (
+            f"{self.model_calls} model calls · {self.input_tokens + self.output_tokens} tokens "
+            f"({self.cached_tokens} cached) · ${self.cost_usd:.4f} · "
+            f"retry cost ${self.retry_cost_usd:.4f}"
+        )
+        if self.budget_refused > 0:
+            line += f" · {self.budget_refused} calls refused by budget"
+        if self.unpriced_calls > 0:
+            line += f" · {self.unpriced_calls} unpriced calls not in $"
+        return line
+
+    def to_dict(self) -> dict[str, Any]:
+        return {name: getattr(self, name) for name in USAGE_FIELDS}
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> Usage:
+        """Parse a wire ``usage`` object; every field is required."""
+        missing = [name for name in USAGE_FIELDS if name not in data]
+        if missing:
+            raise ValueError(f"usage is missing required fields: {', '.join(missing)}")
+        return cls(
+            model_calls=int(data["model_calls"]),
+            judge_calls=int(data["judge_calls"]),
+            input_tokens=int(data["input_tokens"]),
+            output_tokens=int(data["output_tokens"]),
+            cached_tokens=int(data["cached_tokens"]),
+            cost_usd=float(data["cost_usd"]),
+            retry_cost_usd=float(data["retry_cost_usd"]),
+            unpriced_calls=int(data["unpriced_calls"]),
+            budget_refused=int(data["budget_refused"]),
+        )
+
+
+@dataclass(frozen=True)
+class BatchBudget:
+    """``evaluate_batch`` ``budget`` param: limits for one batch on top of the
+    session budget. ``None`` means no limit for that field."""
+
+    max_judge_calls: int | None = None
+    max_cost_usd: float | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        d: dict[str, Any] = {}
+        if self.max_judge_calls is not None:
+            d["max_judge_calls"] = self.max_judge_calls
+        if self.max_cost_usd is not None:
+            d["max_cost_usd"] = self.max_cost_usd
+        return d
+
+
 @dataclass
 class EvaluateBatchResult:
     results: list[AssertionResult]
+    usage: Usage
     total_cost: float = 0.0
     total_duration_ms: int = 0
     simulated: bool = False
@@ -522,6 +774,7 @@ class EvaluateBatchResult:
     def to_dict(self) -> dict[str, Any]:
         return {
             "results": [r.to_dict() for r in self.results],
+            "usage": self.usage.to_dict(),
             "total_cost": self.total_cost,
             "total_duration_ms": self.total_duration_ms,
             "simulated": self.simulated,
@@ -530,8 +783,11 @@ class EvaluateBatchResult:
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> EvaluateBatchResult:
         results = [AssertionResult.from_dict(r) for r in data.get("results", [])]
+        if "usage" not in data:
+            raise ValueError("evaluate_batch result is missing required field 'usage'")
         return cls(
             results=results,
+            usage=Usage.from_dict(data["usage"]),
             total_cost=data.get("total_cost", 0.0),
             total_duration_ms=data.get("total_duration_ms", 0),
             simulated=data.get("simulated", False),

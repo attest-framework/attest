@@ -1,7 +1,8 @@
 name: GitHub Config CI
 
 # Validates workflow and Dependabot changes on the PRs that make them.
-# Composite actions under .github/actions/ are only checked where a workflow uses them.
+# Composite actions under .github/actions/ are only checked where a workflow uses them;
+# the pr-annotate script's unit tests run here.
 on:
   push:
     paths: [".github/**"]
@@ -23,6 +24,8 @@ jobs:
         with:
           go-version: "1.25"
           cache: false
+      - name: pr-annotate unit tests
+        run: python3 -m unittest discover -s .github/actions/pr-annotate -v
       - name: actionlint
         run: |
           go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12

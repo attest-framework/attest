@@ -80,6 +80,21 @@ describe("renderAssertionFailure", () => {
     }
   });
 
+  it("prefixes the judge model with its provider when the engine records one", () => {
+    const result: AssertionResult = {
+      assertion_id: "j_provider",
+      status: STATUS_HARD_FAIL,
+      score: 0.4,
+      explanation: "low",
+      type: TYPE_LLM_JUDGE,
+      judge_metadata: { provider: "anthropic", model: "judge-model", rubric_name: "default", rubric_version: "v1" },
+    };
+
+    const block = renderAssertionFailure(result);
+
+    expect(block).toContain("judge:      anthropic/judge-model / default @ v1");
+  });
+
   it("renders bias probes and calibration agreement", () => {
     const result: AssertionResult = {
       assertion_id: "j_calibrated",

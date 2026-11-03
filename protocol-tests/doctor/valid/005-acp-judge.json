@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "engine_version": "1.0.0-rc.1",
+  "protocol_version": 1,
+  "capabilities": ["layers_1_4"],
+  "simulation_mode": false,
+  "judge": {
+    "configured": true,
+    "provider": "acp",
+    "model": "acp:claude-code-acp",
+    "base_url": null,
+    "api_key_source": null
+  },
+  "embedding": { "configured": false, "requested": "auto", "provider": null },
+  "cache_dir": "/home/dev/.attest/cache"
+}

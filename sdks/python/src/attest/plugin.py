@@ -3,21 +3,39 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
 import os
 import threading
 from collections.abc import Generator
+from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, TypeVar
 
 import pytest
 
+from attest._proto.types import BatchBudget, Trace, Usage
 from attest.cli.diagnostics import render_diagnostics
 from attest.client import AttestClient, require_simulation_capability
 from attest.config import is_simulation_mode
 from attest.engine_manager import EngineManager
 from attest.exceptions import EngineVersionMismatchError
 from attest.expect import ExpectChain
+from attest.report_v2 import TEST_OUTCOMES, TestRecord, write_report
 from attest.result import OUTCOME_FAIL, OUTCOME_SKIP, AgentResult, Verdict
+from attest.trials import (
+    BUDGET_MARKER,
+    DEFAULT_MIN_PASS_RATE,
+    MIN_PASS_RATE_MARKER,
+    TestBudget,
+    TestRun,
+    begin_run,
+    current_run,
+    end_run,
+    min_pass_rate_from_marker,
+    run_trials,
+    validate_min_pass_rate,
+)
 
 logger = logging.getLogger("attest.plugin")
 
@@ -35,12 +53,23 @@ _session_outcomes: dict[str, str] = {}
 # Maps nodeid → soft failures across every evaluation in the test (all
 # trials of a repeat or scenario loop, not only the last result).
 _session_soft_counts: dict[str, int] = {}
+# Maps nodeid → report-v2 test row (location, outcome, every AgentResult).
+# Filled only when --attest-report is set.
+_session_tests: dict[str, TestRecord] = {}
 # Thread-local-ish slot for the AgentResults produced inside the running
 # test. pytest serialises test execution, so a single slot is safe; the
 # makereport hook below pops it, keyed on nodeid, as soon as the call
 # phase completes.
 _test_results: list[AgentResult] = []
 _test_results_lock = threading.Lock()
+# Attest model usage summed over every evaluation of the session.
+_session_usage: Usage = Usage()
+# Maps nodeid → trials run, for tests run as fixed-N trials (--attest-trials > 1).
+_session_trials_run: dict[str, int] = {}
+# Maps nodeid → terminal summary lines of a trials test.
+_session_trial_lines: dict[str, list[str]] = {}
+
+_ATTEST_FIXTURES = frozenset({"attest", "attest_engine"})
 
 
 def _record_result(agent_result: AgentResult) -> None:
@@ -48,6 +77,14 @@ def _record_result(agent_result: AgentResult) -> None:
     when the call phase ends."""
     with _test_results_lock:
         _test_results.append(agent_result)
+
+
+def _replace_test_results(removed: list[AgentResult], replacement: AgentResult) -> None:
+    """Swap the stashed evaluations of a trial that raised for its hard_fail
+    replacement, so the report and session records hold no stale rows."""
+    with _test_results_lock:
+        _test_results[:] = [r for r in _test_results if all(r is not x for x in removed)]
+        _test_results.append(replacement)
 
 
 def _take_test_results() -> list[AgentResult]:
@@ -66,6 +103,26 @@ def pytest_configure(config: pytest.Config) -> None:
         "markers",
         "attest_tier(level): mark test with an Attest tier level (1, 2, or 3)",
     )
+    config.addinivalue_line(
+        "markers",
+        f"{BUDGET_MARKER}(max_judge_calls=None, max_cost_usd=None): per-test limit on "
+        "attest judge calls and on attest cost plus agent spend (USD), across all trials",
+    )
+    config.addinivalue_line(
+        "markers",
+        f"{MIN_PASS_RATE_MARKER}(rate): lowest pass rate over evaluated trials "
+        "(0..1) for this test under --attest-trials; overrides --attest-min-pass-rate",
+    )
+    trials = config.getoption("--attest-trials", default=1)
+    if trials < 1:
+        raise pytest.UsageError(f"--attest-trials must be an integer >= 1, got {trials}")
+    try:
+        validate_min_pass_rate(
+            config.getoption("--attest-min-pass-rate", default=DEFAULT_MIN_PASS_RATE),
+            "--attest-min-pass-rate",
+        )
+    except ValueError as exc:
+        raise pytest.UsageError(str(exc)) from exc
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:
@@ -106,6 +163,31 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         default=False,
         help="Fail (instead of skip) tests with assertions that were not evaluated "
         "(also enabled by ATTEST_STRICT=1)",
+    )
+    group.addoption(
+        "--attest-report",
+        default=None,
+        metavar="PATH",
+        help="Write a report-v2 JSON file (every test with its outcome, file and line, "
+        "and every assertion result) for attest policy evaluate and pr-annotate",
+    )
+    group.addoption(
+        "--attest-trials",
+        default=1,
+        type=int,
+        metavar="N",
+        help="Run every test using the attest fixture N times as fixed-N trials (sync tests "
+        "only); each report row carries its trial. The statistical verdict against a pinned "
+        "baseline comes from `attest policy evaluate --baseline <tag>` with a regression rule",
+    )
+    group.addoption(
+        "--attest-min-pass-rate",
+        default=DEFAULT_MIN_PASS_RATE,
+        type=float,
+        metavar="RATE",
+        help="Under --attest-trials > 1, fail a test whose pass rate over evaluated trials "
+        "is below RATE (0..1, default 1.0: any failing trial fails the test); the "
+        "attest_min_pass_rate marker overrides it per test",
     )
     group.addoption(
         "--attest-diagnostics",
@@ -172,6 +254,108 @@ def pytest_terminal_summary(terminalreporter: Any, exitstatus: int, config: pyte
         terminalreporter.write_line(f"Total LLM cost this session: ${_session_cost:.6f} USD")
         terminalreporter.write_line(f"Soft failures recorded:       {_session_soft_failures}")
 
+    if _session_trial_lines:
+        terminalreporter.write_sep("=", "Attest trials")
+        for lines in _session_trial_lines.values():
+            for line in lines:
+                terminalreporter.write_line(line)
+
+    usage = usage_line(_session_usage)
+    if usage is not None:
+        terminalreporter.write_line(usage)
+
+
+def usage_line(usage: Usage) -> str | None:
+    """The session usage summary line, or ``None`` when no model call was made
+    or refused."""
+    if usage.model_calls > 0 or usage.budget_refused > 0:
+        return f"attest usage: {usage.format()}"
+    return None
+
+
+def _uses_attest(item: pytest.Item) -> bool:
+    return not _ATTEST_FIXTURES.isdisjoint(getattr(item, "fixturenames", ()))
+
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_call(item: pytest.Item) -> Generator[None, Any, None]:
+    """Track the running test (deterministic assertion IDs, per-test budget)
+    for tests using the attest fixture; validate the ``attest_budget`` marker."""
+    marker = item.get_closest_marker(BUDGET_MARKER)
+    budget: TestBudget | None = None
+    if marker is not None:
+        try:
+            budget = TestBudget.from_marker(marker.args, marker.kwargs)
+        except ValueError as exc:
+            pytest.fail(f"{item.nodeid}: {exc}", pytrace=False)
+    rate_marker = item.get_closest_marker(MIN_PASS_RATE_MARKER)
+    min_pass_rate: float | None = None
+    if rate_marker is not None:
+        try:
+            min_pass_rate = min_pass_rate_from_marker(rate_marker.args, rate_marker.kwargs)
+        except ValueError as exc:
+            pytest.fail(f"{item.nodeid}: {exc}", pytrace=False)
+    run = (
+        TestRun(test_id=item.nodeid, budget=budget, min_pass_rate=min_pass_rate)
+        if _uses_attest(item)
+        else None
+    )
+    if run is not None:
+        begin_run(run)
+    try:
+        yield
+    finally:
+        if run is not None:
+            end_run()
+
+
+def _is_coroutine_test(item: pytest.Function) -> bool:
+    """True for ``async def`` tests; pytest-asyncio replaces ``item.obj`` with a
+    sync wrapper, so the definition on the module or class is checked too."""
+    definition = getattr(getattr(item.parent, "obj", None), item.originalname, None)
+    return inspect.iscoroutinefunction(item.obj) or inspect.iscoroutinefunction(definition)
+
+
+@pytest.hookimpl(tryfirst=True)
+def pytest_pyfunc_call(pyfuncitem: pytest.Function) -> bool | None:
+    """Run a test using the attest fixture as fixed-N trials when
+    ``--attest-trials`` > 1 and enforce only the aggregate outcome.
+
+    Each trial's rows carry ``trial``; the report's test row carries
+    ``trials``. The statistical verdict (pass / regressed / inconclusive)
+    comes from ``attest policy evaluate --baseline <tag>`` with a
+    ``regression`` rule.
+    """
+    n: int = pyfuncitem.config.getoption("--attest-trials", default=1)
+    run = current_run()
+    if n == 1 or run is None:
+        return None
+    if _is_coroutine_test(pyfuncitem):
+        pytest.fail(
+            f"--attest-trials supports synchronous tests; {pyfuncitem.nodeid} is async. "
+            "Loop trials in the test with attest.simulation.repeat and "
+            "attest.inspect_async(), then enforce the aggregate.",
+            pytrace=False,
+        )
+    fixture = pyfuncitem.funcargs["attest_engine"]
+    if not isinstance(fixture, AttestEngineFixture):
+        raise TypeError(f"attest_engine fixture is {type(fixture).__name__}")
+    testfunction = pyfuncitem.obj
+    testargs = {arg: pyfuncitem.funcargs[arg] for arg in pyfuncitem._fixtureinfo.argnames}
+    nodeid = pyfuncitem.nodeid
+
+    def trials_run(count: int) -> None:
+        _session_trials_run[nodeid] = count
+
+    result = run_trials(run, lambda: testfunction(**testargs), n, _replace_test_results, trials_run)
+    _session_trial_lines[pyfuncitem.nodeid] = result.summary_lines(pyfuncitem.nodeid)
+    cli_rate: float = pyfuncitem.config.getoption(
+        "--attest-min-pass-rate", default=DEFAULT_MIN_PASS_RATE
+    )
+    result.min_pass_rate = run.min_pass_rate if run.min_pass_rate is not None else cli_rate
+    fixture.enforce(result)
+    return True
+
 
 @pytest.hookimpl(hookwrapper=True)
 def pytest_runtest_makereport(
@@ -183,23 +367,148 @@ def pytest_runtest_makereport(
     attribute ``not evaluated`` skips to the test's own location.
 
     Pytest serialises tests within a worker, so the stashed AgentResults
-    always belong to the call phase that just ran.
+    always belong to the phase (setup, call or teardown) that just ran.
     """
     outcome = yield
-    if call.when != "call":
-        return
     report: pytest.TestReport = outcome.get_result()
-    if report.skipped and isinstance(report.longrepr, tuple):
+    record = (
+        _record_test_phase(item, report)
+        if item.config.getoption("--attest-report", default=None)
+        else None
+    )
+    if call.when == "call" and report.skipped and isinstance(report.longrepr, tuple):
         # Attribute "not evaluated" skips to the test, not to this plugin.
         path, _, reason = report.longrepr
         if os.path.abspath(path) == os.path.abspath(__file__) and "not evaluated:" in reason:
             _, lineno, _ = item.location
             report.longrepr = (str(item.path), (lineno or 0) + 1, reason)
+    if call.when == "setup":
+        # A new attempt (a rerun plugin retrying the test) starts its counts over.
+        _session_soft_counts.pop(item.nodeid, None)
+    # Evaluations in fixture setup or teardown belong to this test, like the call's.
     results = _take_test_results()
+    if record is not None:
+        record.agent_results.extend(results)
     if results:
         _session_results[item.nodeid] = results[-1]
-        _session_outcomes[item.nodeid] = report.outcome
-        _session_soft_counts[item.nodeid] = sum(len(r.soft_failures) for r in results)
+        _session_soft_counts[item.nodeid] = _session_soft_counts.get(item.nodeid, 0) + sum(
+            len(r.soft_failures) for r in results
+        )
+    if results or item.nodeid in _session_results:
+        if call.when == "call" or report.outcome != "passed":
+            _session_outcomes[item.nodeid] = report.outcome
+
+
+def _record_test_phase(item: pytest.Item, report: pytest.TestReport) -> TestRecord:
+    """Fold one setup/call/teardown report into the test's report-v2 row and return it.
+
+    The outcome is the call phase's, overridden by a failed or skipped setup and by a
+    failed teardown. A new setup phase for a test that already ran (a rerun plugin
+    retrying it) starts the row over, so only the last attempt's outcome and results
+    are reported. ``line`` is the 1-based line of the test definition.
+    """
+    record = _session_tests.get(item.nodeid)
+    if record is not None and report.when == "setup":
+        record.outcome = "passed"
+        record.duration_ms = 0
+        record.agent_results.clear()
+        record.trials = None
+    if record is None:
+        path, lineno, _ = item.location
+        record = TestRecord(
+            test_id=item.nodeid,
+            name=item.name,
+            file=Path(path).as_posix(),
+            line=(lineno or 0) + 1,
+        )
+        _session_tests[item.nodeid] = record
+    record.duration_ms += int(report.duration * 1000)
+    if report.outcome not in TEST_OUTCOMES:
+        raise ValueError(f"{item.nodeid}: unknown pytest outcome {report.outcome!r}")
+    if report.when == "call" or report.outcome != "passed":
+        if not (report.when == "teardown" and report.outcome == "skipped"):
+            record.outcome = report.outcome
+    if report.when == "call":
+        record.trials = _session_trials_run.pop(item.nodeid, None)
+    return record
+
+
+@dataclass
+class _SessionState:
+    """Module state of an enclosing session, saved while a nested in-process
+    session (pytester) runs."""
+
+    tests: dict[str, TestRecord]
+    trials_run: dict[str, int]
+    trial_lines: dict[str, list[str]]
+    usage: Usage
+    test_results: list[AgentResult]
+    run: TestRun | None
+
+
+_saved_sessions: list[_SessionState] = []
+
+
+def pytest_sessionstart(session: pytest.Session) -> None:
+    """Start each session with an empty report and usage; the enclosing
+    session's state (pytester runs share this module) is restored when this
+    session finishes."""
+    global _session_usage
+    with _test_results_lock:
+        stashed = list(_test_results)
+        _test_results.clear()
+    _saved_sessions.append(
+        _SessionState(
+            tests=dict(_session_tests),
+            trials_run=dict(_session_trials_run),
+            trial_lines=dict(_session_trial_lines),
+            usage=_session_usage,
+            test_results=stashed,
+            run=current_run(),
+        )
+    )
+    _session_tests.clear()
+    _session_trials_run.clear()
+    _session_trial_lines.clear()
+    _session_usage = Usage()
+    end_run()
+
+
+@pytest.hookimpl(hookwrapper=True, tryfirst=True)
+def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> Generator[None, Any, None]:
+    """Write the --attest-report file, let the terminal summary run, then
+    restore the enclosing session's state."""
+    yield
+    _write_session_report(session)
+    global _session_usage
+    saved = _saved_sessions.pop()
+    _session_tests.clear()
+    _session_tests.update(saved.tests)
+    _session_trials_run.clear()
+    _session_trials_run.update(saved.trials_run)
+    _session_trial_lines.clear()
+    _session_trial_lines.update(saved.trial_lines)
+    _session_usage = saved.usage
+    with _test_results_lock:
+        _test_results[:] = saved.test_results
+    if saved.run is not None:
+        begin_run(saved.run)
+
+
+def _write_session_report(session: pytest.Session) -> None:
+    """Write the --attest-report file once every test has run."""
+    target: str | None = session.config.getoption("--attest-report", default=None)
+    if not target:
+        return
+    path = Path(target)
+    if not path.is_absolute():
+        path = Path(session.config.invocation_params.dir) / path
+    write_report(
+        path,
+        list(_session_tests.values()),
+        simulated=is_simulation_mode(),
+        usage=_session_usage,
+    )
 
 
 def soft_failure_lines(soft_counts: dict[str, int], outcomes: dict[str, str]) -> list[str]:
@@ -210,6 +519,12 @@ def soft_failure_lines(soft_counts: dict[str, int], outcomes: dict[str, str]) ->
         for nid, n in soft_counts.items()
         if n and outcomes.get(nid) != "failed"
     ]
+
+
+def _batch_budget(trace: Trace) -> BatchBudget | None:
+    """The running test's remaining ``attest_budget`` for the batch of ``trace``."""
+    run = current_run()
+    return run.batch_budget(trace) if run is not None else None
 
 
 class AttestEngineFixture:
@@ -299,16 +614,21 @@ class AttestEngineFixture:
         budget: float | None,
     ) -> AgentResult:
         """Shared post-evaluation logic for both sync and async paths."""
-        global _session_cost, _session_soft_failures
+        global _session_cost, _session_soft_failures, _session_usage
 
         _session_cost += result.total_cost
+        _session_usage = _session_usage + result.usage
 
         agent_result = AgentResult(
             trace=chain.trace,
             assertion_results=result.results,
             total_cost=result.total_cost,
             total_duration_ms=result.total_duration_ms,
+            usage=result.usage,
         )
+        run = current_run()
+        if run is not None:
+            run.record(agent_result)
 
         from attest._proto.types import STATUS_SOFT_FAIL
 
@@ -364,7 +684,9 @@ class AttestEngineFixture:
         """
         assert self._client is not None
         result = self._run_on_engine_loop(
-            self._client.evaluate_batch(chain.trace, chain.assertions)
+            self._client.evaluate_batch(
+                chain.trace, chain.assertions, budget=_batch_budget(chain.trace)
+            )
         )
         return self._process_result(chain, result, budget)
 
@@ -383,7 +705,9 @@ class AttestEngineFixture:
         assert self._loop is not None
         assert self._client is not None
         future = asyncio.run_coroutine_threadsafe(
-            self._client.evaluate_batch(chain.trace, chain.assertions),
+            self._client.evaluate_batch(
+                chain.trace, chain.assertions, budget=_batch_budget(chain.trace)
+            ),
             self._loop,
         )
         result = await asyncio.wrap_future(future)
@@ -396,7 +720,13 @@ class AttestEngineFixture:
         trial loop (``RepeatResult``, ``ScenarioResult``). Fails with
         diagnostics on any failure; otherwise skips with the not-evaluated
         reasons (fails under ``--attest-strict``); otherwise returns it.
+
+        A no-op that returns ``verdict`` during a ``--attest-trials`` trial:
+        only the aggregate of all trials is enforced.
         """
+        run = current_run()
+        if run is not None and run.trial is not None:
+            return verdict
         outcome = verdict.outcome(strict=self._strict)
         if outcome == OUTCOME_FAIL:
             header = ""

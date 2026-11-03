@@ -3,6 +3,7 @@ import type { TestContext } from "vitest";
 import {
   type ExpectChain,
   AgentResult,
+  STATUS_SOFT_FAIL,
   AttestClient,
   EngineManager,
   isSimulationMode,
@@ -10,21 +11,44 @@ import {
   requireSimulationCapability,
   OUTCOME_FAIL,
   OUTCOME_SKIP,
-  STATUS_SOFT_FAIL,
+  zeroUsage,
+  type BatchBudget,
 } from "@attest-ai/core";
+import {
+  assignAssertionIds,
+  attemptState,
+  inTrial,
+  recordAgentSpend,
+  recordOnTest,
+  recordUnattachedUsage,
+  remainingBudget,
+  resolveTest,
+  strictFromEnv,
+  trialScope,
+  validateBudget,
+  type TestBudget,
+} from "./test-state.js";
 
 export interface InspectOptions {
   /** Throw when the cumulative session cost exceeds this USD amount. */
   budget?: number;
+  /**
+   * Limits for this test's attest model calls. Each evaluation sends what is
+   * left: judge calls not yet used in the test, and `maxCostUsd` minus the
+   * test's attest cost and agent spend so far (trace `metadata.cost_usd`). A
+   * call that does not fit is not sent and its assertion is not_evaluated with
+   * reason "budget_exhausted". Inside trials(), defaults to the trials budget.
+   */
+  testBudget?: TestBudget;
+  /**
+   * The running test's context (`it("…", async (context) => …)`). Used to
+   * attach results to the right test for AttestReporter and to skip it;
+   * required under `test.concurrent` and, for skips, on Vitest before 4.1.
+   */
+  context?: TestContext;
 }
 
 export interface EvaluateOptions extends InspectOptions {
-  /**
-   * The running test's context (`it("…", async (context) => …)`). Used to
-   * skip the right test; required under `test.concurrent` and on Vitest
-   * versions before 4.1.
-   */
-  context?: TestContext;
   /**
    * Fail (instead of skip) when an assertion was not evaluated. Defaults to
    * the ATTEST_STRICT environment variable ("1", "true" or "yes").
@@ -32,29 +56,28 @@ export interface EvaluateOptions extends InspectOptions {
   strict?: boolean;
 }
 
-function strictFromEnv(): boolean {
-  const v = (process.env["ATTEST_STRICT"] ?? "").trim().toLowerCase();
-  return v === "1" || v === "true" || v === "yes";
-}
-
 /**
  * Fail or skip the running Vitest test according to the batch outcome:
  * any hard_fail throws with rendered diagnostics; otherwise any
  * not_evaluated skips with "not evaluated: <reasons>" (throws when strict);
- * soft failures pass.
+ * soft failures pass. Inside a trial of trials() (N > 1) it does nothing and
+ * returns `result`: trials() enforces the aggregate outcome after the last trial.
  */
 export function enforceOutcome(
   result: AgentResult,
   strict: boolean,
   context?: TestContext,
 ): AgentResult {
+  if (inTrial()) return result;
   const outcome = result.outcome({ strict });
   if (outcome === OUTCOME_FAIL) {
     const header = result.hardFailures.length === 0 ? `strict: ${result.skipReason()}\n` : "";
     throw new Error(header + renderDiagnostics(result).replace(/^\n/, ""));
   }
   if (outcome === OUTCOME_SKIP) {
-    (context ?? currentTestContext(result)).skip(result.skipReason());
+    (context ?? trialScope.getStore()?.test.context ?? currentTestContext(result)).skip(
+      result.skipReason(),
+    );
   }
   return result;
 }
@@ -141,7 +164,36 @@ export class AttestEngineFixture {
   /** Evaluate collected assertions without enforcing the test outcome. */
   async inspect(chain: ExpectChain, options?: InspectOptions): Promise<AgentResult> {
     await this.ensureStarted();
-    const result = await this.client.evaluateBatch(chain.trace, chain.assertions);
+    // Inside a test, assertion IDs are deterministic (the test's report test_id
+    // and the assertion's ordinal in the test, restarting each trial) so trials
+    // and baselines match rows by ID. Outside a test they stay random.
+    const test = await resolveTest(options?.context);
+    const scope = trialScope.getStore();
+    const trial = scope !== undefined && scope.test === test ? scope.trial : undefined;
+    const budget =
+      options?.testBudget !== undefined
+        ? validateBudget(options.testBudget)
+        : scope !== undefined && scope.test === test
+          ? scope.budget
+          : undefined;
+    let assertions = chain.assertions;
+    let batchBudget: BatchBudget | undefined;
+    if (test !== undefined) {
+      assertions = assignAssertionIds(test, assertions);
+      recordAgentSpend(test, chain.trace);
+      if (budget !== undefined) {
+        const state = attemptState(test);
+        batchBudget = remainingBudget(budget, state.usage, state.agentSpendUsd);
+      }
+    } else if (budget !== undefined) {
+      // Outside a test the budget covers this one evaluation.
+      batchBudget = remainingBudget(budget, zeroUsage(), chain.trace.metadata?.cost_usd ?? 0);
+    }
+    const result = await this.client.evaluateBatch(
+      chain.trace,
+      assertions,
+      batchBudget === undefined ? undefined : { budget: batchBudget },
+    );
 
     globalThis.__attest_session_cost__ =
       (globalThis.__attest_session_cost__ ?? 0) + (result.total_cost ?? 0);
@@ -157,7 +209,11 @@ export class AttestEngineFixture {
       result.results ?? [],
       result.total_cost ?? 0,
       result.total_duration_ms ?? 0,
+      result.usage,
     );
+    if (test !== undefined) recordOnTest(test, agentResult, trial);
+    else recordUnattachedUsage(agentResult.usage);
+    if (scope !== undefined && scope.test === test) scope.results.push(agentResult);
 
     // Track non-passing AgentResults so AttestCostReporter can render the
     // diagnostic block at the end of the run. Bound size because long
@@ -203,7 +259,10 @@ export function useAttest(): AttestEngineFixture {
   return workerFixture;
 }
 
-/** Evaluate and enforce: hard_fail throws, not_evaluated skips (strict: throws). */
+/**
+ * Evaluate and enforce: hard_fail throws, not_evaluated skips (strict: throws).
+ * Inside a trial of trials() (N > 1) it does not enforce, like inspect().
+ */
 export async function evaluate(
   chain: ExpectChain,
   options?: EvaluateOptions,
@@ -211,7 +270,7 @@ export async function evaluate(
   return useAttest().evaluate(chain, options);
 }
 
-/** Evaluate without enforcing; use for trial loops and custom checks. */
+/** Evaluate without enforcing; use for custom checks. For repeated runs use trials(). */
 export async function inspect(
   chain: ExpectChain,
   options?: InspectOptions,

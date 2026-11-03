@@ -73,3 +73,10 @@ class EngineVersionMismatchError(AttestError):
             "mismatched one from PATH so the SDK can download "
             f"{required} into ~/.attest/bin/{required}/."
         )
+
+
+class OTLPConversionError(AttestError):
+    """The engine rejected an OTLP/JSON export (``attest-engine trace convert``).
+
+    The message is the engine's error, which names the offending span or field.
+    """

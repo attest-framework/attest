@@ -15,6 +15,7 @@ from attest._proto.types import (
     Step,
     Trace,
     TraceMetadata,
+    Usage,
 )
 from attest.adapters._base import BaseAdapter, BaseProviderAdapter
 from attest.adapters.anthropic import AnthropicAdapter
@@ -28,6 +29,7 @@ from attest.adapters.ollama import OllamaAdapter
 from attest.adapters.openai import OpenAIAdapter
 from attest.adapters.otel import OTelAdapter
 from attest.agent import Agent, agent
+from attest.capture import CaptureError, Fixture, load_fixture, record
 from attest.config import config
 from attest.continuous import AlertDispatcher, ContinuousEvalRunner, Sampler
 from attest.delegate import delegate
@@ -38,8 +40,8 @@ from attest.tier import TIER_1, TIER_2, TIER_3, tier
 from attest.trace import TraceBuilder
 from attest.trace_tree import TraceTree
 
-__version__: str = "1.0.0-rc"
-ENGINE_VERSION: str = "1.0.0-rc"
+__version__: str = "1.0.0-rc.2"
+ENGINE_VERSION: str = "1.0.0-rc.2"
 
 __all__ = [
     # Core types
@@ -51,6 +53,7 @@ __all__ = [
     "Step",
     "Trace",
     "TraceMetadata",
+    "Usage",
     # Configuration
     "config",
     # Agent
@@ -61,6 +64,11 @@ __all__ = [
     # Expect DSL
     "ExpectChain",
     "expect",
+    # Capture
+    "CaptureError",
+    "Fixture",
+    "load_fixture",
+    "record",
     # Trace building
     "TraceBuilder",
     # Multi-agent

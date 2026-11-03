@@ -1,0 +1,330 @@
+{
+  "contracts": [
+    {
+      "description": "calls lookup_order, issue_refund",
+      "id": "tools-called",
+      "kind": "tools",
+      "spec": {
+        "check": "trajectory",
+        "mode": "superset",
+        "soft": false,
+        "tools": [
+          "lookup_order",
+          "issue_refund"
+        ]
+      },
+      "type": "trace"
+    },
+    {
+      "description": "lookup_order is called before issue_refund",
+      "id": "order-lookup_order-before-issue_refund",
+      "kind": "order",
+      "spec": {
+        "after": "issue_refund",
+        "before": "lookup_order",
+        "check": "tool_order",
+        "soft": false
+      },
+      "type": "trace"
+    },
+    {
+      "description": "lookup_order at most once per order_id",
+      "id": "cardinality-lookup_order-per-order_id",
+      "kind": "cardinality",
+      "spec": {
+        "check": "tool_cardinality",
+        "max": 1,
+        "per": "order_id",
+        "soft": false,
+        "tool": "lookup_order"
+      },
+      "type": "trace"
+    },
+    {
+      "description": "issue_refund at most once per order_id",
+      "id": "cardinality-issue_refund-per-order_id",
+      "kind": "cardinality",
+      "spec": {
+        "check": "tool_cardinality",
+        "max": 1,
+        "per": "order_id",
+        "soft": false,
+        "tool": "issue_refund"
+      },
+      "type": "trace"
+    }
+  ],
+  "exchanges": [
+    {
+      "api": "chat_completions",
+      "index": 0,
+      "key": {
+        "model": "gpt-test",
+        "params": {
+          "temperature": 0,
+          "user": "[redacted]"
+        },
+        "prompt_hash": "sha256:663cf4c3ee5d08489e8f160d94e7da96144ddce2e91cdd9f455ec3e39e89f04e",
+        "tool_schema_hash": "sha256:e9c6432592f67eca7781565b9a386b44c13ac2ca1b852e894ddb8daf4af4b531"
+      },
+      "method": "POST",
+      "path": "/chat/completions",
+      "provider": "openai",
+      "request": {
+        "messages": [
+          {
+            "content": "Refund order O-1 for {{email_1}}",
+            "role": "user"
+          }
+        ],
+        "model": "gpt-test",
+        "temperature": 0,
+        "tools": [
+          {
+            "function": {
+              "name": "issue_refund",
+              "parameters": {
+                "properties": {
+                  "order_id": {
+                    "type": "string"
+                  }
+                },
+                "type": "object"
+              }
+            },
+            "type": "function"
+          }
+        ],
+        "user": "[redacted]"
+      },
+      "response": {
+        "body": {
+          "choices": [
+            {
+              "finish_reason": "stop",
+              "index": 0,
+              "message": {
+                "content": "hello from chat",
+                "role": "assistant"
+              }
+            }
+          ],
+          "created": 1,
+          "id": "chatcmpl-{{id_1}}",
+          "model": "gpt-test",
+          "object": "chat.completion"
+        },
+        "content_type": "application/json",
+        "status": 200
+      },
+      "stream": false,
+      "request_headers": {
+        "authorization": "[redacted]"
+      }
+    },
+    {
+      "api": "responses",
+      "index": 1,
+      "key": {
+        "model": "gpt-test",
+        "params": {
+          "stream": true
+        },
+        "prompt_hash": "sha256:ea7452c9d1b8b2b4b0f59218e39f445d719f0fd7862e18c7c82b9f02292451ca",
+        "tool_schema_hash": null
+      },
+      "method": "POST",
+      "path": "/responses",
+      "provider": "openai",
+      "request": {
+        "input": "Summarize the refund for {{email_1}}",
+        "model": "gpt-test",
+        "stream": true
+      },
+      "response": {
+        "body": "event: response.created\ndata: {\"response\":{\"created_at\":2,\"id\":\"resp_{{id_2}}\"},\"type\":\"response.created\"}\n\nevent: response.output_text.delta\ndata: {\"delta\":\"hello \",\"item_id\":\"msg_{{id_3}}\",\"type\":\"response.output_text.delta\"}\n\nevent: response.output_text.delta\ndata: {\"delta\":\"from \",\"item_id\":\"msg_{{id_3}}\",\"type\":\"response.output_text.delta\"}\n\nevent: response.output_text.delta\ndata: {\"delta\":\"responses\",\"item_id\":\"msg_{{id_3}}\",\"type\":\"response.output_text.delta\"}\n\nevent: response.completed\ndata: {\"response\":{\"created_at\":3,\"id\":\"resp_{{id_2}}\",\"model\":\"gpt-test\",\"object\":\"response\",\"output\":[{\"content\":[{\"text\":\"hello from responses\",\"type\":\"output_text\"}],\"id\":\"msg_{{id_3}}\",\"role\":\"assistant\",\"type\":\"message\"}],\"status\":\"completed\"},\"type\":\"response.completed\"}\n\n",
+        "content_type": "text/event-stream",
+        "status": 200
+      },
+      "stream": true
+    },
+    {
+      "api": "messages",
+      "index": 2,
+      "key": {
+        "model": "claude-test",
+        "params": {
+          "max_tokens": 64,
+          "stream": true
+        },
+        "prompt_hash": "sha256:4e94d6dc82f0854abd9cb63cd866cd2f4e20a030ec64a63bd7ea91a5b86836f7",
+        "tool_schema_hash": null
+      },
+      "method": "POST",
+      "path": "/v1/messages",
+      "provider": "anthropic",
+      "request": {
+        "max_tokens": 64,
+        "messages": [
+          {
+            "content": "Write the customer note",
+            "role": "user"
+          }
+        ],
+        "model": "claude-test",
+        "stream": true
+      },
+      "response": {
+        "body": "event: message_start\ndata: {\"message\":{\"content\":[],\"id\":\"msg_{{id_4}}\",\"type\":\"message\"},\"type\":\"message_start\"}\n\nevent: content_block_delta\ndata: {\"delta\":{\"text\":\"hello \",\"type\":\"text_delta\"},\"index\":0,\"type\":\"content_block_delta\"}\n\nevent: content_block_delta\ndata: {\"delta\":{\"text\":\"from \",\"type\":\"text_delta\"},\"index\":0,\"type\":\"content_block_delta\"}\n\nevent: content_block_delta\ndata: {\"delta\":{\"text\":\"messages\",\"type\":\"text_delta\"},\"index\":0,\"type\":\"content_block_delta\"}\n\nevent: message_stop\ndata: {\"type\":\"message_stop\"}\n\n",
+        "content_type": "text/event-stream",
+        "status": 200
+      },
+      "stream": true
+    }
+  ],
+  "fixture_version": 1,
+  "name": "scripted",
+  "source": {
+    "command": [
+      "agent",
+      "--key",
+      "[redacted]"
+    ],
+    "kind": "command",
+    "replay_capable": true
+  },
+  "trace": {
+    "agent_id": "refund-desk",
+    "input": {},
+    "metadata": {
+      "latency_ms": 0,
+      "model": "gpt-test"
+    },
+    "output": {
+      "message": ""
+    },
+    "schema_version": 2,
+    "steps": [
+      {
+        "args": {
+          "model": "gpt-test",
+          "operation": "chat"
+        },
+        "ended_at_ms": 5,
+        "metadata": {
+          "duration_ms": 0
+        },
+        "name": "chat gpt-test",
+        "parent_span_id": "0000000000000001",
+        "result": {},
+        "span_id": "0000000000000002",
+        "started_at_ms": 4,
+        "type": "llm_call"
+      },
+      {
+        "args": {
+          "order_id": "O-1"
+        },
+        "ended_at_ms": 7,
+        "metadata": {
+          "duration_ms": 0
+        },
+        "name": "lookup_order",
+        "parent_span_id": "0000000000000001",
+        "result": {
+          "ok": true
+        },
+        "span_id": "0000000000000003",
+        "started_at_ms": 6,
+        "tool_call_id": "call_{{id_5}}",
+        "type": "tool_call"
+      },
+      {
+        "args": {
+          "email": "{{email_1}}",
+          "order_id": "O-1"
+        },
+        "ended_at_ms": 9,
+        "metadata": {
+          "duration_ms": 0
+        },
+        "name": "issue_refund",
+        "parent_span_id": "0000000000000001",
+        "result": {
+          "ok": true
+        },
+        "span_id": "0000000000000004",
+        "started_at_ms": 8,
+        "tool_call_id": "call_{{id_6}}",
+        "type": "tool_call"
+      },
+      {
+        "args": {
+          "email": "{{email_1}}",
+          "order_id": "O-1"
+        },
+        "ended_at_ms": 11,
+        "metadata": {
+          "duration_ms": 0
+        },
+        "name": "issue_refund",
+        "parent_span_id": "0000000000000001",
+        "result": {
+          "ok": true
+        },
+        "span_id": "0000000000000005",
+        "started_at_ms": 10,
+        "tool_call_id": "call_{{id_7}}",
+        "type": "tool_call"
+      }
+    ],
+    "trace_id": "otel_0000000000000001",
+    "turns": [
+      {
+        "index": 0,
+        "span_id": "0000000000000001",
+        "step_indices": [
+          0,
+          1,
+          2,
+          3
+        ]
+      }
+    ]
+  },
+  "verification": {
+    "expect_fail": true,
+    "expected_failures": [
+      "cardinality-issue_refund-per-order_id"
+    ],
+    "results": [
+      {
+        "contract": "tools-called",
+        "explanation": "trajectory (superset) matches [lookup_order issue_refund]",
+        "status": "pass"
+      },
+      {
+        "contract": "order-lookup_order-before-issue_refund",
+        "explanation": "lookup_order (step 1) precedes issue_refund (step 2)",
+        "status": "pass"
+      },
+      {
+        "contract": "cardinality-lookup_order-per-order_id",
+        "explanation": "lookup_order within max 1 for each of 1 order_id value(s)",
+        "status": "pass"
+      },
+      {
+        "contract": "cardinality-issue_refund-per-order_id",
+        "explanation": "issue_refund called 2× for order_id=O-1 (max 1)",
+        "status": "hard_fail"
+      }
+    ],
+    "trace_check": {
+      "errors": 0,
+      "ok": true,
+      "warnings": 0
+    },
+    "verified": true
+  },
+  "world": null
+}

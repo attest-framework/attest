@@ -7,12 +7,17 @@ runs in ``attest-engine``: the CLI resolves a version-checked engine with
 command, and forwards the arguments, stdout, stderr and exit code unchanged. A missing,
 mismatched or too-old engine exits 1 before anything runs, so a gate such as
 ``attest policy evaluate`` never exits 0 without evaluating.
+
+``attest capture`` is forwarded the same way; when the engine writes a fixture, the CLI
+then drafts its pytest file (:func:`attest.capture.emit_pytest`).
 """
 
 from __future__ import annotations
 
+import json
 import subprocess
 import sys
+import tempfile
 from collections.abc import Sequence
 from pathlib import Path
 
@@ -28,7 +33,11 @@ _SDK_USAGE = (
     "usage: attest <command> [args]\n"
     "\n"
     "SDK commands:\n"
-    "  init  scaffold an attest test project in the current directory\n"
+    "  init [--ci github]  scaffold a sample test and merge policy in the current directory\n"
+    "                      (--ci github also writes .github/workflows/attest.yml)\n"
+    "\n"
+    "`attest capture` (engine) also drafts tests/attest/test_<name>.py (name lowercased,\n"
+    "other characters as _) from a verified fixture, unless that file exists.\n"
     "\n"
     "options:\n"
     "  --version  print the SDK version and the engine version it requires\n"
@@ -118,7 +127,94 @@ def forward(argv: Sequence[str]) -> int:
             file=sys.stderr,
         )
         return 1
+    if command == "capture" and _capture_writes_fixture(argv[1:]):
+        return _capture_and_emit(engine, argv[1:])
     return exit_status(subprocess.run([engine, *argv], check=False).returncode)
+
+
+# Engine capture modes the CLI drafts no test for: help, --check-redaction (writes no
+# fixture) and --serve (used by record(), which drafts its own). Go flags accept one or
+# two dashes.
+_CAPTURE_NO_TEST = frozenset({"check-redaction", "serve", "h", "help"})
+
+
+def _flag_name(arg: str) -> str | None:
+    if not arg.startswith("-") or arg in ("-", "--"):
+        return None
+    return arg.lstrip("-").split("=", 1)[0]
+
+
+def _capture_writes_fixture(args: Sequence[str]) -> bool:
+    """True when ``attest capture`` args select a mode whose fixture the CLI drafts a
+    test for."""
+    for a in args:
+        if a == "--":
+            break
+        if _flag_name(a) in _CAPTURE_NO_TEST:
+            return False
+    return True
+
+
+def _user_result_file(args: Sequence[str]) -> bool:
+    for a in args:
+        if a == "--":
+            break
+        if _flag_name(a) == "result-file":
+            return True
+    return False
+
+
+def _capture_and_emit(engine: str, args: Sequence[str]) -> int:
+    """Run ``attest-engine capture`` and draft the pytest file for the fixture it wrote."""
+    from attest.capture import emit_pytest, test_path_for
+
+    if _user_result_file(args):
+        print(
+            "attest: capture --result-file is set by the attest CLI; "
+            "run attest-engine capture directly to choose it",
+            file=sys.stderr,
+        )
+        return 2
+    with tempfile.TemporaryDirectory(prefix="attest-capture-") as tmp:
+        result_file = Path(tmp) / "result.json"
+        code = exit_status(
+            subprocess.run(
+                [engine, "capture", "--result-file", str(result_file), *args], check=False
+            ).returncode
+        )
+        if not result_file.exists():
+            return code
+        result = json.loads(result_file.read_text(encoding="utf-8"))
+    fixture = Path(result["fixture"])
+    if not result["verified"]:
+        print(f"  test: none drafted for unverified {fixture}", file=sys.stderr)
+        return code
+    written = emit_pytest(fixture)
+    if written is None:
+        print(f"  test: {test_path_for(fixture)} exists; left unchanged", file=sys.stderr)
+    else:
+        print(f"  test: drafted {written}", file=sys.stderr)
+    return code
+
+
+_INIT_USAGE = "usage: attest init [--ci github]  (scaffolds into the current directory)"
+
+
+def init(args: Sequence[str]) -> int:
+    """Run ``attest init [--ci github]`` in the current directory."""
+    if any(a in _HELP_FLAGS for a in args):
+        print(_INIT_USAGE)
+        return 0
+    ci: str | None = None
+    if list(args) == ["--ci", "github"] or list(args) == ["--ci=github"]:
+        ci = "github"
+    elif args:
+        print(_INIT_USAGE, file=sys.stderr)
+        return 2
+    from attest.scaffold import scaffold_project
+
+    scaffold_project(Path.cwd(), ci=ci)
+    return 0
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -131,13 +227,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"attest {__version__} (requires attest-engine {ENGINE_VERSION})")
         return 0
     if args[0] == "init":
-        if len(args) > 1:
-            print("usage: attest init  (scaffolds into the current directory)", file=sys.stderr)
-            return 0 if args[1] in _HELP_FLAGS else 2
-        from attest.scaffold import scaffold_project
-
-        scaffold_project(Path.cwd())
-        return 0
+        return init(args[1:])
     if args[0].startswith("-"):
         print(f"attest: unknown option {args[0]}\n", file=sys.stderr)
         print(_SDK_USAGE, file=sys.stderr)

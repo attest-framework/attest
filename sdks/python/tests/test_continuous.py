@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from attest._proto.types import Assertion, AssertionResult, EvaluateBatchResult, Trace
+from attest._proto.types import Assertion, AssertionResult, EvaluateBatchResult, Trace, Usage
 from attest.continuous import AlertDispatcher, ContinuousEvalRunner, Sampler
 
 # ---------------------------------------------------------------------------
@@ -37,6 +37,7 @@ def _make_batch_result() -> EvaluateBatchResult:
                 explanation="ok",
             )
         ],
+        usage=Usage(),
         total_cost=0.0,
         total_duration_ms=0,
     )

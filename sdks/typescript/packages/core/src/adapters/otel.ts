@@ -1,153 +1,157 @@
+/**
+ * OpenTelemetry trace adapter.
+ *
+ * OTLP → Attest trace conversion runs in the engine (`attest-engine trace convert`), the
+ * single implementation of the OpenTelemetry GenAI semantic convention mapping shared by
+ * every SDK. This module only encodes spans as OTLP/JSON, calls the engine and returns the
+ * trace v2 it prints; it holds no mapping of its own. See `docs/guides/trace-check.md`.
+ */
+import { spawnSync } from "node:child_process";
+import { resolveEngine } from "../engine-manager.js";
+import { OTLPConversionError } from "../proto/errors.js";
 import type { Trace } from "../proto/types.js";
-import { TraceBuilder } from "../trace.js";
 
-interface OTelSpanContext {
-  traceId: string;
+/** Upper bound for one `attest-engine trace convert` run. */
+const CONVERT_TIMEOUT_MS = 60_000;
+/** Largest converted trace accepted from the engine (its trace limit is 10 MB). */
+const MAX_TRACE_OUTPUT_BYTES = 64 * 1024 * 1024;
+/** OTLP status code for an error span. */
+const STATUS_CODE_ERROR = 2;
+
+type AttributeValue =
+  | string
+  | number
+  | boolean
+  | readonly (string | number | boolean | null | undefined)[];
+
+/** The parts of an `@opentelemetry/sdk-trace-base` `ReadableSpan` the adapter reads. */
+export interface OTelSpan {
+  readonly name: string;
+  /** `[seconds, nanoseconds]` */
+  readonly startTime: readonly [number, number];
+  readonly endTime: readonly [number, number];
+  readonly attributes?: Readonly<Record<string, AttributeValue | undefined>>;
+  /** Parent span id (sdk-trace-base 1.x). */
+  readonly parentSpanId?: string;
+  /** Parent span context (sdk-trace-base 2.x). */
+  readonly parentSpanContext?: { readonly spanId: string };
+  readonly status?: { readonly code: number; readonly message?: string };
+  spanContext(): { readonly traceId: string; readonly spanId: string };
 }
 
-interface OTelSpan {
-  name: string;
-  startTime: [number, number]; // [seconds, nanoseconds]
-  endTime: [number, number];
-  attributes?: Record<string, unknown>;
-  parentSpanId?: string;
-  spanContext(): OTelSpanContext;
-}
+/** An OTLP/JSON export: a parsed `ExportTraceServiceRequest`, its JSON text, or its bytes. */
+export type OTLPInput = Record<string, unknown> | string | Uint8Array;
 
 export class OTelAdapter {
-  private readonly agentId: string | undefined;
-
-  constructor(agentId?: string) {
-    this.agentId = agentId;
+  /**
+   * Build a trace from finished OpenTelemetry spans of one trace.
+   *
+   * @param agentId Trace `agent_id`; defaults to the first turn's `gen_ai.agent.name`.
+   * @throws OTLPConversionError when the engine rejects the spans.
+   */
+  static async fromSpans(spans: readonly OTelSpan[], agentId?: string): Promise<Trace> {
+    return OTelAdapter.fromOtlp(spansToOtlp(spans), agentId);
   }
 
-  static fromSpans(spans: OTelSpan[], agentId?: string): Trace {
-    const adapter = new OTelAdapter(agentId);
-    return adapter.buildTrace(spans);
-  }
-
-  private buildTrace(spans: OTelSpan[]): Trace {
-    const sorted = [...spans].sort((a, b) => {
-      const aTime = a.startTime[0] * 1e9 + a.startTime[1];
-      const bTime = b.startTime[0] * 1e9 + b.startTime[1];
-      return aTime - bTime;
+  /**
+   * Convert an OTLP/JSON export (`resourceSpans` → `scopeSpans` → `spans`).
+   *
+   * @param agentId Trace `agent_id`; defaults to the first turn's `gen_ai.agent.name`.
+   * @throws OTLPConversionError when the engine rejects the export (malformed JSON, invalid
+   *   ids or timestamps, more than one trace, non-numeric token counts, ...).
+   * @throws RangeError when a parsed export holds a non-finite number.
+   * @throws OTLPConversionError when the engine times out, overflows the output buffer or
+   *   prints no trace.
+   * @throws Error from `spawnSync` when the engine cannot start.
+   */
+  static async fromOtlp(otlp: OTLPInput, agentId?: string): Promise<Trace> {
+    const payload =
+      typeof otlp === "string" || otlp instanceof Uint8Array
+        ? otlp
+        : JSON.stringify(otlp, (_key, v: unknown) => {
+            if (typeof v === "number" && !Number.isFinite(v)) {
+              throw new RangeError(`OTLP export holds a non-finite number: ${String(v)}`);
+            }
+            return v;
+          });
+    const args = ["trace", "convert"];
+    if (agentId !== undefined) args.push("--agent-id", agentId);
+    args.push("-");
+    const proc = spawnSync(await resolveEngine(), args, {
+      input: payload,
+      timeout: CONVERT_TIMEOUT_MS,
+      maxBuffer: MAX_TRACE_OUTPUT_BYTES,
     });
-
-    const builder = new TraceBuilder(this.agentId);
-    const rootSpan = this.findRootSpan(sorted);
-
-    if (rootSpan) {
-      const traceId = rootSpan.spanContext().traceId;
-      if (traceId) {
-        builder.setTraceId(`otel_${traceId.slice(0, 16)}`);
+    if (proc.error) {
+      const code = (proc.error as NodeJS.ErrnoException).code;
+      if (code === "ETIMEDOUT") {
+        throw new OTLPConversionError(
+          `attest-engine trace convert timed out after ${CONVERT_TIMEOUT_MS / 1000}s`,
+        );
       }
-    }
-
-    let outputMessage = "";
-    let totalTokens: number | undefined;
-    let latencyMs: number | undefined;
-    let model: string | undefined;
-
-    for (const span of sorted) {
-      const attrs = span.attributes ?? {};
-      const stepType = this.classifySpan(attrs, span.name);
-
-      if (stepType === "llm_call") {
-        const [stepArgs, stepResult] = this.extractLlmStep(attrs);
-        builder.addLlmCall(span.name, {
-          args: stepArgs,
-          result: stepResult,
-          metadata: this.spanMetadata(span),
-        });
-
-        const completion = attrs["gen_ai.completion"];
-        if (completion) outputMessage = String(completion);
-
-        const inputTokens = Number(attrs["gen_ai.usage.input_tokens"] ?? 0);
-        const outputTokens = Number(attrs["gen_ai.usage.output_tokens"] ?? 0);
-        const spanTokens = inputTokens + outputTokens;
-        if (spanTokens > 0) totalTokens = (totalTokens ?? 0) + spanTokens;
-
-        if (model === undefined) {
-          const responseModel = attrs["gen_ai.response.model"];
-          const requestModel = attrs["gen_ai.request.model"];
-          if (responseModel) model = String(responseModel);
-          else if (requestModel) model = String(requestModel);
-        }
-      } else if (stepType === "tool_call") {
-        const [stepArgs, stepResult] = this.extractToolStep(attrs);
-        const toolName = String(attrs["gen_ai.tool.name"] ?? span.name);
-        builder.addToolCall(toolName, {
-          args: stepArgs,
-          result: stepResult,
-          metadata: this.spanMetadata(span),
-        });
+      if (code === "ENOBUFS") {
+        throw new OTLPConversionError(
+          `attest-engine trace convert printed more than ${MAX_TRACE_OUTPUT_BYTES} bytes`,
+        );
       }
+      throw proc.error;
     }
-
-    if (rootSpan) {
-      const startNs = rootSpan.startTime[0] * 1e9 + rootSpan.startTime[1];
-      const endNs = rootSpan.endTime[0] * 1e9 + rootSpan.endTime[1];
-      latencyMs = Math.floor((endNs - startNs) / 1_000_000);
+    if (proc.status !== 0) {
+      const message = proc.stderr.toString("utf8").trim();
+      throw new OTLPConversionError(
+        message || `attest-engine trace convert exited ${String(proc.status ?? proc.signal)}`,
+      );
     }
-
-    builder.setOutput({ message: outputMessage });
-    builder.setMetadata({ total_tokens: totalTokens, latency_ms: latencyMs, model });
-
-    return builder.build();
-  }
-
-  private findRootSpan(spans: OTelSpan[]): OTelSpan | undefined {
-    for (const span of spans) {
-      if (!span.parentSpanId) return span;
+    try {
+      return JSON.parse(proc.stdout.toString("utf8")) as Trace;
+    } catch (err) {
+      throw new OTLPConversionError(
+        `attest-engine trace convert printed output that is not JSON: ${String(err)}`,
+      );
     }
-    return spans[0];
   }
+}
 
-  private classifySpan(attrs: Record<string, unknown>, name: string): string | undefined {
-    const op = String(attrs["gen_ai.operation.name"] ?? "");
-    if (op === "chat" || op === "completion" || op === "generate_content" || "gen_ai.completion" in attrs) {
-      return "llm_call";
+function hrTimeToNanos(time: readonly [number, number], spanName: string): string {
+  if (!Number.isSafeInteger(time[0]) || !Number.isSafeInteger(time[1])) {
+    throw new RangeError(`span ${JSON.stringify(spanName)} has a non-integer HrTime`);
+  }
+  return (BigInt(time[0]) * 1_000_000_000n + BigInt(time[1])).toString();
+}
+
+function anyValue(value: AttributeValue | null | undefined): Record<string, unknown> {
+  if (value === null || value === undefined) return {};
+  if (typeof value === "boolean") return { boolValue: value };
+  if (typeof value === "string") return { stringValue: value };
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) {
+      throw new RangeError(`OTel attribute value must be finite, got ${String(value)}`);
     }
-    if (op === "tool" || "gen_ai.tool.name" in attrs) {
-      return "tool_call";
+    return Number.isSafeInteger(value) ? { intValue: String(value) } : { doubleValue: value };
+  }
+  return { arrayValue: { values: value.map((v) => anyValue(v)) } };
+}
+
+/** Encode spans as an OTLP/JSON `ExportTraceServiceRequest`. */
+export function spansToOtlp(spans: readonly OTelSpan[]): Record<string, unknown> {
+  const encoded = spans.map((span) => {
+    const ctx = span.spanContext();
+    const out: Record<string, unknown> = {
+      traceId: ctx.traceId,
+      spanId: ctx.spanId,
+      name: span.name,
+      startTimeUnixNano: hrTimeToNanos(span.startTime, span.name),
+      endTimeUnixNano: hrTimeToNanos(span.endTime, span.name),
+      attributes: Object.entries(span.attributes ?? {})
+        .filter(([, v]) => v !== undefined)
+        .map(([key, v]) => ({ key, value: anyValue(v) })),
+    };
+    const parent = span.parentSpanContext?.spanId ?? span.parentSpanId;
+    if (parent) out["parentSpanId"] = parent;
+    if (span.status?.code === STATUS_CODE_ERROR) {
+      out["status"] = { code: STATUS_CODE_ERROR, message: span.status.message ?? "" };
     }
-    const lower = name.toLowerCase();
-    if (lower.includes("completion") || lower.includes("chat")) return "llm_call";
-    if (lower.includes("tool")) return "tool_call";
-    return undefined;
-  }
-
-  private extractLlmStep(attrs: Record<string, unknown>): [Record<string, unknown>, Record<string, unknown>] {
-    const args: Record<string, unknown> = {};
-    const result: Record<string, unknown> = {};
-
-    if ("gen_ai.request.model" in attrs) args.model = String(attrs["gen_ai.request.model"]);
-    if ("gen_ai.system" in attrs) args.system = String(attrs["gen_ai.system"]);
-    if ("gen_ai.prompt" in attrs) args.prompt = String(attrs["gen_ai.prompt"]);
-
-    if ("gen_ai.completion" in attrs) result.completion = String(attrs["gen_ai.completion"]);
-    if ("gen_ai.usage.input_tokens" in attrs) result.input_tokens = Number(attrs["gen_ai.usage.input_tokens"]);
-    if ("gen_ai.usage.output_tokens" in attrs) result.output_tokens = Number(attrs["gen_ai.usage.output_tokens"]);
-    if ("gen_ai.response.model" in attrs) result.model = String(attrs["gen_ai.response.model"]);
-
-    return [args, result];
-  }
-
-  private extractToolStep(attrs: Record<string, unknown>): [Record<string, unknown>, Record<string, unknown>] {
-    const args: Record<string, unknown> = {};
-    const result: Record<string, unknown> = {};
-
-    if ("gen_ai.tool.call.id" in attrs) args.call_id = String(attrs["gen_ai.tool.call.id"]);
-    if ("gen_ai.tool.parameters" in attrs) args.parameters = attrs["gen_ai.tool.parameters"];
-    if ("gen_ai.tool.output" in attrs) result.output = attrs["gen_ai.tool.output"];
-
-    return [args, result];
-  }
-
-  private spanMetadata(span: OTelSpan): Record<string, unknown> {
-    const startNs = span.startTime[0] * 1e9 + span.startTime[1];
-    const endNs = span.endTime[0] * 1e9 + span.endTime[1];
-    return { duration_ms: Math.floor((endNs - startNs) / 1_000_000) };
-  }
+    return out;
+  });
+  return { resourceSpans: [{ scopeSpans: [{ spans: encoded }] }] };
 }

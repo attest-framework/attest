@@ -16,6 +16,7 @@ from attest._proto.types import (
     AssertionResult,
     EvaluateBatchResult,
     Trace,
+    Usage,
 )
 from attest.expect import ExpectChain
 from attest.plugin import AttestEngineFixture
@@ -52,6 +53,7 @@ def _make_batch_result(cost: float, soft_fails: int = 0) -> EvaluateBatchResult:
     ]
     return EvaluateBatchResult(
         results=results,
+        usage=Usage(),
         total_cost=cost,
         total_duration_ms=10,
     )
