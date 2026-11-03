@@ -110,45 +110,59 @@ func (r *Recorder) Record(ctx *types.BatchContext, assertions []types.Assertion)
 // Close closes the file.
 func (r *Recorder) Close() error { return r.file.Close() }
 
-// Load reads every *.ndjson file under dir. Entries are de-duplicated on
-// (test, type, spec) and sorted, so the result does not depend on file names,
-// process ids or evaluation order.
+// Load reads every regular *.ndjson file directly under dir. Entries are
+// de-duplicated on (test, type, spec) and sorted on every field, so the
+// result does not depend on file names, process ids or evaluation order.
 func Load(dir string) ([]Entry, error) {
-	names, err := filepath.Glob(filepath.Join(dir, "*.ndjson"))
+	infos, err := os.ReadDir(dir)
 	if err != nil {
-		return nil, err
-	}
-	if _, err := os.Stat(dir); err != nil {
 		return nil, fmt.Errorf("contracts directory: %w", err)
 	}
-	sort.Strings(names)
-	seen := map[string]bool{}
-	var out []Entry
-	for _, name := range names {
-		entries, err := loadFile(name)
+	var all []Entry
+	for _, info := range infos {
+		if !info.Type().IsRegular() || filepath.Ext(info.Name()) != ".ndjson" {
+			continue
+		}
+		entries, err := loadFile(filepath.Join(dir, info.Name()))
 		if err != nil {
 			return nil, err
 		}
-		for _, e := range entries {
-			key := e.TestID + "\x00" + e.Assertion.Type + "\x00" + canonical(e.Assertion.Spec)
-			if seen[key] {
-				continue
-			}
-			seen[key] = true
-			out = append(out, e)
-		}
+		all = append(all, entries...)
 	}
-	sort.SliceStable(out, func(i, j int) bool {
-		a, b := out[i], out[j]
-		if a.TestID != b.TestID {
-			return a.TestID < b.TestID
+	sort.SliceStable(all, func(i, j int) bool { return less(all[i], all[j]) })
+	seen := map[string]bool{}
+	var out []Entry
+	for _, e := range all {
+		key := e.TestID + "\x00" + e.Assertion.Type + "\x00" + canonical(e.Assertion.Spec)
+		if seen[key] {
+			continue
 		}
-		if a.Assertion.Type != b.Assertion.Type {
-			return a.Assertion.Type < b.Assertion.Type
-		}
-		return canonical(a.Assertion.Spec) < canonical(b.Assertion.Spec)
-	})
+		seen[key] = true
+		out = append(out, e)
+	}
 	return out, nil
+}
+
+// less orders entries by test, type and spec, then by the fields that tell
+// two recordings of the same spec apart, so the entry kept by Load is the
+// same whichever process recorded it first.
+func less(a, b Entry) bool {
+	if a.TestID != b.TestID {
+		return a.TestID < b.TestID
+	}
+	if a.Assertion.Type != b.Assertion.Type {
+		return a.Assertion.Type < b.Assertion.Type
+	}
+	if as, bs := canonical(a.Assertion.Spec), canonical(b.Assertion.Spec); as != bs {
+		return as < bs
+	}
+	if a.Assertion.AssertionID != b.Assertion.AssertionID {
+		return a.Assertion.AssertionID < b.Assertion.AssertionID
+	}
+	if a.File != b.File {
+		return a.File < b.File
+	}
+	return a.Line < b.Line
 }
 
 func loadFile(name string) ([]Entry, error) {
@@ -201,7 +215,9 @@ func readLine(r *bufio.Reader) ([]byte, error) {
 // canonical returns a key-order-independent form of raw JSON.
 func canonical(raw json.RawMessage) string {
 	var v any
-	if err := json.Unmarshal(raw, &v); err != nil {
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.UseNumber()
+	if err := dec.Decode(&v); err != nil {
 		return strings.TrimSpace(string(raw))
 	}
 	out, err := json.Marshal(v)

@@ -1,0 +1,43 @@
+{
+  "score": 0.5,
+  "seed": 0,
+  "fixtures": ["inc-1042"],
+  "mutants": [
+    {
+      "id": "inc-1042:duplicate_tool_call:3",
+      "fixture": "inc-1042",
+      "operator": "duplicate_tool_call",
+      "description": "duplicate issue_refund (order_id=O-1042)",
+      "status": "killed",
+      "killed_by": [
+        {
+          "assertion_id": "cardinality-issue_refund-per-order_id",
+          "type": "trace",
+          "test_id": "py/tests/attest/test_inc_1042.py::test_one_refund",
+          "spec": {"check": "tool_cardinality", "tool": "issue_refund", "per": "order_id", "max": 1}
+        }
+      ]
+    },
+    {
+      "id": "inc-1042:alter_world_effect:refunds.0.duplicate",
+      "fixture": "inc-1042",
+      "operator": "alter_world_effect",
+      "description": "duplicate refunds record 0 (refund_id=R-0001)",
+      "status": "survived",
+      "killed_by": []
+    }
+  ],
+  "survivors_suggestions": [
+    {
+      "mutant_id": "inc-1042:alter_world_effect:refunds.0.duplicate",
+      "contract": {
+        "type": "effect",
+        "spec": {"check": "count", "resource": "refunds", "where": {"refund_id": "R-0001"}, "equals": 1},
+        "description": "refunds has exactly 1 matching record(s)"
+      },
+      "description": "duplicate refunds record 0 (refund_id=R-0001)"
+    }
+  ],
+  "skipped_specs": 1,
+  "applicable_specs": 2
+}

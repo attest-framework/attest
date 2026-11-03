@@ -1,0 +1,11 @@
+{
+  "score": 1,
+  "seed": 0,
+  "fixtures": ["f"],
+  "mutants": [
+    {"id": "f:mutate_source:1", "fixture": "f", "operator": "mutate_source", "description": "x", "status": "killed", "killed_by": [{"assertion_id": "a", "type": "trace", "spec": {}}]}
+  ],
+  "survivors_suggestions": [],
+  "skipped_specs": 0,
+  "applicable_specs": 1
+}

@@ -107,3 +107,55 @@ func TestLoad_MissingDir_Errors(t *testing.T) {
 		t.Fatal("missing directory accepted")
 	}
 }
+
+func TestLoad_DirectoryNamedLikeAGlob_IsRead(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "run[1]*")
+	r, err := contractlog.New(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Record(nil, assertions("x")); err != nil {
+		t.Fatal(err)
+	}
+	r.Close()
+
+	entries, err := contractlog.Load(dir)
+
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("%d entries, %v", len(entries), err)
+	}
+}
+
+func TestLoad_NonRegularEntryNamedNdjson_IsIgnored(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.Mkdir(filepath.Join(dir, "sub.ndjson"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	entries, err := contractlog.Load(dir)
+
+	if err != nil || len(entries) != 0 {
+		t.Fatalf("%d entries, %v", len(entries), err)
+	}
+}
+
+func TestLoad_SameSpecRecordedUnderTwoIDs_KeepsTheSameEntryWhicheverFileSortsFirst(t *testing.T) {
+	line := func(id string) string {
+		return `{"test_id":"t","assertion":{"assertion_id":"` + id + `","type":"trace","spec":{"check":"required_tools","tools":["a"]}}}` + "\n"
+	}
+	for _, names := range [][2]string{{"a.ndjson", "b.ndjson"}, {"b.ndjson", "a.ndjson"}} {
+		dir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(dir, names[0]), []byte(line("assert_2")), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, names[1]), []byte(line("assert_1")), 0o600); err != nil {
+			t.Fatal(err)
+		}
+
+		entries, err := contractlog.Load(dir)
+
+		if err != nil || len(entries) != 1 || entries[0].Assertion.AssertionID != "assert_1" {
+			t.Fatalf("files %v: %+v, %v", names, entries, err)
+		}
+	}
+}

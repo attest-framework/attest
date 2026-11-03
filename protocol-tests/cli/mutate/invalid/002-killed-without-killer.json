@@ -1,0 +1,11 @@
+{
+  "score": 1,
+  "seed": 0,
+  "fixtures": ["f"],
+  "mutants": [
+    {"id": "f:drop_tool_call:1", "fixture": "f", "operator": "drop_tool_call", "description": "x", "status": "killed", "killed_by": []}
+  ],
+  "survivors_suggestions": [],
+  "skipped_specs": 0,
+  "applicable_specs": 1
+}
