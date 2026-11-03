@@ -93,7 +93,7 @@ For an incident reproduction the test uses `inspect()` and asserts each contract
 
 ## Refresh a fixture
 
-`attest capture --refresh inc-1042` prints the command recorded in the fixture (`source.command`), asks for confirmation (`y` at a terminal; without one, `--yes`), then runs it, with the flags it was captured with (`--expect-fail` included), and overwrites the fixture. **Review the printed command before confirming a fixture you did not record:** the fixture is a file in your repository, and whoever can change it can change the command that `--refresh` runs. Run it from the directory the original capture ran in, with the environment the command needs. It refuses with an explanation when the command's arguments were redacted (a secret passed as an argument), and for fixtures captured with `--from` or in process, which have no command; re-run those captures yourself. A replay miss names this command (see `attest-engine replay`).
+`attest capture --refresh inc-1042` prints the command recorded in the fixture (`source.command`), asks for confirmation (`y` at a terminal; without one, `--yes`), then runs it, with the flags it was captured with (`--expect-fail` included), and overwrites the fixture. **Review the printed command before confirming a fixture you did not record:** the fixture is a file in your repository, and whoever can change it can change the command that `--refresh` runs. Run it from the directory the original capture ran in, with the environment the command needs. It refuses with an explanation when the command's arguments were redacted (a secret passed as an argument), and for fixtures captured with `--from` or in process, which have no command; re-run those captures yourself. It also refuses a fixture with a `world` section, because a refresh would drop the world's state: re-run `attest capture --name inc-1042 --world <world.yaml> …` instead. A replay miss names this command (see `attest-engine replay`).
 
 ## Capture in process
 
@@ -126,7 +126,7 @@ const result = await record(
 
 If the block raises, the capture is abandoned and no fixture is written. A fixture that is not verified raises `attest.CaptureError` (TypeScript: `CaptureError`) after it is written, and no test is drafted.
 
-Options: `out_dir` / `outDir` (default `tests/attest/fixtures`), `expect_fail` / `expectFail`, `agent_id` / `agentId`, `emit_test` / `emitTest` (default true), `engine_path` / `enginePath`, and in TypeScript `flush`. `record()` sets process-wide variables, so captures cannot overlap; a second `record()` while one runs raises `CaptureError`.
+Options: `out_dir` / `outDir` (default `tests/attest/fixtures`), `expect_fail` / `expectFail`, `agent_id` / `agentId`, `emit_test` / `emitTest` (default true), `engine_path` / `enginePath`, `world` (a `world.yaml` to host for the block; see [world fixtures](world-fixtures.md)), and in TypeScript `flush`. `record()` sets process-wide variables, so captures cannot overlap; a second `record()` while one runs raises `CaptureError`.
 
 ## Capture from an export
 
@@ -147,7 +147,7 @@ A fixture follows `proto/attest/v1/fixture-v1.schema.json`:
 | `exchanges` | every model call in request order: provider, API (`chat_completions`, `responses`, `messages`, `other`), path, request body, response status, content type and body (the JSON value, or the event-stream text for a streamed call), and its `key` |
 | `contracts` | the drafted contracts as engine assertion specs |
 | `verification` | `verified`, `expect_fail`, the capture-time trace check, each contract's status and explanation, and `expected_failures` |
-| `world` | reserved for simulated-world state; `null` |
+| `world` | the final state of the [world](world-fixtures.md) hosted with `--world` (`world_version`, `definition_sha256`, `state`, `faults_fired`), redacted like the rest of the fixture; `null` for a capture without `--world` |
 
 Each exchange's `key` identifies the request: the `model`, the request parameters other than the prompt and the tools (`params`), and SHA-256 hashes of the prompt (`messages`; `input` and `instructions`; `system` and `messages`) and of the tool schemas. Fixtures record the exchanges and their keys; replaying them is not part of this release.
 
