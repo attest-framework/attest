@@ -14,7 +14,7 @@ It diffs the merge base of `<ref>` and `HEAD` against the working tree, so commi
 {"mode":"subset","tests":["tests/test_refund.py"],"reasons":[{"path":"tests/attest/fixtures/inc-1042.attest.json","class":"fixture"}]}
 ```
 
-`mode` is `subset` or `all` (`tests` is empty for `all`). Each reason is a changed path and its class. `--repo <dir>` selects another repository; paths are relative to it.
+`mode` is `subset` or `all` (`tests` is empty for `all`). Each reason is a changed path and its class. `--repo <dir>` selects the directory whose tests to list; paths in the output are relative to it. The diff covers the whole git repository, so a lockfile or source change outside `<dir>` still selects `all`, while tests, fixtures and docs outside it are ignored.
 
 ## Rules
 
@@ -34,7 +34,7 @@ A change to the Attest version is a change to a manifest or lockfile, so it sele
 
 A test references a fixture when its source holds the fixture's capture name (the `name` field inside the fixture file) as a quoted string, as in `attest_replay("inc-1042")` or `useReplay("inc-1042")`, or a string that names the file (`fixtures/inc-1042.attest.json`). The match is on text, so it also finds names held in a constant defined in the same file, but not names built at runtime from pieces.
 
-A fixture no test references gives `all`: selection cannot tell what depends on it. So does a fixture that was deleted or that has no readable name.
+A fixture that a `conftest.py` references selects every test file below that `conftest.py`. A fixture that a helper module (any other `.py`, `.ts`, `.tsx`, `.js` or `.mjs` file that is not a test) references gives `all`, because the diff cannot say which tests import the helper. A fixture no test references gives `all` too: selection cannot tell what depends on it. So does a fixture that was deleted or that has no readable name.
 
 ## Run the selection
 

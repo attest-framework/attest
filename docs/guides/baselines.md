@@ -34,7 +34,7 @@ uv run attest policy evaluate --policy attest.policy.yaml --report attest-report
 
 The evaluation names a tag that does not exist as an error (exit 1), not as a pass. Without `--baseline`, the policy's regression rules do not run.
 
-The comparison reports, per assertion, whether it regressed (it passed in the baseline and does not now), improved, was added or was removed, plus the change in overall pass rate, cost and duration.
+`attest policy evaluate` prints its violations as JSON; the comparison reaches the output only through the policy rules. `block_on_regression: true` adds a `block_on_regression` violation naming each assertion that passed in the baseline and does not now (an assertion that was added or removed is not a regression), and a `regression` rule adds a verdict per assertion.
 
 ## Trials and the regression rule
 
@@ -42,4 +42,4 @@ A baseline pinned from a fixed-N run (`pytest --attest-trials=N`, Vitest `trials
 
 ## Refresh a baseline
 
-Re-pin the tag from a report you trust when behavior changes on purpose: a new prompt, a re-recorded [fixture](capture.md) or an intentional contract change. Review the comparison first (`attest policy evaluate --baseline <tag>` lists the regressions), then pin.
+Re-pin the tag from a report you trust when behavior changes on purpose: a new prompt, a re-recorded [fixture](capture.md) or an intentional contract change. Review the regressions first: with `block_on_regression: true`, `attest policy evaluate --baseline <tag>` names them. Then pin.

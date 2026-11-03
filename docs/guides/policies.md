@@ -12,7 +12,7 @@ uv run attest policy evaluate --policy attest.policy.yaml --report attest-report
 | 1 | A rule with severity `block` was violated |
 | 2 | Only rules with severity `warn` were violated |
 
-A missing or invalid policy or report exits 1 with the error on stderr.
+A policy or report that cannot be read or is invalid exits 1 with the error on stderr; leaving out `--policy` or `--report` exits 2.
 
 ## Write a policy
 
@@ -25,7 +25,7 @@ severity: block
 # Assertions with no verdict. warn (default) exits 2; block exits 1.
 not_evaluated: warn
 
-# Stop a run that costs more than this many dollars.
+# Fail the gate when the report's total cost exceeds this many dollars.
 max_cost_usd: 0.50
 
 # Per-layer caps on failures (layers 1-8; 0 means any layer).
@@ -44,7 +44,7 @@ block_on_regression: true
 regression: { confidence: 0.95, tolerance: 0.05 }
 ```
 
-Every field is optional; an empty policy has no rules and always passes. A severity other than `block` or `warn` is a load error, so a typo cannot quietly weaken a rule. A `.json` policy takes the same fields.
+Every field is optional. An empty policy has no rules to block on, but the `not_evaluated` rule still applies, so it exits 2 when any assertion was not evaluated. A severity other than `block` or `warn` is a load error, so a typo cannot quietly weaken a rule. A `.json` policy takes the same fields.
 
 ## Not evaluated is not pass
 
@@ -66,6 +66,7 @@ The engine renders report-v2 files for CI. Each command takes `--report` one or 
 uv run attest report junit --report attest-report.json --out junit.xml
 
 # Markdown summary for a PR comment.
+set +e   # policy evaluate exits 1 or 2 on violations; keep going so the summary renders
 uv run attest policy evaluate --policy attest.policy.yaml --report attest-report.json > policy-result.json
 uv run attest report summary --report attest-report.json --policy-result policy-result.json
 
