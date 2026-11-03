@@ -2,6 +2,7 @@ package capture
 
 import (
 	"encoding/json"
+	"fmt"
 	"strconv"
 	"strings"
 	"testing"
@@ -143,6 +144,51 @@ func TestTemplate_SameContentDifferentVolatileValues_SameOutput(t *testing.T) {
 
 	if a != b {
 		t.Fatalf("a %s\nb %s", a, b)
+	}
+}
+
+// A provider id with no digit (OpenAI call ids are 24 base62 characters, so
+// about 1.5% of them have none) is templated when it sits in an id field,
+// structured or inside JSON held as text; in free text the digit rule still
+// keeps tool names such as call_customer.
+func TestTemplate_DigitlessIDsInIDFields_TemplatedSoRecaptureIsStable(t *testing.T) {
+	const doc = `{"steps":[{"tool_call_id":"%s","name":"call_customer"},{"tool_call_id":"%s"}],
+		"attr":"[{\"parts\":[{\"type\":\"tool_call\",\"id\":\"%s\"},{\"type\":\"tool_call\",\"id\":\"%s\"}]}]",
+		"sse":"data: {\"tool_calls\":[{\"id\":\"%s\"}]}","note":"called %s via call_customer"}`
+	digitless := templated(t, fmt.Sprintf(doc, "call_fcdafade", "call_AbCdEfGhIjKlMnOpQrStUvWx",
+		"call_fcdafade", "call_AbCdEfGhIjKlMnOpQrStUvWx", "call_fcdafade", "call_fcdafade"))
+	withDigits := templated(t, fmt.Sprintf(doc, "call_1a2b3c4d", "call_9Z8y7X6w5V4u3T2s1R0qPoNm",
+		"call_1a2b3c4d", "call_9Z8y7X6w5V4u3T2s1R0qPoNm", "call_1a2b3c4d", "call_1a2b3c4d"))
+
+	if digitless != withDigits {
+		t.Fatalf("digitless %s\nwith digits %s", digitless, withDigits)
+	}
+	for _, gone := range []string{"fcdafade", "AbCdEfGh"} {
+		if strings.Contains(digitless, gone) {
+			t.Errorf("id %s left untemplated: %s", gone, digitless)
+		}
+	}
+	if !strings.Contains(digitless, `"name":"call_customer"`) || !strings.Contains(digitless, "via call_customer") {
+		t.Errorf("tool name call_customer was templated: %s", digitless)
+	}
+}
+
+// Ids that appear only inside JSON held as text (an OTel message attribute,
+// an event-stream body), with no structured copy, are templated too.
+func TestTemplate_DigitlessIDsOnlyInTextHeldJSON_Templated(t *testing.T) {
+	for name, doc := range map[string]string{
+		"attribute": `{"attr":"[{\"parts\":[{\"type\":\"tool_call\",\"id\":\"call_fcdafade\"}]}]"}`,
+		"stream":    `{"body":"data: {\"id\":\"chatcmpl-AbCdEfGhIjKl\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"id\": \"call_AbCdEfGhIjKlMnOpQrStUvWx\"}]}}]}\n\n"}`,
+	} {
+		got := templated(t, doc)
+		for _, gone := range []string{"fcdafade", "AbCdEfGh"} {
+			if strings.Contains(got, gone) {
+				t.Errorf("%s: id %s left untemplated: %s", name, gone, got)
+			}
+		}
+		if !strings.Contains(got, "{{id_1}}") {
+			t.Errorf("%s: no id placeholder: %s", name, got)
+		}
 	}
 }
 
