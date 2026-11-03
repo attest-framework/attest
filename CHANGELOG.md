@@ -13,6 +13,10 @@ All notable changes to Attest are documented in this file. The format follows [K
 - `attest mcp [--root D]` serves attest to coding agents over MCP on stdio with a fixed toolset: `trace_check`, `evaluate`, `explain_failure`, `draft_contract`, `run_contract` and `fixture_info`. It is read-only and offline (deterministic layers only; judge and embedding assertions return `not_evaluated` with `provider_not_configured`) and confined to the project root: paths are resolved through symlinks, files are capped at 32 MiB. `run_contract` parses statements such as `tool_cardinality("issue_refund", per="order_id", at_most=1)` with a closed grammar, never as code, and returns per-statement results plus the Python and TypeScript test lines. `attest mcp --tools --json` prints the tool list; `attest mcp install --dir D --command <json argv>` and `attest init --mcp` (Python and TypeScript) write `.mcp.json`, `.cursor/mcp.json` and `.codex/config.toml` without touching other servers. Guide: `mcp`.
 - Claude Code, Cursor and Codex plugin manifests (`.claude-plugin/`, `.cursor-plugin/`, `.codex-plugin/`) publish the same `skills/`; they are generated from `VERSION` and one metadata source by `go generate` and checked for drift. In Claude Code: `/plugin marketplace add attest-framework/attest`.
 
+### Security
+
+- JSON Schema assertions (`type: schema`) resolve `$ref` inside the schema document only: `file://` and `http://` references no longer load, for every engine caller. Previously a schema could read any local file the engine could, and its compile errors could echo part of it. The compiled-schema cache is bounded.
+
 ### Changed
 
 - `attest policy evaluate` exits 3 on usage errors and when the policy, report or baseline fails to load (previously 2 and 1), so they cannot be read as a warning or a block. Verdicts keep 0 pass, 1 block, 2 warn.

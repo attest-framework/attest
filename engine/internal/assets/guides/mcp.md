@@ -10,7 +10,7 @@ npx attest init --mcp         # TypeScript
 attest-engine mcp install --dir . --command '["attest","mcp"]'   # without an SDK
 ```
 
-`init --mcp` calls `attest-engine mcp install` with the launch command for the project: `uv run attest mcp` when `uv.lock` is in the project root, else `attest mcp` (Python); `pnpm exec attest mcp` with `pnpm-lock.yaml`, else `npx attest mcp` (TypeScript). It writes or merges an `attest` entry into:
+`init --mcp` calls `attest-engine mcp install` with the launch command for the project: `uv run attest mcp` when `uv.lock` is in the project root, else `attest mcp` (Python); `pnpm exec attest mcp` with `pnpm-lock.yaml`, else `npx --no attest mcp` (TypeScript; `--no` makes a missing local install fail instead of letting npx fetch the unscoped `attest` package from the registry). It writes or merges an `attest` entry into:
 
 | Client | File | Entry |
 |---|---|---|
@@ -18,7 +18,7 @@ attest-engine mcp install --dir . --command '["attest","mcp"]'   # without an SD
 | Cursor | `.cursor/mcp.json` | the same, with `"type": "stdio"` |
 | Codex | `.codex/config.toml` (trusted projects) | `[mcp_servers.attest]` with `command` and `args` |
 
-Other servers and keys in those files are kept. A different existing `attest` entry is reported as `conflict` and left alone; `--force` replaces it. Every destination is validated before anything is written, and a destination that resolves outside the project directory is refused. `init --json` lists written files as `created` or `updated` and everything else, conflicts included, as `skipped`.
+Other servers and keys in those files are kept. A different existing `attest` entry is reported as `conflict` and left alone; `--force` replaces it, except in `.codex/config.toml` when the entry is written as an inline table or dotted keys rather than a `[mcp_servers.attest]` table, which stays a conflict for you to edit. The Codex file is parsed as TOML: invalid TOML, or JSON with trailing content after the object, is refused and nothing is written. Existing files keep their permission bits; files are replaced through a synced temporary file. Every destination is validated before anything is written, and a destination that resolves outside the project directory is refused. `init --json` lists written files as `created` or `updated`, unchanged ones as `skipped`, and with `--mcp` adds a `conflict` list; the text output labels a conflict as such and names `attest-engine mcp install --force`.
 
 Claude Code asks you to approve a project-scoped server before using it. Codex reads `.codex/config.toml` only in a project it trusts.
 
@@ -29,7 +29,11 @@ attest-engine mcp [--root DIR]     # serve on stdio; the root defaults to the wo
 attest-engine mcp --tools --json   # print the fixed tool list and exit
 ```
 
-Stdout carries only protocol frames; logs go to stderr. `mcp --json` without `--tools` is a usage error (exit 2).
+Stdout carries only protocol frames; logs go to stderr. A call has a 30 s deadline, at most four calls run at once, and a panic while running a tool is reported as a tool error.
+
+### Which directory is the project root
+
+The root is `--root`, else the directory the client starts the server in. The vendors do not document that directory for stdio servers: Claude Code documents a working directory only for `headersHelper` (the project directory for a project `.mcp.json`), Cursor's table has no `cwd` option (it offers `${workspaceFolder}` as a variable), and Codex has an optional `cwd` setting but does not state the default. Without an explicit `--root`, the server refuses to start in `/` or in your home directory (exit 2). To pin the root, add it to the launch command, for example `attest mcp --root /path/to/project`, or set `cwd` in `.codex/config.toml`. `mcp --json` without `--tools` is a usage error (exit 2).
 
 ## Tools
 
@@ -43,7 +47,7 @@ Every path argument is relative to the project root or absolute inside it.
 | `evaluate` | one of `trace_path`, `fixture_path`, `trace` (inline trace-v2), and `assertions`: `[{assertion_id, type, spec}]` | One result per assertion with a status of `pass`, `soft_fail`, `hard_fail` or `not_evaluated`. |
 | `explain_failure` | `report_path`, optional `test_id` | Every failing or not-evaluated row of a report-v2 file: status, reason, explanation, failure class, file and line, the `attest guide <topic>` to read and a one-line next step. |
 | `draft_contract` | `fixture_path` or `trace_path`, optional `expect_fail` | Contracts drafted from the run and verified on it, each as a `run_contract` statement with its spec, status and the Python and TypeScript test lines. |
-| `run_contract` | `statements`, one of `fixture_path` / `trace_path`, optional `world_path` | Per statement: status, explanation, spec, and the Python and TypeScript test lines. |
+| `run_contract` | `statements`, one of `fixture_path` / `trace_path`, optional `world_path` | Per statement: status, explanation, spec, and the Python and TypeScript test lines (effect lines start with `.world(FIXTURE.world)`, also returned as `chain_prefix`). |
 | `fixture_info` | `path` | Name, how the fixture was captured, trace and exchange counts, contracts, world summary, verification and a redaction check. |
 
 `evaluate` and `run_contract` run the deterministic layers only: schema, constraint, trace, content, trace tree and effect checks. Embedding and judge assertions return `not_evaluated` with reason `provider_not_configured`, because the server never calls a model or the network.
@@ -124,7 +128,7 @@ The grammar and the SDK DSL share one spec: tests check every case in `protocol-
 
 ## Confinement
 
-The project root is the working directory or `--root`. Every path is resolved with symlinks followed and must stay inside the root: `..`, absolute paths outside it and symlinks (chains included) that lead out are refused. Only regular files are read, at most 32 MiB each; a larger file, a directory or a named pipe is refused. Errors name the path the agent gave and never echo file contents.
+The project root is the working directory or `--root`. Every path is checked lexically first (`..` and absolute paths outside the root are refused before any file is touched) and then opened through the root directory, so each path component, symlinks included, is resolved inside the root at open time: a symlink that leads out, a chain of them, or one swapped in after a check cannot escape. A symlink to an absolute path is refused even when its target is inside the root; use a relative link. Only regular files are read, at most 32 MiB each; a larger file, a directory or a named pipe is refused. A path that cannot be read inside the root gets one message, whether or not it exists outside, so an agent cannot probe the filesystem. Errors about a file inside the root can still quote a short fragment of it, such as a JSON parse error; paths the agent supplied are echoed back.
 
 The server writes nothing: there is no tool that creates or edits a file. It opens no listener and makes no outbound request; a test fails if `evaluate` with a judge or embedding assertion makes an HTTP call.
 

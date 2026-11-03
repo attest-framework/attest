@@ -219,7 +219,7 @@ func installSkills(root string) (skillsInstallResult, error) {
 }
 
 // writeSkillFile makes dst hold data and reports "created", "updated", or
-// "unchanged". dst was validated by resolveSkillDestination.
+// "unchanged". dst was validated by pathguard.ResolveDestination.
 func writeSkillFile(dst string, data []byte) (string, error) {
 	state := "created"
 	cur, err := os.ReadFile(dst)
