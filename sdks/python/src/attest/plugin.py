@@ -448,6 +448,7 @@ def attest_replay(
             mode=chosen,
             fixtures_dir=fixtures_dir_for(config.rootpath, fixtures_dir),
             engine_path=engine_path or config.getoption("--attest-engine", default=None),
+            no_live=_egress_mode(config) == "block",
         )
         _item_replays.setdefault(nodeid, []).append(session)
         return session
@@ -529,8 +530,23 @@ def pytest_runtest_makereport(
     """
     outcome = yield
     report: pytest.TestReport = outcome.get_result()
+    if (
+        call.when == "setup"
+        and item.nodeid in _item_replays
+        and (report.outcome == "failed" or hasattr(report, "wasxfail"))
+    ):
+        # A fixture ran the agent under replay during setup and setup failed: settle the
+        # replay now, so a miss is reported as one instead of as the agent's exception
+        # (or, under xfail, as an expected failure).
+        settled = _settle_replays(item)
+        if isinstance(settled, pytest.skip.Exception):
+            if hasattr(report, "wasxfail"):
+                del report.wasxfail
+            _, lineno, _ = item.location
+            report.outcome = "skipped"
+            report.longrepr = (str(item.path), (lineno or 0) + 1, f"Skipped: {settled.msg}")
     replay_failure = item.stash.get(_REPLAY_FAILURE, None)
-    if call.when == "call" and replay_failure is not None:
+    if call.when in ("setup", "call") and replay_failure is not None:
         # Outermost wrapper: the xfail machinery has run. A strict replay miss is a failure
         # of the test, not an expected one.
         if hasattr(report, "wasxfail"):

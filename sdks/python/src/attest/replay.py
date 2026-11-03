@@ -264,6 +264,7 @@ def start_replay(
     mode: str | None = None,
     fixtures_dir: str | os.PathLike[str] = DEFAULT_FIXTURE_DIR,
     engine_path: str | None = None,
+    no_live: bool | None = None,
 ) -> ReplaySession:
     """Start replaying fixture ``<fixtures_dir>/<name>.attest.json``.
 
@@ -276,6 +277,9 @@ def start_replay(
         mode: ``strict``, ``auto`` or ``off`` (default: :func:`resolve_mode`).
         fixtures_dir: Fixture directory.
         engine_path: Engine binary (default: the SDK's engine discovery).
+        no_live: Never forward a miss live (the engine's ``--no-live``). Default: when the
+            egress guard is installed or ``ATTEST_EGRESS=block`` is set. An installed
+            guard always implies it.
 
     Raises:
         ReplayError: The engine did not start (a missing fixture, a trace-only fixture).
@@ -284,7 +288,7 @@ def start_replay(
     from attest.engine_manager import resolve_engine
 
     resolved = resolve_mode(mode)
-    no_live = egress.active() or egress.egress_block_requested()
+    no_live = egress.active() or (egress.egress_block_requested() if no_live is None else no_live)
     if resolved == MODE_OFF:
         return ReplaySession(name, MODE_OFF, {}, None, {})
     if not _REPLAYING.acquire(blocking=False):

@@ -191,6 +191,33 @@ _XFAIL_TEST = _AGENT_HELPERS + textwrap.dedent(
     """
 )
 
+# The agent runs under replay inside a fixture, so a miss surfaces during setup.
+_SETUP_XFAIL_TEST = _AGENT_HELPERS + textwrap.dedent(
+    """
+    import pytest
+
+    @pytest.fixture
+    def incident_with(attest_replay):
+        with attest_replay("inc-9"):
+            call_model(os.environ["AGENT_SYSTEM"])
+        raise AssertionError("the agent's own failure, raised in setup")
+
+    @pytest.fixture
+    def incident_without_with(attest_replay):
+        attest_replay("inc-9")
+        call_model(os.environ["AGENT_SYSTEM"])
+        raise AssertionError("the agent's own failure, raised in setup")
+
+    @pytest.mark.xfail(strict=True)
+    def test_incident_from_fixture_with(incident_with):
+        pass
+
+    @pytest.mark.xfail(strict=True)
+    def test_incident_from_fixture_without_with(incident_without_with):
+        pass
+    """
+)
+
 _TRIALS_TEST = _AGENT_HELPERS + textwrap.dedent(
     """
     def test_trials(attest, attest_replay):
@@ -373,3 +400,39 @@ def test_pytest_auto_with_matching_key_but_egress_blocked_is_not_evaluated_and_n
     assert "2 skipped" in run.stdout and "0 live model calls" in run.stdout
     assert report["summary"]["replay"]["live"] == 0
     assert [t["not_evaluated_reasons"] for t in report["tests"]] == [["replay_miss"]] * 2
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("system, outcome", [(_V2, "errors"), (_V1, "xfailed")])
+def test_pytest_replay_in_fixture_setup_under_xfail_reports_a_miss_as_an_error(
+    captured: Path, tmp_path: Path, system: str, outcome: str
+) -> None:
+    run, _ = _run_pytest(
+        captured, tmp_path, system, "--attest-replay=strict", "-rxX", source=_SETUP_XFAIL_TEST
+    )
+
+    # A setup failure is an error, not a failed test; a miss is never an expected failure.
+    assert f"2 {outcome}" in run.stdout, run.stdout + run.stderr
+    if outcome == "errors":
+        assert "xfailed" not in run.stdout
+        assert _MISS.search(run.stdout) is not None, run.stdout
+
+
+@pytest.mark.integration
+def test_pytest_egress_allow_flag_overrides_attest_egress_env_for_live_forwarding(
+    captured: Path, tmp_path: Path
+) -> None:
+    run, report = _run_pytest(
+        captured,
+        tmp_path,
+        _V2,
+        "--attest-replay=auto",
+        "--attest-egress=allow",
+        OPENAI_API_KEY=_PLANTED_KEY,
+        ATTEST_EGRESS="block",
+    )
+
+    # Allowed: the auto misses carry the engine's key, so they are forwarded (to a dead
+    # upstream here) instead of being reported as not evaluated.
+    assert report["summary"]["replay"]["live"] == 2, run.stdout + run.stderr
+    assert all("replay_miss" not in t.get("not_evaluated_reasons", []) for t in report["tests"])
