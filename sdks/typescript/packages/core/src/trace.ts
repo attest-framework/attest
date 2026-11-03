@@ -61,6 +61,9 @@ export class TraceBuilder {
     let result = options?.result;
     if (mock !== undefined) {
       const mocked = mock(options?.args ?? {});
+      if (typeof (mocked as { then?: unknown } | null)?.then === "function") {
+        throw new Error(`mock for tool '${name}' returned a Promise; mock tools must be synchronous`);
+      }
       if (typeof mocked === "object" && mocked !== null && !Array.isArray(mocked)) {
         result = mocked as Record<string, unknown>;
       }

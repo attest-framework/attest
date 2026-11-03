@@ -114,13 +114,16 @@ export function initFlags(): string[] {
 
 export function collectSurface(): Surface {
   const core = resolve(CORE, "src");
+  const exported = moduleExports(resolve(core, "index.ts"));
+  // Only names re-exported from the package entry count: users cannot import the rest.
+  const reachable = (file: string): string[] => moduleExports(file).filter((n) => exported.includes(n));
   return {
     adapters: exportedClasses(resolve(core, "adapters/index.ts")),
-    exports: moduleExports(resolve(core, "index.ts")),
+    exports: exported,
     expect_chain: classMembers(resolve(core, "index.ts"), "ExpectChain"),
     init_flags: initFlags(),
-    plugins: moduleExports(resolve(core, "plugins.ts")),
-    simulation: moduleExports(resolve(core, "simulation/index.ts")),
+    plugins: reachable(resolve(core, "plugins.ts")),
+    simulation: reachable(resolve(core, "simulation/index.ts")),
     test_runner: moduleExports(resolve(TS_ROOT, "packages/vitest/src/index.ts")),
   };
 }

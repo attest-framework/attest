@@ -174,30 +174,46 @@ def test_parity_checker_flags_exception_for_name_python_no_longer_has() -> None:
     matrix = build_matrix(
         _surface(exports=["Agent"]),
         _surface(exports=["Agent"]),
-        _exceptions({"python": "Gone", "reason": "upstream_python_only", "note": ""}),
+        _exceptions(
+            {"python": "Gone", "section": "exports", "reason": "upstream_python_only", "note": ""}
+        ),
     )
 
-    assert matrix.problems == ["stale exception Gone: no such Python name"]
+    assert matrix.problems == ["stale exception exports.Gone: no such Python name"]
 
 
 def test_parity_checker_flags_exception_once_typescript_has_the_counterpart() -> None:
     matrix = build_matrix(
         _surface(exports=["make_thing"]),
         _surface(exports=["makeThing"]),
-        _exceptions({"python": "make_thing", "reason": "language_idiom", "note": "makeThing"}),
+        _exceptions(
+            {
+                "python": "make_thing",
+                "section": "exports",
+                "reason": "language_idiom",
+                "note": "makeThing",
+            }
+        ),
     )
 
-    assert matrix.problems == ["stale exception make_thing: TypeScript now exports makeThing"]
+    assert matrix.problems == [
+        "stale exception exports.make_thing: TypeScript now exports makeThing"
+    ]
 
 
 def test_parity_checker_flags_outcome_capability_exception() -> None:
     matrix = build_matrix(
         _surface(simulation=["scenario"]),
         _surface(),
-        _exceptions({"python": "scenario", "reason": "language_idiom", "note": "x"}),
+        _exceptions(
+            {"python": "scenario", "section": "simulation", "reason": "language_idiom", "note": "x"}
+        ),
     )
 
-    assert "exception scenario: outcome capabilities cannot be exceptions" in matrix.problems
+    assert (
+        "exception simulation.scenario: outcome capabilities cannot be exceptions"
+        in matrix.problems
+    )
 
 
 def test_parity_checker_flags_stale_alias() -> None:
@@ -214,7 +230,7 @@ def test_parity_checker_rejects_unknown_reason() -> None:
     matrix = build_matrix(
         _surface(exports=["thing"]),
         _surface(),
-        _exceptions({"python": "thing", "reason": "because", "note": ""}),
+        _exceptions({"python": "thing", "section": "exports", "reason": "because", "note": ""}),
     )
 
     assert any("reason must be one of" in p for p in matrix.problems)
@@ -226,3 +242,23 @@ def test_snapshots_define_every_section(section: str) -> None:
 
     assert section in python
     assert section in typescript
+
+
+def test_parity_checker_does_not_apply_an_exception_to_another_section() -> None:
+    matrix = build_matrix(
+        _surface(exports=["integration"], test_runner=["integration"]),
+        _surface(),
+        _exceptions(
+            {
+                "python": "integration",
+                "section": "test_runner",
+                "reason": "language_idiom",
+                "note": "x",
+            }
+        ),
+    )
+
+    assert matrix.problems == [
+        "gap exports.integration: no TypeScript counterpart 'integration' "
+        "and no documented exception"
+    ]

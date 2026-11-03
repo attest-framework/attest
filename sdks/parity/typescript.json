@@ -305,7 +305,6 @@
     "ScenarioResult",
     "SimulatePersona",
     "Verdict",
-    "activeMockRegistry",
     "config",
     "faultInject",
     "isSimulationMode",

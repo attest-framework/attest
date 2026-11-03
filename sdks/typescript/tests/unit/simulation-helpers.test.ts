@@ -64,6 +64,15 @@ describe("MockToolRegistry", () => {
     expect(trace.steps[0]?.result).toEqual({ original: 1 });
   });
 
+  it("rejects an async mock instead of recording a Promise", () => {
+    const registry = new MockToolRegistry();
+    registry.register("search", (async () => ({ ok: true })) as () => unknown);
+
+    expect(() => registry.run(() => searchTrace())).toThrow(
+      "mock for tool 'search' returned a Promise",
+    );
+  });
+
   it("isolates concurrent scopes", async () => {
     const a = new MockToolRegistry();
     a.register("search", () => ({ from: "a" }));

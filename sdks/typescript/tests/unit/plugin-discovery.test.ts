@@ -88,6 +88,36 @@ describe("loadPackagePlugins", () => {
     expect(errors).toHaveBeenCalledTimes(3);
   });
 
+  it("loads CommonJS plugins: module.exports, exports.default and named exports", async () => {
+    writeJson(join(root, "package.json"), { dependencies: { "cjs-plugin": "1.0.0" } });
+    const body = (name: string): string =>
+      `{ name: "${name}", pluginType: "assertion", execute: () => ({ status: "pass", score: 1, explanation: "" }) }`;
+    installPackage("cjs-plugin", ["./a.cjs", "./b.cjs", "./c.cjs"], {
+      "a.cjs": `module.exports = ${body("a")};`,
+      "b.cjs": `Object.defineProperty(exports, "__esModule", { value: true }); exports.default = ${body("b")};`,
+      "c.cjs": `exports.plugin = ${body("c")};`,
+    });
+
+    const registry = new PluginRegistry();
+    expect(await loadPackagePlugins(registry, root)).toBe(3);
+    expect(registry.listPlugins("assertion").sort()).toEqual(["a", "b", "c"]);
+  });
+
+  it("logs a malformed attest.plugins declaration and a bad package.json, then continues", async () => {
+    const errors = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    writeJson(join(root, "package.json"), {
+      dependencies: { "bad-shape": "1", "bad-json": "1", "good-plugin": "1" },
+    });
+    writeJson(join(root, "node_modules", "bad-shape", "package.json"), { attest: { plugins: "./p.mjs" } });
+    mkdirSync(join(root, "node_modules", "bad-json"), { recursive: true });
+    writeFileSync(join(root, "node_modules", "bad-json", "package.json"), "{ not json");
+    installPackage("good-plugin", ["./plugin.mjs"], { "plugin.mjs": PLUGIN_SRC("good") });
+
+    const registry = new PluginRegistry();
+    expect(await loadPackagePlugins(registry, root)).toBe(1);
+    expect(errors).toHaveBeenCalledTimes(2);
+  });
+
   it("throws when the project has no package.json", async () => {
     await expect(loadPackagePlugins(new PluginRegistry(), root)).rejects.toThrow();
   });

@@ -16,31 +16,37 @@
   "exceptions": [
     {
       "python": "BaseProviderAdapter",
+      "section": "exports",
       "reason": "language_idiom",
       "note": "TypeScript adapters implement the `TraceAdapter` interface directly; there is no template-method base class."
     },
     {
       "python": "CrewAIAdapter",
+      "section": "adapters",
       "reason": "upstream_python_only",
       "note": "CrewAI has no TypeScript release."
     },
     {
       "python": "GoogleADKAdapter",
+      "section": "adapters",
       "reason": "otel_capture",
       "note": "Capture Google ADK runs through its OpenTelemetry spans with `attest capture`."
     },
     {
       "python": "LlamaIndexInstrumentationHandler",
+      "section": "adapters",
       "reason": "otel_capture",
       "note": "Capture LlamaIndex runs through its OpenTelemetry spans with `attest capture`."
     },
     {
       "python": "attest",
+      "section": "test_runner",
       "reason": "language_idiom",
       "note": "Vitest selects Attest tests by file glob and `describe`; no marker is needed."
     },
     {
       "python": "integration",
+      "section": "test_runner",
       "reason": "language_idiom",
       "note": "Vitest splits integration tests with a separate include glob or `test:integration` script."
     }

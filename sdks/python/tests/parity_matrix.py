@@ -122,30 +122,36 @@ def _exception_problems(
     exceptions: list[dict[str, str]], python: Surface, typescript: Surface, aliases: dict[str, str]
 ) -> list[str]:
     problems: list[str] = []
-    seen: set[str] = set()
+    seen: set[tuple[str, str]] = set()
     for exc in exceptions:
-        name = exc.get("python", "")
-        where = [s for s in SECTIONS if name in python.get(s, [])]
-        if name in seen:
-            problems.append(f"duplicate exception {name}")
-        seen.add(name)
-        if exc.get("reason") not in REASONS:
-            problems.append(f"exception {name}: reason must be one of {', '.join(REASONS)}")
-        if exc.get("reason") == "language_idiom" and not exc.get("note"):
-            problems.append(f"exception {name}: language_idiom needs a note naming the TS way")
-        if not where:
-            problems.append(f"stale exception {name}: no such Python name")
+        name, section = exc.get("python", ""), exc.get("section", "")
+        label = f"{section}.{name}"
+        if section not in SECTIONS:
+            problems.append(f"exception {name}: section must be one of {', '.join(SECTIONS)}")
             continue
-        if name in OUTCOME_NAMES or any(s in OUTCOME_SECTIONS for s in where):
-            problems.append(f"exception {name}: outcome capabilities cannot be exceptions")
+        if (section, name) in seen:
+            problems.append(f"duplicate exception {label}")
+        seen.add((section, name))
+        if exc.get("reason") not in REASONS:
+            problems.append(f"exception {label}: reason must be one of {', '.join(REASONS)}")
+        if exc.get("reason") == "language_idiom" and not exc.get("note"):
+            problems.append(f"exception {label}: language_idiom needs a note naming the TS way")
+        if name not in python.get(section, []):
+            problems.append(f"stale exception {label}: no such Python name")
+            continue
+        if name in OUTCOME_NAMES or section in OUTCOME_SECTIONS:
+            problems.append(f"exception {label}: outcome capabilities cannot be exceptions")
         counterpart = aliases.get(name, snake_to_camel(name))
-        if all(counterpart in typescript.get(s, []) for s in where):
-            problems.append(f"stale exception {name}: TypeScript now exports {counterpart}")
+        if counterpart in typescript.get(section, []):
+            problems.append(f"stale exception {label}: TypeScript now exports {counterpart}")
     return problems
 
 
 def _alias_problems(
-    aliases: dict[str, str], python: Surface, typescript: Surface, exception_names: set[str]
+    aliases: dict[str, str],
+    python: Surface,
+    typescript: Surface,
+    exception_keys: set[tuple[str, str]],
 ) -> list[str]:
     problems: list[str] = []
     for name, target in aliases.items():
@@ -154,7 +160,7 @@ def _alias_problems(
             problems.append(f"stale alias {name}: no such Python name")
         elif any(target not in typescript.get(s, []) for s in where):
             problems.append(f"stale alias {name}: TypeScript does not export {target}")
-        if name in exception_names:
+        if any((section, name) in exception_keys for section in where):
             problems.append(f"{name} is both an alias and an exception")
     return problems
 
@@ -162,9 +168,9 @@ def _alias_problems(
 def build_matrix(python: Surface, typescript: Surface, exceptions_doc: dict[str, Any]) -> Matrix:
     aliases: dict[str, str] = exceptions_doc["aliases"]
     exceptions: list[dict[str, str]] = exceptions_doc["exceptions"]
-    by_name = {e["python"]: e for e in exceptions}
+    by_key = {(e["section"], e["python"]): e for e in exceptions if "section" in e}
     problems = _exception_problems(exceptions, python, typescript, aliases)
-    problems += _alias_problems(aliases, python, typescript, set(by_name))
+    problems += _alias_problems(aliases, python, typescript, set(by_key))
 
     rows: list[Row] = []
     for section in SECTIONS:
@@ -174,8 +180,8 @@ def build_matrix(python: Surface, typescript: Surface, exceptions_doc: dict[str,
             if target in have:
                 status = "alias" if name in aliases else "match"
                 rows.append(Row(section, name, target, status))
-            elif name in by_name:
-                exc = by_name[name]
+            elif (section, name) in by_key:
+                exc = by_key[(section, name)]
                 rows.append(
                     Row(section, name, "-", "exception", exc["reason"], exc.get("note", ""))
                 )

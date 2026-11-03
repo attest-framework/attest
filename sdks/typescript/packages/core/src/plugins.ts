@@ -1,5 +1,5 @@
 import { existsSync, readFileSync } from "node:fs";
-import { dirname, join, relative, resolve, isAbsolute } from "node:path";
+import { dirname, join, relative, resolve, isAbsolute, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 import type { Trace } from "./proto/types.js";
 import type { AttestClient } from "./client.js";
@@ -117,11 +117,37 @@ function findInstalledPackage(projectRoot: string, name: string): string | undef
   }
 }
 
-function declaredPluginPaths(pkgJson: Record<string, unknown>): string[] {
+function declaredPluginPaths(pkgJson: Record<string, unknown>, dep: string): string[] {
   const attest = pkgJson["attest"];
-  if (typeof attest !== "object" || attest === null) return [];
-  const plugins = (attest as Record<string, unknown>)["plugins"];
-  return Array.isArray(plugins) ? plugins.filter((p): p is string => typeof p === "string") : [];
+  if (attest === undefined) return [];
+  const plugins =
+    typeof attest === "object" && attest !== null
+      ? (attest as Record<string, unknown>)["plugins"]
+      : undefined;
+  if (plugins === undefined) return [];
+  if (!Array.isArray(plugins) || !plugins.every((p) => typeof p === "string")) {
+    throw new Error(`'${dep}': "attest.plugins" must be an array of strings`);
+  }
+  return plugins as string[];
+}
+
+/**
+ * Plugins exported by a loaded module: the default export if it is a plugin
+ * (a CommonJS build puts `module.exports` there, so also look one `default`
+ * deeper), otherwise every plugin-shaped named export.
+ */
+function pluginsOf(mod: Record<string, unknown>): AttestPlugin[] {
+  const def = mod["default"];
+  const nested = typeof def === "object" && def !== null ? (def as Record<string, unknown>) : undefined;
+  for (const candidate of [def, nested?.["default"]]) {
+    if (isAttestPlugin(candidate)) return [candidate];
+  }
+  return [...new Set([...Object.values(mod), ...Object.values(nested ?? {})])].filter(isAttestPlugin);
+}
+
+function isInside(root: string, file: string): boolean {
+  const rel = relative(root, file);
+  return rel !== "" && rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel);
 }
 
 /**
@@ -152,19 +178,21 @@ export async function loadPackagePlugins(
   for (const dep of depNames) {
     const pkgDir = findInstalledPackage(projectRoot, dep);
     if (pkgDir === undefined) continue;
-    for (const entry of declaredPluginPaths(readJson(join(pkgDir, "package.json")))) {
+    let entries: string[];
+    try {
+      entries = declaredPluginPaths(readJson(join(pkgDir, "package.json")), dep);
+    } catch (err) {
+      console.error(`attest: failed to read plugins declared by '${dep}':`, err);
+      continue;
+    }
+    for (const entry of entries) {
       try {
         const file = resolve(pkgDir, entry);
-        const rel = relative(pkgDir, file);
-        if (rel.startsWith("..") || isAbsolute(rel)) {
+        if (!isInside(pkgDir, file)) {
           throw new Error(`plugin path '${entry}' escapes package '${dep}'`);
         }
         const mod = (await import(pathToFileURL(file).href)) as Record<string, unknown>;
-        const candidates =
-          mod["default"] !== undefined
-            ? [mod["default"]]
-            : Object.values(mod).filter(isAttestPlugin);
-        const plugins = candidates.filter(isAttestPlugin);
+        const plugins = pluginsOf(mod);
         if (plugins.length === 0) {
           throw new Error(`'${entry}' exports no plugin (name, pluginType, execute)`);
         }
