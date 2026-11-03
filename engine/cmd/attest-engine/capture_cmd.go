@@ -28,6 +28,7 @@ func init() {
 const captureUsage = `usage: attest-engine capture --name <name> [options] -- <command> [args...]
        attest-engine capture --name <name> --from <otlp.json> [options]
        attest-engine capture --name <name> --serve [options]
+       attest-engine capture --refresh <name> [options]
        attest-engine capture --check-redaction <fixture.attest.json>
 
 Runs <command> with OPENAI_BASE_URL and ANTHROPIC_BASE_URL pointing at a
@@ -43,6 +44,10 @@ options:
   --agent-id <id>        trace agent_id (default: the first turn's agent name)
   --result-file <path>   also write {"fixture", "verified"} JSON to <path>
   --from <otlp.json>     build from an OTLP/JSON export (trace only; no replay)
+  --refresh <name>       re-run the fixture's recorded command with its
+                         original flags (--expect-fail included) and overwrite
+                         it; refuses when the command was redacted or the
+                         fixture has no command (--from, in-process)
   --serve                in-process capture: print the environment as one JSON
                          line, then finalize when stdin sends "finalize" or
                          {"finalize":true,"environ":[...]} (secrets in that
@@ -61,6 +66,7 @@ type captureOptions struct {
 	from           string
 	serve          bool
 	checkRedaction string
+	refresh        string
 	command        []string
 }
 
@@ -76,6 +82,7 @@ func parseCaptureArgs(args []string, stderr io.Writer) (*captureOptions, bool) {
 	fs.StringVar(&o.from, "from", "", "")
 	fs.BoolVar(&o.serve, "serve", false, "")
 	fs.StringVar(&o.checkRedaction, "check-redaction", "", "")
+	fs.StringVar(&o.refresh, "refresh", "", "")
 	if err := fs.Parse(args); err != nil {
 		fmt.Fprintf(stderr, "capture: %s\n%s\n", terminalSafe(err.Error()), captureUsage)
 		return nil, false
@@ -88,6 +95,15 @@ func parseCaptureArgs(args []string, stderr io.Writer) (*captureOptions, bool) {
 	if o.checkRedaction != "" {
 		if o.name != "" || o.from != "" || o.serve || len(o.command) > 0 {
 			return usage("--check-redaction takes only a fixture path")
+		}
+		return o, true
+	}
+	if o.refresh != "" {
+		if o.name != "" || o.from != "" || o.serve || o.expectFail || len(o.command) > 0 {
+			return usage("--refresh takes only a fixture name, --out-dir, --agent-id and --result-file")
+		}
+		if err := capture.ValidateName(o.refresh); err != nil {
+			return usage(terminalSafe(err.Error()))
 		}
 		return o, true
 	}
@@ -113,6 +129,12 @@ func runCapture(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	}
 	if o.checkRedaction != "" {
 		return runCheckRedaction(o.checkRedaction, stdout, stderr)
+	}
+	if o.refresh != "" {
+		if err := resolveRefresh(o); err != nil {
+			fmt.Fprintf(stderr, "capture: %s\n", terminalSafe(err.Error()))
+			return 1
+		}
 	}
 	environ := os.Environ()
 	in := capture.BuildInput{
@@ -476,4 +498,32 @@ func runCheckRedaction(path string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stdout, "  %s\t%s\n", h.Kind, terminalSafe(h.Path))
 	}
 	return 1
+}
+
+// resolveRefresh fills o from the fixture named by --refresh: its command and
+// its --expect-fail flag. A command whose arguments were redacted cannot be
+// run again, and neither can a fixture that has no command.
+func resolveRefresh(o *captureOptions) error {
+	path := filepath.Join(o.outDir, capture.FixtureFile(o.refresh))
+	f, err := capture.LoadFixture(path)
+	if err != nil {
+		return fmt.Errorf("--refresh %s: %w", o.refresh, err)
+	}
+	if f.Source.Kind != capture.SourceCommand || len(f.Source.Command) == 0 {
+		return fmt.Errorf("--refresh %s: the fixture was captured from %s, not from a command; re-run the capture that produced it", o.refresh, f.Source.Kind)
+	}
+	for _, a := range f.Source.Command {
+		if strings.Contains(a, redact.Marker) {
+			return fmt.Errorf("--refresh %s: the recorded command has redacted arguments; re-run `attest capture --name %s%s -- <command>` yourself", o.refresh, o.refresh, expectFailFlag(f.Verification.ExpectFail))
+		}
+	}
+	o.name, o.command, o.expectFail = o.refresh, f.Source.Command, f.Verification.ExpectFail
+	return nil
+}
+
+func expectFailFlag(on bool) string {
+	if on {
+		return " --expect-fail"
+	}
+	return ""
 }
