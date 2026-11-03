@@ -5,7 +5,7 @@ Render this template with the facts from discovery. Replace every `<…>`; delet
 ````markdown
 ---
 name: verify-<agent>
-description: Verify the <agent> agent offline with attest, with zero model calls. Use after changing <agent>'s prompt, tools, model settings or <side-effect code path>, before committing such a change, or when asked whether <agent> still <key rule, e.g. "refunds each order at most once">.
+description: Verify the <agent> agent offline with attest, with zero model calls. Use after changing <agent>'s prompt, tools, model settings or <side-effect code path>, before committing such a change, or when asked whether <agent> still <key rule, e.g. "charges each order at most once">.
 ---
 
 # Verify <agent>
@@ -31,7 +31,7 @@ General attest procedures: the `attest` skill, `attest help --json` and `attest 
 ## Run (zero model calls)
 
 ```bash
-<exact command 1, e.g. make check-replay>
+<exact command 1, e.g. make test>
 <exact command 2>
 ```
 
@@ -41,7 +41,7 @@ Expected: <`N passed`> and `attest replay: N replayed · 0 live model calls · $
 
 | Rule | Contract | Test |
 | --- | --- | --- |
-| <e.g. one refund per order> | <`tool_cardinality("issue_refund", per="order_id", at_most=1)`; `world(state).count("refunds", equals=1, order_id=…)`> | `<path>::<test>` |
+| <e.g. one charge per order> | <`tool_cardinality("charge_card", per="order_id", at_most=1)`; `world(state).count("charges", equals=1, order_id=…)`> | `<path>::<test>` |
 
 ## Extend
 
