@@ -322,8 +322,7 @@ func (e *env) runContract(raw json.RawMessage) (any, error) {
 	}
 
 	results := make([]statementResult, len(in.Statements))
-	var batch []types.Assertion
-	batchOf := map[string]int{}
+	calls := make([]*contractdsl.Call, len(in.Statements))
 	effects := 0
 	for i, stmt := range in.Statements {
 		results[i] = statementResult{Statement: stmt}
@@ -332,19 +331,35 @@ func (e *env) runContract(raw json.RawMessage) (any, error) {
 			results[i].Status, results[i].Explanation = statusError, err.Error()
 			continue
 		}
+		calls[i] = call
+		if call.Method.Effect {
+			effects++
+		}
+	}
+	// Each effect spec carries the world, so check the total before building any.
+	if len(snapshot)*effects > MaxFileBytes {
+		return nil, errors.New("the world snapshot is too large to check against this many effect statements")
+	}
+	var batch []types.Assertion
+	batchOf := map[string]int{}
+	for i, call := range calls {
+		if call == nil {
+			continue
+		}
 		spec := call.Spec()
 		results[i].Spec = spec
 		results[i].Python, _ = call.PythonLine()
 		results[i].TypeScript, _ = call.TypeScriptLine()
+		evalSpec := spec
 		if call.Method.Effect {
-			effects++
+			evalSpec = call.Spec()
 			if snapshot == nil {
-				spec["world"] = nil
+				evalSpec["world"] = nil
 			} else {
-				spec["world"] = snapshot
+				evalSpec["world"] = snapshot
 			}
 		}
-		data, err := json.Marshal(spec)
+		data, err := json.Marshal(evalSpec)
 		if err != nil {
 			results[i].Status, results[i].Explanation = statusError, "spec could not be encoded"
 			continue
@@ -352,11 +367,6 @@ func (e *env) runContract(raw json.RawMessage) (any, error) {
 		id := fmt.Sprintf("statement-%d", i)
 		batchOf[id] = i
 		batch = append(batch, types.Assertion{AssertionID: id, Type: call.Type(), Spec: data})
-		// The world is not part of the spec shown to the agent.
-		delete(spec, "world")
-	}
-	if len(snapshot)*effects > MaxFileBytes*2 {
-		return nil, errors.New("the world snapshot is too large to check against this many effect statements")
 	}
 	if len(batch) > 0 {
 		res, err := e.pipeline.EvaluateBatch(context.Background(), src.trace, batch)

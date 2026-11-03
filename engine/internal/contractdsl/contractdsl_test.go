@@ -416,3 +416,20 @@ func TestMethods_AllHaveBothNames(t *testing.T) {
 		}
 	}
 }
+
+func TestRender_BidiControl_NotPassedThrough(t *testing.T) {
+	call, err := contractdsl.FromSpec("trace", map[string]any{"check": "forbidden_tools", "tools": []any{"a\u202eb"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := call.Statement(); err == nil {
+		t.Error("statement rendered a bidirectional control")
+	}
+	line, err := call.TypeScriptLine()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.ContainsRune(line, '\u202e') || !strings.Contains(line, "\\u202e") {
+		t.Errorf("typescript line %q", line)
+	}
+}

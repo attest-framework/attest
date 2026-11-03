@@ -175,7 +175,7 @@ func TestInstall_SymlinkedDestinationOutsideRoot_Refused(t *testing.T) {
 }
 
 func TestValidateCommand_Rejects(t *testing.T) {
-	for _, argv := range [][]string{nil, {}, {""}, {"a", "b\nc"}, {"a\x00"}, make([]string, 33)} {
+	for _, argv := range [][]string{nil, {}, {""}, {"a", "b\nc"}, {"a\x00"}, {"a\x07b"}, {"a\x7fb"}, make([]string, 33)} {
 		if err := attestmcp.ValidateCommand(argv); err == nil {
 			t.Errorf("%q accepted", argv)
 		}

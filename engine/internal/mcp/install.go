@@ -40,9 +40,47 @@ func ValidateCommand(argv []string) error {
 		return fmt.Errorf("command must hold between 1 and %d elements", maxCommandArgs)
 	}
 	for i, a := range argv {
-		if a == "" || len(a) > maxCommandArg || strings.ContainsAny(a, "\x00\n\r") {
-			return fmt.Errorf("command[%d] must be 1 to %d characters with no NUL or line break", i, maxCommandArg)
+		if a == "" || len(a) > maxCommandArg || hasControl(a) {
+			return fmt.Errorf("command[%d] must be 1 to %d characters with no control characters", i, maxCommandArg)
 		}
+	}
+	return nil
+}
+
+func hasControl(s string) bool {
+	for _, r := range s {
+		if r < 0x20 || r == 0x7f {
+			return true
+		}
+	}
+	return false
+}
+
+// writeAtomic replaces path with data through a temporary file in the same
+// directory, so a failure never leaves a half-written config.
+func writeAtomic(path string, data []byte) error {
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".attest-mcp-*")
+	if err != nil {
+		return err
+	}
+	name := tmp.Name()
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		os.Remove(name)
+		return err
+	}
+	if err := tmp.Chmod(0o644); err != nil {
+		tmp.Close()
+		os.Remove(name)
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		os.Remove(name)
+		return err
+	}
+	if err := os.Rename(name, path); err != nil {
+		os.Remove(name)
+		return err
 	}
 	return nil
 }
@@ -117,7 +155,7 @@ func Install(dir string, argv []string, force bool) (InstallResult, error) {
 			if err := os.MkdirAll(filepath.Dir(p.real), 0o755); err != nil {
 				return res, fmt.Errorf("%s: %w", p.rel, err)
 			}
-			if err := os.WriteFile(p.real, p.out, 0o644); err != nil {
+			if err := writeAtomic(p.real, p.out); err != nil {
 				return res, fmt.Errorf("%s: %w", p.rel, err)
 			}
 		}

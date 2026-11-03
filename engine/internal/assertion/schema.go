@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/attest-ai/attest/engine/pkg/types"
@@ -13,6 +14,11 @@ import (
 
 // schemaCache is a process-level cache of compiled JSON schemas keyed by SHA-256 of the raw schema bytes.
 var schemaCache sync.Map // map[string]*jsonschema.Schema
+
+// maxCachedSchemas bounds the cache: schemas past it are compiled per call.
+const maxCachedSchemas = 256
+
+var schemaCacheLen atomic.Int64
 
 // SchemaEvaluator implements Layer 1: JSON Schema validation.
 type SchemaEvaluator struct{}
@@ -52,6 +58,9 @@ func (e *SchemaEvaluator) Evaluate(trace *types.Trace, assertion *types.Assertio
 		schema = cached.(*jsonschema.Schema)
 	} else {
 		compiler := jsonschema.NewCompiler()
+		// A schema is data from the trace's author, so it must not read files or
+		// reach the network: only references inside the document resolve.
+		compiler.UseLoader(jsonschema.SchemeURLLoader{})
 		if err := compiler.AddResource("schema.json", schemaDoc); err != nil {
 			return failResult(assertion, start, fmt.Sprintf("schema compilation failed: %v", err))
 		}
@@ -60,7 +69,9 @@ func (e *SchemaEvaluator) Evaluate(trace *types.Trace, assertion *types.Assertio
 			return failResult(assertion, start, fmt.Sprintf("schema compilation failed: %v", err))
 		}
 		schema = compiled
-		schemaCache.Store(cacheKey, schema)
+		if schemaCacheLen.Add(1) <= maxCachedSchemas {
+			schemaCache.Store(cacheKey, schema)
+		}
 	}
 
 	var value any

@@ -325,7 +325,7 @@ func quote(s string, st style) (string, error) {
 		if err := enc.Encode(s); err != nil {
 			return "", err
 		}
-		return strings.TrimSuffix(buf.String(), "\n"), nil
+		return escapeBidi(strings.TrimSuffix(buf.String(), "\n")), nil
 	}
 	var b strings.Builder
 	b.WriteByte('"')
@@ -338,7 +338,7 @@ func quote(s string, st style) (string, error) {
 			b.WriteString(`\n`)
 		case r == '\t':
 			b.WriteString(`\t`)
-		case r < 0x20 || r == 0x7f || r == 0xFFFD:
+		case r < 0x20 || r == 0x7f || r == 0xFFFD || isBidi(r):
 			return "", fmt.Errorf("string contains a character that has no statement form")
 		default:
 			b.WriteRune(r)
@@ -346,4 +346,23 @@ func quote(s string, st style) (string, error) {
 	}
 	b.WriteByte('"')
 	return b.String(), nil
+}
+
+// isBidi reports a Unicode bidirectional control, which can make a pasted line
+// display differently from what it says.
+func isBidi(r rune) bool {
+	return r == 0x061C || r == 0x200E || r == 0x200F || (r >= 0x202A && r <= 0x202E) || (r >= 0x2066 && r <= 0x2069)
+}
+
+// escapeBidi writes bidirectional controls in a JSON string literal as \u escapes.
+func escapeBidi(lit string) string {
+	var b strings.Builder
+	for _, r := range lit {
+		if isBidi(r) {
+			fmt.Fprintf(&b, `\u%04x`, r)
+			continue
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
 }

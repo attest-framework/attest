@@ -91,11 +91,15 @@ func (r *Root) ReadFile(p string, maxBytes int64) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	f, err := os.Open(real)
+	f, err := openRegular(real)
 	if err != nil {
 		return nil, fmt.Errorf("%s: cannot be opened", p)
 	}
 	defer f.Close()
+	// The path may have changed since it was resolved: check what was opened.
+	if info, err := f.Stat(); err != nil || !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("%s is not a regular file", p)
+	}
 	data, err := io.ReadAll(io.LimitReader(f, maxBytes+1))
 	if err != nil {
 		return nil, fmt.Errorf("%s: cannot be read", p)

@@ -763,3 +763,47 @@ func TestToolArguments_WrongType_Rejected(t *testing.T) {
 		t.Errorf("accepted: %s", r.Text)
 	}
 }
+
+func TestRunContract_LargeWorldTimesManyEffects_RejectedBeforeBuildingSpecs(t *testing.T) {
+	root, _ := project(t)
+	var snap map[string]any
+	data, _ := os.ReadFile(worldFixture)
+	var fx struct {
+		World map[string]any `json:"world"`
+	}
+	if err := json.Unmarshal(data, &fx); err != nil {
+		t.Fatal(err)
+	}
+	snap = fx.World
+	snap["state"].(map[string]any)["orders"].([]any)[0].(map[string]any)["note"] = strings.Repeat("x", 1<<20)
+	out, _ := json.Marshal(snap)
+	if err := os.WriteFile(filepath.Join(root, "big-world.json"), out, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	stmts := make([]string, 40)
+	for i := range stmts {
+		stmts[i] = `count("orders", at_least=0)`
+	}
+	r := call(t, connect(t, root), "run_contract", map[string]any{
+		"fixture_path": "fixtures/incident.attest.json", "world_path": "big-world.json", "statements": stmts,
+	})
+	if !r.IsError || !strings.Contains(r.Text, "too large") {
+		t.Errorf("got %+v", r)
+	}
+}
+
+func TestEvaluate_SchemaFileRef_NotLoaded(t *testing.T) {
+	root, outside := project(t)
+	secret := filepath.Join(outside, "s.json")
+	if err := os.WriteFile(secret, []byte(`{"pattern":"(sk-live-abc"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	r := call(t, connect(t, root), "evaluate", map[string]any{
+		"fixture_path": "fixtures/incident.attest.json",
+		"assertions": []map[string]any{{"assertion_id": "s", "type": "schema",
+			"spec": map[string]any{"target": "output.message", "schema": map[string]any{"$ref": "file://" + secret}}}},
+	})
+	if strings.Contains(r.Text, "sk-live-abc") {
+		t.Errorf("file content leaked: %s", r.Text)
+	}
+}
