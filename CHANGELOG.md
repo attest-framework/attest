@@ -4,6 +4,20 @@ All notable changes to Attest are documented in this file. The format follows [K
 
 ## [Unreleased]
 
+### Added
+
+- `attest guide [<topic>]` prints the shipped guides (`docs/guides/*.md`) from the engine binary, offline; `--json` gives `{topics:[{name,title}]}` or `{topic,title,markdown}`. New guides: `cli` (agent-facing CLI reference, exit-code table) and `agents` (skills, `init --skills`, plugins). Guides are staged into the engine module by `go generate ./internal/assets/` (`make generate`) and embedded; a test in `go test ./...` fails when the staged copies drift.
+- Every engine command and subcommand accepts `--json` and then writes exactly one JSON document to stdout on success; on a usage, load or runtime error it writes nothing to stdout and the exit code plus stderr describe the error. Schemas are in `proto/attest/v1/cli/` (`doctor` keeps `proto/attest/v1/doctor.schema.json`) with valid and invalid fixtures in `protocol-tests/cli/`, tested in Go, Python and TypeScript. `capture`, `replay` and `world` with `-- <command>` send the command's stdout to stderr under `--json` and print one result object that carries its `exit_code`. `attest help --json` lists every command with its schema and exit codes. `attest init --json` (both SDKs) prints `{created, updated, skipped}`, and the SDKs add `init` to `attest help --json`.
+- Each command declares its exit codes in the registry; the table in `docs/guides/cli.md` is checked against it by a test.
+- `attest skills list|install [--dir D] [--json]` writes the embedded `attest` and `attest-verify-generator` skills to `.agents/skills/` (Codex, Cursor) and `.claude/skills/` (Claude Code), touching only attest-owned files. It validates every destination before writing, follows directory symlinks that resolve inside `--dir` (writing each real file once) and refuses symlinks that resolve outside it or symlinked skill files, writing nothing. `attest init --skills` (Python and TypeScript, alone or with `--ci github`) calls it. The `attest` skill routes to writing contracts, capturing an incident, debugging a failure, CI setup and migrating from Promptfoo or DeepEval with a `MIGRATION.md` progress file; `attest-verify-generator` interviews a repository and writes `verify-<agent>` skills.
+- Claude Code, Cursor and Codex plugin manifests (`.claude-plugin/`, `.cursor-plugin/`, `.codex-plugin/`) publish the same `skills/`; they are generated from `VERSION` and one metadata source by `go generate` and checked for drift. In Claude Code: `/plugin marketplace add attest-framework/attest`.
+
+### Changed
+
+- `attest policy evaluate` exits 3 on usage errors and when the policy, report or baseline fails to load (previously 2 and 1), so they cannot be read as a warning or a block. Verdicts keep 0 pass, 1 block, 2 warn.
+- `attest cache`, `baseline`, `version` and `policy evaluate` reject unexpected arguments; `cache` usage errors exit 2 (previously 1).
+- `attest capture --refresh` also refuses to prompt (exit 2, `--yes` hint) when `CI` is set or `--json` is given.
+
 ## [1.0.0-rc.3] — 2026-11-03
 
 Third release candidate, themed "Flight recorder": capture a real run or incident as a verified fixture, replay the agent's real code against it in CI with zero model calls, check what the agent did to a simulated world with effect contracts, and get a pull-request summary, inline annotations, JUnit and diff-based test selection.

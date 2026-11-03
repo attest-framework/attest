@@ -17,7 +17,17 @@ import (
 )
 
 func init() {
-	register(command{name: "replay", summary: "serve a fixture's recorded model responses to the agent (zero model calls)", run: handleReplayCommand})
+	register(command{
+		name:    "replay",
+		summary: "serve a fixture's recorded model responses to the agent (zero model calls)",
+		run:     handleReplayCommand,
+		schema:  "cli/replay.schema.json",
+		exits: []exitCode{
+			{exitOK, "every request was served and the command exited 0"},
+			{exitFailure, "the command exited non-zero (its code is not propagated; --json reports it as exit_code), a request missed, or the fixture could not be loaded or served"},
+			{exitUsage, "usage error or an invalid --world file"},
+		},
+	})
 }
 
 const replayUsage = `usage: attest-engine replay (--name <name> | --fixture <file>) [options] -- <command> [args...]
@@ -45,12 +55,14 @@ options:
                          the command (or listed in the --serve env)
   --serve                for an SDK helper: print {"env":{...}} as one JSON
                          line, serve until stdin sends "stop" or closes, then
-                         print {"summary":{...}} and exit`
+                         print {"summary":{...}} and exit
+  --json                 with -- <command>: print one JSON result object to
+                         stdout; the command's stdout goes to stderr`
 
 type replayOptions struct {
 	name, fixturesDir, fixture, mode string
 	world                            string
-	serve, noLive                    bool
+	serve, noLive, json              bool
 	command                          []string
 }
 
@@ -69,6 +81,7 @@ func parseReplayArgs(args []string, stderr io.Writer) (*replayOptions, bool) {
 	fs.StringVar(&o.world, "world", "", "")
 	fs.BoolVar(&o.serve, "serve", false, "")
 	fs.BoolVar(&o.noLive, "no-live", false, "")
+	fs.BoolVar(&o.json, "json", false, "")
 	if err := fs.Parse(args); err != nil {
 		fmt.Fprintf(stderr, "replay: %s\n%s\n", terminalSafe(err.Error()), replayUsage)
 		return nil, false
@@ -85,6 +98,8 @@ func parseReplayArgs(args []string, stderr io.Writer) (*replayOptions, bool) {
 		return usage(fmt.Sprintf("--mode %q: want strict or auto", terminalSafe(o.mode)))
 	case o.serve == (len(o.command) > 0):
 		return usage("give exactly one of --serve or -- <command>")
+	case o.json && o.serve:
+		return usage(jsonServeConflict)
 	}
 	if o.name != "" {
 		if err := capture.ValidateName(o.name); err != nil {
@@ -125,7 +140,7 @@ func runReplay(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if o.serve {
 		return replayServe(s, stdin, stdout, stderr)
 	}
-	return replayCommand(s, o.command, environ, stderr)
+	return replayCommand(s, o, environ, stdout, stderr)
 }
 
 // replayServe hosts the listener for an SDK helper: it prints the environment
@@ -154,11 +169,17 @@ func replayServe(s *capture.Session, stdin io.Reader, stdout, stderr io.Writer) 
 	return 0
 }
 
-// replayCommand runs argv against the replay proxy and prints the summary.
-func replayCommand(s *capture.Session, argv, environ []string, stderr io.Writer) int {
+// replayCommand runs the command against the replay proxy and prints the
+// summary; with --json it also prints the one result object to stdout and
+// sends the command's stdout to stderr.
+func replayCommand(s *capture.Session, o *replayOptions, environ []string, stdout, stderr io.Writer) int {
+	argv := o.command
 	cmd := exec.Command(argv[0], argv[1:]...)
 	cmd.Env = withEnv(environ, s.Env())
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
+	if o.json {
+		cmd.Stdout = os.Stderr
+	}
 	if err := cmd.Start(); err != nil {
 		_ = s.Close()
 		fmt.Fprintf(stderr, "replay: running %s: %s\n", terminalSafe(argv[0]), terminalSafe(err.Error()))
@@ -186,8 +207,15 @@ func replayCommand(s *capture.Session, argv, environ []string, stderr io.Writer)
 	}
 	sum := s.ReplaySummary()
 	writeReplaySummary(stderr, sum)
-	if snap := s.WorldSnapshot(); snap != nil {
+	snap := s.WorldSnapshot()
+	if snap != nil {
 		writeWorldSummary(stderr, snap)
+	}
+	if o.json {
+		if err := writeJSON(stdout, map[string]any{"exit_code": childExitCode(runErr), "summary": sum, "world": snap}); err != nil {
+			fmt.Fprintf(stderr, "replay: %s\n", terminalSafe(err.Error()))
+			return 1
+		}
 	}
 	var exitErr *exec.ExitError
 	switch {
@@ -220,4 +248,18 @@ func liveLine(sum capture.ReplaySummary) string {
 		line += fmt.Sprintf(" (+%d unpriced)", sum.UnpricedLiveCalls)
 	}
 	return line
+}
+
+// childExitCode is the exit code of a command that ran, or nil when it did
+// not exit normally with one (killed by a signal, or Wait failed).
+func childExitCode(runErr error) *int {
+	code := 0
+	if runErr != nil {
+		var exitErr *exec.ExitError
+		if !errors.As(runErr, &exitErr) || exitErr.ExitCode() < 0 {
+			return nil
+		}
+		code = exitErr.ExitCode()
+	}
+	return &code
 }

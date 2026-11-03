@@ -32,7 +32,7 @@ Baselines are rows in `attest.db` under `ATTEST_CACHE_DIR` (default `~/.attest/c
 uv run attest policy evaluate --policy attest.policy.yaml --report attest-report.json --baseline main
 ```
 
-The evaluation names a tag that does not exist as an error (exit 1), not as a pass. Without `--baseline`, the policy's regression rules do not run.
+The evaluation names a tag that does not exist as an error (exit 3), not as a pass. Without `--baseline`, the policy's regression rules do not run.
 
 `attest policy evaluate` prints its violations as JSON; the comparison reaches the output only through the policy rules. `block_on_regression: true` adds a `block_on_regression` violation naming each assertion that passed in the baseline and does not now (an assertion that was added or removed is not a regression), and a `regression` rule adds a verdict per assertion.
 

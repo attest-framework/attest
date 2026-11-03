@@ -1,0 +1,11 @@
+[
+  {
+    "file": "tests/test_refund.py",
+    "test_id": "tests/test_refund.py::test_live_agent",
+    "assertion_id": "effect_refunds",
+    "type": "effect",
+    "status": "hard_fail",
+    "reason": "",
+    "explanation": "effect violated: 2 refunds for O-1042 (expected 1)"
+  }
+]

@@ -1,0 +1,6 @@
+{
+  "topics": [
+    { "name": "capture", "title": "Capture: turn a run into a regression fixture" },
+    { "name": "policies", "title": "Policies" }
+  ]
+}

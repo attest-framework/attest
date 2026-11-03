@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://attest-framework.github.io/schemas/v1/cli/report-summary.schema.json",
+  "title": "attest-engine report summary --json",
+  "description": "The PR summary Markdown.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "markdown"
+  ],
+  "properties": {
+    "markdown": {
+      "type": "string",
+      "minLength": 1
+    }
+  }
+}

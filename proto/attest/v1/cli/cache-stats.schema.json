@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://attest-framework.github.io/schemas/v1/cli/cache-stats.schema.json",
+  "title": "attest-engine cache stats --json",
+  "description": "The cache directory and the files directly in it. A missing directory reports exists false and zero counts.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "dir",
+    "exists",
+    "files",
+    "size_bytes"
+  ],
+  "properties": {
+    "dir": {
+      "type": "string",
+      "minLength": 1
+    },
+    "exists": {
+      "type": "boolean"
+    },
+    "files": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "size_bytes": {
+      "type": "integer",
+      "minimum": 0
+    }
+  }
+}

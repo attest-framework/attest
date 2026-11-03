@@ -1,0 +1,19 @@
+{
+  "name": "attest",
+  "version": "1.0.0-rc.3",
+  "description": "Skills for testing AI agents with Attest: capture runs as fixtures, write deterministic assertions, and gate merges.",
+  "author": {
+    "name": "Attest Contributors",
+    "url": "https://github.com/attest-framework"
+  },
+  "homepage": "https://attest-framework.github.io/",
+  "repository": "https://github.com/attest-framework/attest",
+  "license": "Apache-2.0",
+  "keywords": [
+    "testing",
+    "ai",
+    "agents",
+    "llm",
+    "evaluation"
+  ]
+}

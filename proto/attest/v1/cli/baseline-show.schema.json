@@ -1,0 +1,73 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://attest-framework.github.io/schemas/v1/cli/baseline-show.schema.json",
+  "title": "attest-engine baseline show --json",
+  "description": "The assertion rows pinned under one tag.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "tag",
+    "entries"
+  ],
+  "properties": {
+    "tag": {
+      "type": "string",
+      "minLength": 1
+    },
+    "entries": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "assertion_id",
+          "type",
+          "status",
+          "score",
+          "cost",
+          "duration_ms",
+          "passes",
+          "evaluated",
+          "not_evaluated"
+        ],
+        "properties": {
+          "assertion_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "type": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "minLength": 1
+          },
+          "score": {
+            "type": "number"
+          },
+          "cost": {
+            "type": "number",
+            "minimum": 0
+          },
+          "duration_ms": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "passes": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "evaluated": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "not_evaluated": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      }
+    }
+  }
+}

@@ -24,7 +24,17 @@ import (
 )
 
 func init() {
-	register(command{name: "capture", summary: "record a run as a verified fixture (trace, model exchanges, drafted contracts)", run: handleCaptureCommand})
+	register(command{
+		name:    "capture",
+		summary: "record a run as a verified fixture (trace, model exchanges, drafted contracts)",
+		run:     handleCaptureCommand,
+		schema:  "cli/capture.schema.json",
+		exits: []exitCode{
+			{exitOK, "the fixture is verified, or --check-redaction found no secrets; the command's own exit code is recorded, not propagated"},
+			{exitFailure, "the fixture is not verified or was not written, the capture failed, or --check-redaction found secrets"},
+			{exitUsage, "usage error, an invalid --world file, or a --refresh that was not confirmed"},
+		},
+	})
 }
 
 const captureUsage = `usage: attest-engine capture --name <name> [options] -- <command> [args...]
@@ -48,6 +58,11 @@ options:
   --result-file <path>   also write {"fixture", "verified"} JSON to <path>
   --from <otlp.json>     build from an OTLP/JSON export (trace only; no replay)
   --yes                  with --refresh: run the recorded command without asking
+                         (required when CI is set, with --json, or when stdin
+                         is not a terminal)
+  --json                 print one JSON result object to stdout; the
+                         command's stdout and the summary go to stderr (not
+                         with --serve)
   --refresh <name>       re-run the fixture's recorded command with its
                          original flags (--expect-fail included) and overwrite
                          it; refuses when the command's arguments were
@@ -77,6 +92,7 @@ type captureOptions struct {
 	refresh        string
 	world          string
 	yes            bool
+	json           bool
 	command        []string
 }
 
@@ -95,6 +111,7 @@ func parseCaptureArgs(args []string, stderr io.Writer) (*captureOptions, bool) {
 	fs.StringVar(&o.refresh, "refresh", "", "")
 	fs.StringVar(&o.world, "world", "", "")
 	fs.BoolVar(&o.yes, "yes", false, "")
+	fs.BoolVar(&o.json, "json", false, "")
 	if err := fs.Parse(args); err != nil {
 		fmt.Fprintf(stderr, "capture: %s\n%s\n", terminalSafe(err.Error()), captureUsage)
 		return nil, false
@@ -103,6 +120,9 @@ func parseCaptureArgs(args []string, stderr io.Writer) (*captureOptions, bool) {
 	usage := func(msg string) (*captureOptions, bool) {
 		fmt.Fprintf(stderr, "capture: %s\n%s\n", msg, captureUsage)
 		return nil, false
+	}
+	if o.json && o.serve {
+		return usage(jsonServeConflict)
 	}
 	if o.checkRedaction != "" {
 		if o.name != "" || o.from != "" || o.serve || o.world != "" || len(o.command) > 0 {
@@ -146,7 +166,7 @@ func runCapture(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return 2
 	}
 	if o.checkRedaction != "" {
-		return runCheckRedaction(o.checkRedaction, stdout, stderr)
+		return runCheckRedaction(o.checkRedaction, o.json, stdout, stderr)
 	}
 	if o.refresh != "" {
 		if err := resolveRefresh(o); err != nil {
@@ -180,7 +200,11 @@ func runCapture(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	case o.serve:
 		err = captureServe(environ, &in, stdin, stdout, opts)
 	default:
-		err = captureCommand(o.command, environ, &in, stderr, opts)
+		childOut := io.Writer(os.Stdout)
+		if o.json {
+			childOut = os.Stderr
+		}
+		err = captureCommand(o.command, environ, &in, childOut, stderr, opts)
 	}
 	if err != nil {
 		fmt.Fprintf(stderr, "capture: %s\n", terminalSafe(in.Redactor.String(err.Error())))
@@ -203,16 +227,17 @@ func captureFromFile(path string, in *capture.BuildInput) error {
 	return nil
 }
 
-// captureCommand runs the command under capture. The command's exit code is
-// recorded; a failing command still produces a fixture.
-func captureCommand(argv []string, environ []string, in *capture.BuildInput, stderr io.Writer, opts []capture.Option) error {
+// captureCommand runs the command under capture, its stdout going to
+// childOut. The command's exit code is recorded; a failing command still
+// produces a fixture.
+func captureCommand(argv []string, environ []string, in *capture.BuildInput, childOut, stderr io.Writer, opts []capture.Option) error {
 	s, err := capture.Start(capture.UpstreamsFromEnv(environ), opts...)
 	if err != nil {
 		return err
 	}
 	cmd := exec.Command(argv[0], argv[1:]...)
 	cmd.Env = withEnv(environ, s.Env())
-	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
+	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, childOut, os.Stderr
 	if err := cmd.Start(); err != nil {
 		s.Close()
 		return fmt.Errorf("running %s: %w", argv[0], err)
@@ -368,6 +393,14 @@ func finishCapture(o *captureOptions, in capture.BuildInput, stdout, stderr io.W
 		}
 	}
 	summary := stderr
+	if o.json {
+		writeCaptureSummary(stderr, path, f)
+		if err := writeJSON(stdout, captureJSONResult(path, f)); err != nil {
+			fmt.Fprintf(stderr, "capture: %s\n", terminalSafe(err.Error()))
+			return 1
+		}
+		return verifiedExit(f)
+	}
 	if o.serve {
 		if err := writeJSONLine(stdout, result); err != nil {
 			fmt.Fprintf(stderr, "capture: %s\n", terminalSafe(err.Error()))
@@ -377,10 +410,31 @@ func finishCapture(o *captureOptions, in capture.BuildInput, stdout, stderr io.W
 		summary = stdout
 	}
 	writeCaptureSummary(summary, path, f)
+	return verifiedExit(f)
+}
+
+func verifiedExit(f *capture.Fixture) int {
 	if !f.Verification.Verified {
 		return 1
 	}
 	return 0
+}
+
+// captureJSONResult is the `capture --json` result: the fixture written,
+// whether it verified, and the captured command's own exit code (null when
+// the fixture did not come from a command).
+func captureJSONResult(path string, f *capture.Fixture) map[string]any {
+	return map[string]any{
+		"name":           f.Name,
+		"fixture":        path,
+		"verified":       f.Verification.Verified,
+		"expect_fail":    f.Verification.ExpectFail,
+		"source":         f.Source.Kind,
+		"replay_capable": f.Source.ReplayCapable,
+		"exit_code":      f.Source.ExitCode,
+		"exchanges":      len(f.Exchanges),
+		"steps":          len(f.Trace.Steps),
+	}
 }
 
 func writeCaptureSummary(w io.Writer, path string, f *capture.Fixture) {
@@ -510,7 +564,7 @@ func writeJSONFile(path string, v any) error {
 // runCheckRedaction scans a fixture for secrets: values of environment
 // variables whose names end in KEY, TOKEN, SECRET or PASSWORD, and
 // key-shaped strings. It prints where each hit is, never the secret.
-func runCheckRedaction(path string, stdout, stderr io.Writer) int {
+func runCheckRedaction(path string, asJSON bool, stdout, stderr io.Writer) int {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		fmt.Fprintf(stderr, "capture --check-redaction: %s\n", terminalSafe(err.Error()))
@@ -520,6 +574,20 @@ func runCheckRedaction(path string, stdout, stderr io.Writer) int {
 	if err != nil {
 		fmt.Fprintf(stderr, "capture --check-redaction: %s: %s\n", terminalSafe(path), terminalSafe(err.Error()))
 		return 1
+	}
+	if asJSON {
+		secrets := make([]map[string]string, len(hits))
+		for i, h := range hits {
+			secrets[i] = map[string]string{"kind": h.Kind, "path": h.Path}
+		}
+		if err := writeJSON(stdout, map[string]any{"fixture": path, "clean": len(hits) == 0, "secrets": secrets}); err != nil {
+			fmt.Fprintf(stderr, "capture --check-redaction: %s\n", terminalSafe(err.Error()))
+			return 1
+		}
+		if len(hits) > 0 {
+			return 1
+		}
+		return 0
 	}
 	if len(hits) == 0 {
 		fmt.Fprintf(stdout, "check-redaction %s: clean\n", terminalSafe(path))
@@ -572,14 +640,15 @@ func expectFailFlag(on bool) string {
 // confirmRefresh shows the command a refresh is about to run and asks for
 // consent. The command comes from the fixture file, which a pull request can
 // change, so it is never run unseen: --yes, or "y" typed at a terminal.
-// Without either it refuses (exit 2) and nothing runs.
+// Without either it refuses (exit 2) and nothing runs. It never asks under CI
+// (CI set), with --json, or when stdin is not a terminal.
 func confirmRefresh(o *captureOptions, stdin io.Reader, stderr io.Writer) (int, bool) {
 	fmt.Fprintf(stderr, "capture: --refresh %s will run, from the fixture's source.command:\n  %s\n", terminalSafe(o.refresh), terminalSafe(shellQuote(o.command)))
 	if o.yes {
 		return 0, true
 	}
 	f, isFile := stdin.(*os.File)
-	if !isFile || !isTerminal(f) {
+	if !mayPrompt(o.json, os.Getenv("CI"), isFile && isTerminal(f)) {
 		fmt.Fprintf(stderr, "capture: refusing to run it without confirmation: review the command above (it is source.command in the fixture), then re-run with --yes\n")
 		return 2, false
 	}
@@ -590,6 +659,13 @@ func confirmRefresh(o *captureOptions, stdin io.Reader, stderr io.Writer) (int, 
 		return 2, false
 	}
 	return 0, true
+}
+
+// mayPrompt reports whether capture may ask a question on stdin: only at a
+// terminal, never under CI (CI set to any non-empty value) and never with
+// --json, whose caller is a program.
+func mayPrompt(asJSON bool, ci string, stdinTTY bool) bool {
+	return !asJSON && ci == "" && stdinTTY
 }
 
 func isTerminal(f *os.File) bool {

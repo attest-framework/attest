@@ -29,6 +29,9 @@ const (
 	MaxAssertionIDLength = 256
 )
 
+// ProtocolVersion is the newest JSON-RPC protocol version the engine speaks.
+const ProtocolVersion = protocolVersion
+
 // RegisterBuiltinHandlers registers the built-in JSON-RPC handlers on s.
 // It reads ATTEST_* env vars to configure Layer 5/6 providers and caches.
 // Returns an error when any explicitly-set env var has an invalid value, so the

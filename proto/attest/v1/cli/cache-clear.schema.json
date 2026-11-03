@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://attest-framework.github.io/schemas/v1/cli/cache-clear.schema.json",
+  "title": "attest-engine cache clear --json",
+  "description": "The cache directory and how many files were deleted from it.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "dir",
+    "deleted"
+  ],
+  "properties": {
+    "dir": {
+      "type": "string",
+      "minLength": 1
+    },
+    "deleted": {
+      "type": "integer",
+      "minimum": 0
+    }
+  }
+}

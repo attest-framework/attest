@@ -1,0 +1,5 @@
+{
+  "created": [".claude/skills/attest/SKILL.md", ".github/workflows/attest.yml"],
+  "updated": [".agents/skills/attest/SKILL.md"],
+  "skipped": ["attest.policy.yaml", "tests/my-agent.test.ts"]
+}

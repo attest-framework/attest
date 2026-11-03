@@ -140,30 +140,57 @@ jobs:
           exit 1
 `;
 
-function write(file: string, content: string): void {
+/**
+ * Files `scaffoldProject` wrote (`created`) and left alone because they existed
+ * (`skipped`), as forward-slash paths relative to the target directory.
+ */
+export interface ScaffoldResult {
+  created: string[];
+  skipped: string[];
+}
+
+function write(
+  targetDir: string,
+  rel: string,
+  content: string,
+  result: ScaffoldResult,
+  quiet: boolean,
+): void {
+  const file = path.join(targetDir, ...rel.split("/"));
   if (fs.existsSync(file)) {
-    process.stderr.write(`Skipped (exists): ${file}\n`);
+    result.skipped.push(rel);
+    if (!quiet) process.stderr.write(`Skipped (exists): ${file}\n`);
     return;
   }
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, content);
-  process.stdout.write(`Created: ${file}\n`);
+  result.created.push(rel);
+  if (!quiet) process.stdout.write(`Created: ${file}\n`);
 }
 
 /**
  * Write the sample test and the merge policy into `targetDir`; `ci: "github"` also
  * writes `.github/workflows/attest.yml`. Existing files are never overwritten. No
  * Vitest config is written: the workflow adds AttestReporter on the command line
- * (`REPORT_ARGS`), so an existing config keeps working unchanged.
+ * (`REPORT_ARGS`), so an existing config keeps working unchanged. `quiet` suppresses the
+ * per-file lines and the next-step hint. Returns what was written.
  */
-export function scaffoldProject(targetDir: string, options: { ci?: CiProvider } = {}): void {
-  write(path.join(targetDir, "tests", "my-agent.test.ts"), SAMPLE_TEST_TEMPLATE);
-  write(path.join(targetDir, "attest.policy.yaml"), POLICY_TEMPLATE);
+export function scaffoldProject(
+  targetDir: string,
+  options: { ci?: CiProvider; quiet?: boolean } = {},
+): ScaffoldResult {
+  const quiet = options.quiet ?? false;
+  const result: ScaffoldResult = { created: [], skipped: [] };
+  write(targetDir, "tests/my-agent.test.ts", SAMPLE_TEST_TEMPLATE, result, quiet);
+  write(targetDir, "attest.policy.yaml", POLICY_TEMPLATE, result, quiet);
   if (options.ci === "github") {
-    write(path.join(targetDir, ".github", "workflows", "attest.yml"), GITHUB_WORKFLOW_TEMPLATE);
+    write(targetDir, ".github/workflows/attest.yml", GITHUB_WORKFLOW_TEMPLATE, result, quiet);
   }
-  process.stdout.write(
-    `\nNext: run \`npx vitest run\`. Then change the line marked ${DEMO_MARKER} in ` +
-      "tests/my-agent.test.ts and run it again to see a failure.\n",
-  );
+  if (!quiet) {
+    process.stdout.write(
+      `\nNext: run \`npx vitest run\`. Then change the line marked ${DEMO_MARKER} in ` +
+        "tests/my-agent.test.ts and run it again to see a failure.\n",
+    );
+  }
+  return result;
 }

@@ -58,7 +58,7 @@ func TestReportSummary_NoReports_Exit2(t *testing.T) {
 func TestReportJUnit_WritesFile(t *testing.T) {
 	outPath := filepath.Join(t.TempDir(), "junit.xml")
 	var errOut bytes.Buffer
-	if code := reportJUnit([]string{"--report", mixedReport, "--out", outPath}, &errOut); code != 0 {
+	if code := reportJUnit([]string{"--report", mixedReport, "--out", outPath}, &bytes.Buffer{}, &errOut); code != 0 {
 		t.Fatalf("exit %d: %s", code, errOut.String())
 	}
 	data, err := os.ReadFile(outPath)
@@ -69,7 +69,7 @@ func TestReportJUnit_WritesFile(t *testing.T) {
 
 func TestReportJUnit_MissingOut_Exit2(t *testing.T) {
 	var errOut bytes.Buffer
-	if code := reportJUnit([]string{"--report", mixedReport}, &errOut); code != 2 {
+	if code := reportJUnit([]string{"--report", mixedReport}, &bytes.Buffer{}, &errOut); code != 2 {
 		t.Errorf("code %d, want 2", code)
 	}
 }

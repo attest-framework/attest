@@ -1,0 +1,22 @@
+{
+  "trace_id": "29478f3e0a07ff5725faf3112a8e3663",
+  "schema_version": 2,
+  "spans": 10,
+  "steps": {
+    "llm_call": 5,
+    "tool_call": 4
+  },
+  "turns": 1,
+  "handoffs": 0,
+  "retries": 1,
+  "ok": false,
+  "issues": [
+    {
+      "severity": "error",
+      "code": "orphan_span",
+      "span_id": "dd974ec7cd67d0ed",
+      "message": "parent span 00 not in the trace"
+    }
+  ],
+  "coverage": []
+}

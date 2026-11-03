@@ -102,6 +102,7 @@ SDK (Python/TS/Go) ──stdin/stdout──▶ Engine Process (Go)
 - **Soft-failure limit** — cap soft failures per engine session via `ATTEST_MAX_SOFT_FAILURES`
 - **`attest-engine doctor`** — reports engine version, capabilities and judge/embedding configuration (`--json` for tooling); see [configuration](docs/guides/configuration.md)
 - **CI reports and selection** — `attest report junit|summary|rows` render report-v2 as JUnit XML, a pull-request summary (pass / fail / not evaluated, replayed vs live model calls, usage and retry cost) and annotation rows; `attest select --base <ref>` lists the tests a diff needs. Guides: [policies](docs/guides/policies.md), [baselines](docs/guides/baselines.md), [selection](docs/guides/selection.md)
+- **Agent-facing CLI** — every command takes `--json` and prints one document that validates against a published schema (on an error it prints nothing to stdout: the exit code and stderr describe it); `attest help --json` lists commands with schemas and exit codes; `attest guide <topic>` prints the shipped guides offline; `attest init --skills` installs the attest agent skills (also published as Claude Code, Cursor and Codex plugins). Guides: [cli](docs/guides/cli.md), [agents](docs/guides/agents.md)
 - **Judges on four provider families** — Layer 6 runs natively on OpenAI, Anthropic and Gemini, or any OpenAI-compatible endpoint via `ATTEST_JUDGE_BASE_URL`, each with its own rate limit, plus a local-only ACP judge on your Claude Code or Codex subscription; see [judges](docs/guides/judges.md)
 - **Python & TypeScript SDKs** — `attest-ai` (PyPI) + `@attest-ai/core` / `@attest-ai/vitest` (npm)
 - **`attest init`** — scaffolds a passing sample test, a merge policy and, with `--ci github`, a GitHub Actions merge gate (Python + TypeScript)
@@ -220,7 +221,7 @@ Attest diagnostic — 1 of 4 assertions failed:
 
 ### Gate merges on it
 
-`--attest-report` writes every test with its outcome, file and line, and every assertion result, as a report-v2 JSON file (`proto/attest/v1/report-v2.schema.json`). `attest policy evaluate` checks it against `attest.policy.yaml`: exit 0 passes, 1 blocks (a hard failure), 2 warns (assertions not evaluated).
+`--attest-report` writes every test with its outcome, file and line, and every assertion result, as a report-v2 JSON file (`proto/attest/v1/report-v2.schema.json`). `attest policy evaluate` checks it against `attest.policy.yaml`: exit 0 passes, 1 blocks (a hard failure), 2 warns (assertions not evaluated), 3 means the policy or report could not be loaded or the arguments were invalid.
 
 ```bash
 uv run pytest --attest-report=attest-report.json

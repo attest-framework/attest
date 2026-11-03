@@ -1,0 +1,149 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://attest-framework.github.io/schemas/v1/cli/policy-evaluate.schema.json",
+  "title": "attest-engine policy evaluate --json",
+  "description": "The policy verdict. verdict and trials are present when the policy has a regression rule. Always JSON; --json is accepted.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "violations",
+    "exit_code",
+    "passed"
+  ],
+  "properties": {
+    "violations": {
+      "type": [
+        "array",
+        "null"
+      ],
+      "description": "null when no rule was violated.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "rule",
+          "detail",
+          "severity"
+        ],
+        "properties": {
+          "rule": {
+            "type": "string",
+            "minLength": 1
+          },
+          "detail": {
+            "type": "string",
+            "minLength": 1
+          },
+          "severity": {
+            "type": "string",
+            "enum": [
+              "block",
+              "warn"
+            ]
+          }
+        }
+      }
+    },
+    "exit_code": {
+      "type": "integer",
+      "enum": [
+        0,
+        1,
+        2
+      ],
+      "description": "0 pass, 1 block, 2 warn; also the process exit code."
+    },
+    "passed": {
+      "type": "boolean"
+    },
+    "verdict": {
+      "type": "string",
+      "enum": [
+        "pass",
+        "regressed",
+        "inconclusive"
+      ]
+    },
+    "trials": {
+      "type": [
+        "array",
+        "null"
+      ],
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "assertion_id",
+          "passes",
+          "evaluated",
+          "not_evaluated",
+          "pass_rate",
+          "wilson_lower",
+          "wilson_upper",
+          "baseline_pass_rate",
+          "baseline_evaluated",
+          "line",
+          "verdict"
+        ],
+        "properties": {
+          "assertion_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "passes": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "evaluated": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "not_evaluated": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "pass_rate": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "wilson_lower": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "wilson_upper": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "baseline_pass_rate": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "baseline_evaluated": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "line": {
+            "type": "number"
+          },
+          "verdict": {
+            "type": "string",
+            "enum": [
+              "pass",
+              "regressed",
+              "inconclusive"
+            ]
+          }
+        }
+      }
+    }
+  },
+  "dependentRequired": {
+    "trials": [
+      "verdict"
+    ]
+  }
+}

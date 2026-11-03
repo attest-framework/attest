@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://attest-framework.github.io/schemas/v1/cli/report-junit.schema.json",
+  "title": "attest-engine report junit --json",
+  "description": "The JUnit XML file written and its testcase counts.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "out",
+    "tests",
+    "failures",
+    "skipped"
+  ],
+  "properties": {
+    "out": {
+      "type": "string",
+      "minLength": 1
+    },
+    "tests": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "failures": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "skipped": {
+      "type": "integer",
+      "minimum": 0
+    }
+  }
+}

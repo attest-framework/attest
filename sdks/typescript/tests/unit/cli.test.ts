@@ -5,9 +5,11 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { fileURLToPath } from "node:url";
 import { engineCommands, exitStatus, main } from "../../packages/core/src/cli.js";
 import { ENGINE_VERSION, VERSION } from "../../packages/core/src/version.js";
 import { DEMO_MARKER } from "../../packages/core/src/scaffold.js";
+import { Ajv2020 } from "ajv/dist/2020.js";
 import {
   forwardedCalls,
   isolateEngineEnv,
@@ -161,7 +163,14 @@ describe("attest init", () => {
     },
   );
 
-  it.each([[["--help"], 0], [["somedir"], 2], [["--ci"], 2], [["--ci", "gitlab"], 2]])(
+  it.each([
+    [["--help"], 0],
+    [["somedir"], 2],
+    [["--ci"], 2],
+    [["--ci", "gitlab"], 2],
+    [["--json", "--json"], 2],
+    [["--skills", "--skills"], 2],
+  ])(
     "does not scaffold for %j",
     async (args, code) => {
       await expect(main(["init", ...args])).resolves.toBe(code);
@@ -180,6 +189,153 @@ describe("attest init", () => {
     for (const file of [sample(), workflow()]) {
       expect(fs.readFileSync(file, "utf-8")).toBe("// mine\n");
     }
+  });
+});
+
+const initSchema = JSON.parse(
+  fs.readFileSync(
+    path.resolve(
+      path.dirname(fileURLToPath(import.meta.url)),
+      "../../../../proto/attest/v1/cli/init.schema.json",
+    ),
+    "utf-8",
+  ),
+) as Record<string, unknown>;
+const validateInit = new Ajv2020({ strict: false }).compile(initSchema);
+
+/**
+ * An attest-engine stand-in whose help lists `skills` and whose `skills` command runs
+ * `body` (shell builtins only: PATH is isolated) after recording its arguments.
+ */
+function useSkillsEngine(body: string): string {
+  const engine = path.join(env.root, "e", "attest-engine");
+  fs.mkdirSync(path.dirname(engine), { recursive: true });
+  fs.writeFileSync(
+    engine,
+    [
+      "#!/bin/sh",
+      'case "$1" in',
+      `  version) echo 'attest-engine ${ENGINE_VERSION}' ;;`,
+      "  help) echo 'commands:'; echo '  skills  install agent skills' ;;",
+      `  skills) echo "$*" > "$0.calls"; ${body} ;;`,
+      "esac",
+      "",
+    ].join("\n"),
+    { mode: 0o755 },
+  );
+  process.env["ATTEST_ENGINE_PATH"] = engine;
+  return engine;
+}
+
+describe("attest init --json and --skills", () => {
+  let originalCwd: string;
+  let project: string;
+
+  beforeEach(() => {
+    originalCwd = process.cwd();
+    project = path.join(env.root, "project");
+    fs.mkdirSync(project);
+    process.chdir(project);
+  });
+
+  afterEach(() => {
+    process.chdir(originalCwd);
+  });
+
+  function initDoc(): Record<string, string[]> {
+    expect(stdout).toHaveLength(1);
+    const doc = JSON.parse(stdout[0]!) as Record<string, string[]>;
+    expect(validateInit(doc), JSON.stringify(validateInit.errors)).toBe(true);
+    return doc;
+  }
+
+  it("--ci github --json prints only the created paths", async () => {
+    await expect(main(["init", "--ci", "github", "--json"])).resolves.toBe(0);
+
+    expect(initDoc()).toEqual({
+      created: [".github/workflows/attest.yml", "attest.policy.yaml", "tests/my-agent.test.ts"],
+      updated: [],
+      skipped: [],
+    });
+    expect(fs.existsSync(path.join(project, ".github", "workflows", "attest.yml"))).toBe(true);
+  });
+
+  it("--json reports existing files as skipped and leaves them alone", async () => {
+    fs.writeFileSync(path.join(project, "attest.policy.yaml"), "# mine\n");
+
+    await expect(main(["init", "--json"])).resolves.toBe(0);
+
+    expect(initDoc()).toEqual({
+      created: ["tests/my-agent.test.ts"],
+      updated: [],
+      skipped: ["attest.policy.yaml"],
+    });
+    expect(fs.readFileSync(path.join(project, "attest.policy.yaml"), "utf-8")).toBe("# mine\n");
+  });
+
+  it("--skills --json merges the engine's paths", async () => {
+    const engine = useSkillsEngine(
+      "echo '{\"dir\":\"/x\",\"created\":[\".claude/skills/attest/SKILL.md\"]," +
+        "\"updated\":[\"AGENTS.md\"],\"unchanged\":[\".agents/skills/attest/SKILL.md\"]}'",
+    );
+
+    await expect(main(["init", "--skills", "--ci=github", "--json"])).resolves.toBe(0);
+
+    expect(initDoc()).toEqual({
+      created: [
+        ".claude/skills/attest/SKILL.md",
+        ".github/workflows/attest.yml",
+        "attest.policy.yaml",
+        "tests/my-agent.test.ts",
+      ],
+      updated: ["AGENTS.md"],
+      skipped: [".agents/skills/attest/SKILL.md"],
+    });
+    expect(fs.readFileSync(`${engine}.calls`, "utf-8").trim()).toBe(
+      `skills install --dir ${process.cwd()} --json`,
+    );
+  });
+
+  it("--skills without --json prints the skills lines before the scaffold", async () => {
+    useSkillsEngine(
+      "echo '{\"dir\":\"/x\",\"created\":[\"a/SKILL.md\"],\"updated\":[],\"unchanged\":[]}'",
+    );
+
+    await expect(main(["init", "--skills"])).resolves.toBe(0);
+
+    const out = stdout.join("");
+    expect(out).toContain(`Created: ${path.join(process.cwd(), "a", "SKILL.md")}`);
+    expect(out.indexOf("a/SKILL.md")).toBeLessThan(out.indexOf("Next:"));
+  });
+
+  it.each([
+    ["exit 3", "echo boom >&2; exit 3"],
+    ["not json", "echo 'not json'"],
+    ["missing keys", `echo '{"created":[]}'`],
+  ])("--skills with an engine that fails (%s) exits 1 and scaffolds nothing", async (_n, body) => {
+    useSkillsEngine(body);
+
+    await expect(main(["init", "--skills", "--json"])).resolves.toBe(1);
+
+    expect(stdout).toEqual([]);
+    expect(stderr.join("")).toContain("skills install");
+    expect(fs.existsSync(path.join(project, "tests"))).toBe(false);
+  });
+
+  it("--skills with an engine that lacks `skills` exits 1", async () => {
+    useEngine({ commands: ["doctor"] });
+
+    await expect(main(["init", "--skills"])).resolves.toBe(1);
+
+    expect(stderr.join("")).toContain("predates `attest skills`");
+    expect(fs.existsSync(path.join(project, "tests"))).toBe(false);
+  });
+
+  it("--skills --json without an engine exits 1 with empty stdout", async () => {
+    await expect(main(["init", "--skills", "--json"])).resolves.toBe(1);
+
+    expect(stdout).toEqual([]);
+    expect(fs.existsSync(path.join(project, "tests"))).toBe(false);
   });
 });
 

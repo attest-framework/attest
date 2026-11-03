@@ -1,0 +1,6 @@
+{
+  "mode": "subset",
+  "tests": [
+    "tests/test_refund.py"
+  ]
+}

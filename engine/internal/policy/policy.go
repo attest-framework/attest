@@ -35,6 +35,10 @@ const (
 	// ExitWarn means only Severity=warn rules were violated. CI may
 	// surface the warning without blocking.
 	ExitWarn = 2
+	// ExitUsage means `policy evaluate` could not run: a usage error, or a
+	// policy, report or baseline that failed to load. It is distinct from the
+	// three verdicts so a CI gate never mistakes broken input for a warning.
+	ExitUsage = 3
 )
 
 // SeverityBlock and SeverityWarn are the two rule severities. Anything

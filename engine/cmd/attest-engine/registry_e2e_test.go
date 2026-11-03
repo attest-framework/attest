@@ -49,12 +49,12 @@ func TestVersion_PrintsEngineVersion(t *testing.T) {
 	}
 }
 
-func TestCache_NoSubcommand_ExitsOne(t *testing.T) {
+func TestCache_NoSubcommand_ExitsTwo(t *testing.T) {
 	bin := buildEngineBinary(t)
 
 	_, stderr, code := runEngine(t, bin, t.TempDir(), "cache")
 
-	if code != 1 || !strings.Contains(stderr, "usage: attest-engine cache") {
-		t.Fatalf("exit %d stderr %q, want 1 and cache usage", code, stderr)
+	if code != 2 || !strings.Contains(stderr, "usage: attest-engine cache") {
+		t.Fatalf("exit %d stderr %q, want 2 and cache usage", code, stderr)
 	}
 }
