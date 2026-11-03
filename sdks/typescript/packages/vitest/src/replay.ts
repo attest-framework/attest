@@ -4,11 +4,11 @@
  */
 import { onTestFinished } from "vitest";
 import {
-  ReplayMissError,
+  ReplayNotEvaluatedError,
   egressBlockRequested,
   firstMiss,
   installEgressGuard,
-  resolveReplayMode,
+  resolveMode,
   startReplay,
   type ReplayModeSetting,
   type ReplayOptions,
@@ -32,7 +32,7 @@ export interface ReplayMeta {
   notEvaluated: boolean;
 }
 
-export interface UseReplayOptions extends Omit<ReplayOptions, "mode"> {
+export interface UseReplayOptions extends Omit<ReplayOptions, "mode" | "noLive"> {
   /** `strict`, `auto` or `off`; default `ATTEST_REPLAY`, else `strict` when `CI` is set, else `auto`. */
   mode?: ReplayModeSetting;
   /** Block in-process connections to model-provider hosts (default: `ATTEST_EGRESS=block`). */
@@ -53,6 +53,8 @@ export interface ReplayHandle {
 interface FinishedTask {
   name: string;
   meta: Record<string, unknown>;
+  /** Set by `it.fails`; the runner inverts the result after the hooks when true. */
+  fails?: boolean;
   result?: { state?: string; errors?: unknown[] };
 }
 
@@ -65,13 +67,14 @@ interface FinishedTask {
  *   (a failure under `strict: true` / `ATTEST_STRICT=1`); with a key the call went live.
  */
 export async function useReplay(name: string, opts: UseReplayOptions = {}): Promise<ReplayHandle> {
-  const mode = resolveReplayMode(opts.mode);
+  const mode = resolveMode(opts.mode);
   if (mode === "off") return { mode, env: {}, finish: () => Promise.resolve(undefined) };
 
-  const uninstallGuard = (opts.egress ?? (egressBlockRequested() ? "block" : "allow")) === "block" ? installEgressGuard() : undefined;
+  const blocking = (opts.egress ?? (egressBlockRequested() ? "block" : "allow")) === "block";
+  const uninstallGuard = blocking ? installEgressGuard() : undefined;
   let session: ReplaySession;
   try {
-    session = await startReplay(name, { ...opts, mode });
+    session = await startReplay(name, { ...opts, mode, noLive: blocking });
   } catch (err) {
     uninstallGuard?.();
     throw err;
@@ -79,7 +82,8 @@ export async function useReplay(name: string, opts: UseReplayOptions = {}): Prom
   let summary: ReplaySummary | undefined;
   const finish = async (): Promise<ReplaySummary> => {
     try {
-      summary = await session.finish();
+      summary = (await session.finish()) ?? undefined;
+      if (summary === undefined) throw new Error("replay session returned no summary");
       return summary;
     } finally {
       uninstallGuard?.();
@@ -87,12 +91,19 @@ export async function useReplay(name: string, opts: UseReplayOptions = {}): Prom
   };
   onTestFinished(async ({ task }) => {
     const done = await finish();
-    settle(task as unknown as FinishedTask, name, mode, done, opts.strict ?? strictFromEnv());
+    settle(task as unknown as FinishedTask, name, mode, done, session, opts.strict ?? strictFromEnv());
   });
   return { mode, env: session.env, finish };
 }
 
-function settle(task: FinishedTask, name: string, mode: "strict" | "auto", s: ReplaySummary, strict: boolean): void {
+function settle(
+  task: FinishedTask,
+  name: string,
+  mode: "strict" | "auto",
+  s: ReplaySummary,
+  session: ReplaySession,
+  strict: boolean,
+): void {
   const miss = firstMiss(s) ?? undefined;
   const skip = s.misses > 0 && mode === "auto" && !strict;
   const meta: ReplayMeta = {
@@ -115,7 +126,9 @@ function settle(task: FinishedTask, name: string, mode: "strict" | "auto", s: Re
     task.result = { ...task.result, state: "skip", errors: undefined };
     return;
   }
-  const error = new ReplayMissError(miss, s);
+  const error = session.error() ?? new ReplayNotEvaluatedError(miss, s);
+  // The runner flips a failed `it.fails` test to a pass after the hooks run; a miss must stay a failure.
+  task.fails = false;
   if (task.result?.errors !== undefined && task.result.errors.length > 0) {
     // Whatever the agent threw, the user sees the miss.
     task.result.errors = [error];

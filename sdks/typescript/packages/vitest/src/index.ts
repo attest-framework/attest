@@ -12,3 +12,19 @@ export type { AttestTaskMeta, RecordedResult, TestOutcome, TestRecord, TrialsMet
 export { filterByTier } from "./tier-filter.js";
 export { useReplay } from "./replay.js";
 export type { ReplayHandle, ReplayMeta, UseReplayOptions } from "./replay.js";
+export {
+  EgressBlockedError,
+  REASON_REPLAY_MISS,
+  ReplayError,
+  ReplayMissError,
+  ReplayNotEvaluatedError,
+  egressBlockRequested,
+  firstMiss,
+  installEgressGuard,
+  isProviderHost,
+  liveLine,
+  resolveMode,
+  startReplay,
+  uninstallEgressGuard,
+} from "@attest-ai/core";
+export type { ReplaySession, ReplaySummary } from "@attest-ai/core";

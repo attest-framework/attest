@@ -11,6 +11,7 @@
 import { spawn } from "node:child_process";
 import * as path from "node:path";
 import { DEFAULT_FIXTURE_DIR, NAME_PATTERN } from "./capture.js";
+import { egressBlockRequested } from "./egress.js";
 import { resolveEngine } from "./engine-manager.js";
 
 export type ReplayMode = "strict" | "auto";
@@ -50,9 +51,25 @@ export class ReplayMissError extends Error {
   }
 }
 
+/** An auto-mode replay request matched no recording and no provider key was set: `not_evaluated: replay_miss`. */
+export class ReplayNotEvaluatedError extends Error {
+  constructor(
+    message: string,
+    readonly summary: ReplaySummary,
+  ) {
+    super(message);
+    this.name = "ReplayNotEvaluatedError";
+  }
+}
+
+/** Escape control and format characters (Unicode Cc, Cf; newlines, ESC) as \uXXXX. */
+export function escapeControl(text: string): string {
+  return text.replace(/[\p{Cc}\p{Cf}]/gu, (c) => `\\u${(c.codePointAt(0) ?? 0).toString(16).padStart(4, "0")}`);
+}
+
 export class ReplayError extends Error {
   constructor(message: string) {
-    super(message);
+    super(escapeControl(message));
     this.name = "ReplayError";
   }
 }
@@ -60,28 +77,34 @@ export class ReplayError extends Error {
 export interface ReplayOptions {
   /** Fixture directory (default `tests/attest/fixtures`). */
   fixturesDir?: string;
-  /** `strict` or `auto`; default per `resolveReplayMode`. */
-  mode?: ReplayMode;
+  /** `strict`, `auto` or `off`; default per `resolveMode`. `off` starts nothing. */
+  mode?: ReplayModeSetting;
+  /** Pass `--no-live` to the engine: no miss is forwarded live. Default: `ATTEST_EGRESS=block`. */
+  noLive?: boolean;
   /** Engine binary (default: the SDK's engine discovery). */
   enginePath?: string;
 }
 
 export interface ReplaySession {
   readonly name: string;
-  readonly mode: ReplayMode;
+  readonly mode: ReplayModeSetting;
   /** The variables the session set in `process.env`. */
   readonly env: Record<string, string>;
   /** The summary once `finish()` has run, else `null`. */
   readonly summary: ReplaySummary | null;
-  /** Stop the engine, restore the environment and return the summary. Idempotent. */
-  finish(): Promise<ReplaySummary>;
+  /** Stop the engine, restore the environment and return the summary (`null` for `off`). Idempotent. */
+  finish(): Promise<ReplaySummary | null>;
+  /** The error a miss raises (valid after `finish()`): strict => miss, auto => not evaluated. */
+  error(): ReplayMissError | ReplayNotEvaluatedError | null;
+  /** `finish()`, then throw `error()` if any. */
+  check(): Promise<void>;
 }
 
 /**
  * Replay mode from `explicit`, else `ATTEST_REPLAY` (`strict|auto|off`), else `strict`
  * when `CI` is set, else `auto`.
  */
-export function resolveReplayMode(
+export function resolveMode(
   explicit?: ReplayModeSetting,
   env: NodeJS.ProcessEnv = process.env,
 ): ReplayModeSetting {
@@ -103,8 +126,8 @@ let active: string | null = null;
 /** Start a replay session for fixture `name`. Sessions cannot overlap. */
 export async function startReplay(name: string, opts: ReplayOptions = {}): Promise<ReplaySession> {
   if (!NAME_PATTERN.test(name)) throw new ReplayError(`invalid fixture name ${JSON.stringify(name)}`);
-  const resolved = resolveReplayMode(opts.mode);
-  if (resolved === "off") throw new ReplayError("replay mode is off: nothing to start");
+  const resolved = resolveMode(opts.mode);
+  if (resolved === "off") return offSession(name);
   const mode: ReplayMode = resolved;
   if (active !== null) throw new ReplayError(`replay of ${active} is already running; sessions cannot overlap`);
   active = name;
@@ -116,12 +139,31 @@ export async function startReplay(name: string, opts: ReplayOptions = {}): Promi
   }
 }
 
+function offSession(name: string): ReplaySession {
+  return {
+    name,
+    mode: "off",
+    env: {},
+    summary: null,
+    finish: () => Promise.resolve(null),
+    error: () => null,
+    check: () => Promise.resolve(),
+  };
+}
+
+function missError(mode: ReplayMode, summary: ReplaySummary): ReplayMissError | ReplayNotEvaluatedError | null {
+  if (summary.misses === 0) return null;
+  const message = escapeControl(firstMiss(summary) ?? "replay miss");
+  return mode === "auto" ? new ReplayNotEvaluatedError(message, summary) : new ReplayMissError(message, summary);
+}
+
 async function start(name: string, mode: ReplayMode, opts: ReplayOptions): Promise<ReplaySession> {
   const engine = await resolveEngine(opts.enginePath);
   const fixturesDir = path.resolve(opts.fixturesDir ?? DEFAULT_FIXTURE_DIR);
-  const child = spawn(engine, ["replay", "--serve", "--name", name, "--fixtures-dir", fixturesDir, "--mode", mode], {
-    stdio: ["pipe", "pipe", "pipe"],
-  });
+  const blocking = opts.noLive ?? egressBlockRequested();
+  const args = ["replay", "--serve", "--name", name, "--fixtures-dir", fixturesDir, "--mode", mode];
+  if (blocking) args.push("--no-live");
+  const child = spawn(engine, args, { stdio: ["pipe", "pipe", "pipe"] });
   let stdout = "";
   let stderr = "";
   let resolveReady: (line: string | null) => void = () => undefined;
@@ -178,6 +220,11 @@ async function start(name: string, mode: ReplayMode, opts: ReplayOptions): Promi
       if (parsed === null) {
         throw new ReplayError(`replay ${name} wrote no summary (exit ${String(out.code)}): ${out.stderr.trim()}`);
       }
+      if (blocking && parsed.live > 0) {
+        throw new ReplayError(
+          `replay ${name}: ${String(parsed.live)} live model calls while the egress guard is blocking`,
+        );
+      }
       summary = parsed;
       return parsed;
     })();
@@ -191,6 +238,12 @@ async function start(name: string, mode: ReplayMode, opts: ReplayOptions): Promi
       return summary;
     },
     finish,
+    error: () => (summary === null ? null : missError(mode, summary)),
+    check: async () => {
+      await finish();
+      const err = summary === null ? null : missError(mode, summary);
+      if (err !== null) throw err;
+    },
   };
 }
 
@@ -211,7 +264,9 @@ function parseSummary(out: string): ReplaySummary | null {
   const lines = out.trim().split("\n");
   try {
     const s = (JSON.parse(lines[lines.length - 1] ?? "") as { summary?: ReplaySummary }).summary;
-    return s !== undefined && Array.isArray(s.records) ? s : null;
+    if (s === undefined || !Array.isArray(s.records)) return null;
+    for (const r of s.records) if (r.message !== undefined) r.message = escapeControl(r.message);
+    return s;
   } catch {
     return null;
   }
@@ -223,7 +278,7 @@ export function firstMiss(summary: ReplaySummary): string | null {
 }
 
 /** `N live model calls · $X.XX`, plus ` (+N unpriced)`. */
-export function liveCallsLine(live: number, costUsd: number, unpriced = 0): string {
+export function liveLine(live: number, costUsd: number, unpriced = 0): string {
   const line = `${String(live)} live model ${live === 1 ? "call" : "calls"} · $${costUsd.toFixed(2)}`;
   return unpriced > 0 ? `${line} (+${String(unpriced)} unpriced)` : line;
 }

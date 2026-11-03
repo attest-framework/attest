@@ -68,7 +68,7 @@ describe.skipIf(!existsSync(engine))("useReplay (real engine)", () => {
     upstream.close();
   });
 
-  function run(env: Record<string, string>) {
+  function run(env: Record<string, string>, testFile?: string) {
     const out = join(dir, `report-${Math.random().toString(16).slice(2)}.json`);
     const proc = spawnSync(
       join(pkgDir, "node_modules/.bin/vitest"),
@@ -85,6 +85,7 @@ describe.skipIf(!existsSync(engine))("useReplay (real engine)", () => {
           REPLAY_FIXTURES: join(dir, "fixtures"),
           // Tests report to the engine's upstream only through the replay proxy; this one is dead.
           OPENAI_BASE_URL: "http://127.0.0.1:1/v1",
+          ...(testFile === undefined ? {} : { REPLAY_TEST_FILE: testFile }),
           ...env,
         },
       },
@@ -121,6 +122,29 @@ describe.skipIf(!existsSync(engine))("useReplay (real engine)", () => {
     expect(report?.tests.find((t) => t.name === "replays inc-1042")).toMatchObject({
       outcome: "failed",
       replay: { mode: "strict", replayed: 0, misses: 1 },
+    });
+  }, 60_000);
+
+  it("strict miss fails an it.fails test with the miss message (the marker does not hide it)", () => {
+    const { proc, output, report } = run(
+      { ATTEST_REPLAY: "strict", REPLAY_SYSTEM: "You refund twice." },
+      "tests/e2e/replay-fails.fixture.ts",
+    );
+
+    expect(proc.status, output).toBe(1);
+    expect(output).toMatch(
+      /replay miss: system prompt changed \(hash [0-9a-f]{7}→[0-9a-f]{7}\); re-record with `attest capture --refresh inc-1042`/,
+    );
+    expect(report?.tests.find((t) => t.name === "incident reproduces under it.fails")?.outcome).toBe("failed");
+  }, 60_000);
+
+  it("an it.fails replay test without a miss still passes as an expected failure", () => {
+    const { proc, output, report } = run({ ATTEST_REPLAY: "strict" }, "tests/e2e/replay-fails.fixture.ts");
+
+    expect(proc.status, output).toBe(0);
+    expect(report?.tests.find((t) => t.name === "incident reproduces under it.fails")).toMatchObject({
+      outcome: "passed",
+      replay: { replayed: 1, misses: 0 },
     });
   }, 60_000);
 

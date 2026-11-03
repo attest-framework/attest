@@ -20,7 +20,7 @@ import {
 } from "@attest-ai/core";
 
 import type { ReplayMeta } from "./replay.js";
-import { liveCallsLine } from "@attest-ai/core";
+import { liveLine } from "@attest-ai/core";
 
 export const REPORT_VERSION = 2;
 
@@ -210,7 +210,8 @@ export function summaryLines(tests: readonly TestRecord[], unattached: Usage = z
     const n = (f: (r: ReplayMeta) => number) => replays.reduce((a, r) => a + f(r), 0);
     lines.push(
       `attest replay: ${String(n((r) => r.replayed))} replayed · ` +
-        liveCallsLine(n((r) => r.live), n((r) => r.liveCostUsd), n((r) => r.unpricedLiveCalls)),
+        liveLine(n((r) => r.live), n((r) => r.liveCostUsd), n((r) => r.unpricedLiveCalls)) +
+        (n((r) => r.misses) > 0 ? ` · ${String(n((r) => r.misses))} missed` : ""),
     );
   }
   return lines;

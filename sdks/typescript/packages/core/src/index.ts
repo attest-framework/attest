@@ -53,9 +53,10 @@ export type {
 export {
   ReplayError,
   ReplayMissError,
+  ReplayNotEvaluatedError,
   firstMiss,
-  liveCallsLine,
-  resolveReplayMode,
+  liveLine,
+  resolveMode,
   startReplay,
 } from "./replay.js";
 export type {

@@ -1,4 +1,4 @@
-import { chmodSync, mkdtempSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import * as http from "node:http";
 import * as https from "node:https";
 import { tmpdir } from "node:os";
@@ -13,9 +13,11 @@ vi.mock("../../packages/core/src/engine-manager.js", () => ({
 import { EgressBlockedError, installEgressGuard, isProviderHost, uninstallEgressGuard } from "../../packages/core/src/egress.js";
 import {
   ReplayError,
+  ReplayMissError,
+  ReplayNotEvaluatedError,
   firstMiss,
-  liveCallsLine,
-  resolveReplayMode,
+  liveLine,
+  resolveMode,
   startReplay,
   type ReplaySummary,
 } from "../../packages/core/src/replay.js";
@@ -42,26 +44,26 @@ const summary: ReplaySummary = {
   ],
 };
 
-describe("resolveReplayMode", () => {
+describe("resolveMode", () => {
   it("prefers the explicit mode, then ATTEST_REPLAY, then CI, else auto", () => {
-    expect(resolveReplayMode("off", { ATTEST_REPLAY: "strict" })).toBe("off");
-    expect(resolveReplayMode(undefined, { ATTEST_REPLAY: "auto", CI: "true" })).toBe("auto");
-    expect(resolveReplayMode(undefined, { CI: "true" })).toBe("strict");
-    expect(resolveReplayMode(undefined, { CI: "false" })).toBe("auto");
-    expect(resolveReplayMode(undefined, {})).toBe("auto");
+    expect(resolveMode("off", { ATTEST_REPLAY: "strict" })).toBe("off");
+    expect(resolveMode(undefined, { ATTEST_REPLAY: "auto", CI: "true" })).toBe("auto");
+    expect(resolveMode(undefined, { CI: "true" })).toBe("strict");
+    expect(resolveMode(undefined, { CI: "false" })).toBe("auto");
+    expect(resolveMode(undefined, {})).toBe("auto");
   });
 
   it("rejects an unknown mode", () => {
-    expect(() => resolveReplayMode(undefined, { ATTEST_REPLAY: "loose" })).toThrow(/ATTEST_REPLAY must be strict, auto or off/);
+    expect(() => resolveMode(undefined, { ATTEST_REPLAY: "loose" })).toThrow(/ATTEST_REPLAY must be strict, auto or off/);
   });
 });
 
 describe("summary helpers", () => {
   it("names the first miss and formats the live-call line", () => {
     expect(firstMiss(summary)).toMatch(/^replay miss: tools changed/);
-    expect(liveCallsLine(0, 0)).toBe("0 live model calls · $0.00");
-    expect(liveCallsLine(1, 0.004)).toBe("1 live model call · $0.00");
-    expect(liveCallsLine(3, 1.5, 2)).toBe("3 live model calls · $1.50 (+2 unpriced)");
+    expect(liveLine(0, 0)).toBe("0 live model calls · $0.00");
+    expect(liveLine(1, 0.004)).toBe("1 live model call · $0.00");
+    expect(liveLine(3, 1.5, 2)).toBe("3 live model calls · $1.50 (+2 unpriced)");
   });
 });
 
@@ -184,14 +186,61 @@ describe("egress guard", () => {
 
 describe("mode resolution", () => {
   it("treats CI=false and CI=0 as not CI and ignores case and spaces", () => {
-    expect(resolveReplayMode(undefined, { CI: "false" })).toBe("auto");
-    expect(resolveReplayMode(undefined, { CI: "0" })).toBe("auto");
-    expect(resolveReplayMode(undefined, { CI: "true" })).toBe("strict");
-    expect(resolveReplayMode(undefined, { ATTEST_REPLAY: " STRICT " })).toBe("strict");
+    expect(resolveMode(undefined, { CI: "false" })).toBe("auto");
+    expect(resolveMode(undefined, { CI: "0" })).toBe("auto");
+    expect(resolveMode(undefined, { CI: "true" })).toBe("strict");
+    expect(resolveMode(undefined, { ATTEST_REPLAY: " STRICT " })).toBe("strict");
   });
 
-  it("startReplay refuses off instead of starting an engine", async () => {
-    await expect(startReplay("x", { mode: "off" as never })).rejects.toBeInstanceOf(ReplayError);
+  it("startReplay with mode off returns a no-op session and starts nothing", async () => {
+    const session = await startReplay("x", { mode: "off", enginePath: "/nonexistent/engine" });
+    expect(session.mode).toBe("off");
+    expect(session.env).toEqual({});
+    expect(await session.finish()).toBeNull();
+    expect(session.error()).toBeNull();
+    await session.check();
   });
 });
 
+
+describe("replay errors and engine flags", () => {
+  const line = (sum: ReplaySummary): string =>
+    fakeEngine(`echo '{"env":{}}'; read line; echo '${JSON.stringify({ summary: sum })}'`);
+
+  it("error() is a miss error in strict mode and not-evaluated in auto mode", async () => {
+    const strict = await startReplay("x", { enginePath: line(summary), mode: "strict", noLive: false });
+    await strict.finish();
+    expect(strict.error()).toBeInstanceOf(ReplayMissError);
+    await expect(strict.check()).rejects.toThrow(/replay miss: tools changed/);
+
+    const auto = await startReplay("x", { enginePath: line({ ...summary, mode: "auto" }), mode: "auto", noLive: false });
+    await auto.finish();
+    expect(auto.error()).toBeInstanceOf(ReplayNotEvaluatedError);
+  });
+
+  it("escapes control and format characters in miss and engine-error text", async () => {
+    const hostile = { ...summary, records: [{ ...summary.records[1]!, message: "replay miss: model changed (\"a\u001b[31m\\n::error::x\u202e\")" }] };
+    const session = await startReplay("x", { enginePath: line(hostile), mode: "strict", noLive: false });
+    await session.finish();
+    const message = session.error()?.message ?? "";
+    expect(message).not.toMatch(/[\u0000-\u001f\u202e]/);
+    expect(message).toContain("\\u001b");
+
+    const bad = fakeEngine("printf 'boom\\033[31m\\n::error::x' >&2; exit 1");
+    await expect(startReplay("y", { enginePath: bad, noLive: false })).rejects.toThrow(/did not start: boom\\u001b\[31m\\u000a::error::x/);
+  });
+
+  it("passes --no-live when blocking and fails a blocked run that went live", async () => {
+    const argsFile = join(mkdtempSync(join(tmpdir(), "attest-args-")), "args");
+    const engine = fakeEngine(
+      `echo "$@" > ${argsFile}; echo '{"env":{}}'; read line; echo '${JSON.stringify({ summary: { ...summary, misses: 0, live: 1, records: [] } })}'`,
+    );
+    const session = await startReplay("x", { enginePath: engine, mode: "strict", noLive: true });
+    await expect(session.finish()).rejects.toThrow(/live model calls while the egress guard is blocking/);
+    expect(readFileSync(argsFile, "utf8")).toContain("--no-live");
+
+    const open = await startReplay("x", { enginePath: engine, mode: "strict", noLive: false });
+    await open.finish();
+    expect(readFileSync(argsFile, "utf8")).not.toContain("--no-live");
+  });
+});
