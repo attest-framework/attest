@@ -15,6 +15,11 @@ func init() {
 		name:    "select",
 		summary: "list the tests a change needs: --base <ref> [--json] [--repo <dir>]",
 		run:     func(args []string) { os.Exit(runSelect(args, os.Stdout, os.Stderr)) },
+		schema:  "cli/select.schema.json",
+		exits: []exitCode{
+			{exitOK, "success, including an empty selection"},
+			{exitUsage, "usage error, or git or the base ref failed"},
+		},
 	})
 }
 

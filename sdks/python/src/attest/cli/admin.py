@@ -14,6 +14,7 @@ then drafts its pytest file (:func:`attest.capture.emit_pytest`).
 
 from __future__ import annotations
 
+import contextlib
 import json
 import subprocess
 import sys
@@ -33,8 +34,11 @@ _SDK_USAGE = (
     "usage: attest <command> [args]\n"
     "\n"
     "SDK commands:\n"
-    "  init [--ci github]  scaffold a sample test and merge policy in the current directory\n"
-    "                      (--ci github also writes .github/workflows/attest.yml)\n"
+    "  init [--ci github] [--skills] [--json]\n"
+    "                      scaffold a sample test and merge policy in the current directory\n"
+    "                      (--ci github also writes .github/workflows/attest.yml;\n"
+    "                      --skills installs the agent skills with attest-engine;\n"
+    "                      --json prints {created, updated, skipped} paths as JSON)\n"
     "\n"
     "`attest capture` (engine) also drafts tests/attest/test_<name>.py (name lowercased,\n"
     "other characters as _) from a verified fixture, unless that file exists.\n"
@@ -109,15 +113,17 @@ def exit_status(returncode: int) -> int:
     return 128 - returncode if returncode < 0 else returncode
 
 
-def forward(argv: Sequence[str]) -> int:
-    """Run ``<engine> <argv>`` on a version-checked engine that provides the command."""
+def _engine_providing(command: str) -> str | None:
+    """Resolve a version-checked engine whose ``help`` lists ``command``.
+
+    Prints the reason to stderr and returns ``None`` when there is none.
+    """
     try:
         engine = resolve_engine()
     except _RESOLVE_ERRORS as exc:
         print(f"attest: {exc}", file=sys.stderr)
-        return 1
+        return None
     commands = engine_commands(engine)
-    command = argv[0]
     if commands is None or (command != "help" and command not in commands):
         print(
             f"attest: attest-engine at {engine} (version {ENGINE_VERSION}) predates "
@@ -126,8 +132,59 @@ def forward(argv: Sequence[str]) -> int:
             "engine provides it.",
             file=sys.stderr,
         )
+        return None
+    return engine
+
+
+_INIT_HELP_ENTRY: dict[str, object] = {
+    "name": "init",
+    "summary": "scaffold a sample test and policy; --ci github, --skills, --json",
+    "schema": "cli/init.schema.json",
+    "exit_codes": [
+        {"code": 0, "meaning": "success"},
+        {
+            "code": 1,
+            "meaning": "--skills could not install: the engine is missing, too old or failed",
+        },
+        {"code": 2, "meaning": "usage error"},
+    ],
+}
+
+
+def _help_json(engine: str) -> int:
+    """Print the engine's ``help --json`` document with the SDK's ``init`` command added."""
+    proc = subprocess.run(
+        [engine, "help", "--json"],
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if proc.returncode != 0:
+        sys.stderr.write(proc.stderr)
+        return exit_status(proc.returncode)
+    try:
+        doc = json.loads(proc.stdout)
+        commands = doc["commands"]
+    except (json.JSONDecodeError, KeyError, TypeError) as exc:
+        print(
+            f"attest: `{engine} help --json` printed an unexpected document: {exc}",
+            file=sys.stderr,
+        )
         return 1
-    if command == "capture" and _capture_writes_fixture(argv[1:]):
+    doc["commands"] = sorted([*commands, _INIT_HELP_ENTRY], key=lambda c: str(c["name"]))
+    print(json.dumps(doc, indent=2))
+    return 0
+
+
+def forward(argv: Sequence[str]) -> int:
+    """Run ``<engine> <argv>`` on a version-checked engine that provides the command."""
+    engine = _engine_providing(argv[0])
+    if engine is None:
+        return 1
+    if list(argv) == ["help", "--json"]:
+        return _help_json(engine)
+    if argv[0] == "capture" and _capture_writes_fixture(argv[1:]):
         return _capture_and_emit(engine, argv[1:])
     return exit_status(subprocess.run([engine, *argv], check=False).returncode)
 
@@ -197,23 +254,119 @@ def _capture_and_emit(engine: str, args: Sequence[str]) -> int:
     return code
 
 
-_INIT_USAGE = "usage: attest init [--ci github]  (scaffolds into the current directory)"
+_INIT_USAGE = (
+    "usage: attest init [--ci github] [--skills] [--json]  (scaffolds into the current directory)"
+)
+
+_INIT_KINDS = ("created", "updated", "skipped")
+
+# `attest-engine skills install --json` key -> `attest init --json` key.
+_SKILLS_KINDS = {"created": "created", "updated": "updated", "unchanged": "skipped"}
+
+
+def _parse_init_args(args: Sequence[str]) -> tuple[str | None, bool, bool] | None:
+    """Return ``(ci, skills, json)`` for ``attest init`` args, or ``None`` on a usage error."""
+    ci: str | None = None
+    skills = as_json = False
+    rest = list(args)
+    while rest:
+        arg = rest.pop(0)
+        if arg == "--ci" and rest and rest[0] == "github" and ci is None:
+            rest.pop(0)
+            ci = "github"
+        elif arg == "--ci=github" and ci is None:
+            ci = "github"
+        elif arg == "--skills" and not skills:
+            skills = True
+        elif arg == "--json" and not as_json:
+            as_json = True
+        else:
+            return None
+    return ci, skills, as_json
+
+
+def _install_skills(engine: str, root: Path) -> dict[str, list[str]]:
+    """Run ``<engine> skills install --dir <root> --json`` and map its paths to init kinds.
+
+    Raises :class:`AttestError` when the engine fails or prints an unexpected document.
+    """
+    argv = [engine, "skills", "install", "--dir", str(root), "--json"]
+    proc = subprocess.run(
+        argv, stdin=subprocess.DEVNULL, capture_output=True, text=True, check=False
+    )
+    if proc.returncode != 0:
+        detail = proc.stderr.strip()
+        raise AttestError(
+            f"skills install failed (`{' '.join(argv)}` exited {exit_status(proc.returncode)})"
+            + (f": {detail}" if detail else "")
+        )
+    sys.stderr.write(proc.stderr)
+    try:
+        doc = json.loads(proc.stdout)
+    except json.JSONDecodeError as exc:
+        raise AttestError(f"`{' '.join(argv)}` printed invalid JSON: {exc}") from exc
+    if not isinstance(doc, dict):
+        raise AttestError(f"`{' '.join(argv)}` printed {type(doc).__name__}, not an object")
+    result: dict[str, list[str]] = {kind: [] for kind in _INIT_KINDS}
+    for engine_kind, init_kind in _SKILLS_KINDS.items():
+        paths = doc.get(engine_kind)
+        if not isinstance(paths, list) or not all(isinstance(p, str) for p in paths):
+            raise AttestError(
+                f"`{' '.join(argv)}` printed no `{engine_kind}` list of paths: {proc.stdout!r}"
+            )
+        result[init_kind].extend(paths)
+    return result
+
+
+def _print_skills(root: Path, skills: dict[str, list[str]]) -> None:
+    for rel in skills["created"]:
+        print(f"Created: {root / rel}")
+    for rel in skills["updated"]:
+        print(f"Updated: {root / rel}")
+    for rel in skills["skipped"]:
+        print(f"Skipped (unchanged): {root / rel}", file=sys.stderr)
 
 
 def init(args: Sequence[str]) -> int:
-    """Run ``attest init [--ci github]`` in the current directory."""
+    """Run ``attest init [--ci github] [--skills] [--json]`` in the current directory.
+
+    ``--skills`` installs the agent skills with ``attest-engine skills install`` before
+    scaffolding; a missing or failing engine exits 1 with nothing scaffolded. ``--json``
+    prints one ``{"created", "updated", "skipped"}`` document (paths relative to the
+    current directory, sorted) as the only stdout; everything else goes to stderr.
+    """
     if any(a in _HELP_FLAGS for a in args):
         print(_INIT_USAGE)
         return 0
-    ci: str | None = None
-    if list(args) == ["--ci", "github"] or list(args) == ["--ci=github"]:
-        ci = "github"
-    elif args:
+    parsed = _parse_init_args(args)
+    if parsed is None:
         print(_INIT_USAGE, file=sys.stderr)
         return 2
+    ci, skills, as_json = parsed
     from attest.scaffold import scaffold_project
 
-    scaffold_project(Path.cwd(), ci=ci)
+    root = Path.cwd()
+    result: dict[str, list[str]] = {kind: [] for kind in _INIT_KINDS}
+    # Under --json, stdout carries the document only: anything else printed goes to stderr.
+    with contextlib.redirect_stdout(sys.stderr) if as_json else contextlib.nullcontext():
+        if skills:
+            engine = _engine_providing("skills")
+            if engine is None:
+                return 1
+            try:
+                installed = _install_skills(engine, root)
+            except AttestError as exc:
+                print(f"attest: {exc}", file=sys.stderr)
+                return 1
+            if not as_json:
+                _print_skills(root, installed)
+            for kind in _INIT_KINDS:
+                result[kind].extend(installed[kind])
+        scaffolded = scaffold_project(root, ci=ci, quiet=as_json)
+    result["created"].extend(scaffolded.created)
+    result["skipped"].extend(scaffolded.skipped)
+    if as_json:
+        print(json.dumps({kind: sorted(result[kind]) for kind in _INIT_KINDS}))
     return 0
 
 

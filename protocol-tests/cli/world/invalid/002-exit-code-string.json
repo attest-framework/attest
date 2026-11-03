@@ -1,0 +1,18 @@
+{
+  "exit_code": "0",
+  "world": {
+    "world_version": 1,
+    "definition_sha256": "2c40eea584a67786d685130abda2c17c7273ac950da76e4c0ff1d68aecbcc386",
+    "state": {
+      "orders": [
+        {
+          "id": "O-1042",
+          "status": "delivered"
+        }
+      ],
+      "refunds": []
+    },
+    "faults_fired": [],
+    "faults_fired_count": 0
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "mode": "all",
+  "tests": [],
+  "reasons": [
+    {
+      "path": "uv.lock",
+      "class": "all"
+    }
+  ]
+}

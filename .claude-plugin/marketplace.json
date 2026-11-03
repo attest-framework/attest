@@ -1,0 +1,15 @@
+{
+  "name": "attest-framework",
+  "owner": {
+    "name": "Attest Contributors",
+    "url": "https://github.com/attest-framework"
+  },
+  "description": "Skills for testing AI agents with Attest: capture runs as fixtures, write deterministic assertions, and gate merges.",
+  "plugins": [
+    {
+      "name": "attest",
+      "source": "./",
+      "description": "Skills for testing AI agents with Attest: capture runs as fixtures, write deterministic assertions, and gate merges."
+    }
+  ]
+}

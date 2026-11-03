@@ -1,0 +1,27 @@
+{
+  "exit_code": 1,
+  "passed": false,
+  "verdict": "regressed",
+  "trials": [
+    {
+      "assertion_id": "judge_tone",
+      "passes": 6,
+      "evaluated": 10,
+      "not_evaluated": 0,
+      "pass_rate": 0.6,
+      "wilson_lower": 0.31,
+      "wilson_upper": 0.83,
+      "baseline_pass_rate": 0.9,
+      "baseline_evaluated": 10,
+      "line": 0.85,
+      "verdict": "regressed"
+    }
+  ],
+  "violations": [
+    {
+      "rule": "regression",
+      "detail": "regressed vs v1: judge_tone 6/10",
+      "severity": "block"
+    }
+  ]
+}

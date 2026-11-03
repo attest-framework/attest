@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://attest-framework.github.io/schemas/v1/cli/version.schema.json",
+  "title": "attest-engine version --json",
+  "description": "The engine version and the newest JSON-RPC protocol version it speaks.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "engine_version",
+    "protocol_version"
+  ],
+  "properties": {
+    "engine_version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "protocol_version": {
+      "type": "integer",
+      "minimum": 1
+    }
+  }
+}

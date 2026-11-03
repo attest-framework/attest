@@ -1,0 +1,6 @@
+{
+  "failures": 2,
+  "out": "junit.xml",
+  "skipped": 2,
+  "tests": 5
+}

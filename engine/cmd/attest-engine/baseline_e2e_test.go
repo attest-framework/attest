@@ -180,12 +180,33 @@ func TestPolicy_EvaluateExitCodes(t *testing.T) {
 	}
 }
 
-func TestPolicy_FailingLoadExitsTwo(t *testing.T) {
+func TestPolicy_UsageAndLoadErrors_ExitThree(t *testing.T) {
 	bin := buildEngineBinary(t)
 	cacheDir := t.TempDir()
-
-	_, _, code := runEngine(t, bin, cacheDir, "policy", "evaluate")
-	if code != 2 {
-		t.Errorf("missing flags should exit 2, got %d", code)
+	dir := t.TempDir()
+	policyPath := filepath.Join(dir, "policy.yaml")
+	if err := os.WriteFile(policyPath, []byte("layers:\n  1:\n    max_hard_fails: 0\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	reportPath := filepath.Join(dir, "report.json")
+	if err := os.WriteFile(reportPath, []byte(minimalReportV2(1, 0)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cases := map[string][]string{
+		"no subcommand":      {"policy"},
+		"unknown subcommand": {"policy", "judge"},
+		"missing flags":      {"policy", "evaluate"},
+		"unknown flag":       {"policy", "evaluate", "--nope"},
+		"missing policy":     {"policy", "evaluate", "--policy", filepath.Join(dir, "absent.yaml"), "--report", reportPath},
+		"missing report":     {"policy", "evaluate", "--policy", policyPath, "--report", filepath.Join(dir, "absent.json")},
+		"unknown baseline":   {"policy", "evaluate", "--policy", policyPath, "--report", reportPath, "--baseline", "never-pinned"},
+	}
+	for name, args := range cases {
+		t.Run(name, func(t *testing.T) {
+			stdout, _, code := runEngine(t, bin, cacheDir, args...)
+			if code != 3 || stdout != "" {
+				t.Errorf("exit %d stdout %q, want 3 and no output", code, stdout)
+			}
+		})
 	}
 }

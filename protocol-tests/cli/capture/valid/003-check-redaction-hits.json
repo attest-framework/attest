@@ -1,0 +1,10 @@
+{
+  "fixture": "fx/inc.attest.json",
+  "clean": false,
+  "secrets": [
+    {
+      "kind": "env:OPENAI_API_KEY",
+      "path": "$.exchanges[0].request.body"
+    }
+  ]
+}

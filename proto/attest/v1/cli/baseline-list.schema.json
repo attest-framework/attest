@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://attest-framework.github.io/schemas/v1/cli/baseline-list.schema.json",
+  "title": "attest-engine baseline list --json",
+  "description": "Every pinned baseline, one summary per tag.",
+  "type": "array",
+  "items": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "tag",
+      "assertion_count",
+      "passed",
+      "soft_failed",
+      "hard_failed",
+      "total_cost",
+      "total_duration_ms",
+      "pinned_at"
+    ],
+    "properties": {
+      "tag": {
+        "type": "string",
+        "minLength": 1
+      },
+      "assertion_count": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "passed": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "soft_failed": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "hard_failed": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "total_cost": {
+        "type": "number",
+        "minimum": 0
+      },
+      "total_duration_ms": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "pinned_at": {
+        "type": "string",
+        "format": "date-time"
+      }
+    }
+  }
+}

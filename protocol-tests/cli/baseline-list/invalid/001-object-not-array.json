@@ -1,0 +1,10 @@
+{
+  "tag": "v1.2.0",
+  "assertion_count": 4,
+  "passed": 1,
+  "soft_failed": 0,
+  "hard_failed": 1,
+  "total_cost": 0.0123,
+  "total_duration_ms": 950,
+  "pinned_at": "2026-11-03T18:13:12Z"
+}

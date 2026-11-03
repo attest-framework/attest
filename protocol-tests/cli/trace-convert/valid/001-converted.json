@@ -1,0 +1,21 @@
+{
+  "source": "inc-1042-refund.otlp.json",
+  "trace_id": "otel_29478f3e0a07ff57",
+  "agent_id": "refund-desk",
+  "steps": {
+    "llm_call": 1
+  },
+  "trace": {
+    "schema_version": 2,
+    "trace_id": "otel_29478f3e0a07ff57",
+    "agent_id": "refund-desk",
+    "input": {},
+    "steps": [
+      {
+        "type": "llm_call",
+        "name": "chat"
+      }
+    ],
+    "output": {}
+  }
+}

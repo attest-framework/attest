@@ -1,0 +1,107 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://attest-framework.github.io/schemas/v1/cli/capture.schema.json",
+  "title": "attest-engine capture --json",
+  "description": "One result object. --json is refused with --serve, which writes JSON lines of its own.",
+  "oneOf": [
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "fixture",
+        "verified",
+        "expect_fail",
+        "source",
+        "replay_capable",
+        "exit_code",
+        "exchanges",
+        "steps"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "fixture": {
+          "type": "string",
+          "minLength": 1
+        },
+        "verified": {
+          "type": "boolean"
+        },
+        "expect_fail": {
+          "type": "boolean"
+        },
+        "source": {
+          "type": "string",
+          "enum": [
+            "command",
+            "in_process",
+            "otlp_file"
+          ]
+        },
+        "replay_capable": {
+          "type": "boolean"
+        },
+        "exit_code": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "description": "The command's own exit code; null when it did not exit with one (killed by a signal). Not the process exit code of attest-engine."
+        },
+        "exchanges": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "steps": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "description": "A capture: the fixture written and whether it verified. exit_code is the captured command's (null for --from)."
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "fixture",
+        "clean",
+        "secrets"
+      ],
+      "properties": {
+        "fixture": {
+          "type": "string",
+          "minLength": 1
+        },
+        "clean": {
+          "type": "boolean"
+        },
+        "secrets": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "kind",
+              "path"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "minLength": 1
+              },
+              "path": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        }
+      },
+      "description": "--check-redaction: where each secret is (never the secret itself)."
+    }
+  ]
+}

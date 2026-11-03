@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://attest-framework.github.io/schemas/v1/cli/report-rows.schema.json",
+  "title": "attest-engine report rows --json",
+  "description": "Every failure and replay miss with its source location.",
+  "type": "array",
+  "items": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "file",
+      "line",
+      "test_id",
+      "assertion_id",
+      "type",
+      "status",
+      "reason",
+      "explanation"
+    ],
+    "properties": {
+      "file": {
+        "type": "string"
+      },
+      "line": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "test_id": {
+        "type": "string"
+      },
+      "assertion_id": {
+        "type": "string"
+      },
+      "type": {
+        "type": "string",
+        "minLength": 1
+      },
+      "status": {
+        "type": "string",
+        "minLength": 1
+      },
+      "reason": {
+        "type": "string"
+      },
+      "explanation": {
+        "type": "string"
+      }
+    }
+  }
+}

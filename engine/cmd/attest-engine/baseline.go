@@ -17,7 +17,42 @@ import (
 )
 
 func init() {
-	register(command{name: "baseline", summary: "pin, list, show or delete report baselines (pin|list|show|delete)", run: handleBaselineCommand})
+	register(command{
+		name:    "baseline",
+		summary: "pin, list, show or delete report baselines (pin|list|show|delete)",
+		run:     handleBaselineCommand,
+		subs: []subcommand{
+			{name: "pin", schema: "cli/baseline-pin.schema.json"},
+			{name: "list", schema: "cli/baseline-list.schema.json"},
+			{name: "show", schema: "cli/baseline-show.schema.json"},
+			{name: "delete", schema: "cli/baseline-delete.schema.json"},
+		},
+		exits: []exitCode{
+			{exitOK, "success"},
+			{exitFailure, "the report could not be loaded or has no assertion results, the tag is not pinned (show), or the baseline store failed"},
+			{exitUsage, "usage error"},
+		},
+	})
+}
+
+// baselineFlags is the flag set of one baseline subcommand. Every subcommand
+// prints JSON; --json is accepted for uniformity with the other commands.
+func baselineFlags(name string) *flag.FlagSet {
+	fs := flag.NewFlagSet("baseline "+name, flag.ExitOnError)
+	fs.Bool("json", false, "print the result as JSON (always on)")
+	return fs
+}
+
+// parseBaselineFlags parses args and refuses positional arguments.
+func parseBaselineFlags(fs *flag.FlagSet, args []string) {
+	if err := fs.Parse(args); err != nil {
+		os.Exit(exitUsage)
+	}
+	if fs.NArg() > 0 {
+		fmt.Fprintf(os.Stderr, "%s: unexpected argument %q\n", fs.Name(), fs.Arg(0))
+		baselineUsage()
+		os.Exit(exitUsage)
+	}
 }
 
 // handleBaselineCommand dispatches `attest-engine baseline pin|list|show|delete`.
@@ -97,12 +132,10 @@ func loadReport(path string) (*reportEnvelope, error) {
 }
 
 func baselinePin(args []string) {
-	fs := flag.NewFlagSet("baseline pin", flag.ExitOnError)
+	fs := baselineFlags("pin")
 	tag := fs.String("tag", "", "baseline tag (e.g. release name or git SHA)")
 	reportPath := fs.String("report", "", "path to JSON v2 report to snapshot")
-	if err := fs.Parse(args); err != nil {
-		os.Exit(2)
-	}
+	parseBaselineFlags(fs, args)
 	if *tag == "" || *reportPath == "" {
 		fmt.Fprintln(os.Stderr, "baseline pin: --tag and --report are required")
 		os.Exit(2)
@@ -139,7 +172,8 @@ func baselinePin(args []string) {
 	emitJSON(out)
 }
 
-func baselineList(_ []string) {
+func baselineList(args []string) {
+	parseBaselineFlags(baselineFlags("list"), args)
 	store, closer, err := openBaselineStore()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "baseline list: %v\n", err)
@@ -170,11 +204,9 @@ func baselineList(_ []string) {
 }
 
 func baselineShow(args []string) {
-	fs := flag.NewFlagSet("baseline show", flag.ExitOnError)
+	fs := baselineFlags("show")
 	tag := fs.String("tag", "", "baseline tag")
-	if err := fs.Parse(args); err != nil {
-		os.Exit(2)
-	}
+	parseBaselineFlags(fs, args)
 	if *tag == "" {
 		fmt.Fprintln(os.Stderr, "baseline show: --tag is required")
 		os.Exit(2)
@@ -215,11 +247,9 @@ func baselineShow(args []string) {
 }
 
 func baselineDelete(args []string) {
-	fs := flag.NewFlagSet("baseline delete", flag.ExitOnError)
+	fs := baselineFlags("delete")
 	tag := fs.String("tag", "", "baseline tag")
-	if err := fs.Parse(args); err != nil {
-		os.Exit(2)
-	}
+	parseBaselineFlags(fs, args)
 	if *tag == "" {
 		fmt.Fprintln(os.Stderr, "baseline delete: --tag is required")
 		os.Exit(2)

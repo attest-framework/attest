@@ -1,0 +1,107 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://attest-framework.github.io/schemas/v1/cli/help.schema.json",
+  "title": "attest-engine help --json",
+  "description": "Every command: its --json output schema (or one per subcommand, paths relative to proto/attest/v1) and every exit code it can return.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "commands"
+  ],
+  "properties": {
+    "commands": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "summary",
+          "exit_codes"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9-]*$"
+          },
+          "summary": {
+            "type": "string",
+            "minLength": 1
+          },
+          "schema": {
+            "type": "string",
+            "pattern": "^(cli/)?[a-z0-9][a-z0-9-]*\\.schema\\.json$"
+          },
+          "subcommands": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "name",
+                "schema"
+              ],
+              "properties": {
+                "name": {
+                  "type": "string",
+                  "pattern": "^[a-z][a-z0-9-]*$"
+                },
+                "schema": {
+                  "type": "string",
+                  "pattern": "^(cli/)?[a-z0-9][a-z0-9-]*\\.schema\\.json$"
+                }
+              }
+            }
+          },
+          "exit_codes": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "code",
+                "meaning"
+              ],
+              "properties": {
+                "code": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 255
+                },
+                "meaning": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            }
+          }
+        },
+        "oneOf": [
+          {
+            "required": [
+              "schema"
+            ],
+            "not": {
+              "required": [
+                "subcommands"
+              ]
+            }
+          },
+          {
+            "required": [
+              "subcommands"
+            ],
+            "not": {
+              "required": [
+                "schema"
+              ]
+            }
+          }
+        ]
+      }
+    }
+  }
+}

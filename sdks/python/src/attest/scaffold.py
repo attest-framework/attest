@@ -9,6 +9,7 @@ workflow that gates merges on the test run, the report and the policy.
 from __future__ import annotations
 
 import sys
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from attest import __version__
@@ -154,29 +155,57 @@ jobs:
 CI_PROVIDERS = ("github",)
 
 
-def _write(path: Path, content: str) -> None:
+@dataclass(frozen=True)
+class ScaffoldResult:
+    """Files ``scaffold_project`` wrote (``created``) and left alone because they existed
+    (``skipped``), as forward-slash paths relative to the target directory."""
+
+    created: list[str] = field(default_factory=list)
+    skipped: list[str] = field(default_factory=list)
+
+
+def _write(
+    target_dir: Path, rel: str, content: str, result: ScaffoldResult, *, quiet: bool
+) -> None:
+    path = target_dir / rel
     if path.exists():
-        print(f"Skipped (exists): {path}", file=sys.stderr)
+        result.skipped.append(rel)
+        if not quiet:
+            print(f"Skipped (exists): {path}", file=sys.stderr)
         return
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(content)
-    print(f"Created: {path}")
+    result.created.append(rel)
+    if not quiet:
+        print(f"Created: {path}")
 
 
-def scaffold_project(target_dir: Path, *, ci: str | None = None) -> None:
+def scaffold_project(
+    target_dir: Path, *, ci: str | None = None, quiet: bool = False
+) -> ScaffoldResult:
     """Write the sample test (with its ``my_agent_result`` fixture) and the merge policy.
 
     ``ci="github"`` also writes ``.github/workflows/attest.yml``. Files go under
     ``target_dir``; existing files are never overwritten, and the sample test is
-    self-contained so an existing ``tests/conftest.py`` does not affect it.
+    self-contained so an existing ``tests/conftest.py`` does not affect it. ``quiet``
+    suppresses the per-file lines and the next-step hint. Returns what was written.
     """
     if ci is not None and ci not in CI_PROVIDERS:
         raise ValueError(f"unknown CI provider {ci!r}; supported: {', '.join(CI_PROVIDERS)}")
-    _write(target_dir / "tests" / "test_my_agent.py", SAMPLE_TEST_TEMPLATE)
-    _write(target_dir / "attest.policy.yaml", POLICY_TEMPLATE)
+    result = ScaffoldResult()
+    _write(target_dir, "tests/test_my_agent.py", SAMPLE_TEST_TEMPLATE, result, quiet=quiet)
+    _write(target_dir, "attest.policy.yaml", POLICY_TEMPLATE, result, quiet=quiet)
     if ci == "github":
-        _write(target_dir / ".github" / "workflows" / "attest.yml", GITHUB_WORKFLOW_TEMPLATE)
-    print(
-        "\nNext: run `pytest`. Then change the line marked "
-        f"{DEMO_MARKER} in tests/test_my_agent.py and run it again to see a failure."
-    )
+        _write(
+            target_dir,
+            ".github/workflows/attest.yml",
+            GITHUB_WORKFLOW_TEMPLATE,
+            result,
+            quiet=quiet,
+        )
+    if not quiet:
+        print(
+            "\nNext: run `pytest`. Then change the line marked "
+            f"{DEMO_MARKER} in tests/test_my_agent.py and run it again to see a failure."
+        )
+    return result

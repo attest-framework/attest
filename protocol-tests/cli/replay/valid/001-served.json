@@ -1,0 +1,23 @@
+{
+  "exit_code": 0,
+  "summary": {
+    "fixture": "inc-1042",
+    "mode": "strict",
+    "replayed": 3,
+    "live": 0,
+    "misses": 0,
+    "unused": 0,
+    "live_cost_usd": 0,
+    "unpriced_live_calls": 0,
+    "records": [
+      {
+        "seq": 1,
+        "provider": "openai",
+        "api": "chat.completions",
+        "outcome": "replayed",
+        "exchange": 0
+      }
+    ]
+  },
+  "world": null
+}

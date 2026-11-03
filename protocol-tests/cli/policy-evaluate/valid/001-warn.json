@@ -1,0 +1,11 @@
+{
+  "exit_code": 2,
+  "passed": false,
+  "violations": [
+    {
+      "rule": "not_evaluated",
+      "detail": "2 assertions not evaluated (provider_not_configured: 1, replay_miss: 1)",
+      "severity": "warn"
+    }
+  ]
+}

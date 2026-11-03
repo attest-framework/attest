@@ -1,0 +1,13 @@
+{
+  "agreement": 0.4,
+  "cohen_kappa": -0.2,
+  "judge_model": "gpt-4.1",
+  "judge_provider": "openai",
+  "label_count": 2,
+  "missing_judge": 0,
+  "persisted": true,
+  "roc_auc": 0.35,
+  "rubric_name": "default",
+  "rubric_version": "v2",
+  "threshold": 0.5
+}
