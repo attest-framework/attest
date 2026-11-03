@@ -14,6 +14,7 @@ import {
   type AgentResult,
   type Assertion,
   type BatchBudget,
+  type BatchContext,
   type Trace,
   type Usage,
 } from "@attest-ai/core";
@@ -122,12 +123,28 @@ export function testIdOf(test: RunningTest): string {
   for (let suite = test.suite; suite !== undefined && suite !== test.file; suite = suite.suite) {
     names.unshift(suite.name);
   }
+  return `${testFileOf(test)} > ${names.join(" > ")}`;
+}
+
+function testFileOf(test: RunningTest): string {
   const root = process.env[ROOT_ENV];
-  const file =
-    root === undefined || test.file.filepath === undefined
-      ? test.file.name
-      : relative(root, test.file.filepath).split(sep).join("/");
-  return `${file} > ${names.join(" > ")}`;
+  return root === undefined || test.file.filepath === undefined
+    ? test.file.name
+    : relative(root, test.file.filepath).split(sep).join("/");
+}
+
+/**
+ * The `evaluate_batch` context naming `test`: its report test_id, its file and
+ * the line it starts on. The line is present only when Vitest records task
+ * locations (`test.includeTaskLocation`).
+ */
+export function batchContextOf(test: RunningTest): BatchContext {
+  const line = test.location?.line;
+  return {
+    test_id: testIdOf(test),
+    file: testFileOf(test),
+    ...(line !== undefined ? { line } : {}),
+  };
 }
 
 /**

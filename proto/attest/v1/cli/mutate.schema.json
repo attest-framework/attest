@@ -1,0 +1,198 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://attest-framework.github.io/schemas/v1/cli/mutate.schema.json",
+  "title": "attest-engine mutate --json",
+  "description": "The mutation report: behavior mutants of fixtures, the contracts that killed each, and a contract that would kill each survivor. score is killed / (killed + survived) and null when no mutant could be scored: no contract applies to any fixture (exit 1), or no mutant was generated.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "score",
+    "seed",
+    "fixtures",
+    "mutants",
+    "survivors_suggestions",
+    "skipped_specs",
+    "applicable_specs"
+  ],
+  "properties": {
+    "score": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "minimum": 0,
+      "maximum": 1
+    },
+    "seed": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "fixtures": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "mutants": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "fixture",
+          "operator",
+          "description",
+          "status",
+          "killed_by"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "description": "<fixture>:<operator>:<site>"
+          },
+          "fixture": {
+            "type": "string",
+            "minLength": 1
+          },
+          "operator": {
+            "type": "string",
+            "enum": [
+              "drop_tool_call",
+              "duplicate_tool_call",
+              "reorder_tool_calls",
+              "perturb_argument",
+              "inject_tool_error",
+              "alter_world_effect",
+              "truncate_output"
+            ]
+          },
+          "description": {
+            "type": "string",
+            "minLength": 1
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "killed",
+              "survived",
+              "no_applicable_specs"
+            ]
+          },
+          "killed_by": {
+            "type": "array",
+            "description": "The specs that hard-failed on the mutant; empty unless status is killed.",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "assertion_id",
+                "type",
+                "spec"
+              ],
+              "properties": {
+                "assertion_id": {
+                  "type": "string"
+                },
+                "type": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "test_id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "spec": {
+                  "description": "The assertion spec; an effect spec is reported without its embedded world snapshot."
+                }
+              }
+            }
+          }
+        },
+        "if": {
+          "properties": {
+            "status": {
+              "const": "killed"
+            }
+          }
+        },
+        "then": {
+          "properties": {
+            "killed_by": {
+              "minItems": 1
+            }
+          }
+        },
+        "else": {
+          "properties": {
+            "killed_by": {
+              "maxItems": 0
+            }
+          }
+        }
+      }
+    },
+    "survivors_suggestions": {
+      "type": "array",
+      "description": "For a surviving mutant, a contract verified to pass on the unmutated fixture and hard-fail on the mutant. An effect contract omits the world, which the test supplies.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "mutant_id",
+          "contract",
+          "description"
+        ],
+        "properties": {
+          "mutant_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "contract": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "type",
+              "spec",
+              "description"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "trace",
+                  "content",
+                  "effect"
+                ]
+              },
+              "spec": {
+                "type": "object"
+              },
+              "description": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          },
+          "description": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The mutant the contract would kill."
+          }
+        }
+      }
+    },
+    "skipped_specs": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Specs left out because their layer is not deterministic (judge, embedding, plugin)."
+    },
+    "applicable_specs": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Specs that pass on at least one unmutated fixture."
+    }
+  }
+}

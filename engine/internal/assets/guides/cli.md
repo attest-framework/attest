@@ -32,6 +32,7 @@ Commands that run a child process (`capture`, `replay`, `world` with `-- <comman
 | `capture` | `cli/capture.schema.json` |
 | `doctor` | `doctor.schema.json` |
 | `guide` | `cli/guide.schema.json` |
+| `mutate` | `cli/mutate.schema.json` |
 | `policy evaluate` | `cli/policy-evaluate.schema.json` |
 | `replay` | `cli/replay.schema.json` |
 | `report junit` | `cli/report-junit.schema.json` |
@@ -74,10 +75,13 @@ The table is checked against the engine's command registry by a test; a change t
 | `guide` | 0 | guide list or guide printed |
 | `guide` | 1 | an embedded guide is unreadable or has no title |
 | `guide` | 2 | unknown topic or usage error |
+| `mutate` | 0 | a mutation report was produced |
+| `mutate` | 1 | no contract applies to any fixture, so there is no score |
+| `mutate` | 2 | usage error, or a fixture or contracts directory could not be loaded |
 | `policy` | 0 | pass: every rule satisfied |
 | `policy` | 1 | block: a block-severity rule was violated |
 | `policy` | 2 | warn: only warn-severity rules were violated |
-| `policy` | 3 | usage error, or the policy, report or baseline failed to load |
+| `policy` | 3 | usage error, or the policy, report, baseline or mutation report failed to load, or the policy sets min_mutation_score without --mutation |
 | `replay` | 0 | every request was served and the command exited 0 |
 | `replay` | 1 | the command exited non-zero (its code is not propagated; --json reports it as exit_code), a request missed, or the fixture could not be loaded or served |
 | `replay` | 2 | usage error or an invalid --world file |

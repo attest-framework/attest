@@ -65,6 +65,9 @@ var cliJSONRunners = map[string]cliJSONRunner{
 	"capture": func(t *testing.T, bin string, env []string, tmp string) []byte {
 		return cliRun(t, bin, env, tmp, 0, "capture", "--json", "--name", "inc", "--from", cliAbs(t, inc1042OTLP), "--out-dir", filepath.Join(tmp, "fixtures"))
 	},
+	"mutate": func(t *testing.T, bin string, env []string, tmp string) []byte {
+		return cliRun(t, bin, env, tmp, 0, "mutate", "--json", cliAbs(t, mutateFixture))
+	},
 	"policy evaluate": func(t *testing.T, bin string, env []string, tmp string) []byte {
 		policyPath := filepath.Join(tmp, "policy.yaml")
 		cliWriteFile(t, policyPath, "layers:\n  1:\n    max_hard_fails: 0\n")
