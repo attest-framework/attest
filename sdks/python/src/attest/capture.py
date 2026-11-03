@@ -112,7 +112,7 @@ def load_fixture(path: str | os.PathLike[str]) -> Fixture:
 
 
 #: Fixture names, as the engine accepts them (they become file names).
-NAME_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+NAME_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}")
 
 _REQUIRED: dict[str, type] = {
     "name": str,
@@ -151,7 +151,7 @@ def _validate(p: Path, doc: dict[str, Any]) -> None:
     need("fixture", doc, _REQUIRED)
     if "world" not in doc:
         raise CaptureError(f"{p}: fixture.world is missing")
-    if not NAME_PATTERN.match(doc["name"]):
+    if not NAME_PATTERN.fullmatch(doc["name"]):
         raise CaptureError(f"{p}: fixture name {doc['name']!r} is not a valid fixture name")
     need("fixture.verification", doc["verification"], _VERIFICATION_FIELDS)
     for i, c in enumerate(doc["contracts"]):

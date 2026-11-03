@@ -274,6 +274,7 @@ def _fixture_doc() -> dict[str, object]:
     [
         lambda d: d.update(name='x"""\nimport os'),
         lambda d: d.update(name="a\nrequire('fs')"),
+        lambda d: d.update(name="inc-1042\n"),
         lambda d: d.pop("verification"),
         lambda d: d.pop("world"),
         lambda d: d["contracts"][0].pop("spec"),
@@ -282,6 +283,7 @@ def _fixture_doc() -> dict[str, object]:
     ids=[
         "docstring-name",
         "newline-name",
+        "trailing-newline",
         "no-verification",
         "no-world",
         "contract-no-spec",
