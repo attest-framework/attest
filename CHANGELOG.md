@@ -4,6 +4,16 @@ All notable changes to Attest are documented in this file. The format follows [K
 
 ## [Unreleased]
 
+### Added
+
+- TypeScript simulation helpers in `@attest-ai/core`: `scenario`, `faultInject`, `mockTool`, `MockToolRegistry` and `repeat`, with `ScenarioResult` and `RepeatResult` aggregating verdicts like Python's. `TraceBuilder.addToolCall` returns the active mock's result. Guide: [simulation](docs/guides/simulation.md).
+- TypeScript plugin discovery: `loadPackagePlugins(registry, projectRoot?)` loads plugins that an installed dependency declares in `package.json` under `"attest": {"plugins": [...]}`; `registerPlugin` mirrors Python's `register_plugin`.
+- A parity matrix, [docs/guides/parity.md](docs/guides/parity.md), generated from both SDKs' public surfaces (`sdks/parity/`). The existing Python and TypeScript test commands fail on a Python capability with no TypeScript counterpart or documented exception, on a stale exception, and when the snapshots or the guide are out of date (regenerate with `ATTEST_UPDATE_PARITY=1`).
+
+### Fixed
+
+- TypeScript `executePluginAssertion` clears its timeout timer when the plugin finishes, so a completed assertion no longer holds the process open for the timeout.
+
 ## [1.0.0-rc.4] — 2026-11-04
 
 Fourth release candidate, themed "Agent-native": coding agents operate attest without the website through `--json` output with published schemas and stable exit codes, offline guides (`attest guide`), installable skills and plugins, and an MCP server whose closed contract grammar drafts and checks contracts. `attest mutate` measures how much of an agent's behavior the suite would actually catch.
