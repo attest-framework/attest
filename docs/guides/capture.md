@@ -192,6 +192,8 @@ Keys are sorted and indentation is fixed, so capturing the same scripted run twi
 
 `attest trace check <fixture>` checks a fixture: it decodes, its trace passes the engine's trace validation, and its capture-time trace check was clean; an unverified fixture is a warning.
 
+A pull request that changes a fixture can run just the tests that reference it by name: see [selection](selection.md).
+
 ## Limits
 
 The listener accepts loopback clients only: requests whose `Host` is not `localhost` or a loopback address, and requests with an `Origin` header (a web page), are refused. It serves only `/<token>/openai/v1/…`, `/<token>/anthropic/…` and `/<token>/v1/traces`, admits 64 concurrent requests, refuses request bodies over 32 MiB, records at most 32 MiB of each response (marked `truncated`) and 512 MiB per capture (past which the capture fails), and holds at most 20,000 spans; OTLP protobuf bodies are checked against the span, attribute and nesting limits before they are decoded. An agent whose model client cannot change its base URL still gets its trace and drafted contracts through the receiver; its fixture has no exchanges.
