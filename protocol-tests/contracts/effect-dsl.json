@@ -1,0 +1,269 @@
+{
+  "description": "Effect DSL calls in Python and TypeScript (after world(snapshot)), the assertion spec both must emit (the spec's world is the named snapshot, or null), and the status the engine returns for each listed snapshot. Kept apart from dsl.json, which the engine evaluates as trace specs.",
+  "worlds": {
+    "doubled": {
+      "world_version": 1,
+      "definition_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "state": {
+        "refunds": [
+          {
+            "refund_id": "R-0001",
+            "order_id": "O-1042",
+            "amount_cents": 4999,
+            "idempotency_key": "k-1"
+          },
+          {
+            "refund_id": "R-0002",
+            "order_id": "O-1042",
+            "amount_cents": 4999,
+            "idempotency_key": "k-1"
+          }
+        ]
+      },
+      "faults_fired": []
+    }
+  },
+  "cases": [
+    {
+      "name": "count-equals-where",
+      "world": "doubled",
+      "python": {
+        "method": "count",
+        "args": [
+          "refunds"
+        ],
+        "kwargs": {
+          "equals": 1,
+          "order_id": "O-1042"
+        }
+      },
+      "typescript": {
+        "method": "count",
+        "args": [
+          "refunds",
+          {
+            "equals": 1,
+            "where": {
+              "order_id": "O-1042"
+            }
+          }
+        ]
+      },
+      "spec": {
+        "check": "count",
+        "resource": "refunds",
+        "equals": 1,
+        "where": {
+          "order_id": "O-1042"
+        }
+      },
+      "result": {
+        "status": "hard_fail",
+        "explanation": "effect violated: 2 refunds for O-1042 (expected 1)"
+      }
+    },
+    {
+      "name": "count-bounds",
+      "world": "doubled",
+      "python": {
+        "method": "count",
+        "args": [
+          "refunds"
+        ],
+        "kwargs": {
+          "at_least": 1,
+          "at_most": 2
+        }
+      },
+      "typescript": {
+        "method": "count",
+        "args": [
+          "refunds",
+          {
+            "atLeast": 1,
+            "atMost": 2
+          }
+        ]
+      },
+      "spec": {
+        "check": "count",
+        "resource": "refunds",
+        "at_most": 2,
+        "at_least": 1
+      },
+      "result": {
+        "status": "pass"
+      }
+    },
+    {
+      "name": "unique-by-name",
+      "world": "doubled",
+      "python": {
+        "method": "unique",
+        "args": [
+          "refunds"
+        ],
+        "kwargs": {
+          "by": "refund_id"
+        }
+      },
+      "typescript": {
+        "method": "unique",
+        "args": [
+          "refunds",
+          {
+            "by": "refund_id"
+          }
+        ]
+      },
+      "spec": {
+        "check": "unique",
+        "resource": "refunds",
+        "fields": [
+          "refund_id"
+        ]
+      },
+      "result": {
+        "status": "pass"
+      }
+    },
+    {
+      "name": "unique-by-list-where",
+      "world": "doubled",
+      "python": {
+        "method": "unique",
+        "args": [
+          "refunds"
+        ],
+        "kwargs": {
+          "by": [
+            "order_id",
+            "amount_cents"
+          ],
+          "order_id": "O-1042"
+        }
+      },
+      "typescript": {
+        "method": "unique",
+        "args": [
+          "refunds",
+          {
+            "by": [
+              "order_id",
+              "amount_cents"
+            ],
+            "where": {
+              "order_id": "O-1042"
+            }
+          }
+        ]
+      },
+      "spec": {
+        "check": "unique",
+        "resource": "refunds",
+        "fields": [
+          "order_id",
+          "amount_cents"
+        ],
+        "where": {
+          "order_id": "O-1042"
+        }
+      },
+      "result": {
+        "status": "hard_fail"
+      }
+    },
+    {
+      "name": "idempotent-default-key",
+      "world": "doubled",
+      "python": {
+        "method": "idempotent",
+        "args": [
+          "refunds"
+        ],
+        "kwargs": {}
+      },
+      "typescript": {
+        "method": "idempotent",
+        "args": [
+          "refunds"
+        ]
+      },
+      "spec": {
+        "check": "idempotent",
+        "resource": "refunds",
+        "field": "idempotency_key"
+      },
+      "result": {
+        "status": "hard_fail"
+      }
+    },
+    {
+      "name": "idempotent-named-key-where",
+      "world": "doubled",
+      "python": {
+        "method": "idempotent",
+        "args": [
+          "refunds"
+        ],
+        "kwargs": {
+          "key": "idempotency_key",
+          "order_id": "O-1042"
+        }
+      },
+      "typescript": {
+        "method": "idempotent",
+        "args": [
+          "refunds",
+          {
+            "key": "idempotency_key",
+            "where": {
+              "order_id": "O-1042"
+            }
+          }
+        ]
+      },
+      "spec": {
+        "check": "idempotent",
+        "resource": "refunds",
+        "field": "idempotency_key",
+        "where": {
+          "order_id": "O-1042"
+        }
+      },
+      "result": {
+        "status": "hard_fail"
+      }
+    },
+    {
+      "name": "count-without-snapshot",
+      "world": null,
+      "python": {
+        "method": "count",
+        "args": [
+          "refunds"
+        ],
+        "kwargs": {
+          "equals": 1
+        }
+      },
+      "typescript": {
+        "method": "count",
+        "args": [
+          "refunds",
+          {
+            "equals": 1
+          }
+        ]
+      },
+      "spec": {
+        "check": "count",
+        "resource": "refunds",
+        "equals": 1
+      },
+      "result": {
+        "status": "not_evaluated"
+      }
+    }
+  ]
+}
