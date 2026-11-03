@@ -51,21 +51,32 @@ var durationKeys = map[string]bool{
 var (
 	// providerIDPattern matches provider-generated ids: chat completions,
 	// Responses objects and output items, Anthropic messages and tool uses,
-	// tool call ids. A match must contain a digit, so tool names such as
-	// call_customer are left alone.
+	// tool call ids. In free text a match must contain a digit, so tool
+	// names such as call_customer are left alone; a value seen in an id
+	// field (idKeys, idInTextPattern) is an id even without a digit.
 	providerIDPattern = regexp.MustCompile(`\b(chatcmpl-|resp_|msg_|call_|toolu_|fc_|rs_)([A-Za-z0-9_-]{8,})`)
-	emailPattern      = regexp.MustCompile(`[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}`)
-	isoTimePattern    = regexp.MustCompile(`\b\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?`)
+	// idInTextPattern finds provider ids held in id fields of JSON stored as
+	// text: OpenTelemetry message attributes and event-stream bodies.
+	idInTextPattern = regexp.MustCompile(`"(?:id|tool_call_id|call_id|tool_use_id|item_id|response_id)"\s*:\s*"((?:chatcmpl-|resp_|msg_|call_|toolu_|fc_|rs_)[A-Za-z0-9_-]{8,})"`)
+	emailPattern    = regexp.MustCompile(`[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}`)
+	isoTimePattern  = regexp.MustCompile(`\b\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?`)
 	// sseTimestampPattern finds timestamp fields inside a JSON document held
 	// as text, such as a server-sent event stream.
 	sseTimestampPattern = regexp.MustCompile(`"(created|created_at|completed_at)":\s*(\d+)`)
 )
+
+// idKeys hold a provider id as their whole value.
+var idKeys = map[string]bool{
+	"id": true, "tool_call_id": true, "call_id": true, "tool_use_id": true,
+	"item_id": true, "response_id": true, "gen_ai.tool.call.id": true,
+}
 
 // templater holds the value → placeholder maps for one fixture.
 type templater struct {
 	traceIDs map[string]string
 	spanIDs  map[string]string
 	strs     map[string]string // provider id or email → placeholder
+	knownIDs map[string]bool   // provider ids seen in id fields
 	counts   map[string]int
 }
 
@@ -77,6 +88,7 @@ func Template(doc any) any {
 		traceIDs: map[string]string{},
 		spanIDs:  map[string]string{},
 		strs:     map[string]string{},
+		knownIDs: map[string]bool{},
 		counts:   map[string]int{},
 	}
 	t.collect(doc, "")
@@ -105,7 +117,8 @@ func walkKeys(m map[string]any) []string {
 	return keys
 }
 
-// collect assigns trace and span id placeholders in walk order.
+// collect assigns trace and span id placeholders in walk order and records
+// the provider ids that appear in id fields.
 func (t *templater) collect(v any, key string) {
 	switch x := v.(type) {
 	case map[string]any:
@@ -122,6 +135,11 @@ func (t *templater) collect(v any, key string) {
 			t.idFor(t.traceIDs, x, "trace", 32)
 		case spanIDKeys[key] && x != "":
 			t.idFor(t.spanIDs, x, "span", 16)
+		case idKeys[key] && providerIDPattern.FindString(x) == x:
+			t.knownIDs[x] = true
+		}
+		for _, sub := range idInTextPattern.FindAllStringSubmatch(x, -1) {
+			t.knownIDs[sub[1]] = true
 		}
 	}
 }
@@ -201,7 +219,7 @@ func (t *templater) rewriteString(s, key string) string {
 	})
 	s = providerIDPattern.ReplaceAllStringFunc(s, func(m string) string {
 		sub := providerIDPattern.FindStringSubmatch(m)
-		if !strings.ContainsFunc(sub[2], unicode.IsDigit) {
+		if !t.knownIDs[m] && !strings.ContainsFunc(sub[2], unicode.IsDigit) {
 			return m
 		}
 		return sub[1] + t.placeholder("id", m)
