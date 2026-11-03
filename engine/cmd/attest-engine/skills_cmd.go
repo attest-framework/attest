@@ -10,6 +10,7 @@ import (
 	"path"
 	"path/filepath"
 	"sort"
+	"strings"
 	"text/tabwriter"
 
 	"github.com/attest-ai/attest/engine/internal/assets"
@@ -148,7 +149,7 @@ func installSkills(root string) (skillsInstallResult, error) {
 			}
 			for _, target := range skillTargets {
 				rel := path.Join(target, p)
-				state, err := writeSkillFile(filepath.Join(root, filepath.FromSlash(rel)), data)
+				state, err := writeSkillFile(root, filepath.Join(root, filepath.FromSlash(rel)), data)
 				if err != nil {
 					return err
 				}
@@ -174,8 +175,13 @@ func installSkills(root string) (skillsInstallResult, error) {
 }
 
 // writeSkillFile makes dst hold data and reports "created", "updated", or
-// "unchanged". It refuses to replace anything but a regular file.
-func writeSkillFile(dst string, data []byte) (string, error) {
+// "unchanged". It refuses to replace anything but a regular file and to write
+// through a symlinked directory below root, so a linked .claude or
+// .claude/skills never redirects the install elsewhere.
+func writeSkillFile(root, dst string, data []byte) (string, error) {
+	if err := refuseSymlinkedDirs(root, filepath.Dir(dst)); err != nil {
+		return "", err
+	}
 	state := "updated"
 	info, err := os.Lstat(dst)
 	switch {
@@ -201,4 +207,31 @@ func writeSkillFile(dst string, data []byte) (string, error) {
 		return "", err
 	}
 	return state, nil
+}
+
+// refuseSymlinkedDirs fails when an existing directory between root (exclusive)
+// and dir (inclusive) is a symlink.
+func refuseSymlinkedDirs(root, dir string) error {
+	rel, err := filepath.Rel(root, dir)
+	if err != nil {
+		return err
+	}
+	cur := root
+	for _, part := range strings.Split(rel, string(filepath.Separator)) {
+		if part == "." {
+			continue
+		}
+		cur = filepath.Join(cur, part)
+		info, err := os.Lstat(cur)
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("%s is a symlink; refusing to install skills through it", cur)
+		}
+	}
+	return nil
 }

@@ -162,3 +162,23 @@ func TestSkills_UsageErrors_ExitTwo(t *testing.T) {
 		}
 	}
 }
+
+func TestSkillsInstall_SymlinkedSkillsDir_RefusesAndWritesNothingThroughIt(t *testing.T) {
+	bin := buildEngineBinary(t)
+	dir, elsewhere := t.TempDir(), t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, ".claude"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(elsewhere, filepath.Join(dir, ".claude", "skills")); err != nil {
+		t.Fatal(err)
+	}
+
+	_, stderr, code := runEngine(t, bin, dir, "skills", "install", "--dir", dir, "--json")
+
+	if code == 0 || !strings.Contains(stderr, "symlink") {
+		t.Errorf("exit %d, stderr %q; want non-zero naming the symlink", code, stderr)
+	}
+	if entries, _ := os.ReadDir(elsewhere); len(entries) != 0 {
+		t.Errorf("wrote %d entries through the symlink", len(entries))
+	}
+}

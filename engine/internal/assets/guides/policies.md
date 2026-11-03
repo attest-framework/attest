@@ -66,8 +66,9 @@ The engine renders report-v2 files for CI. Each command takes `--report` one or 
 uv run attest report junit --report attest-report.json --out junit.xml
 
 # Markdown summary for a PR comment.
-set +e   # policy evaluate exits 1 or 2 on violations; keep going so the summary renders
+set +e   # policy evaluate exits 1 or 2 on violations; keep going so the summary renders (exit 3 is an error: stop)
 uv run attest policy evaluate --policy attest.policy.yaml --report attest-report.json > policy-result.json
+[ $? -le 2 ] || exit 1
 uv run attest report summary --report attest-report.json --policy-result policy-result.json
 
 # Failures and replay misses as JSON rows, for annotations.

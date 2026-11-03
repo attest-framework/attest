@@ -114,7 +114,7 @@ func addSkills(repoRoot string, out map[string]file) error {
 			return fmt.Errorf("%s: not a regular file (symlinks cannot be embedded)", src)
 		}
 		base := path.Base(rel)
-		if base == ".gitkeep" {
+		if base == ".gitkeep" || base == ".DS_Store" {
 			return nil
 		}
 		// A staged .go or go.mod file would change the engine module's build.
