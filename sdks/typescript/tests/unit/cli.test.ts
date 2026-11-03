@@ -1,336 +1,263 @@
 /**
- * T14 — TypeScript CLI unit tests.
- *
- * Tests the CLI commands: --version, cache stats, cache clear, init, validate.
- * Uses tmp directories and mocks process.exit/stdout/stderr.
+ * The `attest` CLI: `init` runs locally, every other command forwards to a matching engine.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import * as os from "node:os";
-import { main } from "../../packages/core/src/cli.js";
+import { engineCommands, exitStatus, main } from "../../packages/core/src/cli.js";
+import { ENGINE_VERSION, VERSION } from "../../packages/core/src/version.js";
+import { DEMO_MARKER } from "../../packages/core/src/scaffold.js";
+import {
+  forwardedCalls,
+  isolateEngineEnv,
+  legacyCachePath,
+  writeScriptedEngine,
+  type IsolatedEngineEnv,
+  type ScriptedEngineOptions,
+} from "../support/scripted-engine.js";
 
-function makeTmpDir(): string {
-  return fs.mkdtempSync(path.join(os.tmpdir(), "attest-cli-test-"));
+let env: IsolatedEngineEnv;
+let stdout: string[];
+let stderr: string[];
+
+beforeEach(() => {
+  env = isolateEngineEnv();
+  stdout = [];
+  stderr = [];
+  vi.spyOn(process.stdout, "write").mockImplementation((chunk) => {
+    stdout.push(String(chunk));
+    return true;
+  });
+  vi.spyOn(process.stderr, "write").mockImplementation((chunk) => {
+    stderr.push(String(chunk));
+    return true;
+  });
+});
+
+afterEach(() => {
+  vi.restoreAllMocks();
+  env.restore();
+});
+
+function useEngine(options: ScriptedEngineOptions = {}): string {
+  const engine = writeScriptedEngine(path.join(env.root, "e", "attest-engine"), options);
+  process.env["ATTEST_ENGINE_PATH"] = engine;
+  return engine;
 }
 
-function cleanTmpDir(dir: string): void {
-  fs.rmSync(dir, { recursive: true, force: true });
-}
+describe("attest --help", () => {
+  it("lists SDK and engine commands and exits 0", async () => {
+    useEngine();
 
-describe("CLI --version", () => {
-  it("prints version and exits 0", () => {
-    const writeSpy = vi.spyOn(process.stdout, "write").mockReturnValue(true);
-    const exitSpy = vi.spyOn(process, "exit").mockImplementation((() => {
-      throw new Error("EXIT");
-    }) as never);
+    await expect(main(["--help"])).resolves.toBe(0);
 
-    expect(() => main(["--version"])).toThrow("EXIT");
+    const out = stdout.join("");
+    expect(out).toContain("init");
+    expect(out).toContain("doctor");
+    expect(out).toContain("policy");
+  });
 
-    const output = writeSpy.mock.calls.map((c) => c[0]).join("");
-    expect(output).toContain("attest ");
-    expect(exitSpy).toHaveBeenCalledWith(0);
+  it("prints help for no arguments", async () => {
+    useEngine();
 
-    writeSpy.mockRestore();
-    exitSpy.mockRestore();
+    await expect(main([])).resolves.toBe(0);
+    expect(stdout.join("")).toContain("SDK commands");
+  });
+
+  it("exits 0 with a note when no engine resolves, without downloading", async () => {
+    delete process.env["ATTEST_ENGINE_NO_DOWNLOAD"];
+
+    await expect(main(["--help"])).resolves.toBe(0);
+    await expect(main([])).resolves.toBe(0);
+
+    const out = stdout.join("");
+    expect(out).toContain("init");
+    expect(out).toContain("engine commands: not available");
+    expect(fs.existsSync(path.join(env.home, ".attest"))).toBe(false);
+  });
+
+  it("exits 0 with a note for a mismatched engine", async () => {
+    useEngine({ version: "0.8.0" });
+
+    await expect(main(["--help"])).resolves.toBe(0);
+    expect(stdout.join("")).toContain("reports version 0.8.0");
+  });
+
+  it("exits 0 with a note for an engine without a command registry", async () => {
+    useEngine({ helpMode: "server" });
+
+    await expect(main(["--help"])).resolves.toBe(0);
+    expect(stdout.join("")).toContain("predates the command registry");
   });
 });
 
-describe("CLI cache stats", () => {
-  let tmpDir: string;
-
-  beforeEach(() => {
-    tmpDir = makeTmpDir();
-  });
-
-  afterEach(() => {
-    cleanTmpDir(tmpDir);
-    delete process.env["ATTEST_CACHE_DIR"];
-  });
-
-  it("reports no cache when DB does not exist", () => {
-    process.env["ATTEST_CACHE_DIR"] = tmpDir;
-
-    const writeSpy = vi.spyOn(process.stdout, "write").mockReturnValue(true);
-    const exitSpy = vi.spyOn(process, "exit").mockImplementation((() => {
-      throw new Error("EXIT");
-    }) as never);
-
-    expect(() => main(["cache", "stats"])).toThrow("EXIT");
-
-    const output = writeSpy.mock.calls.map((c) => c[0]).join("");
-    const data = JSON.parse(output.trim());
-    expect(data.exists).toBe(false);
-    expect(data.file_size).toBe(0);
-    expect(exitSpy).toHaveBeenCalledWith(0);
-
-    writeSpy.mockRestore();
-    exitSpy.mockRestore();
-  });
-
-  it("reports cache size when DB exists", () => {
-    process.env["ATTEST_CACHE_DIR"] = tmpDir;
-    const dbPath = path.join(tmpDir, "attest.db");
-    fs.writeFileSync(dbPath, "fake sqlite data".repeat(5));
-
-    const writeSpy = vi.spyOn(process.stdout, "write").mockReturnValue(true);
-    const exitSpy = vi.spyOn(process, "exit").mockImplementation((() => {
-      throw new Error("EXIT");
-    }) as never);
-
-    expect(() => main(["cache", "stats"])).toThrow("EXIT");
-
-    const output = writeSpy.mock.calls.map((c) => c[0]).join("");
-    const data = JSON.parse(output.trim());
-    expect(data.exists).toBe(true);
-    expect(data.file_size).toBeGreaterThan(0);
-    expect(data.path).toContain("attest.db");
-
-    writeSpy.mockRestore();
-    exitSpy.mockRestore();
+describe("attest --version", () => {
+  it("prints the SDK version and the required engine version", async () => {
+    await expect(main(["--version"])).resolves.toBe(0);
+    expect(stdout.join("")).toContain(VERSION);
+    expect(stdout.join("")).toContain(ENGINE_VERSION);
   });
 });
 
-describe("CLI cache clear", () => {
-  let tmpDir: string;
-
-  beforeEach(() => {
-    tmpDir = makeTmpDir();
-  });
-
-  afterEach(() => {
-    cleanTmpDir(tmpDir);
-    delete process.env["ATTEST_CACHE_DIR"];
-  });
-
-  it("removes the DB file", () => {
-    process.env["ATTEST_CACHE_DIR"] = tmpDir;
-    const dbPath = path.join(tmpDir, "attest.db");
-    fs.writeFileSync(dbPath, "test data");
-
-    const writeSpy = vi.spyOn(process.stdout, "write").mockReturnValue(true);
-    const exitSpy = vi.spyOn(process, "exit").mockImplementation((() => {
-      throw new Error("EXIT");
-    }) as never);
-
-    expect(() => main(["cache", "clear"])).toThrow("EXIT");
-    expect(fs.existsSync(dbPath)).toBe(false);
-
-    const output = writeSpy.mock.calls.map((c) => c[0]).join("");
-    expect(output).toContain("Cleared cache");
-
-    writeSpy.mockRestore();
-    exitSpy.mockRestore();
-  });
-
-  it("handles missing DB gracefully", () => {
-    process.env["ATTEST_CACHE_DIR"] = tmpDir;
-
-    const writeSpy = vi.spyOn(process.stdout, "write").mockReturnValue(true);
-    const exitSpy = vi.spyOn(process, "exit").mockImplementation((() => {
-      throw new Error("EXIT");
-    }) as never);
-
-    expect(() => main(["cache", "clear"])).toThrow("EXIT");
-
-    const output = writeSpy.mock.calls.map((c) => c[0]).join("");
-    expect(output).toContain("No cache to clear");
-
-    writeSpy.mockRestore();
-    exitSpy.mockRestore();
-  });
-});
-
-describe("CLI cache unknown subcommand", () => {
-  it("exits with error for unknown cache subcommand", () => {
-    const stderrSpy = vi.spyOn(process.stderr, "write").mockReturnValue(true);
-    const exitSpy = vi.spyOn(process, "exit").mockImplementation((() => {
-      throw new Error("EXIT");
-    }) as never);
-
-    expect(() => main(["cache", "foobar"])).toThrow("EXIT");
-
-    const output = stderrSpy.mock.calls.map((c) => c[0]).join("");
-    expect(output).toContain("Unknown cache subcommand");
-    expect(exitSpy).toHaveBeenCalledWith(1);
-
-    stderrSpy.mockRestore();
-    exitSpy.mockRestore();
-  });
-});
-
-describe("CLI init", () => {
-  let tmpDir: string;
+describe("attest init", () => {
   let originalCwd: string;
 
   beforeEach(() => {
-    tmpDir = makeTmpDir();
     originalCwd = process.cwd();
-    process.chdir(tmpDir);
+    process.chdir(env.root);
   });
 
   afterEach(() => {
     process.chdir(originalCwd);
-    cleanTmpDir(tmpDir);
   });
 
-  it("creates tests directory and sample test file", () => {
-    const writeSpy = vi.spyOn(process.stdout, "write").mockReturnValue(true);
-    const exitSpy = vi.spyOn(process, "exit").mockImplementation((() => {
-      throw new Error("EXIT");
-    }) as never);
+  const sample = () => path.join(env.root, "tests", "my-agent.test.ts");
+  const workflow = () => path.join(env.root, ".github", "workflows", "attest.yml");
 
-    expect(() => main(["init"])).toThrow("EXIT");
+  it("writes the sample test and policy, and no Vitest config, without an engine", async () => {
+    await expect(main(["init"])).resolves.toBe(0);
 
-    const testsDir = path.join(tmpDir, "tests");
-    expect(fs.existsSync(testsDir)).toBe(true);
-    expect(fs.existsSync(path.join(testsDir, "test_my_agent.test.ts"))).toBe(true);
-
-    const content = fs.readFileSync(
-      path.join(testsDir, "test_my_agent.test.ts"),
-      "utf-8",
+    const test = fs.readFileSync(sample(), "utf-8");
+    expect(test).toContain("await evaluate(chain, { context })");
+    expect(test.split("\n").filter((l) => l.includes(DEMO_MARKER))).toEqual([
+      expect.stringContaining('.outputContains("refund");'),
+    ]);
+    expect(fs.existsSync(path.join(env.root, "vitest.config.ts"))).toBe(false);
+    expect(fs.readFileSync(path.join(env.root, "attest.policy.yaml"), "utf-8")).toContain(
+      "max_hard_fails: 0",
     );
-    expect(content).toContain("@attest-ai/core");
-
-    writeSpy.mockRestore();
-    exitSpy.mockRestore();
+    expect(fs.existsSync(workflow())).toBe(false);
   });
 
-  it("does not overwrite existing test file", () => {
-    const testsDir = path.join(tmpDir, "tests");
-    fs.mkdirSync(testsDir, { recursive: true });
-    const testFile = path.join(testsDir, "test_my_agent.test.ts");
-    fs.writeFileSync(testFile, "// custom test\n");
+  it.each([[["--ci", "github"]], [["--ci=github"]]])(
+    "writes the merge-gate workflow for %j",
+    async (args) => {
+      await expect(main(["init", ...args])).resolves.toBe(0);
 
-    const writeSpy = vi.spyOn(process.stdout, "write").mockReturnValue(true);
-    const stderrSpy = vi.spyOn(process.stderr, "write").mockReturnValue(true);
-    const exitSpy = vi.spyOn(process, "exit").mockImplementation((() => {
-      throw new Error("EXIT");
-    }) as never);
+      const steps = fs.readFileSync(workflow(), "utf-8").split("      - ").slice(1);
+      const byName = new Map(steps.map((s) => [s.split("\n")[0]!.replace(/^name: /, ""), s]));
+      expect(byName.get("Run tests")).toContain("continue-on-error: true");
+      expect(byName.get("Run tests")).toContain(
+        "npx vitest run --reporter=default --reporter=@attest-ai/vitest/reporter " +
+          "--outputFile.attest=attest-report.json",
+      );
+      expect(byName.get("Upload the Attest report")).toContain("if: always()");
+      expect(byName.get("Evaluate the merge policy")).toContain("if: always()");
+      expect(byName.get("Evaluate the merge policy")).toContain('"$code" -eq 2');
+      expect(byName.get("Annotate the pull request")).toContain(`pr-annotate@v${VERSION}`);
+      expect(byName.get("Annotate the pull request")).toContain(
+        "github.event.pull_request.head.repo.full_name == github.repository",
+      );
+      expect(steps.at(-1)).toContain("if: always() && steps.tests.outcome == 'failure'");
+    },
+  );
 
-    expect(() => main(["init"])).toThrow("EXIT");
+  it.each([[["--help"], 0], [["somedir"], 2], [["--ci"], 2], [["--ci", "gitlab"], 2]])(
+    "does not scaffold for %j",
+    async (args, code) => {
+      await expect(main(["init", ...args])).resolves.toBe(code);
+      expect(fs.existsSync(path.join(env.root, "tests"))).toBe(false);
+    },
+  );
 
-    expect(fs.readFileSync(testFile, "utf-8")).toBe("// custom test\n");
+  it("does not overwrite existing files", async () => {
+    for (const file of [sample(), workflow()]) {
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      fs.writeFileSync(file, "// mine\n");
+    }
 
-    stderrSpy.mockRestore();
-    writeSpy.mockRestore();
-    exitSpy.mockRestore();
-  });
-});
+    await expect(main(["init", "--ci", "github"])).resolves.toBe(0);
 
-describe("CLI validate", () => {
-  let tmpDir: string;
-  let originalCwd: string;
-
-  beforeEach(() => {
-    tmpDir = makeTmpDir();
-    originalCwd = process.cwd();
-    process.chdir(tmpDir);
-  });
-
-  afterEach(() => {
-    process.chdir(originalCwd);
-    cleanTmpDir(tmpDir);
-  });
-
-  it("warns when no test files exist", () => {
-    const stderrSpy = vi.spyOn(process.stderr, "write").mockReturnValue(true);
-    const stdoutSpy = vi.spyOn(process.stdout, "write").mockReturnValue(true);
-    const exitSpy = vi.spyOn(process, "exit").mockImplementation((() => {
-      throw new Error("EXIT");
-    }) as never);
-
-    expect(() => main(["validate"])).toThrow("EXIT");
-
-    const errOutput = stderrSpy.mock.calls.map((c) => c[0]).join("");
-    expect(errOutput).toContain("Warning");
-    expect(errOutput).toContain("no test files");
-
-    stderrSpy.mockRestore();
-    stdoutSpy.mockRestore();
-    exitSpy.mockRestore();
-  });
-
-  it("reports found test files", () => {
-    const testsDir = path.join(tmpDir, "tests");
-    fs.mkdirSync(testsDir, { recursive: true });
-    fs.writeFileSync(path.join(testsDir, "example.test.ts"), "// test\n");
-
-    const stdoutSpy = vi.spyOn(process.stdout, "write").mockReturnValue(true);
-    const stderrSpy = vi.spyOn(process.stderr, "write").mockReturnValue(true);
-    const exitSpy = vi.spyOn(process, "exit").mockImplementation((() => {
-      throw new Error("EXIT");
-    }) as never);
-
-    expect(() => main(["validate"])).toThrow("EXIT");
-
-    const output = stdoutSpy.mock.calls.map((c) => c[0]).join("");
-    expect(output).toContain("Found 1 test file");
-
-    stdoutSpy.mockRestore();
-    stderrSpy.mockRestore();
-    exitSpy.mockRestore();
-  });
-
-  it("warns on stale golden traces", () => {
-    const testsDir = path.join(tmpDir, "tests");
-    fs.mkdirSync(testsDir, { recursive: true });
-    fs.writeFileSync(path.join(testsDir, "example.test.ts"), "// test\n");
-
-    const tracesDir = path.join(tmpDir, "traces");
-    fs.mkdirSync(tracesDir, { recursive: true });
-    const goldenPath = path.join(tracesDir, "agent.golden");
-    fs.writeFileSync(goldenPath, "trace data\n");
-    // Set mtime to 31 days ago
-    const staleTime = Date.now() / 1000 - 31 * 24 * 60 * 60;
-    fs.utimesSync(goldenPath, staleTime, staleTime);
-
-    const stderrSpy = vi.spyOn(process.stderr, "write").mockReturnValue(true);
-    const stdoutSpy = vi.spyOn(process.stdout, "write").mockReturnValue(true);
-    const exitSpy = vi.spyOn(process, "exit").mockImplementation((() => {
-      throw new Error("EXIT");
-    }) as never);
-
-    expect(() => main(["validate"])).toThrow("EXIT");
-
-    const errOutput = stderrSpy.mock.calls.map((c) => c[0]).join("");
-    expect(errOutput).toContain("golden");
-    expect(errOutput).toContain("Warning");
-
-    stderrSpy.mockRestore();
-    stdoutSpy.mockRestore();
-    exitSpy.mockRestore();
+    for (const file of [sample(), workflow()]) {
+      expect(fs.readFileSync(file, "utf-8")).toBe("// mine\n");
+    }
   });
 });
 
-describe("CLI usage", () => {
-  it("prints usage on no args and exits 0", () => {
-    const stderrSpy = vi.spyOn(process.stderr, "write").mockReturnValue(true);
-    const exitSpy = vi.spyOn(process, "exit").mockImplementation((() => {
-      throw new Error("EXIT");
-    }) as never);
+describe("forwarded commands", () => {
+  it("forwards policy arguments and propagates the exit code", async () => {
+    const engine = useEngine({ exitCode: 2 });
 
-    expect(() => main([])).toThrow("EXIT");
+    const code = await main(["policy", "evaluate", "--policy", "p.yaml", "--report", "r.json"]);
 
-    const output = stderrSpy.mock.calls.map((c) => c[0]).join("");
-    expect(output).toContain("Usage:");
-    expect(exitSpy).toHaveBeenCalledWith(0);
-
-    stderrSpy.mockRestore();
-    exitSpy.mockRestore();
+    expect(code).toBe(2);
+    expect(forwardedCalls(engine)).toEqual(["policy evaluate --policy p.yaml --report r.json"]);
   });
 
-  it("prints usage on unknown command and exits 1", () => {
-    const stderrSpy = vi.spyOn(process.stderr, "write").mockReturnValue(true);
-    const exitSpy = vi.spyOn(process, "exit").mockImplementation((() => {
-      throw new Error("EXIT");
-    }) as never);
+  it("forwards doctor --json", async () => {
+    const engine = useEngine();
 
-    expect(() => main(["unknown"])).toThrow("EXIT");
-    expect(exitSpy).toHaveBeenCalledWith(1);
+    await expect(main(["doctor", "--json"])).resolves.toBe(0);
+    expect(forwardedCalls(engine)).toEqual(["doctor --json"]);
+  });
 
-    stderrSpy.mockRestore();
-    exitSpy.mockRestore();
+  it("exits 1 without running an old engine", async () => {
+    const engine = useEngine({ version: "0.8.0" });
+
+    const code = await main(["policy", "evaluate", "--policy", "p.yaml", "--report", "r.json"]);
+
+    expect(code).toBe(1);
+    expect(forwardedCalls(engine)).toEqual([]);
+    expect(stderr.join("")).toContain(
+      `reports version 0.8.0; this SDK requires attest-engine ${ENGINE_VERSION}`,
+    );
+  });
+
+  it("exits 1 when only a legacy unversioned engine is cached", async () => {
+    const legacy = writeScriptedEngine(legacyCachePath(env.home), { version: "0.8.0" });
+
+    await expect(main(["policy", "evaluate"])).resolves.toBe(1);
+    expect(forwardedCalls(legacy)).toEqual([]);
+  });
+
+  it("refuses a same-version engine without a command registry", async () => {
+    const engine = useEngine({ helpMode: "server" });
+
+    await expect(main(["doctor", "--json"])).resolves.toBe(1);
+    expect(forwardedCalls(engine)).toEqual([]);
+    expect(stderr.join("")).toContain("predates `attest doctor`");
+  });
+
+  it("refuses a command the engine does not list", async () => {
+    const engine = useEngine({ commands: ["policy"] });
+
+    await expect(main(["doctor", "--json"])).resolves.toBe(1);
+    expect(forwardedCalls(engine)).toEqual([]);
+    expect(stderr.join("")).toContain("predates `attest doctor`");
+  });
+
+  it("exits 128 + signal when the engine is killed", async () => {
+    useEngine({ signal: "TERM" });
+
+    await expect(main(["policy", "evaluate"])).resolves.toBe(128 + 15);
+  });
+
+  it("rejects unknown options with exit 2", async () => {
+    await expect(main(["--bogus"])).resolves.toBe(2);
+    expect(stderr.join("")).toContain("unknown option --bogus");
+  });
+});
+
+describe("engineCommands", () => {
+  it("returns null when help hangs past the timeout", () => {
+    const engine = writeScriptedEngine(path.join(env.root, "e", "attest-engine"), {
+      helpMode: "hang",
+    });
+
+    expect(engineCommands(engine, 300)).toBeNull();
+  });
+
+  it("parses command names and summaries", () => {
+    const engine = writeScriptedEngine(path.join(env.root, "e", "attest-engine"));
+
+    expect([...(engineCommands(engine) ?? new Map()).keys()]).toEqual(["doctor", "policy"]);
+  });
+});
+
+describe("exitStatus", () => {
+  it("passes exit codes through and maps signals to 128 + N", () => {
+    expect(exitStatus(2, null)).toBe(2);
+    expect(exitStatus(null, "SIGKILL")).toBe(137);
   });
 });

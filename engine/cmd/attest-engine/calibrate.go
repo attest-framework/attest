@@ -15,6 +15,7 @@ import (
 
 	"github.com/attest-ai/attest/engine/internal/assertion/judge"
 	"github.com/attest-ai/attest/engine/internal/cache"
+	"github.com/attest-ai/attest/engine/internal/server"
 )
 
 func init() {
@@ -22,7 +23,9 @@ func init() {
 }
 
 // handleCalibrateCommand runs `attest-engine calibrate --labels <path>
-// --rubric <name> [--threshold 0.5] [--persist]`. It expects each row in
+// --rubric <name> [--threshold 0.5] [--persist --judge-provider <p>
+// --judge-model <m>]`. Persisted labels are keyed by judge provider and
+// model, because agreement belongs to one judge model. It expects each row in
 // the labels file to already include both human_label and judge_score —
 // invocation does NOT call the judge model. This keeps the command
 // dependency-free for offline use; agreement runs in CI without LLM keys.
@@ -33,11 +36,21 @@ func handleCalibrateCommand(args []string) {
 	rubricVer := fs.String("rubric-version", "", "rubric version (defaults to built-in version when --rubric is built-in)")
 	threshold := fs.Float64("threshold", 0.5, "binarization threshold for κ and ROC-AUC (must be in (0,1))")
 	persist := fs.Bool("persist", false, "store the loaded labels in the calibration history at $ATTEST_CACHE_DIR/attest.db")
+	judgeProvider := fs.String("judge-provider", "", "provider that produced judge_score (openai, anthropic, gemini, ...); required with --persist")
+	judgeModel := fs.String("judge-model", "", "model that produced judge_score; required with --persist")
 	if err := fs.Parse(args); err != nil {
 		os.Exit(2)
 	}
 	if *labels == "" {
 		fmt.Fprintln(os.Stderr, "calibrate: --labels is required")
+		os.Exit(2)
+	}
+	if *persist && (*judgeProvider == "" || *judgeModel == "") {
+		fmt.Fprintln(os.Stderr, "calibrate: --persist requires --judge-provider and --judge-model; calibration is stored per judge model")
+		os.Exit(2)
+	}
+	if *judgeProvider != "" && !server.IsJudgeProvider(*judgeProvider) {
+		fmt.Fprintf(os.Stderr, "calibrate: --judge-provider %q is not supported; supported: %s\n", *judgeProvider, server.SupportedJudgeProviders())
 		os.Exit(2)
 	}
 
@@ -79,13 +92,21 @@ func handleCalibrateCommand(args []string) {
 	}
 
 	if *persist {
-		if err := persistLabels(records, *rubric, resolvedVersion); err != nil {
+		key := cache.CalibrationKey{
+			JudgeProvider: *judgeProvider,
+			JudgeModel:    *judgeModel,
+			RubricName:    *rubric,
+			RubricVersion: resolvedVersion,
+		}
+		if err := persistLabels(records, key); err != nil {
 			fmt.Fprintf(os.Stderr, "calibrate: persist failed: %v\n", err)
 			os.Exit(1)
 		}
 	}
 
 	out := map[string]any{
+		"judge_provider": *judgeProvider,
+		"judge_model":    *judgeModel,
 		"rubric_name":    *rubric,
 		"rubric_version": resolvedVersion,
 		"threshold":      agreement.Threshold,
@@ -128,7 +149,9 @@ func loadLabelsByExt(path string) ([]judge.LabeledRecord, error) {
 	}
 }
 
-func persistLabels(records []judge.LabeledRecord, rubricName, rubricVersion string) error {
+// persistLabels stores records under key; key.PromptHash is computed per
+// record from its input.
+func persistLabels(records []judge.LabeledRecord, key cache.CalibrationKey) error {
 	dbPath := filepath.Join(cacheDir(), "attest.db")
 	if err := os.MkdirAll(cacheDir(), 0o755); err != nil {
 		return fmt.Errorf("mkdir cache: %w", err)
@@ -148,8 +171,10 @@ func persistLabels(records []judge.LabeledRecord, rubricName, rubricVersion stri
 			continue
 		}
 		if err := store.Record(cache.CalibrationLabel{
-			RubricName:    rubricName,
-			RubricVersion: rubricVersion,
+			JudgeProvider: key.JudgeProvider,
+			JudgeModel:    key.JudgeModel,
+			RubricName:    key.RubricName,
+			RubricVersion: key.RubricVersion,
 			PromptHash:    judge.PromptHash(r.Input),
 			Input:         r.Input,
 			HumanLabel:    r.HumanLabel,

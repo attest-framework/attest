@@ -193,3 +193,59 @@ func TestBaselineStore_Delete(t *testing.T) {
 		t.Error("Delete with empty tag must error")
 	}
 }
+
+func TestNewBaselineStore_LegacyTable_MigratesAndReadsOneRun(t *testing.T) {
+	// Arrange: a baselines table pinned before the count columns existed.
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Close() })
+	db.SetMaxOpenConns(1)
+	if _, err := db.Exec(`CREATE TABLE baselines (
+		tag TEXT NOT NULL, assertion_id TEXT NOT NULL, assertion_type TEXT NOT NULL,
+		status TEXT NOT NULL, score REAL NOT NULL, cost REAL NOT NULL DEFAULT 0,
+		duration_ms INTEGER NOT NULL DEFAULT 0, pinned_at INTEGER NOT NULL,
+		PRIMARY KEY (tag, assertion_id))`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO baselines VALUES
+		('old', 'p', 'schema', 'pass', 1, 0, 0, 1),
+		('old', 'f', 'schema', 'hard_fail', 0, 0, 0, 1),
+		('old', 'n', 'llm_judge', 'not_evaluated', 0, 0, 0, 1)`); err != nil {
+		t.Fatal(err)
+	}
+
+	// Act
+	store, err := cache.NewBaselineStore(db)
+	if err != nil {
+		t.Fatalf("NewBaselineStore on legacy table: %v", err)
+	}
+	got, err := store.Get("old")
+
+	// Assert
+	if err != nil || len(got) != 3 {
+		t.Fatalf("Get = %v, %v", got, err)
+	}
+	want := map[string][3]int{"f": {0, 1, 0}, "n": {0, 0, 1}, "p": {1, 1, 0}}
+	for _, e := range got {
+		if w := want[e.AssertionID]; [3]int{e.Passes, e.Evaluated, e.NotEvaluated} != w {
+			t.Errorf("%s counts = %d/%d/%d, want %v", e.AssertionID, e.Passes, e.Evaluated, e.NotEvaluated, w)
+		}
+	}
+}
+
+func TestBaselineStore_PinWithCounts_RoundTrips(t *testing.T) {
+	store := newBaselineStore(t)
+
+	if err := store.Pin("trials", []cache.BaselineEntry{
+		{AssertionID: "tone", Type: "llm_judge", Status: "hard_fail", Passes: 18, Evaluated: 20, NotEvaluated: 1},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := store.Get("trials")
+
+	if err != nil || len(got) != 1 || got[0].Passes != 18 || got[0].Evaluated != 20 || got[0].NotEvaluated != 1 {
+		t.Fatalf("Get = %+v, %v; want 18/20 with 1 not evaluated", got, err)
+	}
+}

@@ -1,0 +1,148 @@
+{
+  "description": "Behavior-contract DSL calls in Python and TypeScript, the assertion spec both must emit, and the engine result for each listed trace.",
+  "traces": {
+    "inc-1042-py": "trace-v2/otlp/inc-1042-refund.trace.json",
+    "inc-1042-ts": "contracts/traces/inc-1042-ts.trace.json",
+    "inc-1042-corrected": "contracts/traces/inc-1042-corrected.trace.json",
+    "abab": "contracts/traces/abab.trace.json"
+  },
+  "cases": [
+    {
+      "name": "cardinality-per-key",
+      "python": {"method": "tool_cardinality", "args": ["issue_refund"], "kwargs": {"per": "order_id", "at_most": 1}},
+      "typescript": {"method": "toolCardinality", "args": ["issue_refund", {"per": "order_id", "atMost": 1}]},
+      "spec": {"check": "tool_cardinality", "tool": "issue_refund", "per": "order_id", "max": 1, "soft": false},
+      "results": [
+        {"trace": "inc-1042-py", "status": "hard_fail", "explanation": "issue_refund called 2× for order_id=O-1042 (max 1)"},
+        {"trace": "inc-1042-ts", "status": "hard_fail", "explanation": "issue_refund called 2× for order_id=O-1042 (max 1)"},
+        {"trace": "inc-1042-corrected", "status": "pass"}
+      ]
+    },
+    {
+      "name": "cardinality-bounds-soft",
+      "python": {"method": "tool_cardinality", "args": ["lookup_order"], "kwargs": {"at_least": 1, "at_most": 1, "soft": true}},
+      "typescript": {"method": "toolCardinality", "args": ["lookup_order", {"atLeast": 1, "atMost": 1, "soft": true}]},
+      "spec": {"check": "tool_cardinality", "tool": "lookup_order", "min": 1, "max": 1, "soft": true},
+      "results": [
+        {"trace": "inc-1042-py", "status": "pass"},
+        {"trace": "inc-1042-corrected", "status": "soft_fail", "explanation": "lookup_order called 2× (min 1, max 1)"}
+      ]
+    },
+    {
+      "name": "cardinality-at-least-only",
+      "python": {"method": "tool_cardinality", "args": ["notify_customer"], "kwargs": {"at_least": 1}},
+      "typescript": {"method": "toolCardinality", "args": ["notify_customer", {"atLeast": 1}]},
+      "spec": {"check": "tool_cardinality", "tool": "notify_customer", "min": 1, "soft": false},
+      "results": [
+        {"trace": "inc-1042-py", "status": "pass"},
+        {"trace": "abab", "status": "hard_fail", "explanation": "notify_customer called 0× (min 1)"}
+      ]
+    },
+    {
+      "name": "forbidden-tools",
+      "python": {"method": "forbidden_tools", "args": [["delete_order"]], "kwargs": {}},
+      "typescript": {"method": "forbiddenTools", "args": [["delete_order"]]},
+      "spec": {"check": "forbidden_tools", "tools": ["delete_order"], "soft": false},
+      "results": [{"trace": "inc-1042-py", "status": "pass"}]
+    },
+    {
+      "name": "trajectory-strict",
+      "python": {"method": "trajectory", "args": [["lookup_order", "issue_refund", "notify_customer"]], "kwargs": {}},
+      "typescript": {"method": "trajectory", "args": [["lookup_order", "issue_refund", "notify_customer"]]},
+      "spec": {"check": "trajectory", "mode": "strict", "tools": ["lookup_order", "issue_refund", "notify_customer"], "soft": false},
+      "results": [{"trace": "inc-1042-py", "status": "hard_fail", "explanation": "trajectory (strict): tool calls [lookup_order issue_refund issue_refund notify_customer] differ from expected [lookup_order issue_refund notify_customer]"}]
+    },
+    {
+      "name": "trajectory-unordered",
+      "python": {"method": "trajectory", "args": [["notify_customer", "lookup_order", "issue_refund", "lookup_order"]], "kwargs": {"mode": "unordered"}},
+      "typescript": {"method": "trajectory", "args": [["notify_customer", "lookup_order", "issue_refund", "lookup_order"], {"mode": "unordered"}]},
+      "spec": {"check": "trajectory", "mode": "unordered", "tools": ["notify_customer", "lookup_order", "issue_refund", "lookup_order"], "soft": false},
+      "results": [{"trace": "inc-1042-corrected", "status": "pass"}]
+    },
+    {
+      "name": "trajectory-subset",
+      "python": {"method": "trajectory", "args": [["lookup_order", "issue_refund", "notify_customer"]], "kwargs": {"mode": "subset"}},
+      "typescript": {"method": "trajectory", "args": [["lookup_order", "issue_refund", "notify_customer"], {"mode": "subset"}]},
+      "spec": {"check": "trajectory", "mode": "subset", "tools": ["lookup_order", "issue_refund", "notify_customer"], "soft": false},
+      "results": [{"trace": "inc-1042-py", "status": "hard_fail", "explanation": "trajectory (subset): tool calls not in the expected trajectory: issue_refund (2 vs 1)"}]
+    },
+    {
+      "name": "trajectory-superset",
+      "python": {"method": "trajectory", "args": [["lookup_order", "notify_customer"]], "kwargs": {"mode": "superset"}},
+      "typescript": {"method": "trajectory", "args": [["lookup_order", "notify_customer"], {"mode": "superset"}]},
+      "spec": {"check": "trajectory", "mode": "superset", "tools": ["lookup_order", "notify_customer"], "soft": false},
+      "results": [{"trace": "inc-1042-py", "status": "pass"}]
+    },
+    {
+      "name": "trajectory-partial-order",
+      "python": {"method": "trajectory_partial_order", "args": [[["lookup_order", "issue_refund"], ["issue_refund", "notify_customer"]]], "kwargs": {"tools": ["lookup_order"]}},
+      "typescript": {"method": "trajectoryPartialOrder", "args": [[["lookup_order", "issue_refund"], ["issue_refund", "notify_customer"]], {"tools": ["lookup_order"]}]},
+      "spec": {"check": "trajectory", "mode": "partial_order", "order": [["lookup_order", "issue_refund"], ["issue_refund", "notify_customer"]], "tools": ["lookup_order"], "soft": false},
+      "results": [
+        {"trace": "inc-1042-py", "status": "pass"},
+        {"trace": "abab", "status": "hard_fail", "explanation": "trajectory (partial_order): tools not called: lookup_order, issue_refund, notify_customer"}
+      ]
+    },
+    {
+      "name": "trajectory-partial-order-without-tools",
+      "python": {"method": "trajectory_partial_order", "args": [[["search", "rephrase"]]], "kwargs": {}},
+      "typescript": {"method": "trajectoryPartialOrder", "args": [[["search", "rephrase"]]]},
+      "spec": {"check": "trajectory", "mode": "partial_order", "order": [["search", "rephrase"]], "soft": false},
+      "results": [
+        {"trace": "abab", "status": "pass"},
+        {"trace": "inc-1042-py", "status": "hard_fail", "explanation": "trajectory (partial_order): tools not called: search, rephrase"}
+      ]
+    },
+    {
+      "name": "tool-order",
+      "python": {"method": "tool_called_before", "args": ["verify_identity", "issue_refund"], "kwargs": {}},
+      "typescript": {"method": "toolCalledBefore", "args": ["verify_identity", "issue_refund"]},
+      "spec": {"check": "tool_order", "before": "verify_identity", "after": "issue_refund", "soft": false},
+      "results": [
+        {"trace": "inc-1042-py", "status": "hard_fail", "explanation": "issue_refund called at step 3 without a prior verify_identity"},
+        {"trace": "abab", "status": "pass"}
+      ]
+    },
+    {
+      "name": "cycle-period-2",
+      "python": {"method": "no_tool_cycles", "args": [2], "kwargs": {}},
+      "typescript": {"method": "noToolCycles", "args": [2]},
+      "spec": {"check": "cycle", "period": 2, "min_repeats": 2, "soft": false},
+      "results": [
+        {"trace": "abab", "status": "hard_fail", "explanation": "tool cycle of period 2 repeated 2× at steps 0-4: search → rephrase (min_repeats 2)"},
+        {"trace": "inc-1042-py", "status": "pass"}
+      ]
+    },
+    {
+      "name": "cycle-period-1-min-repeats",
+      "python": {"method": "no_tool_cycles", "args": [1], "kwargs": {"min_repeats": 3}},
+      "typescript": {"method": "noToolCycles", "args": [1, {"minRepeats": 3}]},
+      "spec": {"check": "cycle", "period": 1, "min_repeats": 3, "soft": false},
+      "results": [{"trace": "inc-1042-py", "status": "pass"}]
+    },
+    {
+      "name": "failure-streak",
+      "python": {"method": "max_tool_failure_streak", "args": [1], "kwargs": {}},
+      "typescript": {"method": "maxToolFailureStreak", "args": [1]},
+      "spec": {"check": "failure_streak", "max": 1, "soft": false},
+      "results": [
+        {"trace": "abab", "status": "hard_fail", "explanation": "2 consecutive tool failures at steps 3, 4 (max 1): search, rephrase"},
+        {"trace": "inc-1042-py", "status": "pass"}
+      ]
+    },
+    {
+      "name": "arg-predicate",
+      "python": {"method": "tool_arg_satisfies", "args": ["issue_refund", "amount_cents", "lte", 5000], "kwargs": {}},
+      "typescript": {"method": "toolArgSatisfies", "args": ["issue_refund", "amount_cents", "lte", 5000]},
+      "spec": {"check": "arg_predicate", "tool": "issue_refund", "arg": "amount_cents", "op": "lte", "value": 5000, "soft": false},
+      "results": [{"trace": "inc-1042-py", "status": "hard_fail", "explanation": "issue_refund violates amount_cents lte 5000 at step 3: amount_cents=8400; step 5: amount_cents=8400"}]
+    },
+    {
+      "name": "arg-predicate-in",
+      "python": {"method": "tool_arg_satisfies", "args": ["issue_refund", "order_id", "in", ["O-1042"]], "kwargs": {"soft": true}},
+      "typescript": {"method": "toolArgSatisfies", "args": ["issue_refund", "order_id", "in", ["O-1042"], {"soft": true}]},
+      "spec": {"check": "arg_predicate", "tool": "issue_refund", "arg": "order_id", "op": "in", "value": ["O-1042"], "soft": true},
+      "results": [{"trace": "inc-1042-py", "status": "pass"}]
+    }
+  ]
+}

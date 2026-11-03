@@ -1,16 +1,23 @@
 name: 'Attest PR Annotate'
 description: |
-  Post inline PR review comments for each failed Attest assertion in a
-  JSON v2 report. Uses the GitHub REST API via gh; needs `pull-requests:
-  write` and `contents: read`. Optionally evaluates a policy file and
-  fails the step (exit 1) when a blocking violation occurs.
+  Annotate a pull request with each failed Attest assertion in a report-v2
+  file (pytest --attest-report, Vitest AttestReporter). Each failure is
+  placed at the file and line of the test that requested it: an inline
+  review comment when that line is in the diff, an entry in the review body
+  otherwise, and an ::error (hard failure) or ::warning (soft failure)
+  workflow annotation either way. Failures without
+  a source location are listed in the review body. Uses the GitHub REST API;
+  needs `pull-requests: write` and `contents: read`. Optionally evaluates a
+  policy file and fails the step (exit 1) on a blocking violation; a warning
+  (exit 2) does not fail it. Any other evaluator exit code (e.g. 127, engine
+  not found) fails the step after the annotations are posted.
 
 inputs:
   report:
-    description: 'Path to JSON v2 report file (engine/internal/report/json.go output).'
+    description: 'Path to the report-v2 file (proto/attest/v1/report-v2.schema.json).'
     required: true
   policy:
-    description: 'Optional path to attest.policy.yaml; when set, the step exits with the policy exit code.'
+    description: 'Optional path to attest.policy.yaml. When set, a blocking violation (exit 1) fails the step if fail-on-violation is true, a warning (exit 2) does not, and any other non-zero evaluator exit (e.g. 127, engine not found) always fails it.'
     required: false
     default: ''
   baseline-tag:
@@ -91,4 +98,16 @@ runs:
       shell: bash
       run: |
         echo "::error::Attest policy reported a blocking violation"
+        exit 1
+
+    - name: Fail on policy evaluator error
+      if: >-
+        steps.evaluate.outputs.exit_code != '0' &&
+        steps.evaluate.outputs.exit_code != '1' &&
+        steps.evaluate.outputs.exit_code != '2'
+      shell: bash
+      env:
+        POLICY_EXIT_CODE: ${{ steps.evaluate.outputs.exit_code }}
+      run: |
+        echo "::error::attest-engine policy evaluate exited ${POLICY_EXIT_CODE} (expected 0 pass, 1 block or 2 warn); the policy was not evaluated (127: engine-binary not found)"
         exit 1

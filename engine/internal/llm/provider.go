@@ -23,8 +23,11 @@ type CompletionResponse struct {
 	Model        string
 	InputTokens  int
 	OutputTokens int
-	Cost         float64
-	DurationMS   int64
+	// CachedInputTokens is the part of InputTokens the provider served
+	// from its prompt cache.
+	CachedInputTokens int
+	Cost              float64
+	DurationMS        int64
 }
 
 // Provider is the interface that wraps an LLM backend.
@@ -32,4 +35,11 @@ type Provider interface {
 	Complete(ctx context.Context, req *CompletionRequest) (*CompletionResponse, error)
 	Name() string
 	DefaultModel() string
+}
+
+// OutputLimiter is implemented by providers that send a different output
+// token limit than CompletionRequest.MaxTokens. The budget ledger reserves
+// against the limit actually sent.
+type OutputLimiter interface {
+	MaxOutputTokens(requested int) int
 }

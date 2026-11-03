@@ -18,6 +18,7 @@ from attest._proto.types import (
     EvaluateBatchResult,
     InitializeResult,
     Trace,
+    Usage,
 )
 from attest.client import AttestClient
 from attest.config import config, is_simulation_mode, reset
@@ -142,6 +143,7 @@ def _engine_payload() -> dict[str, object]:
             }
         ],
         "total_cost": 0.0,
+        "usage": Usage().to_dict(),
         "total_duration_ms": 0,
     }
 
@@ -150,7 +152,12 @@ class TestClientSimulationMode:
     def test_engine_payload_without_simulated_marker_defaults_false(self) -> None:
         # Older engines omit "simulated"; callers must not mistake a real run
         # for a simulated one.
-        payload = {"results": [], "total_cost": 0.0, "total_duration_ms": 0}
+        payload = {
+            "results": [],
+            "usage": Usage().to_dict(),
+            "total_cost": 0.0,
+            "total_duration_ms": 0,
+        }
 
         result = EvaluateBatchResult.from_dict(payload)
 

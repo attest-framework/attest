@@ -6,10 +6,10 @@
   "simulation_mode": false,
   "judge": {
     "configured": true,
-    "provider": "anthropic",
-    "model": "claude",
-    "base_url": "https://api.anthropic.com/v1",
-    "api_key_source": "ANTHROPIC_API_KEY"
+    "provider": "ollama",
+    "model": "judge-model",
+    "base_url": "http://localhost:11434",
+    "api_key_source": "ATTEST_JUDGE_API_KEY"
   },
   "embedding": { "configured": false, "requested": "auto", "provider": null },
   "cache_dir": "/home/dev/.attest/cache"

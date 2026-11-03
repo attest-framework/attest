@@ -118,17 +118,7 @@ func baselinePin(args []string) {
 		os.Exit(1)
 	}
 
-	entries := make([]cache.BaselineEntry, 0, len(env.Results))
-	for _, r := range env.Results {
-		entries = append(entries, cache.BaselineEntry{
-			AssertionID: r.AssertionID,
-			Type:        r.Type,
-			Status:      r.Status,
-			Score:       r.Score,
-			Cost:        r.Cost,
-			DurationMS:  r.DurationMS,
-		})
-	}
+	entries := report.BaselineEntries(env.Results)
 
 	store, closer, err := openBaselineStore()
 	if err != nil {
@@ -207,12 +197,15 @@ func baselineShow(args []string) {
 	rows := make([]map[string]any, 0, len(entries))
 	for _, e := range entries {
 		rows = append(rows, map[string]any{
-			"assertion_id": e.AssertionID,
-			"type":         e.Type,
-			"status":       e.Status,
-			"score":        e.Score,
-			"cost":         e.Cost,
-			"duration_ms":  e.DurationMS,
+			"assertion_id":  e.AssertionID,
+			"type":          e.Type,
+			"status":        e.Status,
+			"score":         e.Score,
+			"cost":          e.Cost,
+			"duration_ms":   e.DurationMS,
+			"passes":        e.Passes,
+			"evaluated":     e.Evaluated,
+			"not_evaluated": e.NotEvaluated,
 		})
 	}
 	emitJSON(map[string]any{

@@ -2,8 +2,8 @@
 
 Provides Python-side parity with engine/internal/assertion/judge/calibration.go
 so SDK callers can compute agreement metrics, load labeled CSV/JSONL files,
-and derive prompt hashes without spawning the engine binary. The CLI
-``python -m attest calibrate`` consumes this module.
+and derive prompt hashes without spawning the engine binary. The
+``attest calibrate`` command runs in the engine (``attest-engine calibrate``).
 
 The metrics match the engine implementation byte-for-byte on the same input
 so a calibration result computed in Python and rendered through the engine

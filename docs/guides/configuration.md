@@ -2,13 +2,37 @@
 
 The engine reads its configuration from environment variables when it starts. An invalid provider, URL or integer setting stops the engine with an error naming the variable. Two exceptions keep their historical behavior: `ATTEST_JUDGE_TIMEOUT_S` falls back to 30 on a non-positive or non-integer value, and `ATTEST_JUDGE_META_EVAL` is enabled only by the exact value `true`.
 
-## Check your setup
+## Engine discovery and the `attest` command
 
-`attest-engine doctor` reports what the engine would start with under the current environment: engine and protocol versions, the capabilities `initialize` advertises, the judge and embedding providers, simulation mode and the cache directory.
+Each SDK release requires one engine version, `ENGINE_VERSION` (`1.0.0-rc.N` during the release candidates). The SDK looks for an engine in this order and uses the first one it finds:
+
+1. `--attest-engine` (pytest) or the `engine_path` / `enginePath` argument of `EngineManager`
+2. `ATTEST_ENGINE_PATH`
+3. `attest-engine` (`attest-engine.exe` on Windows) in a `PATH` directory; empty entries are skipped, so the current directory is never searched
+4. `~/.attest/bin/<ENGINE_VERSION>/attest-engine`
+5. A download of `ENGINE_VERSION` from GitHub Releases into that directory, verified against the release's `checksums-sha256.txt` and written atomically. `ATTEST_ENGINE_NO_DOWNLOAD=1` turns the download off.
+
+The engine found must report exactly `ENGINE_VERSION` (`attest-engine version`). Otherwise the SDK stops with a version-mismatch error naming the engine, where it came from, the version it reports and the version required. It never skips a mismatched engine in favor of the next location. The pytest fixture, Vitest, `EngineManager` and the `attest` command all use this check. The legacy unversioned `~/.attest/bin/attest-engine` from releases before 1.0 is neither used nor deleted.
+
+The `attest` command (`uv run attest`, `npx attest`) implements `attest init` itself and forwards every other command to the version-checked engine, passing arguments, output and exit code through unchanged:
 
 ```bash
-attest-engine doctor          # human-readable
-attest-engine doctor --json   # machine-readable, schema: proto/attest/v1/doctor.schema.json
+attest --help                     # SDK commands, plus engine commands when one is installed
+attest --version                  # SDK version and the engine version it requires
+attest init                       # scaffold a test project (no engine needed)
+attest doctor --json              # = attest-engine doctor --json
+attest policy evaluate --policy attest.policy.yaml --report report.json
+```
+
+Before forwarding, the CLI checks that the engine's `help` lists the command. If no matching engine is available, or the engine predates the command, the command exits 1 before anything runs, so `attest policy evaluate` never exits 0 without evaluating. A command killed by a signal exits 128 + N. `attest --help` never downloads: it lists the engine's commands only when a matching engine is already available, and always exits 0. Run tests with `pytest` or `vitest` directly.
+
+## Check your setup
+
+`attest doctor` (or `attest-engine doctor`) reports what the engine would start with under the current environment: engine and protocol versions, the capabilities `initialize` advertises, the judge and embedding providers, simulation mode and the cache directory.
+
+```bash
+attest doctor          # human-readable
+attest doctor --json   # machine-readable, schema: proto/attest/v1/doctor.schema.json
 ```
 
 The output never contains an API key. It shows only which variable the judge key came from. A configuration error exits 1 with the same message the server would fail to start with. In `onnx` builds that select ONNX embeddings, `doctor` constructs the embedder just as the server does, so the first run downloads the model.
@@ -17,20 +41,24 @@ The output never contains an API key. It shows only which variable the judge key
 
 ## LLM judge (Layer 6)
 
-The judge works with OpenAI and with any OpenAI-compatible endpoint (vLLM, Ollama's `/v1` API, LiteLLM, Azure-compatible gateways).
+The judge runs natively on OpenAI, Anthropic and Gemini, on any OpenAI-compatible endpoint (vLLM, Ollama's `/v1` API, LiteLLM, Azure-compatible gateways), and locally through an ACP agent on your Claude Code or Codex subscription. Provider setup, rate limits and calibration per model: [Judges](judges.md).
 
 | Variable | Purpose | Default |
 |---|---|---|
-| `ATTEST_JUDGE_API_KEY` | Judge API key. Takes precedence over `OPENAI_API_KEY`, and is required with `ATTEST_JUDGE_BASE_URL`. For an endpoint without authentication, set any non-empty value. | unset |
-| `OPENAI_API_KEY` | Provider's standard key variable. Used for the judge when `ATTEST_JUDGE_API_KEY` is unset and no `ATTEST_JUDGE_BASE_URL` is set, and for OpenAI embeddings. Never sent to a custom base URL. | unset |
-| `ATTEST_JUDGE_BASE_URL` | OpenAI-compatible base URL, e.g. `http://localhost:11434/v1`. Requires `ATTEST_JUDGE_API_KEY`. Must be `http`/`https` without credentials, query or fragment; use `https` for anything other than a local endpoint, because the key is sent with every request. | `https://api.openai.com/v1` |
-| `ATTEST_JUDGE_MODEL` | Judge model name. | `gpt-4.1` |
-| `ATTEST_JUDGE_PROVIDER` | Judge provider. Only `openai` is implemented; any other value is a startup error. | `openai` |
+| `ATTEST_JUDGE_PROVIDER` | `openai` (also OpenAI-compatible endpoints), `anthropic`, `gemini`, or `acp` (local only). Any other value is a startup error. | `openai` |
+| `ATTEST_JUDGE_ACP_COMMAND` | With `acp`: the command that starts the ACP agent, split on whitespace and run without a shell. | unset |
+| `CI` (also `GITHUB_ACTIONS`, `GITLAB_CI`, `BUILDKITE`, `CIRCLECI`, `JENKINS_URL`, `TF_BUILD`, `TEAMCITY_VERSION`) | When any is defined, even empty, `ATTEST_JUDGE_PROVIDER=acp` is a startup error. | unset |
+| `ATTEST_JUDGE_API_KEY` | Judge API key. Takes precedence over the provider's standard key variable, and is required with `ATTEST_JUDGE_BASE_URL`. For an endpoint without authentication, set any non-empty value. | unset |
+| `OPENAI_API_KEY` | OpenAI's standard key variable. Used for the `openai` judge when `ATTEST_JUDGE_API_KEY` is unset and no `ATTEST_JUDGE_BASE_URL` is set, and for OpenAI embeddings. Never sent to a custom base URL. | unset |
+| `ANTHROPIC_API_KEY` | Anthropic's standard key variable, used for the `anthropic` judge under the same rules. | unset |
+| `GOOGLE_API_KEY`, `GEMINI_API_KEY` | Gemini's standard key variables (in that order, as in Google's SDK), used for the `gemini` judge under the same rules. | unset |
+| `ATTEST_JUDGE_BASE_URL` | Base URL of the selected provider's API, e.g. `http://localhost:11434/v1` for an OpenAI-compatible server (include `/v1`), or the root of an Anthropic or Gemini gateway without a version segment (the engine appends `/v1/messages` or `/v1beta/models/...`). Requires `ATTEST_JUDGE_API_KEY`. Must be `http`/`https` without credentials, query or fragment; use `https` for anything other than a local endpoint, because the key is sent with every request. | `https://api.openai.com/v1`, `https://api.anthropic.com`, `https://generativelanguage.googleapis.com` |
+| `ATTEST_JUDGE_MODEL` | Judge model name. Required for `anthropic` and `gemini`; for `acp` a label recorded on results. | `gpt-4.1` for `openai`, `acp:<command name>` for `acp` |
 | `ATTEST_JUDGE_TIMEOUT_S` | Per-evaluation judge timeout in seconds. | `30` |
 | `ATTEST_JUDGE_META_EVAL` | `true` runs each judge assertion three times and takes the median. | unset |
 | `ATTEST_JUDGE_CACHE_MAX_MB` | Judge response cache size, clamped to 10–10000. | `100` |
-| `ATTEST_RATE_LIMIT_OPENAI` | Judge requests per minute; must be > 0. | `60` |
-| `ATTEST_RATE_LIMIT_OPENAI_BURST` | Judge request burst size; must be > 0. | `10` |
+| `ATTEST_RATE_LIMIT_<PROVIDER>` | Judge requests per minute for the selected provider (`ATTEST_RATE_LIMIT_OPENAI`, `ATTEST_RATE_LIMIT_ANTHROPIC`, `ATTEST_RATE_LIMIT_GEMINI`, `ATTEST_RATE_LIMIT_ACP`); must be > 0. | `60` |
+| `ATTEST_RATE_LIMIT_<PROVIDER>_BURST` | Judge request burst size for the selected provider; must be > 0. | `10` |
 
 Point the judge at a local OpenAI-compatible server:
 
@@ -62,6 +90,9 @@ Plain `http` to a host other than `localhost` or a loopback address is allowed f
 | `ATTEST_SIMULATION` | `1`/`true`/`yes`: Layers 5–6 return `not_evaluated(simulation)` and no provider is called. | unset |
 | `ATTEST_MAX_SOFT_FAILURES` | Maximum soft failures allowed in one engine session, counted across batches; `0` allows none. Exceeding it fails the batch. | unset (no limit) |
 | `ATTEST_EVAL_CONCURRENCY` | Layer 5–6 worker pool size per batch; `0` or a negative value uses the default. | `8` |
+| `ATTEST_MAX_JUDGE_CALLS` | Maximum judge-provider requests in one engine session (judges, `repeat` runs, bias probes, simulated-user messages, retries). Each request reserves one call before it is sent; a request that cannot reserve is not sent and its assertion is `not_evaluated: budget_exhausted`. ACP judge calls count. | unset (no limit) |
+| `ATTEST_BUDGET_USD` | Maximum USD for attest-initiated model calls (layer 5 OpenAI embeddings and every judge request) in one engine session. Each call reserves its worst-case cost (price × prompt bytes + price × output-token limit) before it is sent and is reconciled to the reported token usage when it returns; a call that fails after it was sent keeps its reservation, since the provider may have billed it. A default judge model or embedding model without a price is a startup error, and so is the `acp` judge, which reports no token usage; an assertion that names an unpriced `model` is refused at run time (`budget_exhausted`). | unset (no limit) |
+| `ATTEST_JUDGE_PRICE_IN`, `ATTEST_JUDGE_PRICE_OUT` | Judge price in USD per 1M input and output tokens, set together. Overrides the built-in table (`gpt-4.1`, `gpt-4.1-mini`, `gpt-4.1-nano`) for every judge call; required for `ATTEST_BUDGET_USD` with any other judge model. | unset |
 
 ## Cache and history
 

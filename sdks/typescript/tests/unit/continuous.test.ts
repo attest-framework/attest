@@ -20,6 +20,17 @@ function makeMockClient(): AttestClient {
       results: [],
       total_cost: 0,
       total_duration_ms: 0,
+      usage: {
+        model_calls: 0,
+        judge_calls: 0,
+        input_tokens: 0,
+        output_tokens: 0,
+        cached_tokens: 0,
+        cost_usd: 0,
+        retry_cost_usd: 0,
+        unpriced_calls: 0,
+        budget_refused: 0,
+      },
     }),
   } as unknown as AttestClient;
 }

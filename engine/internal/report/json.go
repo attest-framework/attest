@@ -39,6 +39,14 @@ type JSONSummary struct {
 	HardFail int `json:"hard_fail"`
 }
 
+// JSONSummaryV2 adds the not_evaluated count; pass rates exclude those rows.
+type JSONSummaryV2 struct {
+	JSONSummary
+	NotEvaluated int `json:"not_evaluated"`
+	// Usage is the run's attest-initiated model usage, when known.
+	Usage *types.Usage `json:"usage,omitempty"`
+}
+
 // JSONReportV2 is the diagnostic-rich envelope. AssertionResult already
 // carries the new fields (Layer, Type, Expected, Actual, Judge) via
 // JSON-omitempty, so the change is purely additive at the row level.
@@ -48,19 +56,37 @@ type JSONSummary struct {
 //   - simulated: bool — true when produced by an SDK simulation shim
 //   - layers: per-layer counts and assertion id lists
 //   - p50_duration_ms / p95_duration_ms: latency percentiles
+//   - tests: per-test outcomes with source locations. SDK writers fill it;
+//     the engine has no test context and emits an empty list.
+//
+// The schema is proto/attest/v1/report-v2.schema.json.
 type JSONReportV2 struct {
 	ReportVersion   int                     `json:"report_version"`
 	Timestamp       string                  `json:"timestamp"`
 	Simulated       bool                    `json:"simulated"`
-	Summary         JSONSummary             `json:"summary"`
+	Summary         JSONSummaryV2           `json:"summary"`
 	Layers          []LayerSummary          `json:"layers"`
 	Results         []types.AssertionResult `json:"results"`
+	Tests           []TestRecord            `json:"tests"`
 	TotalCost       float64                 `json:"total_cost"`
 	TotalDurationMS int64                   `json:"total_duration_ms"`
 	P50DurationMS   int64                   `json:"p50_duration_ms"`
 	P95DurationMS   int64                   `json:"p95_duration_ms"`
 	FailureClasses  map[string]int          `json:"failure_classes,omitempty"`
 	Baseline        *BaselineDelta          `json:"baseline,omitempty"`
+}
+
+// TestRecord is one test in a v2 report: its outcome under the C1
+// aggregation rules and the source location reviewers are pointed at.
+type TestRecord struct {
+	TestID              string   `json:"test_id"`
+	Name                string   `json:"name"`
+	File                string   `json:"file"`
+	Line                int      `json:"line"`
+	Outcome             string   `json:"outcome"`
+	NotEvaluatedReasons []string `json:"not_evaluated_reasons,omitempty"`
+	AssertionIDs        []string `json:"assertion_ids,omitempty"`
+	DurationMS          int64    `json:"duration_ms,omitempty"`
 }
 
 // LayerSummary is the per-layer index emitted in v2.
@@ -81,6 +107,8 @@ type ReportOptions struct {
 	// Baseline, when non-nil, embeds a baseline-delta block in the v2
 	// envelope. Ignored for v1.
 	Baseline *BaselineDelta
+	// Usage, when non-nil, is written to summary.usage. Ignored for v1.
+	Usage *types.Usage
 }
 
 // GenerateJSONReport emits a JSON report. By default it returns v2. Pass
@@ -118,7 +146,12 @@ func generateJSONV1(results []types.AssertionResult, totalCost float64, totalDur
 }
 
 func generateJSONV2(results []types.AssertionResult, totalCost float64, totalDurationMS int64, opt ReportOptions) ([]byte, error) {
-	summary := buildSummary(results)
+	summary := JSONSummaryV2{JSONSummary: buildSummary(results), Usage: opt.Usage}
+	for _, r := range results {
+		if r.Status == types.StatusNotEvaluated {
+			summary.NotEvaluated++
+		}
+	}
 	if totalCost == 0 {
 		totalCost = sumCost(results)
 	}
@@ -132,6 +165,7 @@ func generateJSONV2(results []types.AssertionResult, totalCost float64, totalDur
 		Summary:         summary,
 		Layers:          layers,
 		Results:         results,
+		Tests:           []TestRecord{},
 		TotalCost:       totalCost,
 		TotalDurationMS: totalDurationMS,
 		P50DurationMS:   p50,

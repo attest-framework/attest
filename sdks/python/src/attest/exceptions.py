@@ -48,3 +48,35 @@ class ProtocolDesyncError(AttestError):
     ) -> None:
         super().__init__(message)
         self.diagnostics: tuple[ProtocolDiagnostic, ...] = tuple(diagnostics)
+
+
+class EngineVersionMismatchError(AttestError):
+    """Raised when a discovered engine does not report the version this SDK requires.
+
+    Attributes:
+        engine_path: The engine binary that was checked.
+        source: Where discovery found it (e.g. ``ATTEST_ENGINE_PATH``, ``PATH``).
+        found: The version the engine reported, or ``None`` if it reported none.
+        required: The engine version this SDK requires.
+    """
+
+    def __init__(self, engine_path: str, source: str, found: str | None, required: str) -> None:
+        self.engine_path = engine_path
+        self.source = source
+        self.found = found
+        self.required = required
+        reported = f"reports version {found}" if found is not None else "reports no version"
+        super().__init__(
+            f"attest-engine at {engine_path} (from {source}) {reported}; "
+            f"this SDK requires attest-engine {required}. "
+            "Point ATTEST_ENGINE_PATH at a matching engine, or remove the "
+            "mismatched one from PATH so the SDK can download "
+            f"{required} into ~/.attest/bin/{required}/."
+        )
+
+
+class OTLPConversionError(AttestError):
+    """The engine rejected an OTLP/JSON export (``attest-engine trace convert``).
+
+    The message is the engine's error, which names the offending span or field.
+    """

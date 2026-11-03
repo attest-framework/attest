@@ -16,6 +16,8 @@ export const REASON_PROVIDER_NOT_CONFIGURED = "provider_not_configured" as const
 export const REASON_SIMULATION = "simulation" as const;
 export const REASON_MISSING_EVIDENCE = "missing_evidence" as const;
 export const REASON_SHORT_CIRCUITED = "short_circuited" as const;
+export const REASON_BUDGET_EXHAUSTED = "budget_exhausted" as const;
+export const REASON_JUDGE_ABSTAINED = "judge_abstained" as const;
 
 // Test outcomes derived from a batch of assertion results (AgentResult.outcome)
 export const OUTCOME_PASS = "pass" as const;

@@ -1,6 +1,6 @@
 {
   "name": "@attest-ai/vitest",
-  "version": "1.0.0-rc",
+  "version": "1.0.0-rc.2",
   "description": "Attest vitest integration — global setup, fixtures, cost reporter, tier filtering",
   "type": "module",
   "main": "./dist/index.js",
@@ -13,6 +13,10 @@
     "./setup": {
       "import": "./dist/plugin.js",
       "types": "./dist/plugin.d.ts"
+    },
+    "./reporter": {
+      "import": "./dist/reporter.js",
+      "types": "./dist/reporter.d.ts"
     }
   },
   "files": [
@@ -42,12 +46,13 @@
     "attest"
   ],
   "peerDependencies": {
-    "@attest-ai/core": ">=0.3.0",
-    "vitest": ">=2.0.0"
+    "@attest-ai/core": ">=1.0.0-rc",
+    "vitest": ">=3.0.0"
   },
   "devDependencies": {
     "@attest-ai/core": "workspace:*",
     "@types/node": "^26.1.2",
+    "ajv": "^8.20.0",
     "typescript": "^5.9.3",
     "vitest": "^4.1.10"
   }

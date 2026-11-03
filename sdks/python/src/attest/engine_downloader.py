@@ -26,11 +26,14 @@ _PLATFORM_MAP: dict[str, str] = {
 }
 
 
-def _attest_bin_dir() -> Path:
-    """Return ``~/.attest/bin/``, creating it if absent."""
-    bin_dir = Path.home() / ".attest" / "bin"
-    bin_dir.mkdir(parents=True, exist_ok=True)
-    return bin_dir
+def versioned_bin_dir() -> Path:
+    """Return ``~/.attest/bin/<ENGINE_VERSION>/``, the cache directory for this SDK's engine.
+
+    The directory name is the canonical engine version (``1.0.0-rc.N``), never the
+    normalized Python package version. The legacy unversioned ``~/.attest/bin/attest-engine``
+    is neither read nor modified.
+    """
+    return Path.home() / ".attest" / "bin" / ENGINE_VERSION
 
 
 def _platform_key() -> str:
@@ -53,25 +56,11 @@ def _binary_filename() -> str:
     return "attest-engine"
 
 
-def _version_file() -> Path:
-    """Return the path to the cached engine version marker."""
-    return _attest_bin_dir() / ".engine-version"
-
-
 def cached_engine_path() -> Path | None:
-    """Return the cached binary path if it exists and matches ENGINE_VERSION."""
-    bin_path = _attest_bin_dir() / _binary_filename()
+    """Return the engine binary in the versioned cache, or ``None`` if it is absent."""
+    bin_path = versioned_bin_dir() / _binary_filename()
     if not bin_path.is_file():
         return None
-
-    ver_file = _version_file()
-    if not ver_file.is_file():
-        return None
-
-    cached_version = ver_file.read_text().strip()
-    if cached_version != ENGINE_VERSION:
-        return None
-
     return bin_path
 
 
@@ -151,7 +140,8 @@ def download_engine() -> Path:
         )
 
     # Atomic write: temp file + rename
-    bin_dir = _attest_bin_dir()
+    bin_dir = versioned_bin_dir()
+    bin_dir.mkdir(parents=True, exist_ok=True)
     target = bin_dir / bin_name
 
     fd, tmp_path = tempfile.mkstemp(dir=bin_dir, prefix=".attest-engine-tmp-")
@@ -162,17 +152,6 @@ def download_engine() -> Path:
         os.replace(tmp_path, target)
     except BaseException:
         Path(tmp_path).unlink(missing_ok=True)
-        raise
-
-    # Write version marker atomically
-    ver_file = _version_file()
-    fd_v, tmp_ver = tempfile.mkstemp(dir=bin_dir, prefix=".engine-version-tmp-")
-    try:
-        with os.fdopen(fd_v, "w") as f:
-            f.write(ver)
-        os.replace(tmp_ver, ver_file)
-    except BaseException:
-        Path(tmp_ver).unlink(missing_ok=True)
         raise
 
     sys.stderr.write(f"attest: engine v{ver} installed to {target}\n")

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 from collections.abc import Generator
 from contextlib import contextmanager
 from typing import Any
@@ -92,7 +93,10 @@ class TestGoogleADKAdapterImportGuard:
     """Verify ImportError when google-adk is not installed."""
 
     def test_raises_import_error_when_adk_missing(self) -> None:
-        with pytest.raises(ImportError, match="Install ADK extras"):
+        with (
+            patch.dict(sys.modules, {"google.adk": None}),
+            pytest.raises(ImportError, match="Install ADK extras"),
+        ):
             GoogleADKAdapter.from_events([])
 
 

@@ -41,7 +41,7 @@ func (e *ConstraintEvaluator) Evaluate(trace *types.Trace, assertion *types.Asse
 
 	actualVal, err := resolveConstraintField(trace, spec.Field)
 	if errors.Is(err, errEvidenceNotSet) {
-		return notEvaluatedResult(assertion, start, types.ReasonMissingEvidence, fmt.Sprintf("trace does not record the checked field: %v", err))
+		return notEvaluatedResult(assertion, start, types.ReasonMissingEvidence, err.Error())
 	}
 	if err != nil {
 		return failResult(assertion, start, fmt.Sprintf("field resolution failed: %v", err))
@@ -141,26 +141,26 @@ func buildConstraintExpected(field, op string, value, minV, maxV *float64) strin
 
 // errEvidenceNotSet marks a constraint field the trace leaves unset. The
 // assertion is then not_evaluated(missing_evidence), not a failure.
-var errEvidenceNotSet = errors.New("not set in trace metadata")
+var errEvidenceNotSet = errors.New("absent")
 
 // resolveConstraintField resolves a constraint field path to a float64 value.
 func resolveConstraintField(trace *types.Trace, field string) (float64, error) {
 	switch field {
 	case "metadata.cost_usd":
 		if trace.Metadata == nil || trace.Metadata.CostUSD == nil {
-			return 0, fmt.Errorf("metadata.cost_usd: %w", errEvidenceNotSet)
+			return 0, fmt.Errorf("metadata.cost_usd %w", errEvidenceNotSet)
 		}
 		return *trace.Metadata.CostUSD, nil
 
 	case "metadata.total_tokens":
 		if trace.Metadata == nil || trace.Metadata.TotalTokens == nil {
-			return 0, fmt.Errorf("metadata.total_tokens: %w", errEvidenceNotSet)
+			return 0, fmt.Errorf("metadata.total_tokens %w", errEvidenceNotSet)
 		}
 		return float64(*trace.Metadata.TotalTokens), nil
 
 	case "metadata.latency_ms":
 		if trace.Metadata == nil || trace.Metadata.LatencyMS == nil {
-			return 0, fmt.Errorf("metadata.latency_ms: %w", errEvidenceNotSet)
+			return 0, fmt.Errorf("metadata.latency_ms %w", errEvidenceNotSet)
 		}
 		return float64(*trace.Metadata.LatencyMS), nil
 

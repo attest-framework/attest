@@ -1,301 +1,254 @@
 #!/usr/bin/env node
 /**
- * CLI entry point for Attest: npx attest or attest (after global install).
+ * The `attest` command line (`npx attest`).
  *
- * Ported from Python sdks/python/src/attest/__main__.py
+ * `attest init` runs in the SDK. Every other command (`doctor`, `baseline`, `policy`,
+ * `cache`, `calibrate`, `version` and any command a later engine adds) runs in
+ * `attest-engine`: the CLI resolves a version-checked engine with `resolveEngine`, checks
+ * that the engine's `help` lists the command, and forwards the arguments, stdio and exit
+ * code unchanged. A missing, mismatched or too-old engine exits 1 before anything runs, so
+ * a gate such as `attest policy evaluate` never exits 0 without evaluating.
+ *
+ * `attest capture` is forwarded the same way; when the engine writes a fixture, the CLI
+ * then drafts its Vitest file (`emitVitest`).
  */
 
+import { spawnSync } from "node:child_process";
 import * as fs from "node:fs";
-import * as path from "node:path";
 import * as os from "node:os";
-import { VERSION } from "./version.js";
-import {
-  computeAgreement,
-  loadLabelsCSV,
-  loadLabelsJSONL,
-  type LabelPair,
-} from "./calibration.js";
+import * as path from "node:path";
+import { fileURLToPath } from "node:url";
+import { ENGINE_VERSION, VERSION } from "./version.js";
+import { resolveEngine } from "./engine-manager.js";
+import { scaffoldProject } from "./scaffold.js";
+import { emitVitest, testPathFor } from "./capture.js";
 
-function cacheDir(): string {
-  const envOverride = process.env["ATTEST_CACHE_DIR"];
-  if (envOverride) return envOverride;
-  return path.join(os.homedir(), ".attest", "cache");
-}
+const HELP_FLAGS = new Set(["-h", "--help"]);
 
-function cacheDbPath(): string {
-  return path.join(cacheDir(), "attest.db");
-}
+const SDK_USAGE =
+  "usage: attest <command> [args]\n" +
+  "\n" +
+  "SDK commands:\n" +
+  "  init [--ci github]  scaffold a sample test and merge policy here\n" +
+  "                      (--ci github also writes .github/workflows/attest.yml)\n" +
+  "\n" +
+  "`attest capture` (engine) also drafts tests/attest/<name>.test.ts from a verified\n" +
+  "fixture, unless that file exists.\n" +
+  "\n" +
+  "options:\n" +
+  "  --version  print the SDK version and the engine version it requires\n" +
+  "  --help     print this help\n";
 
-function cmdCacheStats(): void {
-  const dbPath = cacheDbPath();
-  const exists = fs.existsSync(dbPath);
-  let fileSize = 0;
-  if (exists) {
-    fileSize = fs.statSync(dbPath).size;
+const INIT_USAGE = "usage: attest init [--ci github]  (scaffolds into the current directory)";
+
+/** Run `attest init [--ci github]` in the current directory. */
+function cmdInit(args: string[]): number {
+  if (args.some((a) => HELP_FLAGS.has(a))) {
+    process.stdout.write(`${INIT_USAGE}\n`);
+    return 0;
   }
-  const stats = { exists, file_size: fileSize, path: dbPath };
-  process.stdout.write(JSON.stringify(stats) + "\n");
-}
-
-function cmdCacheClear(): void {
-  const dbPath = cacheDbPath();
-  if (fs.existsSync(dbPath)) {
-    fs.unlinkSync(dbPath);
-    process.stdout.write(`Cleared cache: ${dbPath}\n`);
-  } else {
-    process.stdout.write(`No cache to clear: ${dbPath}\n`);
+  const joined = args.join(" ");
+  if (args.length > 0 && joined !== "--ci github" && joined !== "--ci=github") {
+    process.stderr.write(`${INIT_USAGE}\n`);
+    return 2;
   }
+  scaffoldProject(process.cwd(), args.length > 0 ? { ci: "github" } : {});
+  return 0;
 }
 
-const CONFTEST_TEMPLATE = `import { describe, it, expect } from "vitest";
-import { attestExpect, TraceBuilder } from "@attest-ai/core";
+const HELP_PROBE_TIMEOUT_MS = 10_000;
 
-describe("my agent", () => {
-  it("returns expected output", async () => {
-    const trace = new TraceBuilder("my-agent")
-      .setInput({ user_message: "hello" })
-      .setOutput({ message: "world" })
-      .build();
+function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
 
-    attestExpect(trace).outputContains("world");
+/**
+ * `{command: summary}` from `<engine> help`, or null if it lists none.
+ *
+ * stdin is closed and the probe times out after 10 s, so an engine that predates the
+ * command registry (and starts the JSON-RPC server for `help`) cannot hang the CLI.
+ */
+export function engineCommands(
+  engine: string,
+  timeoutMs: number = HELP_PROBE_TIMEOUT_MS,
+): Map<string, string> | null {
+  const proc = spawnSync(engine, ["help"], {
+    stdio: ["ignore", "pipe", "pipe"],
+    encoding: "utf-8",
+    timeout: timeoutMs,
   });
-});
-`;
-
-function cmdInit(targetDir: string): void {
-  const testsDir = path.join(targetDir, "tests");
-  fs.mkdirSync(testsDir, { recursive: true });
-  process.stdout.write(`Directory: ${testsDir}\n`);
-
-  const sampleTestPath = path.join(testsDir, "test_my_agent.test.ts");
-  if (fs.existsSync(sampleTestPath)) {
-    process.stderr.write(`Skipped (exists): ${sampleTestPath}\n`);
-  } else {
-    fs.writeFileSync(sampleTestPath, CONFTEST_TEMPLATE);
-    process.stdout.write(`Created: ${sampleTestPath}\n`);
+  if (proc.error || proc.status !== 0) return null;
+  const lines = proc.stdout.split("\n");
+  const start = lines.indexOf("commands:");
+  if (start === -1) return null;
+  const commands = new Map<string, string>();
+  for (const line of lines.slice(start + 1)) {
+    const match = /^\s*(\S+)\s*(.*)$/.exec(line);
+    if (match?.[1]) commands.set(match[1], (match[2] ?? "").trim());
   }
+  return commands;
 }
 
-function cmdValidate(targetDir: string): void {
-  const testsDir = path.join(targetDir, "tests");
-
-  let testFiles: string[] = [];
-  if (fs.existsSync(testsDir)) {
-    testFiles = fs
-      .readdirSync(testsDir)
-      .filter((f) => f.endsWith(".test.ts") || f.endsWith(".test.js"));
-  }
-
-  if (testFiles.length === 0) {
-    process.stderr.write(
-      `Warning: no test files (*.test.ts / *.test.js) found in ${testsDir}.\n`,
+/** Print SDK commands, plus engine commands when an engine is available without download. */
+async function printHelp(): Promise<number> {
+  process.stdout.write(`${SDK_USAGE}\n`);
+  let engine: string;
+  try {
+    engine = await resolveEngine(undefined, { allowDownload: false });
+  } catch (err) {
+    const firstLine = (errorMessage(err).split("\n")[0] ?? "").replace(/\.$/, "");
+    process.stdout.write(
+      `engine commands: not available (${firstLine}). Run \`attest doctor\` to download ` +
+        `attest-engine ${ENGINE_VERSION}, or set ATTEST_ENGINE_PATH.\n`,
     );
-  } else {
-    process.stdout.write(`Found ${testFiles.length} test file(s) in ${testsDir}\n`);
+    return 0;
   }
-
-  // Check for stale golden traces
-  const STALE_DAYS = 30;
-  const now = Date.now();
-  const goldenFiles = findGoldenFiles(targetDir);
-  for (const golden of goldenFiles) {
-    const mtime = fs.statSync(golden).mtimeMs;
-    const ageDays = Math.floor((now - mtime) / (1000 * 60 * 60 * 24));
-    if (ageDays > STALE_DAYS) {
-      process.stderr.write(
-        `Warning: golden trace ${golden} is ${ageDays} days old (>${STALE_DAYS} days). Consider regenerating.\n`,
-      );
-    }
+  const commands = engineCommands(engine);
+  if (commands === null) {
+    process.stdout.write(
+      `engine commands: not available (attest-engine at ${engine} lists no commands; ` +
+        "it predates the command registry).\n",
+    );
+    return 0;
   }
+  const width = Math.max(0, ...[...commands.keys()].map((name) => name.length));
+  process.stdout.write(`engine commands (attest-engine ${ENGINE_VERSION}, ${engine}):\n`);
+  for (const [name, summary] of commands) {
+    process.stdout.write(`  ${name.padEnd(width)}  ${summary}\n`);
+  }
+  return 0;
 }
 
-function findGoldenFiles(dir: string): string[] {
-  const results: string[] = [];
-  if (!fs.existsSync(dir)) return results;
-
-  const entries = fs.readdirSync(dir, { withFileTypes: true });
-  for (const entry of entries) {
-    const fullPath = path.join(dir, entry.name);
-    if (entry.isDirectory() && entry.name !== "node_modules") {
-      results.push(...findGoldenFiles(fullPath));
-    } else if (entry.isFile() && entry.name.endsWith(".golden")) {
-      results.push(fullPath);
-    }
-  }
-  return results;
+/** Map a child's exit to a shell exit status (signal N → 128 + N). */
+export function exitStatus(status: number | null, signal: NodeJS.Signals | null): number {
+  if (status !== null) return status;
+  if (signal !== null) return 128 + (os.constants.signals[signal] ?? 0);
+  return 1;
 }
 
-export function main(argv: string[] = process.argv.slice(2)): void {
-  const args = argv;
-
-  if (args[0] === "--version") {
-    process.stdout.write(`attest ${VERSION}\n`);
-    process.exit(0);
+async function forward(args: string[]): Promise<number> {
+  let engine: string;
+  try {
+    engine = await resolveEngine();
+  } catch (err) {
+    process.stderr.write(`attest: ${errorMessage(err)}\n`);
+    return 1;
   }
-
-  if (args[0] === "cache" && args.length >= 2) {
-    if (args[1] === "stats") {
-      cmdCacheStats();
-      process.exit(0);
-    } else if (args[1] === "clear") {
-      cmdCacheClear();
-      process.exit(0);
-    } else {
-      process.stderr.write(`Unknown cache subcommand: ${args[1]}\n`);
-      process.stderr.write("Available: cache stats, cache clear\n");
-      process.exit(1);
-    }
+  const command = args[0] ?? "";
+  const commands = engineCommands(engine);
+  if (commands === null || (command !== "help" && !commands.has(command))) {
+    process.stderr.write(
+      `attest: attest-engine at ${engine} (version ${ENGINE_VERSION}) predates ` +
+        `\`attest ${command}\`: its help does not list that command. Set ATTEST_ENGINE_PATH ` +
+        "to an engine built from this release (make engine), or install a release whose " +
+        "engine provides it.\n",
+    );
+    return 1;
   }
-
-  if (args[0] === "init") {
-    cmdInit(process.cwd());
-    process.exit(0);
+  if (command === "capture" && captureWritesFixture(args.slice(1))) {
+    return captureAndEmit(engine, args.slice(1));
   }
+  const proc = spawnSync(engine, args, { stdio: "inherit" });
+  if (proc.error) throw proc.error;
+  return exitStatus(proc.status, proc.signal);
+}
 
-  if (args[0] === "validate") {
-    cmdValidate(process.cwd());
-    process.exit(0);
+// Engine capture modes the CLI drafts no test for: help, --check-redaction (writes no
+// fixture) and --serve (used by record(), which drafts its own). Go flags accept one or
+// two dashes.
+const CAPTURE_NO_TEST = new Set(["check-redaction", "serve", "h", "help"]);
+
+function flagName(arg: string): string | null {
+  if (!arg.startsWith("-") || arg === "-" || arg === "--") return null;
+  return arg.replace(/^-+/, "").split("=", 1)[0] ?? null;
+}
+
+/** True when `attest capture` args select a mode whose fixture the CLI drafts a test for. */
+export function captureWritesFixture(args: string[]): boolean {
+  for (const a of args) {
+    if (a === "--") break;
+    const name = flagName(a);
+    if (name !== null && CAPTURE_NO_TEST.has(name)) return false;
   }
+  return true;
+}
 
-  if (args[0] === "calibrate") {
-    cmdCalibrate(args.slice(1));
-    process.exit(0);
+function userResultFile(args: string[]): boolean {
+  for (const a of args) {
+    if (a === "--") break;
+    if (flagName(a) === "result-file") return true;
   }
+  return false;
+}
 
+/** Run `attest-engine capture` and draft the Vitest file for the fixture it wrote. */
+function captureAndEmit(engine: string, args: string[]): number {
+  if (userResultFile(args)) {
+    process.stderr.write(
+      "attest: capture --result-file is set by the attest CLI; run attest-engine capture directly to choose it\n",
+    );
+    return 2;
+  }
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "attest-capture-"));
+  const resultFile = path.join(tmp, "result.json");
+  let result: { fixture: string; verified: boolean };
+  let code: number;
+  try {
+    const proc = spawnSync(engine, ["capture", "--result-file", resultFile, ...args], { stdio: "inherit" });
+    if (proc.error) throw proc.error;
+    code = exitStatus(proc.status, proc.signal);
+    if (!fs.existsSync(resultFile)) return code;
+    result = JSON.parse(fs.readFileSync(resultFile, "utf8")) as { fixture: string; verified: boolean };
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+  const fixture = result.fixture;
+  if (!result.verified) {
+    process.stderr.write(`  test: none drafted for unverified ${fixture}\n`);
+    return code;
+  }
+  const written = emitVitest(fixture);
   process.stderr.write(
-    "Usage: attest <command>\n\n" +
-    "Commands:\n" +
-    "  --version       Print version\n" +
-    "  init            Scaffold a test project\n" +
-    "  validate        Validate test suite\n" +
-    "  cache stats     Show cache statistics\n" +
-    "  cache clear     Clear cache database\n" +
-    "  calibrate       Compute judge agreement metrics over labeled data\n",
+    written === null
+      ? `  test: ${testPathFor(fixture)} exists; left unchanged\n`
+      : `  test: drafted ${written}\n`,
   );
-  process.exit(args.length === 0 ? 0 : 1);
+  return code;
 }
 
-interface CalibrateOptions {
-  labels: string;
-  rubric: string;
-  rubricVersion: string;
-  threshold: number;
+/** Dispatch `attest` arguments and resolve to the process exit code. */
+export async function main(argv: string[] = process.argv.slice(2)): Promise<number> {
+  const [command] = argv;
+  if (command === undefined || HELP_FLAGS.has(command) || (command === "help" && argv.length === 1)) {
+    return printHelp();
+  }
+  if (command === "--version") {
+    process.stdout.write(`attest ${VERSION} (requires attest-engine ${ENGINE_VERSION})\n`);
+    return 0;
+  }
+  if (command === "init") {
+    return cmdInit(argv.slice(1));
+  }
+  if (command.startsWith("-")) {
+    process.stderr.write(`attest: unknown option ${command}\n\n${SDK_USAGE}`);
+    return 2;
+  }
+  return forward(argv);
 }
 
-function parseCalibrateArgs(args: string[]): CalibrateOptions {
-  const opts: CalibrateOptions = {
-    labels: "",
-    rubric: "default",
-    rubricVersion: "",
-    threshold: 0.5,
-  };
-  for (let i = 0; i < args.length; i++) {
-    const arg = args[i]!;
-    const next = args[i + 1];
-    if (arg === "--labels") {
-      if (next === undefined) throw new Error("--labels requires a path");
-      opts.labels = next;
-      i++;
-    } else if (arg === "--rubric") {
-      if (next === undefined) throw new Error("--rubric requires a name");
-      opts.rubric = next;
-      i++;
-    } else if (arg === "--rubric-version") {
-      if (next === undefined) throw new Error("--rubric-version requires a value");
-      opts.rubricVersion = next;
-      i++;
-    } else if (arg === "--threshold") {
-      if (next === undefined) throw new Error("--threshold requires a number");
-      const parsed = Number(next);
-      if (next.trim() === "" || Number.isNaN(parsed)) {
-        throw new Error(`--threshold value ${JSON.stringify(next)} is not a number`);
-      }
-      opts.threshold = parsed;
-      i++;
-    } else {
-      throw new Error(`unknown calibrate flag: ${arg}`);
-    }
-  }
-  if (!opts.labels) {
-    throw new Error("--labels is required");
-  }
-  return opts;
+// Run when executed directly, including through the node_modules/.bin/attest symlink.
+function isDirectExecution(): boolean {
+  const script = process.argv[1];
+  if (script === undefined || !fs.existsSync(script)) return false;
+  return fs.realpathSync(script) === fs.realpathSync(fileURLToPath(import.meta.url));
 }
 
-function cmdCalibrate(args: string[]): void {
-  let opts: CalibrateOptions;
-  try {
-    opts = parseCalibrateArgs(args);
-  } catch (err) {
-    process.stderr.write(`calibrate: ${(err as Error).message}\n`);
-    process.exit(2);
-    return;
-  }
-
-  const text = fs.readFileSync(opts.labels, "utf-8");
-  const ext = path.extname(opts.labels).toLowerCase();
-  let records;
-  try {
-    if (ext === ".jsonl" || ext === ".ndjson") {
-      records = loadLabelsJSONL(text);
-    } else if (ext === ".csv") {
-      records = loadLabelsCSV(text);
-    } else if (text.trimStart().startsWith("{")) {
-      records = loadLabelsJSONL(text);
-    } else {
-      records = loadLabelsCSV(text);
-    }
-  } catch (err) {
-    process.stderr.write(`calibrate: ${(err as Error).message}\n`);
-    process.exit(1);
-    return;
-  }
-
-  const pairs: LabelPair[] = records
-    .filter((r) => r.judgeKnown)
-    .map((r) => ({ human: r.humanLabel, judge: r.judgeScore }));
-  const missing = records.filter((r) => !r.judgeKnown).length;
-  if (pairs.length === 0) {
-    process.stderr.write(
-      `calibrate: no rows had judge_score (${missing} rows missing); pre-score the labels file first\n`,
-    );
-    process.exit(1);
-    return;
-  }
-
-  let result;
-  try {
-    result = computeAgreement(pairs, opts.threshold);
-  } catch (err) {
-    process.stderr.write(`calibrate: ${(err as Error).message}\n`);
-    process.exit(1);
-    return;
-  }
-
-  const output = {
-    rubric_name: opts.rubric,
-    rubric_version: opts.rubricVersion,
-    threshold: result.threshold,
-    label_count: result.n,
-    agreement: round3(result.agreement),
-    cohen_kappa: round3(result.cohenKappa),
-    roc_auc: round3(result.rocAuc),
-    missing_judge: missing,
-  };
-  process.stdout.write(JSON.stringify(output, null, 2) + "\n");
-}
-
-function round3(x: number): number {
-  return Math.round(x * 1000) / 1000;
-}
-
-// Run when executed directly
-const isDirectExecution =
-  typeof import.meta.url === "string" &&
-  import.meta.url.startsWith("file:") &&
-  process.argv[1] !== undefined &&
-  import.meta.url.endsWith(path.basename(process.argv[1]));
-
-if (isDirectExecution) {
-  main();
+if (isDirectExecution()) {
+  main().then(
+    (code) => process.exit(code),
+    (err: unknown) => {
+      process.stderr.write(`attest: ${errorMessage(err)}\n`);
+      process.exit(1);
+    },
+  );
 }
