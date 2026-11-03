@@ -16,6 +16,7 @@ import (
 	"github.com/attest-ai/attest/engine/internal/assertion/judge"
 	"github.com/attest-ai/attest/engine/internal/buildinfo"
 	"github.com/attest-ai/attest/engine/internal/cache"
+	"github.com/attest-ai/attest/engine/internal/contractlog"
 	"github.com/attest-ai/attest/engine/internal/llm"
 	"github.com/attest-ai/attest/engine/internal/simulation"
 	"github.com/attest-ai/attest/engine/internal/trace"
@@ -70,9 +71,17 @@ func RegisterBuiltinHandlers(s *Server) error {
 		return err
 	}
 
+	recorder, err := contractlog.NewFromEnv()
+	if err != nil {
+		return err
+	}
+	if recorder != nil {
+		s.logger.Info("recording assertion specs", "file", recorder.Path())
+	}
+
 	s.RegisterHandler("initialize", handleInitialize(caps))
 	s.RegisterHandler("shutdown", handleShutdown)
-	s.RegisterHandler("evaluate_batch", handleEvaluateBatch(pipeline, historyStore, batchBudgets{softFail: budget, ledger: provs.ledger}, s.writeNotification))
+	s.RegisterHandler("evaluate_batch", handleEvaluateBatch(pipeline, historyStore, batchBudgets{softFail: budget, ledger: provs.ledger}, recorder, s.writeNotification))
 	s.RegisterHandler("submit_plugin_result", handleSubmitPluginResult(historyStore))
 	s.RegisterHandler("validate_trace_tree", handleValidateTraceTree())
 	s.RegisterHandler("query_drift", handleQueryDrift(historyStore))
@@ -391,7 +400,7 @@ type batchBudgets struct {
 	ledger   *assertion.Ledger
 }
 
-func handleEvaluateBatch(pipeline *assertion.Pipeline, historyStore *cache.HistoryStore, budgets batchBudgets, writeNotification func(any)) Handler {
+func handleEvaluateBatch(pipeline *assertion.Pipeline, historyStore *cache.HistoryStore, budgets batchBudgets, recorder *contractlog.Recorder, writeNotification func(any)) Handler {
 	return func(session *Session, params json.RawMessage) (any, *types.RPCError) {
 		if session.State() != StateInitialized {
 			return nil, types.NewRPCError(
@@ -464,6 +473,25 @@ func handleEvaluateBatch(pipeline *assertion.Pipeline, historyStore *cache.Histo
 		if rpcErr := validateBatchBudget(p.Budget); rpcErr != nil {
 			return nil, rpcErr
 		}
+		if recorder != nil {
+			// Only validated batches, and only assertion types the engine knows.
+			var known []types.Assertion
+			for _, a := range p.Assertions {
+				if types.LayerForType(a.Type) != 0 {
+					known = append(known, a)
+				}
+			}
+			if err := recorder.Record(p.Context, known); err != nil {
+				return nil, types.NewRPCError(
+					types.ErrEngineError,
+					fmt.Sprintf("%s: %v", contractlog.EnvDir, err),
+					types.ErrTypeEngineError,
+					false,
+					"Fix the directory named by ATTEST_CONTRACTS_DIR or unset it.",
+				)
+			}
+		}
+
 		scope := budgets.ledger.NewScope(p.Budget)
 		ctx := assertion.WithBudgetScope(context.Background(), scope)
 		result, err := pipeline.EvaluateBatchWithBudget(ctx, &p.Trace, p.Assertions, budgets.softFail)

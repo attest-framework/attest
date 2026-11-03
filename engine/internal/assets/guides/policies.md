@@ -42,6 +42,10 @@ block_on_regression: true
 
 # Needs --baseline and fixed-N trials: statistical comparison of pass rates.
 regression: { confidence: 0.95, tolerance: 0.05 }
+
+# Needs --mutation <mutate.json>: the mutation score from `attest mutate --json`
+# must reach this ratio (0 to 1). Severity defaults to the policy severity.
+min_mutation_score: { score: 0.8, severity: block }
 ```
 
 Every field is optional. An empty policy has no rules to block on, but the `not_evaluated` rule still applies, so it exits 2 when any assertion was not evaluated. A severity other than `block` or `warn` is a load error, so a typo cannot quietly weaken a rule. A `.json` policy takes the same fields.
@@ -51,6 +55,17 @@ Every field is optional. An empty policy has no rules to block on, but the `not_
 An assertion the engine could not judge (`provider_unavailable`, `provider_not_configured`, `simulation`, `missing_evidence`, `short_circuited`, `budget_exhausted`, `judge_abstained`, `replay_miss`) has status `not_evaluated` and a reason. It is never counted as a pass, and it is excluded from pass rates. The policy's `not_evaluated` severity decides what it costs: the default `warn` exits 2 so an outage or a missing key does not block merges; `not_evaluated: block` makes it exit 1.
 
 A [replay miss](replay.md#what-a-miss-says) is `not_evaluated` with reason `replay_miss` when the test could not go live, and a failed test when the replay is strict.
+
+## Mutation score
+
+`min_mutation_score` gates on how well the suite's contracts catch behavior mutants of your fixtures ([mutation](mutation.md)). Pass the `--json` output of `attest mutate`:
+
+```bash
+uv run attest mutate tests/attest/fixtures/*.attest.json --contracts .attest/contracts --json > mutation.json
+uv run attest policy evaluate --policy attest.policy.yaml --report attest-report.json --mutation mutation.json
+```
+
+A score below `score` is a violation named `min_mutation_score` with the rule's severity, so it exits 1 (`block`) or 2 (`warn`). A report with no score (no mutant could be scored) cannot meet a threshold and is also a violation. `score` must be between 0 and 1 and is required; a policy that sets the rule without `--mutation` is a load error (exit 3), so the gate cannot be skipped by forgetting the file. `--mutation` without the rule changes nothing.
 
 ## Baselines
 

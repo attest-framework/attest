@@ -1,6 +1,6 @@
 ---
 name: attest
-description: Test AI agents with Attest (attest-ai on PyPI, @attest-ai/core and @attest-ai/vitest on npm). Use when asked to add a behavior or side-effect contract to an agent (for example "prevent duplicate refunds"), turn an incident or a run into a regression test, debug a failing, skipped or not-evaluated attest test, set up an attest merge gate in CI, or migrate eval suites from Promptfoo or DeepEval to attest.
+description: Test AI agents with Attest (attest-ai on PyPI, @attest-ai/core and @attest-ai/vitest on npm). Use when asked to add a behavior or side-effect contract to an agent (for example "never charge a card twice"), turn an incident or a run into a regression test, debug a failing, skipped or not-evaluated attest test, set up an attest merge gate in CI, or migrate eval suites from Promptfoo or DeepEval to attest.
 ---
 
 # Attest
@@ -11,7 +11,7 @@ Attest checks what an agent did (tool calls, side effects, structured output) wi
 
 | The user asks to | Read |
 | --- | --- |
-| add a contract or test for an agent behavior or incident ("never refund twice", "always look up the order first", "one refund per order") | `references/write-contracts.md` |
+| add a contract or test for an agent behavior or incident ("never charge a card twice", "always look up the order first", "one charge per order") | `references/write-contracts.md` |
 | turn an incident, a bad run or a good run into a fixture and a test | `references/capture-incident.md` |
 | explain or fix a failing, skipped or `not_evaluated` attest test, a replay miss, a policy exit code | `references/debug-failure.md` |
 | gate merges in CI, annotate pull requests, run only affected tests | `references/ci-setup.md` |

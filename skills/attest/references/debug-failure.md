@@ -19,14 +19,14 @@ uv run attest report summary --report attest-report.json          # the PR summa
 uv run attest policy evaluate --policy attest.policy.yaml --report attest-report.json
 ```
 
-`report rows` lists hard failures and replay misses with their test file and line. The pytest/Vitest diagnostic names the layer, the trace path, expected and actual:
+`report rows` lists hard failures and replay misses with their test file and line. The pytest/Vitest diagnostic names the layer, the trace path, expected and actual (example from a fictional checkout assistant):
 
 ```text
 Attest diagnostic — 1 of 4 assertions failed:
   FAIL assert_2d1d647b — L4 content
       trace path: output.message
-      expected:   contains "store credit"
-      actual:     Your refund of $42.00 has been issued.
+      expected:   contains "confirmation pending"
+      actual:     Your card has been charged $42.00.
 ```
 
 | Status | Test outcome | Meaning |
@@ -38,7 +38,7 @@ Attest diagnostic — 1 of 4 assertions failed:
 
 ## 3. Fix by cause
 
-`hard_fail`: decide whether the agent or the assertion is wrong. If the explanation describes the bug the contract exists for (`issue_refund called 2× for order_id=O-1042 (max 1)`, `effect violated: 2 refunds for O-1042 (expected 1)`), fix the agent. Change an assertion only when it encodes a wrong rule, and tell the user.
+`hard_fail`: decide whether the agent or the assertion is wrong. If the explanation describes the bug the contract exists for (example: `charge_card called 2× for order_id=A-17 (max 1)`, `effect violated: 2 charges for A-17 (expected 1)`), fix the agent. Change an assertion only when it encodes a wrong rule, and tell the user.
 
 `not_evaluated` reasons (never treat as pass):
 
@@ -55,10 +55,10 @@ Attest diagnostic — 1 of 4 assertions failed:
 
 ## 4. Replay misses
 
-A strict miss fails the test with the first component that changed:
+A strict miss fails the test with the first component that changed (example fixture: `checkout-timeout`):
 
 ```text
-replay miss: system prompt changed (hash a1b2c3d→e4f5a6b); re-record with `attest capture --refresh inc-1042`
+replay miss: system prompt changed (hash a1b2c3d→e4f5a6b); re-record with `attest capture --refresh checkout-timeout`
 ```
 
 Other forms: `messages changed`, `tools changed`, `params changed`, `model changed ("gpt-4.1"→"gpt-5.4")`, `the agent made more model calls than the 3 recorded`, `the agent made an extra identical call`.

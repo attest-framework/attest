@@ -1,0 +1,18 @@
+{
+  "score": null,
+  "seed": 7,
+  "fixtures": ["inc-1042"],
+  "mutants": [
+    {
+      "id": "inc-1042:drop_tool_call:1",
+      "fixture": "inc-1042",
+      "operator": "drop_tool_call",
+      "description": "drop lookup_order (order_id=O-1042)",
+      "status": "no_applicable_specs",
+      "killed_by": []
+    }
+  ],
+  "survivors_suggestions": [],
+  "skipped_specs": 3,
+  "applicable_specs": 0
+}

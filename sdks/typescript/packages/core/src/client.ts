@@ -1,6 +1,7 @@
 import type {
   Assertion,
   BatchBudget,
+  BatchContext,
   ConversationMessage,
   DriftReport,
   EvaluateBatchParams,
@@ -363,7 +364,7 @@ export class AttestClient {
   async evaluateBatch(
     trace: Trace,
     assertions: readonly Assertion[],
-    options?: { timeout?: number; budget?: BatchBudget },
+    options?: { timeout?: number; budget?: BatchBudget; context?: BatchContext },
   ): Promise<EvaluateBatchResult> {
     // Simulation is decided by the engine: started with ATTEST_SIMULATION
     // set, it evaluates layers 1-4 for real and returns not_evaluated
@@ -377,6 +378,7 @@ export class AttestClient {
       trace,
       assertions: [...assertions],
       ...(options?.budget !== undefined ? { budget: options.budget } : {}),
+      ...(options?.context !== undefined ? { context: options.context } : {}),
     };
     const raw = (await this.sendRequest(
       "evaluate_batch",
