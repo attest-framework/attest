@@ -5,6 +5,7 @@ import (
 	"flag"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -226,5 +227,93 @@ func TestGenerateJUnitXML_Skips_MatchesGolden(t *testing.T) {
 	}
 	if strings.Contains(string(out), "<failure") {
 		t.Error("an expected failure must not become a <failure>")
+	}
+}
+
+const hostilePolicyDetail = "<!-- attest:pr-annotate --> @octocat [x](https://evil) <img src=x> unclosed <!--"
+
+func TestRenderSummary_HostileReport_IsInert(t *testing.T) {
+	policy := &report.PolicyOutcome{
+		ExitCode: 1,
+		Verdict:  "@org/team",
+		Violations: []report.PolicyViolation{
+			{Rule: "rule`with`ticks", Detail: hostilePolicyDetail, Severity: "block@x"},
+		},
+	}
+	got := report.RenderSummary(loadFixture(t, "hostile.json"), policy)
+	golden(t, "summary_hostile.md", got)
+
+	outside := stripCodeSpans(got)
+	for _, trigger := range []string{
+		"@octocat", "@org", "org/repo#1", "<img", "<!--", "-->", "](", "evil", "attest:pr-annotate",
+		"‮", "​",
+	} {
+		if strings.Contains(outside, trigger) {
+			t.Errorf("%q appears outside a code span:\n%s", trigger, outside)
+		}
+	}
+	for _, line := range strings.Split(got, "\n") {
+		if strings.HasPrefix(line, "| `") && strings.Count(strings.ReplaceAll(line, `\|`, ""), "|") != 5 {
+			t.Errorf("table row has extra unescaped pipes: %s", line)
+		}
+	}
+}
+
+var spanRun = regexp.MustCompile("`+")
+
+// stripCodeSpans removes inline code spans (CommonMark: an opening backtick
+// run closes at the next run of the same length) from s.
+func stripCodeSpans(s string) string {
+	var out strings.Builder
+	for len(s) > 0 {
+		loc := spanRun.FindStringIndex(s)
+		if loc == nil {
+			out.WriteString(s)
+			break
+		}
+		out.WriteString(s[:loc[0]])
+		fence := s[loc[0]:loc[1]]
+		rest := s[loc[1]:]
+		end := -1
+		for off := 0; off < len(rest); {
+			l := spanRun.FindStringIndex(rest[off:])
+			if l == nil {
+				break
+			}
+			if rest[off+l[0]:off+l[1]] == fence {
+				end = off + l[1]
+				break
+			}
+			off += l[1]
+		}
+		if end < 0 {
+			out.WriteString(fence)
+			s = rest
+			continue
+		}
+		s = rest[end:]
+	}
+	return out.String()
+}
+
+func TestCodeSpan_BacktickRuns_GetALongerFence(t *testing.T) {
+	cases := map[string]string{
+		"plain":       "`plain`",
+		"a`b":         "``a`b``",
+		"a``b":        "```a``b```",
+		"`start":      "`` `start ``",
+		"end`":        "`` end` ``",
+		"a|b":         `a\|b`,
+		"line\nbreak": "`line break`",
+		"z​w‮x":       "`zwx`",
+	}
+	for in, want := range cases {
+		got := report.CodeSpanForTest(in, in == "a|b")
+		if in == "a|b" {
+			want = "`" + want + "`"
+		}
+		if got != want {
+			t.Errorf("codeSpan(%q) = %q, want %q", in, got, want)
+		}
 	}
 }

@@ -6,6 +6,7 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/attest-ai/attest/engine/pkg/types"
@@ -138,7 +139,7 @@ func notEvaluatedReasons(results []CIResult) []string {
 	})
 	out := make([]string, len(reasons))
 	for i, reason := range reasons {
-		out[i] = fmt.Sprintf("`%s` ×%d", reason, counts[reason])
+		out[i] = fmt.Sprintf("%s ×%d", span(reason), counts[reason])
 	}
 	return out
 }
@@ -190,24 +191,85 @@ func writePolicy(b *strings.Builder, p *PolicyOutcome) {
 	}
 	fmt.Fprintf(b, "**Policy:** %s (exit %d)", verdict, p.ExitCode)
 	if p.Verdict != "" {
-		fmt.Fprintf(b, " · regression verdict %s", p.Verdict)
+		fmt.Fprintf(b, " · regression verdict %s", span(p.Verdict))
 	}
 	b.WriteString("\n")
 	for _, v := range p.Violations {
-		fmt.Fprintf(b, "- %s `%s`: %s\n", v.Severity, v.Rule, cell(v.Detail))
+		fmt.Fprintf(b, "- %s %s: %s\n", span(v.Severity), span(v.Rule), span(v.Detail))
 	}
 }
 
-// cell makes s safe inside a Markdown table cell: it removes line breaks and
-// escapes pipes, then truncates to summaryCellCap runes.
-func cell(s string) string {
-	s = strings.Join(strings.Fields(s), " ")
-	s = strings.ReplaceAll(s, "|", `\|`)
+// sanitize reduces report-derived text to one line of printable characters:
+// line breaks and tabs become spaces, other control, format (bidi marks,
+// zero-width characters, BOM) and line/paragraph separator characters are
+// removed, and whitespace runs collapse. The result is truncated to
+// summaryCellCap runes.
+func sanitize(s string) string {
+	var b strings.Builder
+	for _, r := range s {
+		switch {
+		case r == '\n' || r == '\r' || r == '\t' || r == '\u2028' || r == '\u2029':
+			b.WriteRune(' ')
+		case unicode.IsControl(r) || unicode.Is(unicode.Cf, r):
+		default:
+			b.WriteRune(r)
+		}
+	}
+	s = strings.Join(strings.Fields(b.String()), " ")
 	if utf8.RuneCountInString(s) > summaryCellCap {
-		runes := []rune(s)
-		s = string(runes[:summaryCellCap-1]) + "…"
+		s = string([]rune(s)[:summaryCellCap-1]) + "…"
 	}
 	return s
+}
+
+// codeSpan renders s as an inline code span. GitHub renders no Markdown,
+// HTML, mentions, issue references or autolinks inside one, so report content
+// (which can hold agent output) stays inert in a comment posted with a write
+// token. The fence is one backtick longer than the longest backtick run in s,
+// and a span that starts or ends with a backtick is space-padded
+// (CommonMark strips one space from each side). With escapePipes, `|` becomes
+// `\|` as GFM requires inside a table cell, code spans included.
+func codeSpan(s string, escapePipes bool) string {
+	s = sanitize(s)
+	if s == "" {
+		return ""
+	}
+	if escapePipes {
+		s = strings.ReplaceAll(s, "|", `\|`)
+	}
+	longest, run := 0, 0
+	for _, r := range s {
+		if r == '`' {
+			run++
+			if run > longest {
+				longest = run
+			}
+		} else {
+			run = 0
+		}
+	}
+	fence := strings.Repeat("`", longest+1)
+	if strings.HasPrefix(s, "`") || strings.HasSuffix(s, "`") {
+		s = " " + s + " "
+	}
+	return fence + s + fence
+}
+
+// cell renders report-derived text for a table cell: a code span with pipes
+// escaped. An empty value renders as "-".
+func cell(s string) string {
+	if c := codeSpan(s, true); c != "" {
+		return c
+	}
+	return "-"
+}
+
+// span renders report-derived text as a code span outside a table.
+func span(s string) string {
+	if c := codeSpan(s, false); c != "" {
+		return c
+	}
+	return "`(empty)`"
 }
 
 // FormatUsage renders usage as the run-summary line
