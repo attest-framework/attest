@@ -11,7 +11,7 @@
 import { spawn } from "node:child_process";
 import * as path from "node:path";
 import { DEFAULT_FIXTURE_DIR, NAME_PATTERN } from "./capture.js";
-import { egressBlockRequested } from "./egress.js";
+import { egressBlockRequested, egressGuardActive } from "./egress.js";
 import { resolveEngine } from "./engine-manager.js";
 
 export type ReplayMode = "strict" | "auto";
@@ -79,7 +79,10 @@ export interface ReplayOptions {
   fixturesDir?: string;
   /** `strict`, `auto` or `off`; default per `resolveMode`. `off` starts nothing. */
   mode?: ReplayModeSetting;
-  /** Pass `--no-live` to the engine: no miss is forwarded live. Default: `ATTEST_EGRESS=block`. */
+  /**
+   * Pass `--no-live` to the engine: no miss is forwarded live. Default: `ATTEST_EGRESS=block`.
+   * An installed egress guard always implies it.
+   */
   noLive?: boolean;
   /** Engine binary (default: the SDK's engine discovery). */
   enginePath?: string;
@@ -160,7 +163,7 @@ function missError(mode: ReplayMode, summary: ReplaySummary): ReplayMissError | 
 async function start(name: string, mode: ReplayMode, opts: ReplayOptions): Promise<ReplaySession> {
   const engine = await resolveEngine(opts.enginePath);
   const fixturesDir = path.resolve(opts.fixturesDir ?? DEFAULT_FIXTURE_DIR);
-  const blocking = opts.noLive ?? egressBlockRequested();
+  const blocking = egressGuardActive() || (opts.noLive ?? egressBlockRequested());
   const args = ["replay", "--serve", "--name", name, "--fixtures-dir", fixturesDir, "--mode", mode];
   if (blocking) args.push("--no-live");
   const child = spawn(engine, args, { stdio: ["pipe", "pipe", "pipe"] });

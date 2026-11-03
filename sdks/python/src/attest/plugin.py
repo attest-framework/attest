@@ -448,6 +448,7 @@ def attest_replay(
             mode=chosen,
             fixtures_dir=fixtures_dir_for(config.rootpath, fixtures_dir),
             engine_path=engine_path or config.getoption("--attest-engine", default=None),
+            no_live=_egress_mode(config) == "block",
         )
         _item_replays.setdefault(nodeid, []).append(session)
         return session
@@ -529,8 +530,27 @@ def pytest_runtest_makereport(
     """
     outcome = yield
     report: pytest.TestReport = outcome.get_result()
+    if call.when == "setup" and item.nodeid in _session_tests:
+        # A new attempt (a rerun plugin retrying the test) starts its replay summaries over;
+        # drop them before this setup settles any of its own.
+        _session_replay.pop(item.nodeid, None)
+    if (
+        call.when == "setup"
+        and item.nodeid in _item_replays
+        and (report.outcome == "failed" or hasattr(report, "wasxfail"))
+    ):
+        # A fixture ran the agent under replay during setup and setup failed: settle the
+        # replay now, so a miss is reported as one instead of as the agent's exception
+        # (or, under xfail, as an expected failure).
+        settled = _settle_replays(item)
+        if isinstance(settled, pytest.skip.Exception):
+            if hasattr(report, "wasxfail"):
+                del report.wasxfail
+            _, lineno, _ = item.location
+            report.outcome = "skipped"
+            report.longrepr = (str(item.path), (lineno or 0) + 1, f"Skipped: {settled.msg}")
     replay_failure = item.stash.get(_REPLAY_FAILURE, None)
-    if call.when == "call" and replay_failure is not None:
+    if call.when in ("setup", "call") and replay_failure is not None:
         # Outermost wrapper: the xfail machinery has run. A strict replay miss is a failure
         # of the test, not an expected one.
         if hasattr(report, "wasxfail"):
@@ -581,7 +601,6 @@ def _record_test_phase(item: pytest.Item, report: pytest.TestReport) -> TestReco
         record.agent_results.clear()
         record.trials = None
         record.replay = []
-        _session_replay.pop(item.nodeid, None)
     if record is None:
         path, lineno, _ = item.location
         record = TestRecord(
@@ -599,6 +618,8 @@ def _record_test_phase(item: pytest.Item, report: pytest.TestReport) -> TestReco
             record.outcome = report.outcome
     if report.when == "call":
         record.trials = _session_trials_run.pop(item.nodeid, None)
+    if report.when == "call" or (report.when == "setup" and report.outcome != "passed"):
+        # A setup that failed or skipped ran no call phase: its replay is the test's.
         record.replay = list(_session_replay.get(item.nodeid, []))
     return record
 

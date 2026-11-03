@@ -88,6 +88,11 @@ export function installEgressGuard(): () => void {
   };
 }
 
+/** True while an egress guard is installed in this process. */
+export function egressGuardActive(): boolean {
+  return installs > 0;
+}
+
 /** Remove the guard now, whatever the install count. */
 export function uninstallEgressGuard(): void {
   installs = 0;
