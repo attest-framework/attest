@@ -3,6 +3,7 @@ import type { Assertion, Trace } from "./proto/types.js";
 import {
   TYPE_CONSTRAINT,
   TYPE_CONTENT,
+  TYPE_EFFECT,
   TYPE_EMBEDDING,
   TYPE_LLM_JUDGE,
   TYPE_PLUGIN,
@@ -14,6 +15,75 @@ import { AgentResult } from "./result.js";
 
 type TrajectoryMode = "strict" | "unordered" | "subset" | "superset";
 type ArgOperator = "eq" | "ne" | "lt" | "lte" | "gt" | "gte" | "in" | "not_in";
+
+/** A resource's records filtered by exact field values. */
+type Where = Record<string, unknown>;
+
+/**
+ * Effect checks against one world snapshot, from {@link ExpectChain.world}. Each method adds
+ * an `effect` assertion (Layer 3) to the parent chain and returns it.
+ */
+export class WorldChecks<C> {
+  private readonly _snapshot: Record<string, unknown> | null;
+  private readonly _add: (spec: Record<string, unknown>) => C;
+
+  constructor(snapshot: Record<string, unknown> | null, add: (spec: Record<string, unknown>) => C) {
+    this._snapshot = snapshot;
+    this._add = add;
+  }
+
+  private addCheck(spec: Record<string, unknown>, where: Where | undefined): C {
+    const full: Record<string, unknown> = { ...spec, world: this._snapshot };
+    if (where !== undefined && Object.keys(where).length > 0) full.where = where;
+    return this._add(full);
+  }
+
+  /**
+   * Assert how many records of `resource` match `where`. Give `equals`, or `atMost` and/or
+   * `atLeast`. A violation reads `effect violated: 2 refunds for O-1042 (expected 1)`.
+   *
+   * @throws Error when no bound is given, or `equals` is combined with another bound.
+   *
+   * @example
+   * ```ts
+   * expect(trace).world(await world.state()).count("refunds", { equals: 1, where: { order_id: "O-1042" } });
+   * ```
+   */
+  count(
+    resource: string,
+    opts: { equals?: number; atMost?: number; atLeast?: number; where?: Where },
+  ): C {
+    if (opts.equals === undefined && opts.atMost === undefined && opts.atLeast === undefined) {
+      throw new Error("count needs equals, atMost or atLeast");
+    }
+    if (opts.equals !== undefined && (opts.atMost !== undefined || opts.atLeast !== undefined)) {
+      throw new Error("count: equals excludes atMost and atLeast");
+    }
+    const spec: Record<string, unknown> = { check: "count", resource };
+    if (opts.equals !== undefined) spec.equals = opts.equals;
+    if (opts.atMost !== undefined) spec.at_most = opts.atMost;
+    if (opts.atLeast !== undefined) spec.at_least = opts.atLeast;
+    return this.addCheck(spec, opts.where);
+  }
+
+  /** Assert no two matching records share the same values for field(s) `by`. */
+  unique(resource: string, opts: { by: string | string[]; where?: Where }): C {
+    const fields = typeof opts.by === "string" ? [opts.by] : [...opts.by];
+    if (fields.length === 0) throw new Error("unique needs at least one field in by");
+    return this.addCheck({ check: "unique", resource, fields }, opts.where);
+  }
+
+  /**
+   * Assert every matching record carries a distinct value in field `key` (default
+   * `idempotency_key`), the record field that stores the idempotency key.
+   */
+  idempotent(resource: string, opts: { key?: string; where?: Where } = {}): C {
+    return this.addCheck(
+      { check: "idempotent", resource, field: opts.key ?? "idempotency_key" },
+      opts.where,
+    );
+  }
+}
 
 export class ExpectChain {
   private readonly _result: AgentResult;
@@ -493,6 +563,17 @@ export class ExpectChain {
       value,
       soft: opts?.soft ?? false,
     });
+  }
+
+  // -- Layer 3: Effect checks (the external system the agent acted on) --
+
+  /**
+   * Check effects in a world snapshot:
+   * `expect(trace).world(await world.state()).count(...)`. `null` means the test ran without
+   * a world helper: the checks are `not_evaluated` (`missing_evidence`).
+   */
+  world(snapshot: Record<string, unknown> | null): WorldChecks<this> {
+    return new WorldChecks<this>(snapshot, (spec) => this.add(TYPE_EFFECT, spec));
   }
 
   // -- Layer 4: Content --

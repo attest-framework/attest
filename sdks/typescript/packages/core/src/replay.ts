@@ -250,7 +250,7 @@ async function start(name: string, mode: ReplayMode, opts: ReplayOptions): Promi
   };
 }
 
-function parseEnv(line: string | null): Record<string, string> | null {
+export function parseEnv(line: string | null): Record<string, string> | null {
   if (line === null) return null;
   try {
     const env = (JSON.parse(line) as { env?: unknown }).env;

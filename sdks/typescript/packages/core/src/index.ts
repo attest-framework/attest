@@ -32,7 +32,7 @@ export {
 } from "./diagnostics.js";
 export type { RenderOptions } from "./diagnostics.js";
 export { TraceTree } from "./trace-tree.js";
-export { ExpectChain, attestExpect } from "./expect.js";
+export { ExpectChain, WorldChecks, attestExpect } from "./expect.js";
 export {
   CaptureError,
   loadFixture,
@@ -59,6 +59,8 @@ export {
   resolveMode,
   startReplay,
 } from "./replay.js";
+export { WorldError, startWorld } from "./world.js";
+export type { WorldOptions, WorldSession, WorldSnapshot } from "./world.js";
 export type {
   ReplayMode,
   ReplayModeSetting,

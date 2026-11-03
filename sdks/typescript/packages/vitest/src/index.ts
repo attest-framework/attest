@@ -10,6 +10,7 @@ export type { AttestReporterOptions } from "./reporter.js";
 export { buildReport, REPORT_VERSION, sessionUsage, summaryLines } from "./report.js";
 export type { AttestTaskMeta, RecordedResult, TestOutcome, TestRecord, TrialsMeta } from "./report.js";
 export { filterByTier } from "./tier-filter.js";
+export { useWorld } from "./world.js";
 export { useReplay } from "./replay.js";
 export type { ReplayHandle, ReplayMeta, UseReplayOptions } from "./replay.js";
 export {
@@ -25,6 +26,8 @@ export {
   liveLine,
   resolveMode,
   startReplay,
+  startWorld,
   uninstallEgressGuard,
+  WorldError,
 } from "@attest-ai/core";
-export type { ReplaySession, ReplaySummary } from "@attest-ai/core";
+export type { ReplaySession, ReplaySummary, WorldOptions, WorldSession, WorldSnapshot } from "@attest-ai/core";

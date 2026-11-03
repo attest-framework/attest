@@ -30,6 +30,7 @@ export type Outcome = typeof OUTCOME_PASS | typeof OUTCOME_FAIL | typeof OUTCOME
 export const TYPE_SCHEMA = "schema" as const;
 export const TYPE_CONSTRAINT = "constraint" as const;
 export const TYPE_TRACE = "trace" as const;
+export const TYPE_EFFECT = "effect" as const;
 export const TYPE_CONTENT = "content" as const;
 export const TYPE_EMBEDDING = "embedding" as const;
 export const TYPE_LLM_JUDGE = "llm_judge" as const;

@@ -342,6 +342,12 @@ export interface RecordOptions {
   /** Engine binary (default: the SDK's engine discovery). */
   enginePath?: string;
   /**
+   * A `world.yaml` to host for the callback (the engine's `--world`): its base URL variable
+   * (`PAYMENTS_BASE_URL`) is set for the callback and the world's final state is saved in
+   * the fixture's `world` section.
+   */
+  world?: string;
+  /**
    * Called after the callback returns and before the fixture is built; pass the tracer
    * provider's `forceFlush` so batched spans reach the receiver.
    */
@@ -483,6 +489,7 @@ async function recordExclusive<T>(
   const args = ["capture", "--serve", "--name", name, "--out-dir", opts.outDir ?? DEFAULT_FIXTURE_DIR];
   if (opts.expectFail) args.push("--expect-fail");
   if (opts.agentId !== undefined) args.push("--agent-id", opts.agentId);
+  if (opts.world !== undefined) args.push("--world", path.resolve(opts.world));
   const proc = serve(engine, args);
   const env = readyEnv(await proc.ready);
   if (env === null) {
