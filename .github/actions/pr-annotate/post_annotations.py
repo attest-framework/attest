@@ -48,6 +48,8 @@ DEFAULT_ENGINE = "attest-engine"
 
 # GitHub shows 10 errors and 10 warnings per step and 50 per job.
 MAX_PER_LEVEL = 10
+# One warning slot stays free for the "comment not posted" warning.
+MAX_ROWS = {"error": MAX_PER_LEVEL, "warning": MAX_PER_LEVEL - 1}
 MAX_MESSAGE_CHARS = 1000
 MAX_TITLE_CHARS = 100
 # GitHub rejects comment bodies over 65536 characters.
@@ -55,6 +57,7 @@ MAX_COMMENT_CHARS = 60000
 MAX_COMMENT_PAGES = 50
 ENGINE_TIMEOUT_S = 120
 
+_TOKEN_VARS = ("GITHUB_TOKEN", "INPUT_GITHUB-TOKEN")
 _REPO = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 
 # Control characters other than tab and newline, line/paragraph separators,
@@ -160,7 +163,7 @@ def evaluate_policies(
     """
     if not policy:
         return 0, None
-    worst_code = -1
+    worst_code: int | None = None
     worst_out = b""
     for report in reports:
         if engine is None:
@@ -177,8 +180,9 @@ def evaluate_policies(
         if len(reports) > 1:
             print(f"policy evaluate {_one_line(report, 200)}: exit {code}")
         sys.stdout.write(out.decode("utf-8", "replace"))
-        if worst_code < 0 or _exit_rank(code) > _exit_rank(worst_code):
+        if worst_code is None or _exit_rank(code) > _exit_rank(worst_code):
             worst_code, worst_out = code, out
+    assert worst_code is not None
     out_file.write_bytes(worst_out)
     return worst_code, out_file if worst_out.strip() else None
 
@@ -263,7 +267,7 @@ def row_annotation(row: dict[str, Any], path: str | None) -> tuple[str, str]:
 
 
 def build_annotations(rows: list[tuple[dict[str, Any], str | None]]) -> list[str]:
-    """Workflow commands for the rows, at most MAX_PER_LEVEL per level.
+    """Workflow commands for the rows, at most MAX_ROWS per level.
 
     When a level overflows, its last slot is one summary annotation counting
     the rest.
@@ -274,9 +278,10 @@ def build_annotations(rows: list[tuple[dict[str, Any], str | None]]) -> list[str
         by_level[level].append(command)
     out: list[str] = []
     for level, commands in by_level.items():
-        if len(commands) > MAX_PER_LEVEL:
-            hidden = len(commands) - (MAX_PER_LEVEL - 1)
-            commands = commands[: MAX_PER_LEVEL - 1] + [
+        cap = MAX_ROWS[level]
+        if len(commands) > cap:
+            hidden = len(commands) - (cap - 1)
+            commands = commands[: cap - 1] + [
                 f"::{level} title=Attest: {hidden} more {level}s::"
                 f"{hidden} more {level}s are in the job summary and the attest-report artifact."
             ]
@@ -352,15 +357,42 @@ def _api(method: str, url: str, token: str, payload: dict[str, Any] | None = Non
     return json.loads(body) if body else None
 
 
+BOT_LOGIN = "github-actions[bot]"
+
+
+def _identity(api: str, token: str) -> str:
+    """The login this token comments as: the user for a personal token, else the Actions bot.
+
+    An installation token (the workflow token) cannot call GET /user (403).
+    """
+    try:
+        user = _api("GET", f"{api}/user", token)
+    except urllib.error.HTTPError:
+        return BOT_LOGIN
+    login = user.get("login") if isinstance(user, dict) else None
+    return login if isinstance(login, str) and login else BOT_LOGIN
+
+
 def _marker_comments(api: str, repo: str, pr: int, token: str) -> list[int]:
-    """Ids of the PR's comments that carry the marker, oldest first."""
+    """Ids of the PR's marker comments written by this token's identity, oldest first.
+
+    The marker alone proves nothing: anyone who can comment can plant it, and a
+    token with write access could then edit their comment. Only comments by the
+    token's own login are updated.
+    """
+    me = _identity(api, token)
     ids: list[int] = []
     for page in range(1, MAX_COMMENT_PAGES + 1):
         batch = _api("GET", f"{api}/repos/{repo}/issues/{pr}/comments?per_page=100&page={page}", token)
         if not isinstance(batch, list):
             raise ValueError("comments response is not a list")
         ids += [
-            c["id"] for c in batch if isinstance(c, dict) and MARKER in str(c.get("body", ""))
+            c["id"]
+            for c in batch
+            if isinstance(c, dict)
+            and MARKER in str(c.get("body", ""))
+            and isinstance(c.get("user"), dict)
+            and c["user"].get("login") == me
         ]
         if len(batch) < 100:
             break
@@ -370,9 +402,9 @@ def _marker_comments(api: str, repo: str, pr: int, token: str) -> list[int]:
 def post_comment(api: str, repo: str, pr: int, token: str, body: str) -> str:
     """Update the marker comment in place, or create it; return "updated" or "created".
 
-    A marker comment written by someone else cannot be edited with this token
-    (403), so it is skipped and the next candidate tried; when none can be
-    edited a new comment is created.
+    Marker comments by other authors are ignored (see _marker_comments). A
+    candidate that has since disappeared or cannot be edited (404, 403) is
+    skipped; when none remains a new comment is created.
     """
     payload = {"body": f"{MARKER}\n{body}"}
     for comment_id in _marker_comments(api, repo, pr, token):
@@ -405,8 +437,7 @@ def _same_repo_pull_request(env: dict[str, str]) -> int | None:
     return number
 
 
-def publish_summary(summary: str, env: dict[str, str]) -> None:
-    """Write the step summary, and post the PR comment where the token can."""
+def write_step_summary(summary: str, env: dict[str, str]) -> None:
     step_summary = env.get("GITHUB_STEP_SUMMARY")
     if step_summary:
         with open(step_summary, "a", encoding="utf-8") as fh:
@@ -414,9 +445,15 @@ def publish_summary(summary: str, env: dict[str, str]) -> None:
     else:
         print(summary)
 
+
+def publish_comment(summary: str, env: dict[str, str]) -> None:
+    """Post the PR comment where the token can; the job summary is already written."""
     number = _same_repo_pull_request(env)
     if number is None:
-        print("post_annotations: not a same-repository pull request; summary is in the job summary only")
+        print(
+            "::notice::Attest summary comment not posted: not a same-repository pull request; "
+            "the summary is in the job summary"
+        )
         return
     repo, token = env.get("GITHUB_REPOSITORY", ""), env.get("GITHUB_TOKEN", "")
     if not _REPO.match(repo) or not token:
@@ -446,9 +483,11 @@ def run(args: argparse.Namespace, env: dict[str, str]) -> int:
             raise ActionError(f"Attest report not found at {_one_line(report, 200)}")
     workspace = Path(env.get("GITHUB_WORKSPACE") or os.getcwd())
 
-    engine = resolve_engine(args.engine, env)
+    # The engine never needs the token: it is used only by publish_comment.
+    engine_env = {k: v for k, v in env.items() if k not in _TOKEN_VARS}
+    engine = resolve_engine(args.engine, engine_env)
     code, result = evaluate_policies(
-        engine, reports, args.policy, args.baseline_tag, Path("policy-result.json"), env
+        engine, reports, args.policy, args.baseline_tag, Path("policy-result.json"), engine_env
     )
     output = env.get("GITHUB_OUTPUT")
     if output:
@@ -466,10 +505,11 @@ def run(args: argparse.Namespace, env: dict[str, str]) -> int:
         run_url = (
             f"{env['GITHUB_SERVER_URL']}/{env['GITHUB_REPOSITORY']}/actions/runs/{env['GITHUB_RUN_ID']}"
         )
-    summary = render_summary(engine, reports, result, run_url, env)
-    for command in build_annotations(collect_rows(engine, reports, workspace, env)):
+    summary = render_summary(engine, reports, result, run_url, engine_env)
+    write_step_summary(summary, env)
+    for command in build_annotations(collect_rows(engine, reports, workspace, engine_env)):
         print(command)
-    publish_summary(summary, env)
+    publish_comment(summary, env)
     return 0
 
 

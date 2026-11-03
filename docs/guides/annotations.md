@@ -2,12 +2,14 @@
 
 `pr-annotate` turns report-v2 files into what a reviewer sees on a pull request: one summary comment, plus an annotation on the file and line of each failing test. `attest init --ci github` wires it into the workflow ([merge gate guide](merge-gate.md)). To use it directly:
 
+`pr-annotate` v2 ships in the first release after `1.0.0-rc.1`; pin the tag of the release you use (`attest init --ci github` writes it).
+
 ```yaml
 permissions:
   contents: read
   pull-requests: write
 steps:
-  - uses: attest-framework/attest/.github/actions/pr-annotate@v1.0.0-rc.1
+  - uses: attest-framework/attest/.github/actions/pr-annotate@v1.0.0-rc.2
     if: always() && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
     with:
       report: attest-report.json
@@ -28,9 +30,9 @@ Output `exit-code` is the policy exit code (0 when no `policy`).
 
 The comment is rendered by `attest report summary` over every report and the policy result: pass, fail and not-evaluated counts (with reasons), replayed versus live model calls, `model calls · tokens · $ · retry cost`, and the failures with `file:line`. A link to the workflow run follows.
 
-There is one comment per pull request. The first run creates it; later runs update it in place. The action finds it by the hidden marker `<!-- attest:pr-annotate -->`. A comment with the marker that the token cannot edit (someone else's) is skipped.
+There is one comment per pull request. The first run creates it; later runs update it in place. The action finds it by the hidden marker `<!-- attest:pr-annotate -->`. Only marker comments written by the token's own login are updated (the Actions bot for the workflow token, the user for a personal token); a marker planted by anyone else is ignored and never edited.
 
-It is posted only on `pull_request` events from the same repository. On a fork pull request, or when the token cannot write (403), the action posts nothing and prints a warning. The summary is always appended to the job summary (`$GITHUB_STEP_SUMMARY`), so it is readable either way. A comment that fails to post never fails the step.
+It is posted only on `pull_request` events from the same repository. On a fork pull request, or when the token cannot write (403), the action posts nothing and prints a notice (fork or non-pull-request event) or a warning (the API refused the write). The summary is always appended to the job summary (`$GITHUB_STEP_SUMMARY`), so it is readable either way. A comment that fails to post never fails the step.
 
 ## Annotations
 
@@ -45,7 +47,7 @@ Each row from `attest report rows` becomes a workflow command, which GitHub show
 
 Annotations are not limited to lines in the diff, unlike review comments, so a failing test on an untouched line still annotates.
 
-GitHub shows 10 errors and 10 warnings per step. The action emits at most 10 of each; when more exist, the tenth is one annotation counting the rest. The full list is in the summary and the report artifact. Messages are capped at 1000 characters, control characters are removed, and `%`, line breaks, `:` and `,` are escaped as the workflow-command format requires. Report content is treated as untrusted: it can contain agent output.
+GitHub shows 10 errors and 10 warnings per step. The action emits at most 10 errors and 9 warnings (one warning slot stays free for a comment failure); when more exist, the tenth is one annotation counting the rest. The full list is in the summary and the report artifact. Messages are capped at 1000 characters, control characters are removed, and `%`, line breaks, `:` and `,` are escaped as the workflow-command format requires. Report content is treated as untrusted: it can contain agent output.
 
 ### Paths
 

@@ -43,7 +43,9 @@ class _FakeGitHub:
         self.calls: list[tuple[str, str]] = []
         self.force_status: int | None = None
         self.locked_ids: set[int] = set()  # PATCH on these returns 403
+        self.user_login: str | None = None  # GET /user: None is 403 (installation token)
         self.tokens: set[str] = set()
+        self.paged = False
         owner = self
 
         class Handler(BaseHTTPRequestHandler):
@@ -65,11 +67,22 @@ class _FakeGitHub:
                 payload = json.loads(self.rfile.read(length)) if length else None
                 if owner.force_status:
                     return self._reply(owner.force_status, {"message": "forced"})
+                if self.command == "GET" and self.path == "/user":
+                    if owner.user_login is None:
+                        return self._reply(403, {"message": "Resource not accessible"})
+                    return self._reply(200, {"login": owner.user_login})
                 if self.command == "GET":
+                    page = int(self.path.rsplit("&page=", 1)[1]) if "&page=" in self.path else 1
+                    if owner.paged:
+                        return self._reply(200, owner.comments[(page - 1) * 100 : page * 100])
                     return self._reply(200, owner.comments)
                 if self.command == "POST":
                     assert payload is not None
-                    comment = {"id": 100 + len(owner.comments), "body": payload["body"]}
+                    comment = {
+                        "id": 100 + len(owner.comments),
+                        "body": payload["body"],
+                        "user": {"login": owner.user_login or _pa.BOT_LOGIN},
+                    }
                     owner.comments.append(comment)
                     return self._reply(201, comment)
                 comment_id = int(self.path.rsplit("/", 1)[1])
@@ -210,17 +223,17 @@ class TestCaps(unittest.TestCase):
         ]
 
     def test_under_the_cap_every_row_is_emitted(self) -> None:
-        out = _pa.build_annotations(self.rows(10, 10))
-        self.assertEqual(len(out), 20)
+        out = _pa.build_annotations(self.rows(10, 9))
+        self.assertEqual(len(out), 19)
         self.assertFalse(any("more" in c for c in out))
 
     def test_overflow_ends_each_level_with_one_summary_annotation(self) -> None:
         out = _pa.build_annotations(self.rows(25, 12))
         errors = [c for c in out if c.startswith("::error")]
         warnings = [c for c in out if c.startswith("::warning")]
-        self.assertEqual((len(errors), len(warnings)), (10, 10))
+        self.assertEqual((len(errors), len(warnings)), (10, 9))
         self.assertIn("16 more errors", errors[-1])
-        self.assertIn("3 more warnings", warnings[-1])
+        self.assertIn("4 more warnings", warnings[-1])
         self.assertIn("e8", errors[-2])
 
 
@@ -248,7 +261,7 @@ class TestRootRelative(ActionCase):
 
 
 class TestWorstExit(ActionCase):
-    def exit_for(self, *codes: int, policy: bool = True) -> str:
+    def exit_for(self, *codes: int | str, policy: bool = True) -> str:
         reports = [self.report(f"r{i}/attest-report.json", policy_exit=str(c)) for i, c in enumerate(codes)]
         code, _ = self.run_action(*reports, policy="attest.policy.yaml" if policy else "")
         self.assertEqual(code, 0)
@@ -265,6 +278,9 @@ class TestWorstExit(ActionCase):
     def test_no_policy_is_exit_zero_and_never_calls_policy_evaluate(self) -> None:
         self.assertEqual(self.exit_for(1, policy=False), "0")
         self.assertNotIn("policy", self.log.read_text())
+
+    def test_signal_killed_evaluator_is_not_overwritten_by_a_later_pass(self) -> None:
+        self.assertEqual(self.exit_for("kill", 0), "-9")
 
     def test_policy_result_of_the_worst_report_goes_to_the_summary(self) -> None:
         a = self.report("a/attest-report.json", policy_exit="0")
@@ -298,20 +314,54 @@ class TestSummaryComment(ActionCase):
         self.assertEqual(sum(1 for m, _ in self.github.calls if m == "POST"), 1)
 
     def test_unrelated_comments_are_left_alone(self) -> None:
-        self.github.comments.append({"id": 1, "body": "looks good"})
+        self.github.comments.append({"id": 1, "body": "looks good", "user": {"login": "a"}})
         self.run_action(self.report())
         self.assertEqual(self.github.comments[0]["body"], "looks good")
         self.assertEqual(len(self.github.comments), 2)
 
-    def test_foreign_marker_comment_is_skipped_when_it_cannot_be_edited(self) -> None:
-        self.github.comments.append({"id": 1, "body": f"{_pa.MARKER} planted"})
-        self.github.locked_ids.add(1)
+    def test_planted_marker_comment_is_never_edited_even_when_editable(self) -> None:
+        planted = {"id": 1, "body": f"{_pa.MARKER} planted", "user": {"login": "mallory"}}
+        self.github.comments.append(planted)
 
         self.run_action(self.report())
 
-        self.assertEqual(self.github.comments[0]["body"], f"{_pa.MARKER} planted")
+        self.assertEqual(planted["body"], f"{_pa.MARKER} planted")
         self.assertEqual(len(self.github.comments), 2)
+        self.assertFalse(any(m == "PATCH" for m, _ in self.github.calls))
         self.assertIn("### attest:", self.github.comments[1]["body"])
+
+    def test_own_comment_is_found_among_planted_ones(self) -> None:
+        self.github.comments.append(
+            {"id": 1, "body": f"{_pa.MARKER} planted", "user": {"login": "mallory"}}
+        )
+        report = self.report()
+        self.run_action(report)
+        self.run_action(report)
+
+        self.assertEqual(len(self.github.comments), 2)
+        self.assertEqual(sum(1 for m, _ in self.github.calls if m == "POST"), 1)
+
+    def test_personal_token_updates_only_comments_by_its_own_login(self) -> None:
+        self.github.user_login = "octocat"
+        report = self.report()
+        self.run_action(report)
+        self.run_action(report)
+
+        self.assertEqual(len(self.github.comments), 1)
+        self.assertEqual(self.github.comments[0]["user"]["login"], "octocat")
+
+    def test_comment_list_is_read_past_the_first_page(self) -> None:
+        mine = {"id": 900, "body": f"{_pa.MARKER}\nold", "user": {"login": _pa.BOT_LOGIN}}
+        self.github.comments.extend(
+            {"id": i, "body": "x", "user": {"login": "a"}} for i in range(100)
+        )
+        self.github.comments.append(mine)
+        self.github.paged = True
+
+        self.run_action(self.report())
+
+        self.assertIn("### attest:", mine["body"])
+        self.assertEqual(len(self.github.comments), 101)
 
     def test_step_summary_is_written_alongside_the_comment(self) -> None:
         self.run_action(self.report())
@@ -324,6 +374,7 @@ class TestSummaryComment(ActionCase):
 
         self.assertEqual(code, 0, out)
         self.assertEqual(self.github.calls, [])
+        self.assertIn("::notice::Attest summary comment not posted", out)
         self.assertIn("### attest:", (self.root / "step-summary.md").read_text())
 
     def test_push_event_posts_no_comment(self) -> None:
@@ -344,6 +395,11 @@ class TestSummaryComment(ActionCase):
         code, out = self.run_action(self.report(), extra={"GITHUB_API_URL": "http://127.0.0.1:1"})
         self.assertEqual(code, 0, out)
         self.assertIn("::warning::Attest summary comment not posted", out)
+
+    def test_engine_never_sees_the_token(self) -> None:
+        self.run_action(self.report(), policy="p.yaml", extra={"INPUT_GITHUB-TOKEN": _TOKEN})
+        self.assertTrue(self.log.exists())
+        self.assertFalse(Path(f"{self.log}.token-seen").exists())
 
     def test_token_is_never_printed(self) -> None:
         self.github.force_status = 403
@@ -425,10 +481,11 @@ class TestFailures(ActionCase):
         self.assertEqual(code, 1)
         self.assertIn("report summary exited 2 (bad input)", out)
 
-    def test_rows_failure_fails_the_step(self) -> None:
+    def test_rows_failure_fails_the_step_after_the_summary_is_written(self) -> None:
         report = self.report(rows_exit="2")
         code, out = self.run_action(report)
         self.assertEqual(code, 1)
+        self.assertIn("### attest:", (self.root / "step-summary.md").read_text())
         self.assertIn("report rows exited 2", out)
 
     def test_rows_that_are_not_an_array_fail_the_step(self) -> None:

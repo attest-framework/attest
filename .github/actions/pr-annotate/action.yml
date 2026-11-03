@@ -5,7 +5,7 @@ description: |
   created on the first run and updated in place afterwards (hidden marker
   `<!-- attest:pr-annotate -->`), rendered by `attest-engine report summary`.
   It is posted only for pull requests from the same repository; fork PRs and
-  tokens that cannot write get the summary in the job summary and a warning.
+  tokens that cannot write get the summary in the job summary and a notice or warning.
   The summary is always written to the job summary. Each failure and replay
   miss becomes a workflow annotation (::error / ::warning) at the file and
   line of its test, shown in the checks list and inline in the diff. Needs

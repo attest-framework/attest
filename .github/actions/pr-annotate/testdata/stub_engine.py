@@ -10,12 +10,15 @@ Every call appends its argv as one JSON line to $STUB_LOG.
 
 import json
 import os
+import signal
 import sys
 from pathlib import Path
 
 argv = sys.argv[1:]
 with open(os.environ["STUB_LOG"], "a", encoding="utf-8") as log:
     log.write(json.dumps(argv) + "\n")
+if os.environ.get("GITHUB_TOKEN") or os.environ.get("INPUT_GITHUB-TOKEN"):
+    Path(os.environ["STUB_LOG"] + ".token-seen").write_text("1")
 
 
 def reports() -> list[str]:
@@ -30,7 +33,10 @@ def side(report: str, suffix: str, default: str) -> str:
 if argv[:2] == ["policy", "evaluate"]:
     report = reports()[0]
     print(json.dumps({"report": report}))
-    sys.exit(int(side(report, ".policy-exit", "0")))
+    code = side(report, ".policy-exit", "0")
+    if code == "kill":
+        os.kill(os.getpid(), signal.SIGKILL)
+    sys.exit(int(code))
 if argv[:2] == ["report", "rows"]:
     report = reports()[0]
     sys.stdout.write(side(report, ".rows.json", "[]"))
