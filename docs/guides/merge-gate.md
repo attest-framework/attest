@@ -15,7 +15,7 @@ uv run pytest            # 1 passed
 TypeScript:
 
 ```bash
-npm install -D "@attest-ai/core@>=1.0.0-rc.1" "@attest-ai/vitest@>=1.0.0-rc.1" vitest
+npm install -D "@attest-ai/core@>=1.0.0-rc.1" "@attest-ai/vitest@>=1.0.0-rc.1" "vitest@^4"
 npx attest init
 npx vitest run          # 1 passed
 ```

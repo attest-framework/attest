@@ -4,7 +4,7 @@ A behavior contract states what the agent did, not what it said: how often a too
 
 ```bash
 uv add "attest-ai>=1.0.0rc1"
-npm install -D "@attest-ai/core@>=1.0.0-rc.1" "@attest-ai/vitest@>=1.0.0-rc.1" vitest
+npm install -D "@attest-ai/core@>=1.0.0-rc.1" "@attest-ai/vitest@>=1.0.0-rc.1" "vitest@^4"
 ```
 
 ## Example: one refund per order
