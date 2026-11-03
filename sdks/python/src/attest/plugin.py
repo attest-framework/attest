@@ -47,6 +47,7 @@ from attest.trials import (
     run_trials,
     validate_min_pass_rate,
 )
+from attest.world import WorldError, WorldSession, start_world
 
 logger = logging.getLogger("attest.plugin")
 
@@ -86,6 +87,8 @@ _ATTEST_FIXTURES = frozenset({"attest", "attest_engine"})
 # sessions each running test has started (attest_replay fixture).
 _session_replay: dict[str, list[ReplaySummary]] = {}
 _item_replays: dict[str, list[ReplaySession]] = {}
+# The worlds each running test has started (attest_world fixture).
+_item_worlds: dict[str, list[WorldSession]] = {}
 # Per running session: did it install the egress guard (and so release it)?
 _egress_installed: list[Callable[[], None] | None] = []
 # A strict replay failure recorded on the item: no xfail marker may turn it into XFAIL.
@@ -458,6 +461,44 @@ def attest_replay(
         session.finish()
 
 
+def _stop_worlds(nodeid: str) -> None:
+    """Stop the worlds the test started; every one is stopped before the first error raises."""
+    error: WorldError | None = None
+    for world in _item_worlds.pop(nodeid, []):
+        try:
+            world.stop()
+        except WorldError as exc:
+            error = error or exc
+    if error is not None:
+        raise error
+
+
+@pytest.fixture
+def attest_world(
+    request: pytest.FixtureRequest,
+) -> Generator[Callable[..., WorldSession], None, None]:
+    """Host a world for the test: ``world = attest_world("tests/payments.world.yaml")``
+    starts it and sets its base URL variable (``PAYMENTS_BASE_URL``) until the test ends.
+
+    HTTP clients read the variable when constructed, so construct them after the call. Read
+    the effects with ``world.state()`` and assert on them with
+    ``expect(trace).world(world.state()).count(...)``. Composes with ``attest_replay`` in the
+    same test. Keyword argument: ``engine_path`` (default ``--attest-engine``).
+    """
+    config = request.config
+    nodeid = request.node.nodeid
+
+    def start(path: str | os.PathLike[str], *, engine_path: str | None = None) -> WorldSession:
+        session = start_world(
+            path, engine_path=engine_path or config.getoption("--attest-engine", default=None)
+        )
+        _item_worlds.setdefault(nodeid, []).append(session)
+        return session
+
+    yield start
+    _stop_worlds(nodeid)
+
+
 def _is_coroutine_test(item: pytest.Function) -> bool:
     """True for ``async def`` tests; pytest-asyncio replaces ``item.obj`` with a
     sync wrapper, so the definition on the module or class is checked too."""
@@ -497,11 +538,12 @@ def pytest_pyfunc_call(pyfuncitem: pytest.Function) -> bool | None:
         _session_trials_run[nodeid] = count
 
     def one_trial() -> Any:
-        # Each trial's replay sessions end with the trial; a second trial would otherwise
+        # Each trial's replay and world sessions end with the trial; a second trial would otherwise
         # find the first one's still running.
         try:
             return testfunction(**testargs)
         finally:
+            _stop_worlds(nodeid)
             exc = _settle_replays(pyfuncitem)
             if exc is not None:
                 raise exc  # noqa: B012 (a miss outranks whatever the trial raised)

@@ -391,6 +391,7 @@ def record(
     agent_id: str | None = None,
     emit_test: bool = True,
     engine_path: str | None = None,
+    world: str | os.PathLike[str] | None = None,
 ) -> Iterator[Capture]:
     """Capture the code in the block as fixture ``<out_dir>/<name>.attest.json``.
 
@@ -411,6 +412,9 @@ def record(
         agent_id: Trace ``agent_id`` (default: the first turn's agent name).
         emit_test: Write the drafted pytest file.
         engine_path: Engine binary (default: the SDK's engine discovery).
+        world: A ``world.yaml`` to host for the block (the engine's ``--world``): its base
+            URL variable (``PAYMENTS_BASE_URL``) is set for the block and the world's final
+            state is saved in the fixture's ``world`` section.
 
     Raises:
         CaptureError: The engine could not write the fixture, or the fixture is not
@@ -423,7 +427,12 @@ def record(
         raise CaptureError("record() is already running; captures cannot overlap")
     try:
         with _serve(
-            name, resolve_engine(engine_path), os.fspath(out_dir), expect_fail, agent_id
+            name,
+            resolve_engine(engine_path),
+            os.fspath(out_dir),
+            expect_fail,
+            agent_id,
+            None if world is None else os.fspath(world),
         ) as capture:
             yield capture
     finally:
@@ -438,7 +447,12 @@ def record(
 
 @contextmanager
 def _serve(
-    name: str, engine: str, out_dir: str, expect_fail: bool, agent_id: str | None
+    name: str,
+    engine: str,
+    out_dir: str,
+    expect_fail: bool,
+    agent_id: str | None,
+    world: str | None,
 ) -> Iterator[Capture]:
     """Run ``attest-engine capture --serve`` around the block and fill in the result."""
     args = [engine, "capture", "--serve", "--name", name, "--out-dir", out_dir]
@@ -446,6 +460,8 @@ def _serve(
         args.append("--expect-fail")
     if agent_id is not None:
         args += ["--agent-id", agent_id]
+    if world is not None:
+        args += ["--world", world]
     proc = subprocess.Popen(
         args,
         stdin=subprocess.PIPE,

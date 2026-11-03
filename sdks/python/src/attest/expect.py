@@ -8,6 +8,7 @@ from typing import Any, Literal
 from attest._proto.types import (
     TYPE_CONSTRAINT,
     TYPE_CONTENT,
+    TYPE_EFFECT,
     TYPE_EMBEDDING,
     TYPE_LLM_JUDGE,
     TYPE_PLUGIN,
@@ -22,6 +23,65 @@ from attest.trials import current_run
 
 TrajectoryMode = Literal["strict", "unordered", "subset", "superset"]
 ArgOperator = Literal["eq", "ne", "lt", "lte", "gt", "gte", "in", "not_in"]
+
+
+class WorldChecks:
+    """Effect checks against one world snapshot, from :meth:`ExpectChain.world`.
+
+    Each method adds an ``effect`` assertion (Layer 3) to the parent chain and returns it.
+    ``where`` keyword arguments are exact-match filters on the resource's records.
+    """
+
+    def __init__(self, chain: ExpectChain, snapshot: dict[str, Any] | None) -> None:
+        self._chain = chain
+        self._snapshot = snapshot
+
+    def _add(self, spec: dict[str, Any], where: dict[str, Any]) -> ExpectChain:
+        spec["world"] = self._snapshot
+        if where:
+            spec["where"] = where
+        return self._chain._add(TYPE_EFFECT, spec)
+
+    def count(
+        self,
+        resource: str,
+        *,
+        equals: int | None = None,
+        at_most: int | None = None,
+        at_least: int | None = None,
+        **where: Any,
+    ) -> ExpectChain:
+        """Assert how many records of ``resource`` match ``where``.
+
+        Give ``equals``, or ``at_most`` and/or ``at_least``. A violation reads
+        ``effect violated: 2 refunds for O-1042 (expected 1)``.
+
+        Raises:
+            ValueError: No bound is given, or ``equals`` is combined with another bound.
+        """
+        if equals is None and at_most is None and at_least is None:
+            raise ValueError("count needs equals, at_most or at_least")
+        if equals is not None and (at_most is not None or at_least is not None):
+            raise ValueError("count: equals excludes at_most and at_least")
+        spec: dict[str, Any] = {"check": "count", "resource": resource}
+        for key, bound in (("equals", equals), ("at_most", at_most), ("at_least", at_least)):
+            if bound is not None:
+                spec[key] = bound
+        return self._add(spec, where)
+
+    def unique(self, resource: str, *, by: str | list[str], **where: Any) -> ExpectChain:
+        """Assert no two matching records share the same values for field(s) ``by``."""
+        fields = [by] if isinstance(by, str) else list(by)
+        if not fields:
+            raise ValueError("unique needs at least one field in by")
+        return self._add({"check": "unique", "resource": resource, "fields": fields}, where)
+
+    def idempotent(
+        self, resource: str, *, key: str = "idempotency_key", **where: Any
+    ) -> ExpectChain:
+        """Assert every matching record carries a distinct value in field ``key``, the
+        record field that stores the idempotency key."""
+        return self._add({"check": "idempotent", "resource": resource, "field": key}, where)
 
 
 class ExpectChain:
@@ -354,6 +414,17 @@ class ExpectChain:
                 "soft": soft,
             },
         )
+
+    # ── Layer 3: Effect checks (the external system the agent acted on) ──
+
+    def world(self, snapshot: dict[str, Any] | None) -> WorldChecks:
+        """Check effects in a world snapshot: ``expect(trace).world(world.state()).count(...)``.
+
+        ``snapshot`` is :meth:`WorldSession.state` (or the ``stop()`` result). ``None`` means
+        the test ran without a world helper: the checks are ``not_evaluated``
+        (``missing_evidence``).
+        """
+        return WorldChecks(self, snapshot)
 
     # ── Layer 4: Content ──
 
