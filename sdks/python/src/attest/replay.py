@@ -17,11 +17,13 @@ import json
 import os
 import subprocess
 import threading
+import unicodedata
 from dataclasses import dataclass, field
 from pathlib import Path
 from types import TracebackType
 from typing import Any
 
+from attest import egress
 from attest.capture import DEFAULT_FIXTURE_DIR, CaptureError, _ready_env
 from attest.exceptions import AttestError
 
@@ -29,6 +31,15 @@ MODE_STRICT = "strict"
 MODE_AUTO = "auto"
 MODE_OFF = "off"
 REPLAY_MODES = (MODE_STRICT, MODE_AUTO, MODE_OFF)
+
+
+def sanitize(text: str) -> str:
+    """Escape control and format characters (Unicode Cc and Cf, newlines included) as
+    ``\\uXXXX``, so text taken from a fixture or the engine cannot inject terminal escapes
+    or CI log commands."""
+    return "".join(
+        f"\\u{ord(c):04x}" if unicodedata.category(c) in ("Cc", "Cf") else c for c in text
+    )
 
 
 class ReplayError(AttestError):
@@ -89,7 +100,7 @@ class ReplaySummary:
                     api=str(r["api"]),
                     outcome=str(r["outcome"]),
                     exchange=r.get("exchange"),
-                    message=r.get("message"),
+                    message=sanitize(r["message"]) if r.get("message") is not None else None,
                 )
                 for r in doc["records"]
             )
@@ -119,6 +130,11 @@ class ReplaySummary:
         if self.first_miss is not None:
             row["miss"] = self.first_miss
         return row
+
+
+def first_miss(summary: ReplaySummary) -> str | None:
+    """The message of the first request that matched no recording."""
+    return summary.first_miss
 
 
 def live_line(live: int, cost_usd: float, unpriced: int) -> str:
@@ -161,6 +177,7 @@ class ReplaySession:
         env: dict[str, str],
         proc: subprocess.Popen[str] | None,
         saved: dict[str, str | None],
+        no_live: bool = False,
     ) -> None:
         self.name = name
         self.mode = mode
@@ -169,6 +186,7 @@ class ReplaySession:
         self._proc = proc
         self._saved = saved
         self._finished = proc is None
+        self._no_live = no_live
 
     def __enter__(self) -> ReplaySession:
         return self
@@ -210,12 +228,17 @@ class ReplaySession:
             _REPLAYING.release()
         lines = [ln for ln in out.splitlines() if ln.strip()]
         if proc.returncode != 0 or not lines:
-            raise ReplayError(f"attest-engine replay {self.name} failed: {err.strip()}")
+            raise ReplayError(sanitize(f"attest-engine replay {self.name} failed: {err.strip()}"))
         try:
             doc = json.loads(lines[-1])["summary"]
         except (ValueError, KeyError, TypeError):
             raise ReplayError(f"unexpected replay output {lines[-1][:200]!r}") from None
         self.summary = ReplaySummary.from_dict(doc)
+        if self._no_live and self.summary.live > 0:
+            raise ReplayError(
+                f"replay {self.name}: {self.summary.live} live model call(s) while the egress "
+                "guard was blocking; a blocked run must make none"
+            )
         return self.summary
 
     def error(self) -> AttestError | None:
@@ -261,6 +284,7 @@ def start_replay(
     from attest.engine_manager import resolve_engine
 
     resolved = resolve_mode(mode)
+    no_live = egress.active() or egress.egress_block_requested()
     if resolved == MODE_OFF:
         return ReplaySession(name, MODE_OFF, {}, None, {})
     if not _REPLAYING.acquire(blocking=False):
@@ -277,6 +301,7 @@ def start_replay(
                 os.fspath(fixtures_dir),
                 "--mode",
                 resolved,
+                *(["--no-live"] if no_live else []),
             ],
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
@@ -294,7 +319,9 @@ def start_replay(
         proc.stdin = None
         _, err = proc.communicate()
         _REPLAYING.release()
-        raise ReplayError(f"attest-engine replay {name} did not start: {err.strip()}") from None
+        raise ReplayError(
+            sanitize(f"attest-engine replay {name} did not start: {err.strip()}")
+        ) from None
     except BaseException:
         proc.kill()
         proc.communicate()
@@ -302,7 +329,7 @@ def start_replay(
         raise
     saved = {k: os.environ.get(k) for k in env}
     os.environ.update(env)
-    return ReplaySession(name, resolved, env, proc, saved)
+    return ReplaySession(name, resolved, env, proc, saved, no_live)
 
 
 def _restore(saved: dict[str, str | None]) -> None:

@@ -150,13 +150,14 @@ _AGENT_TEST = textwrap.dedent(
     import json, os, urllib.request
 
     def call_model(system):
+        key = os.environ.get("OPENAI_API_KEY", "unused")
         body = {"model": "gpt-test", "messages": [
             {"role": "system", "content": system},
             {"role": "user", "content": "refund O-9 for sam.customer@example.net"}]}
         req = urllib.request.Request(
             os.environ["OPENAI_BASE_URL"] + "/chat/completions",
             data=json.dumps(body).encode(),
-            headers={"Content-Type": "application/json", "Authorization": "Bearer unused"})
+            headers={"Content-Type": "application/json", "Authorization": "Bearer " + key})
         return urllib.request.urlopen(req).read()
 
     def test_inc_9_replay(attest_replay):
@@ -170,11 +171,45 @@ _AGENT_TEST = textwrap.dedent(
 )
 
 
+_AGENT_HELPERS = _AGENT_TEST.split("def test_inc_9_replay(")[0]
+
+_XFAIL_TEST = _AGENT_HELPERS + textwrap.dedent(
+    """
+    import pytest
+
+    @pytest.mark.xfail(strict=True)
+    def test_current_agent_under_xfail(attest_replay):
+        with attest_replay("inc-9"):
+            call_model(os.environ["AGENT_SYSTEM"])
+            raise AssertionError("the agent's own failure: INC-1042 reproduces")
+
+    @pytest.mark.xfail(strict=True)
+    def test_current_agent_under_xfail_without_with(attest_replay):
+        attest_replay("inc-9")
+        call_model(os.environ["AGENT_SYSTEM"])
+        raise AssertionError("the agent's own failure: INC-1042 reproduces")
+    """
+)
+
+_TRIALS_TEST = _AGENT_HELPERS + textwrap.dedent(
+    """
+    def test_trials(attest, attest_replay):
+        attest_replay("inc-9")
+        call_model(os.environ["AGENT_SYSTEM"])
+    """
+)
+
+
 def _run_pytest(
-    captured: Path, tmp_path: Path, system: str, *args: str, **env: str
+    captured: Path,
+    tmp_path: Path,
+    system: str,
+    *args: str,
+    source: str = _AGENT_TEST,
+    **env: str,
 ) -> tuple[subprocess.CompletedProcess[str], dict[str, Any]]:
     project = captured.parents[2]
-    (project / "test_agent.py").write_text(_AGENT_TEST)
+    (project / "test_agent.py").write_text(source)
     report = tmp_path / "report.json"
     child_env = {
         k: v
@@ -281,3 +316,60 @@ def test_pytest_attest_replay_off_runs_the_agent_live_and_not_replayed(
 
     assert run.returncode == 1, run.stdout + run.stderr  # the dead upstream refuses the call
     assert "replay" not in report["summary"]
+
+
+@pytest.mark.integration
+def test_pytest_strict_miss_under_xfail_strict_is_failed_with_the_miss_message(
+    captured: Path, tmp_path: Path
+) -> None:
+    run, report = _run_pytest(
+        captured, tmp_path, _V2, "--attest-replay=strict", "-rxX", source=_XFAIL_TEST
+    )
+
+    assert run.returncode == 1, run.stdout + run.stderr
+    assert "2 failed" in run.stdout and "xfailed" not in run.stdout
+    assert _MISS.search(run.stdout) is not None, run.stdout
+    assert [t["outcome"] for t in report["tests"]] == ["failed", "failed"]
+
+
+@pytest.mark.integration
+def test_pytest_no_miss_under_xfail_strict_is_xfail_as_usual(
+    captured: Path, tmp_path: Path
+) -> None:
+    run, _ = _run_pytest(captured, tmp_path, _V1, "--attest-replay=strict", source=_XFAIL_TEST)
+
+    assert run.returncode == 0, run.stdout + run.stderr
+    assert "2 xfailed" in run.stdout
+    assert "0 live model calls · $0.00" in run.stdout
+
+
+@pytest.mark.integration
+def test_pytest_attest_trials_with_unscoped_replay_ends_each_trials_session(
+    captured: Path, tmp_path: Path
+) -> None:
+    run, _ = _run_pytest(
+        captured, tmp_path, _V1, "--attest-replay=strict", "--attest-trials=2", source=_TRIALS_TEST
+    )
+
+    assert "already running" not in run.stdout + run.stderr
+    assert run.returncode == 0, run.stdout + run.stderr
+    assert "attest replay: 2 replayed" in run.stdout
+
+
+@pytest.mark.integration
+def test_pytest_auto_with_matching_key_but_egress_blocked_is_not_evaluated_and_not_live(
+    captured: Path, tmp_path: Path
+) -> None:
+    run, report = _run_pytest(
+        captured,
+        tmp_path,
+        _V2,
+        "--attest-replay=auto",
+        "-rs",
+        OPENAI_API_KEY=_PLANTED_KEY,
+    )
+
+    assert run.returncode == 0, run.stdout + run.stderr
+    assert "2 skipped" in run.stdout and "0 live model calls" in run.stdout
+    assert report["summary"]["replay"]["live"] == 0
+    assert [t["not_evaluated_reasons"] for t in report["tests"]] == [["replay_miss"]] * 2

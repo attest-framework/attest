@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from attest._proto.types import (
+    REASON_REPLAY_MISS,
     Assertion,
     AssertionResult,
     BiasProbe,
@@ -33,6 +34,13 @@ from attest.capture import CaptureError, Fixture, load_fixture, record
 from attest.config import config
 from attest.continuous import AlertDispatcher, ContinuousEvalRunner, Sampler
 from attest.delegate import delegate
+from attest.egress import (
+    EgressBlockedError,
+    egress_block_requested,
+    install_egress_guard,
+    is_provider_host,
+    uninstall_egress_guard,
+)
 from attest.exceptions import EngineTimeoutError
 from attest.expect import ExpectChain, expect
 from attest.replay import (
@@ -41,6 +49,9 @@ from attest.replay import (
     ReplayNotEvaluatedError,
     ReplaySession,
     ReplaySummary,
+    first_miss,
+    live_line,
+    resolve_mode,
     start_replay,
 )
 from attest.result import AgentResult
@@ -80,6 +91,15 @@ __all__ = [
     "ReplaySession",
     "ReplaySummary",
     "start_replay",
+    "first_miss",
+    "live_line",
+    "resolve_mode",
+    "REASON_REPLAY_MISS",
+    "EgressBlockedError",
+    "egress_block_requested",
+    "install_egress_guard",
+    "is_provider_host",
+    "uninstall_egress_guard",
     "Fixture",
     "load_fixture",
     "record",

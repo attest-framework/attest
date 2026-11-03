@@ -9,8 +9,10 @@ clients); the engine subprocess is not affected.
 
 from __future__ import annotations
 
+import os
 import socket
 import threading
+from collections.abc import Callable, Mapping
 from typing import Any
 
 PROVIDER_HOSTS = (
@@ -33,6 +35,14 @@ def is_provider_host(host: object) -> bool:
         return False
     h = host.strip().rstrip(".").lower()
     return h in PROVIDER_HOSTS or h.endswith(PROVIDER_HOST_SUFFIXES)
+
+
+def egress_block_requested(env: Mapping[str, str] | None = None) -> bool:
+    """Whether ``ATTEST_EGRESS=block`` is set (``allow`` and unset are not blocking)."""
+    value = (os.environ if env is None else env).get("ATTEST_EGRESS", "").strip().lower()
+    if value not in ("", "block", "allow"):
+        raise ValueError(f"ATTEST_EGRESS must be block or allow, got {value!r}")
+    return value == "block"
 
 
 _lock = threading.Lock()
@@ -71,3 +81,30 @@ def uninstall() -> None:
         if _original is not None and _installs == 0:
             socket.getaddrinfo = _original
             _original = None
+
+
+def active() -> bool:
+    """Whether the guard is currently installed."""
+    return _original is not None
+
+
+def install_egress_guard() -> Callable[[], None]:
+    """:func:`install`, returning a function that releases only this install (once)."""
+    install()
+    released = False
+
+    def release() -> None:
+        nonlocal released
+        if not released:
+            released = True
+            uninstall()
+
+    return release
+
+
+def uninstall_egress_guard() -> None:
+    """Remove the guard now, whatever the install count."""
+    global _installs
+    with _lock:
+        _installs = 1
+    uninstall()

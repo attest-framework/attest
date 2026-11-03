@@ -87,7 +87,9 @@ _ATTEST_FIXTURES = frozenset({"attest", "attest_engine"})
 _session_replay: dict[str, list[ReplaySummary]] = {}
 _item_replays: dict[str, list[ReplaySession]] = {}
 # Per running session: did it install the egress guard (and so release it)?
-_egress_installed: list[bool] = []
+_egress_installed: list[Callable[[], None] | None] = []
+# A strict replay failure recorded on the item: no xfail marker may turn it into XFAIL.
+_REPLAY_FAILURE = pytest.StashKey[str]()
 
 
 def _record_result(agent_result: AgentResult) -> None:
@@ -365,11 +367,12 @@ def pytest_runtest_call(item: pytest.Item) -> Generator[None, Any, None]:
     _finish_replays(item, outcome)
 
 
-def _finish_replays(item: pytest.Item, outcome: Any) -> None:
-    """Stop the test's replay sessions, record what they served and turn a miss into the
-    test's outcome: a failure naming the miss in strict mode (whatever the agent raised),
+def _settle_replays(item: pytest.Item) -> BaseException | None:
+    """Stop the test's replay sessions, record what they served and return the exception a
+    miss turns into: a failure naming the miss in strict mode (whatever the agent raised),
     a skip with ``not evaluated: replay_miss`` in auto mode (a failure under
-    ``--attest-strict``)."""
+    ``--attest-strict``). A failure is also stashed on the item so that no ``xfail`` marker
+    can turn it into an expected failure."""
     sessions = _item_replays.pop(item.nodeid, [])
     error: Exception | None = None
     for session in sessions:
@@ -383,15 +386,24 @@ def _finish_replays(item: pytest.Item, outcome: Any) -> None:
         _session_replay.setdefault(item.nodeid, []).append(summary)
         error = error or session.error()
     if error is None:
-        return
+        return None
     strict = bool(item.config.getoption("--attest-strict", default=False)) or (
         os.environ.get("ATTEST_STRICT", "").strip().lower() in ("1", "true", "yes")
     )
     try:
         if isinstance(error, ReplayNotEvaluatedError) and not strict:
             pytest.skip(f"not evaluated: replay_miss: {error}")
+        item.stash[_REPLAY_FAILURE] = str(error)
         pytest.fail(str(error), pytrace=False)
     except (pytest.skip.Exception, pytest.fail.Exception) as exc:
+        return exc
+    return None
+
+
+def _finish_replays(item: pytest.Item, outcome: Any) -> None:
+    """Apply :func:`_settle_replays` to the call's outcome."""
+    exc = _settle_replays(item)
+    if exc is not None:
         outcome.force_exception(exc)
 
 
@@ -483,7 +495,17 @@ def pytest_pyfunc_call(pyfuncitem: pytest.Function) -> bool | None:
     def trials_run(count: int) -> None:
         _session_trials_run[nodeid] = count
 
-    result = run_trials(run, lambda: testfunction(**testargs), n, _replace_test_results, trials_run)
+    def one_trial() -> Any:
+        # Each trial's replay sessions end with the trial; a second trial would otherwise
+        # find the first one's still running.
+        try:
+            return testfunction(**testargs)
+        finally:
+            exc = _settle_replays(pyfuncitem)
+            if exc is not None:
+                raise exc  # noqa: B012 (a miss outranks whatever the trial raised)
+
+    result = run_trials(run, one_trial, n, _replace_test_results, trials_run)
     _session_trial_lines[pyfuncitem.nodeid] = result.summary_lines(pyfuncitem.nodeid)
     cli_rate: float = pyfuncitem.config.getoption(
         "--attest-min-pass-rate", default=DEFAULT_MIN_PASS_RATE
@@ -493,7 +515,7 @@ def pytest_pyfunc_call(pyfuncitem: pytest.Function) -> bool | None:
     return True
 
 
-@pytest.hookimpl(hookwrapper=True)
+@pytest.hookimpl(hookwrapper=True, tryfirst=True)
 def pytest_runtest_makereport(
     item: pytest.Item,
     call: pytest.CallInfo[Any],
@@ -507,6 +529,15 @@ def pytest_runtest_makereport(
     """
     outcome = yield
     report: pytest.TestReport = outcome.get_result()
+    replay_failure = item.stash.get(_REPLAY_FAILURE, None)
+    if call.when == "call" and replay_failure is not None:
+        # Outermost wrapper: the xfail machinery has run. A strict replay miss is a failure
+        # of the test, not an expected one.
+        if hasattr(report, "wasxfail"):
+            del report.wasxfail
+        report.outcome = "failed"
+        report.longrepr = replay_failure
+        del item.stash[_REPLAY_FAILURE]
     record = (
         _record_test_phase(item, report)
         if item.config.getoption("--attest-report", default=None)
@@ -610,9 +641,7 @@ def pytest_sessionstart(session: pytest.Session) -> None:
     )
     _session_replay.clear()
     block = _egress_mode(session.config) == "block"
-    if block:
-        egress.install()
-    _egress_installed.append(block)
+    _egress_installed.append(egress.install_egress_guard() if block else None)
     _session_tests.clear()
     _session_trials_run.clear()
     _session_trial_lines.clear()
@@ -626,8 +655,9 @@ def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> Generator[
     restore the enclosing session's state."""
     yield
     _write_session_report(session)
-    if _egress_installed.pop():
-        egress.uninstall()
+    release = _egress_installed.pop()
+    if release is not None:
+        release()
     global _session_usage
     saved = _saved_sessions.pop()
     _session_replay.clear()

@@ -241,3 +241,29 @@ def test_egress_installs_are_counted_so_an_inner_release_keeps_the_outer_guard()
     egress.uninstall()
 
     assert socket.getaddrinfo is original
+
+
+def test_sanitize_escapes_control_and_format_characters() -> None:
+    from attest.replay import sanitize
+
+    text = "model \x1b[31m\n::error::boom\u200b ok"
+
+    assert sanitize(text) == "model \\u001b[31m\\u000a::error::boom\\u200b ok"
+
+
+def test_from_dict_sanitizes_miss_messages() -> None:
+    summary = _summary(
+        misses=1,
+        records=[
+            {
+                "seq": 0,
+                "provider": "openai",
+                "api": "chat_completions",
+                "outcome": "miss",
+                "message": 'replay miss: model changed ("a"→"\x1b]0;x\n::error::")',
+            }
+        ],
+    )
+
+    assert summary.first_miss is not None
+    assert "\x1b" not in summary.first_miss and "\n" not in summary.first_miss
