@@ -33,6 +33,8 @@ uv run attest init --skills --ci github --json
 {"created": [".agents/skills/attest/SKILL.md", ".claude/skills/attest/SKILL.md", "attest.policy.yaml"], "updated": [], "skipped": ["tests/test_my_agent.py"]}
 ```
 
+`skills install` validates every destination before it writes anything, so a refusal leaves the project untouched (exit 1). It overwrites only the files of the embedded skills. A symlinked `.claude`, `.agents`, `.claude/skills` or `.agents/skills` (or any deeper directory) is followed when its fully resolved target stays inside the `--dir` root; files behind the same resolved path are written once and reported under each logical path (for example `.claude/skills -> ../.agents/skills`). A symlink that resolves outside the root, a symlinked skill file and any other existing non-regular file are refused.
+
 `skipped` lists files that already existed (scaffold files are never overwritten) and skill files already up to date. Without an engine that provides `skills`, `init --skills` exits 1 and scaffolds nothing; a usage error exits 2.
 
 ## Install with `attest skills`
@@ -78,7 +80,7 @@ The skills tell the agent to discover instead of guessing:
 | `attest guide` | the topics: one per guide, with its title |
 | `attest guide <topic>` | the guide's Markdown, offline; `--json` gives `{topic, title, markdown}`. An unknown topic exits 2 and lists the topics |
 
-`attest` is `uv run attest` or `npx attest`; both forward to the engine of the installed SDK version. Every command accepts `--json` and then writes exactly one JSON document to stdout, with diagnostics on stderr. Exit codes are 0 success, 1 a failed result, 2 usage error; `attest policy evaluate` exits 0 pass, 1 block, 2 warn, 3 usage or load error. Nothing prompts in CI, under `--json` or without a terminal: `attest capture --refresh` refuses there unless given `--yes`. See [cli](cli.md) for the full command and exit-code reference.
+`attest` is `uv run attest` or `npx attest`; both forward to the engine of the installed SDK version. Every command accepts `--json` and then writes exactly one JSON document to stdout on success, with diagnostics on stderr; on a usage, load or runtime error it writes nothing to stdout, and the exit code plus stderr describe the error. Exit codes are 0 success, 1 a failed result, 2 usage error; `attest policy evaluate` exits 0 pass, 1 block, 2 warn, 3 usage or load error. Nothing prompts in CI, under `--json` or without a terminal: `attest capture --refresh` refuses there unless given `--yes`. See [cli](cli.md) for the full command and exit-code reference.
 
 ## Ask your agent
 

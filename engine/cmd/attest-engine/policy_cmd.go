@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -58,6 +59,9 @@ func policyEvaluate(args []string) {
 	baselineTag := fs.String("baseline", "", "optional baseline tag for regression rules")
 	fs.Bool("json", false, "print the result as JSON (always on)")
 	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			os.Exit(exitOK)
+		}
 		os.Exit(policy.ExitUsage)
 	}
 	if *policyPath == "" || *reportPath == "" || fs.NArg() > 0 {

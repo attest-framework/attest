@@ -53,6 +53,29 @@ func TestDrift_FixtureTree_ReportsEveryMismatchKind(t *testing.T) {
 	}
 }
 
+func TestDrift_DSStoreSource_IsNotStagedOrReported(t *testing.T) {
+	msgs, err := assetsync.Drift(fixtureRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, m := range msgs {
+		if strings.Contains(m, ".DS_Store") {
+			t.Errorf(".DS_Store reported as drift: %s", m)
+		}
+	}
+	root := t.TempDir()
+	if err := os.CopyFS(root, os.DirFS(fixtureRoot)); err != nil {
+		t.Fatal(err)
+	}
+	if err := assetsync.Generate(root); err != nil {
+		t.Fatal(err)
+	}
+	staged := filepath.Join(root, "engine", "internal", "assets", "skills", "demo", ".DS_Store")
+	if _, err := os.Stat(staged); !os.IsNotExist(err) {
+		t.Errorf(".DS_Store was staged (err=%v)", err)
+	}
+}
+
 func TestGenerate_FixtureTree_ClearsDriftAndIsIdempotent(t *testing.T) {
 	root := t.TempDir()
 	if err := os.CopyFS(root, os.DirFS(fixtureRoot)); err != nil {

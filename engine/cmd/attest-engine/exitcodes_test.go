@@ -16,17 +16,28 @@ const exitTableGuide = "../../../docs/guides/cli.md"
 // row.
 func exitTableDrift(md string, cmds map[string]command) []string {
 	documented := map[string]string{}
+	var problems []string
 	for _, line := range strings.Split(md, "\n") {
 		cells := strings.Split(strings.TrimSpace(line), "|")
 		if len(cells) != 5 || cells[0] != "" || cells[4] != "" {
 			continue
 		}
-		name := strings.Trim(strings.TrimSpace(cells[1]), "`")
+		first := strings.TrimSpace(cells[1])
+		if !strings.HasPrefix(first, "`") {
+			continue // header and separator rows
+		}
+		name := strings.Trim(first, "`")
 		code := strings.TrimSpace(cells[2])
 		if _, err := strconv.Atoi(code); err != nil {
+			problems = append(problems, fmt.Sprintf("code is not an integer: %s %q", name, code))
 			continue
 		}
-		documented[name+" "+code] = strings.TrimSpace(cells[3])
+		key := name + " " + code
+		if _, dup := documented[key]; dup {
+			problems = append(problems, "duplicate row: "+key)
+			continue
+		}
+		documented[key] = strings.TrimSpace(cells[3])
 	}
 	declared := map[string]string{}
 	for _, c := range cmds {
@@ -34,7 +45,6 @@ func exitTableDrift(md string, cmds map[string]command) []string {
 			declared[fmt.Sprintf("%s %d", c.name, e.Code)] = e.Meaning
 		}
 	}
-	var problems []string
 	for key, meaning := range declared {
 		got, ok := documented[key]
 		switch {
@@ -72,12 +82,14 @@ func TestExitTableDrift_MismatchFixture_ReportsEveryKind(t *testing.T) {
 		"demo": {name: "demo", exits: []exitCode{{0, "success"}, {1, "check failed"}, {2, "usage error"}}},
 	}
 	got := strings.Join(exitTableDrift(string(md), cmds), "\n")
-	for _, want := range []string{"missing row: demo 2", "different meaning for demo 1", "extra row: demo 9"} {
+	for _, want := range []string{"missing row: demo 2", "different meaning for demo 1", "extra row: demo 9", "duplicate row: demo 0", "code is not an integer: demo \"x\""} {
 		if !strings.Contains(got, want) {
 			t.Errorf("drift output missing %q:\n%s", want, got)
 		}
 	}
-	if strings.Contains(got, "demo 0") {
-		t.Errorf("matching row demo 0 reported:\n%s", got)
+	for _, bad := range []string{"missing row: demo 0", "different meaning for demo 0"} {
+		if strings.Contains(got, bad) {
+			t.Errorf("matching row demo 0 reported as %q:\n%s", bad, got)
+		}
 	}
 }

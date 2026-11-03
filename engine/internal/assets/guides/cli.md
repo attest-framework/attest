@@ -10,11 +10,11 @@ attest guide            # list the shipped guides
 attest guide <topic>    # print one guide as Markdown, offline
 ```
 
-`attest help --json` prints `{"commands": [{"name", "summary", "schema", "subcommands", "exit_codes"}]}`. `schema` and each subcommand's `schema` are paths relative to `proto/attest/v1/` in the attest repository. The text form (`attest help`) is unchanged.
+`attest help --json` prints `{"commands": [{"name", "summary", "schema", "subcommands", "exit_codes"}]}`. `schema` and each subcommand's `schema` are paths relative to `proto/attest/v1/` in the attest repository. Run through the SDK (`uv run attest help --json`, `npx attest help --json`), the document also lists `init`, which the SDK implements itself (schema `cli/init.schema.json`; exit 0 success, 1 `--skills` could not install, 2 usage error). The text form (`attest help`) is unchanged.
 
 ## JSON output
 
-Every command and subcommand accepts `--json`. With `--json` the command writes exactly one JSON document to stdout and sends diagnostics to stderr. Without it, output stays human-readable.
+Every command and subcommand accepts `--json`. With `--json` a successful command writes exactly one JSON document to stdout and sends diagnostics to stderr. On a usage, load or runtime error the command writes nothing to stdout; the exit code and stderr describe the error. Errors are not JSON objects: read the exit code and stderr. Without it, output stays human-readable.
 
 Commands that run a child process (`capture`, `replay`, `world` with `-- <command>`) send the child's stdout to stderr under `--json` and print one result object at exit; `exit_code` in that object is the child's exit code (`null` when a signal killed it). `--serve` already writes JSON lines, so `--serve --json` is a usage error (exit 2).
 
@@ -86,7 +86,7 @@ The table is checked against the engine's command registry by a test; a change t
 | `select` | 0 | success, including an empty selection |
 | `select` | 2 | usage error, or git or the base ref failed |
 | `skills` | 0 | skills listed or installed |
-| `skills` | 1 | an embedded skill is invalid or a file could not be written |
+| `skills` | 1 | an embedded skill is invalid or a destination was refused or a file could not be written |
 | `skills` | 2 | usage error |
 | `trace` | 0 | success: the trace converted, or check found no structural errors |
 | `trace` | 1 | check found structural errors, or the input could not be read, parsed or converted |

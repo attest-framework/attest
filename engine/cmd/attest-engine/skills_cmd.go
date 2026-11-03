@@ -27,7 +27,7 @@ func init() {
 		},
 		exits: []exitCode{
 			{Code: 0, Meaning: "skills listed or installed"},
-			{Code: 1, Meaning: "an embedded skill is invalid or a file could not be written"},
+			{Code: 1, Meaning: "an embedded skill is invalid or a destination was refused or a file could not be written"},
 			{Code: 2, Meaning: "usage error"},
 		},
 	})
@@ -64,9 +64,10 @@ func runSkills(args []string) int {
 }
 
 // parseSkillsFlags parses fs and rejects positional arguments.
-func parseSkillsFlags(fs *flag.FlagSet, args []string) bool {
+func parseSkillsFlags(fs *flag.FlagSet, args []string, help *bool) bool {
 	fs.SetOutput(os.Stderr)
 	if err := fs.Parse(args); err != nil {
+		*help = errors.Is(err, flag.ErrHelp)
 		return false
 	}
 	if fs.NArg() > 0 {
@@ -79,7 +80,11 @@ func parseSkillsFlags(fs *flag.FlagSet, args []string) bool {
 func runSkillsList(args []string) int {
 	fset := flag.NewFlagSet("list", flag.ContinueOnError)
 	asJSON := fset.Bool("json", false, `print {"skills":[{"name","description"}]} as JSON`)
-	if !parseSkillsFlags(fset, args) {
+	var help bool
+	if !parseSkillsFlags(fset, args, &help) {
+		if help {
+			return 0
+		}
 		return 2
 	}
 	skills, err := assets.Skills()
@@ -106,7 +111,11 @@ func runSkillsInstall(args []string) int {
 	fset := flag.NewFlagSet("install", flag.ContinueOnError)
 	dir := fset.String("dir", ".", "project directory to install into")
 	asJSON := fset.Bool("json", false, `print {"dir","created","updated","unchanged"} as JSON`)
-	if !parseSkillsFlags(fset, args) {
+	var help bool
+	if !parseSkillsFlags(fset, args, &help) {
+		if help {
+			return 0
+		}
 		return 2
 	}
 	root, err := filepath.Abs(*dir)
@@ -128,16 +137,36 @@ func runSkillsInstall(args []string) int {
 	return 0
 }
 
+// skillFile is one embedded skill file and where it lands.
+type skillFile struct {
+	rel  string // logical path relative to root, forward slashes
+	real string // fully resolved destination
+	data []byte
+}
+
 // installSkills writes every file of every embedded skill under each skill
 // target of root. Only files of embedded skills are written; nothing is
-// deleted, and directories of other skills are never touched.
+// deleted, and directories of other skills are never touched. Every
+// destination is validated before the first write, so a refusal leaves the
+// tree untouched. Directory symlinks are followed only when they resolve
+// inside root; files that are symlinks or otherwise not regular are refused.
+// Destinations sharing a resolved path are written once and reported under
+// each logical path with the same state.
 func installSkills(root string) (skillsInstallResult, error) {
 	res := skillsInstallResult{Dir: root, Created: []string{}, Updated: []string{}, Unchanged: []string{}}
 	skills, err := assets.Skills()
 	if err != nil {
 		return res, err
 	}
+	realRoot := root
+	if r, err := filepath.EvalSymlinks(root); err == nil {
+		realRoot = r
+	} else if !errors.Is(err, fs.ErrNotExist) {
+		return res, err
+	}
+
 	tree := assets.SkillsFS()
+	var plan []skillFile
 	for _, s := range skills {
 		err := fs.WalkDir(tree, s.Name, func(p string, d fs.DirEntry, err error) error {
 			if err != nil || d.IsDir() {
@@ -149,23 +178,38 @@ func installSkills(root string) (skillsInstallResult, error) {
 			}
 			for _, target := range skillTargets {
 				rel := path.Join(target, p)
-				state, err := writeSkillFile(root, filepath.Join(root, filepath.FromSlash(rel)), data)
+				real, err := resolveSkillDestination(realRoot, rel)
 				if err != nil {
 					return err
 				}
-				switch state {
-				case "created":
-					res.Created = append(res.Created, rel)
-				case "updated":
-					res.Updated = append(res.Updated, rel)
-				default:
-					res.Unchanged = append(res.Unchanged, rel)
-				}
+				plan = append(plan, skillFile{rel: rel, real: real, data: data})
 			}
 			return nil
 		})
 		if err != nil {
 			return res, fmt.Errorf("skill %q: %w", s.Name, err)
+		}
+	}
+
+	states := map[string]string{}
+	for _, f := range plan {
+		if _, done := states[f.real]; done {
+			continue
+		}
+		state, err := writeSkillFile(f.real, f.data)
+		if err != nil {
+			return res, err
+		}
+		states[f.real] = state
+	}
+	for _, f := range plan {
+		switch states[f.real] {
+		case "created":
+			res.Created = append(res.Created, f.rel)
+		case "updated":
+			res.Updated = append(res.Updated, f.rel)
+		default:
+			res.Unchanged = append(res.Unchanged, f.rel)
 		}
 	}
 	sort.Strings(res.Created)
@@ -174,31 +218,70 @@ func installSkills(root string) (skillsInstallResult, error) {
 	return res, nil
 }
 
-// writeSkillFile makes dst hold data and reports "created", "updated", or
-// "unchanged". It refuses to replace anything but a regular file and to write
-// through a symlinked directory below root, so a linked .claude or
-// .claude/skills never redirects the install elsewhere.
-func writeSkillFile(root, dst string, data []byte) (string, error) {
-	if err := refuseSymlinkedDirs(root, filepath.Dir(dst)); err != nil {
-		return "", err
-	}
-	state := "updated"
-	info, err := os.Lstat(dst)
-	switch {
-	case errors.Is(err, fs.ErrNotExist):
-		state = "created"
-	case err != nil:
-		return "", err
-	case !info.Mode().IsRegular():
-		return "", fmt.Errorf("%s exists and is not a regular file", dst)
-	default:
-		cur, err := os.ReadFile(dst)
+// resolveSkillDestination returns the real path rel (relative to realRoot)
+// would be written to. It follows existing directory symlinks, refuses any that
+// resolve outside realRoot, refuses an existing non-directory in the path, and
+// refuses an existing destination that is not a regular file.
+func resolveSkillDestination(realRoot, rel string) (string, error) {
+	parts := strings.Split(rel, "/")
+	cur := realRoot
+	for i, part := range parts {
+		next := filepath.Join(cur, part)
+		info, err := os.Lstat(next)
+		if errors.Is(err, fs.ErrNotExist) {
+			return filepath.Join(append([]string{cur}, parts[i:]...)...), nil
+		}
 		if err != nil {
 			return "", err
 		}
+		last := i == len(parts)-1
+		if info.Mode()&os.ModeSymlink != 0 {
+			if last {
+				return "", fmt.Errorf("%s is a symlink; refusing to overwrite it", next)
+			}
+			resolved, err := filepath.EvalSymlinks(next)
+			if err != nil {
+				return "", fmt.Errorf("%s: %w", next, err)
+			}
+			if !within(realRoot, resolved) {
+				return "", fmt.Errorf("%s resolves to %s, outside %s; refusing to install through it", next, resolved, realRoot)
+			}
+			next = resolved
+			if info, err = os.Stat(next); err != nil {
+				return "", err
+			}
+		}
+		if last {
+			if !info.Mode().IsRegular() {
+				return "", fmt.Errorf("%s exists and is not a regular file", next)
+			}
+		} else if !info.IsDir() {
+			return "", fmt.Errorf("%s exists and is not a directory", next)
+		}
+		cur = next
+	}
+	return cur, nil
+}
+
+// within reports whether p is root or lies below it.
+func within(root, p string) bool {
+	rel, err := filepath.Rel(root, p)
+	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+}
+
+// writeSkillFile makes dst hold data and reports "created", "updated", or
+// "unchanged". dst was validated by resolveSkillDestination.
+func writeSkillFile(dst string, data []byte) (string, error) {
+	state := "created"
+	cur, err := os.ReadFile(dst)
+	switch {
+	case err == nil:
 		if bytes.Equal(cur, data) {
 			return "unchanged", nil
 		}
+		state = "updated"
+	case !errors.Is(err, fs.ErrNotExist):
+		return "", err
 	}
 	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
 		return "", err
@@ -207,31 +290,4 @@ func writeSkillFile(root, dst string, data []byte) (string, error) {
 		return "", err
 	}
 	return state, nil
-}
-
-// refuseSymlinkedDirs fails when an existing directory between root (exclusive)
-// and dir (inclusive) is a symlink.
-func refuseSymlinkedDirs(root, dir string) error {
-	rel, err := filepath.Rel(root, dir)
-	if err != nil {
-		return err
-	}
-	cur := root
-	for _, part := range strings.Split(rel, string(filepath.Separator)) {
-		if part == "." {
-			continue
-		}
-		cur = filepath.Join(cur, part)
-		info, err := os.Lstat(cur)
-		if errors.Is(err, fs.ErrNotExist) {
-			return nil
-		}
-		if err != nil {
-			return err
-		}
-		if info.Mode()&os.ModeSymlink != 0 {
-			return fmt.Errorf("%s is a symlink; refusing to install skills through it", cur)
-		}
-	}
-	return nil
 }

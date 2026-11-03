@@ -2,6 +2,8 @@ package main_test
 
 import (
 	"encoding/json"
+	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"slices"
@@ -163,7 +165,53 @@ func TestSkills_UsageErrors_ExitTwo(t *testing.T) {
 	}
 }
 
-func TestSkillsInstall_SymlinkedSkillsDir_RefusesAndWritesNothingThroughIt(t *testing.T) {
+func countFiles(t *testing.T, dir string) int {
+	t.Helper()
+	n := 0
+	if _, err := os.Lstat(dir); errors.Is(err, fs.ErrNotExist) {
+		return 0
+	}
+	err := filepath.WalkDir(dir, func(_ string, d fs.DirEntry, err error) error {
+		if err == nil && !d.IsDir() {
+			n++
+		}
+		return err
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return n
+}
+
+func TestSkillsInstall_SymlinkedDirInsideRoot_InstallsOnceAndReportsBothPaths(t *testing.T) {
+	bin := buildEngineBinary(t)
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, ".agents", "skills"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(dir, ".claude"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join("..", ".agents", "skills"), filepath.Join(dir, ".claude", "skills")); err != nil {
+		t.Fatal(err)
+	}
+
+	first := installSkillsJSON(t, bin, dir)
+	second := installSkillsJSON(t, bin, dir)
+
+	sources := len(sourceSkillFiles(t))
+	if got := countFiles(t, filepath.Join(dir, ".agents")); got != sources {
+		t.Errorf("real files under .agents = %d, want %d (each written once)", got, sources)
+	}
+	if len(first.Created) != 2*sources || len(first.Updated)+len(first.Unchanged) != 0 {
+		t.Errorf("first install: created %d updated %d unchanged %d, want created %d", len(first.Created), len(first.Updated), len(first.Unchanged), 2*sources)
+	}
+	if len(second.Unchanged) != 2*sources || len(second.Created)+len(second.Updated) != 0 {
+		t.Errorf("rerun: created %d updated %d unchanged %d, want all %d unchanged", len(second.Created), len(second.Updated), len(second.Unchanged), 2*sources)
+	}
+}
+
+func TestSkillsInstall_SymlinkedDirOutsideRoot_RefusesWithNothingWritten(t *testing.T) {
 	bin := buildEngineBinary(t)
 	dir, elsewhere := t.TempDir(), t.TempDir()
 	if err := os.MkdirAll(filepath.Join(dir, ".claude"), 0o755); err != nil {
@@ -175,10 +223,57 @@ func TestSkillsInstall_SymlinkedSkillsDir_RefusesAndWritesNothingThroughIt(t *te
 
 	_, stderr, code := runEngine(t, bin, dir, "skills", "install", "--dir", dir, "--json")
 
-	if code == 0 || !strings.Contains(stderr, "symlink") {
-		t.Errorf("exit %d, stderr %q; want non-zero naming the symlink", code, stderr)
+	if code != 1 || !strings.Contains(stderr, "outside") {
+		t.Errorf("exit %d, stderr %q; want 1 naming the outside target", code, stderr)
 	}
-	if entries, _ := os.ReadDir(elsewhere); len(entries) != 0 {
-		t.Errorf("wrote %d entries through the symlink", len(entries))
+	if n := countFiles(t, elsewhere); n != 0 {
+		t.Errorf("%d files written through the symlink", n)
+	}
+	if n := countFiles(t, filepath.Join(dir, ".agents")); n != 0 {
+		t.Errorf("%d files written under .agents before the refusal", n)
+	}
+}
+
+func TestSkillsInstall_SymlinkedSkillFile_RefusesWithNothingWritten(t *testing.T) {
+	bin := buildEngineBinary(t)
+	dir, elsewhere := t.TempDir(), t.TempDir()
+	victim := filepath.Join(elsewhere, "victim.md")
+	if err := os.WriteFile(victim, []byte("keep"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	skillDir := filepath.Join(dir, ".claude", "skills", "attest")
+	if err := os.MkdirAll(skillDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(victim, filepath.Join(skillDir, "SKILL.md")); err != nil {
+		t.Fatal(err)
+	}
+
+	_, stderr, code := runEngine(t, bin, dir, "skills", "install", "--dir", dir, "--json")
+
+	if code != 1 || !strings.Contains(stderr, "symlink") {
+		t.Errorf("exit %d, stderr %q; want 1 naming the symlink", code, stderr)
+	}
+	if got, _ := os.ReadFile(victim); string(got) != "keep" {
+		t.Errorf("symlink target overwritten: %q", got)
+	}
+	if n := countFiles(t, filepath.Join(dir, ".agents")); n != 0 {
+		t.Errorf("%d files written under .agents before the refusal", n)
+	}
+}
+
+func TestHelpFlag_ExitsZero(t *testing.T) {
+	bin := buildEngineBinary(t)
+	for _, args := range [][]string{
+		{"policy", "evaluate", "-h"},
+		{"version", "-h"},
+		{"cache", "stats", "-h"},
+		{"skills", "install", "-h"},
+		{"skills", "list", "-h"},
+	} {
+		_, _, code := runEngine(t, bin, t.TempDir(), args...)
+		if code != 0 {
+			t.Errorf("attest-engine %s: exit %d, want 0", strings.Join(args, " "), code)
+		}
 	}
 }
