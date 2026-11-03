@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"text/tabwriter"
@@ -34,7 +35,7 @@ func init() {
 	})
 }
 
-const mcpUsage = `usage: attest-engine mcp [--root DIR]
+const mcpUsage = `usage: attest-engine mcp [--root DIR]   (without --root, the working directory must not be / or your home directory)
        attest-engine mcp --tools [--json]
        attest-engine mcp install --dir DIR --command '<json argv>' [--force] [--json]`
 
@@ -68,10 +69,19 @@ func runMCP(args []string) int {
 		return printMCPTools(*asJSON)
 	}
 
+	explicit := false
+	fset.Visit(func(f *flag.Flag) { explicit = explicit || f.Name == "root" })
 	r, err := pathguard.NewRoot(*root)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "mcp: %v\n", err)
 		return 1
+	}
+	defer r.Close()
+	if !explicit {
+		if why := broadRoot(r.Path()); why != "" {
+			fmt.Fprintf(os.Stderr, "mcp: the working directory %s is %s; the server would read anything under it. Start the server in the project directory or pass --root DIR\n", r.Path(), why)
+			return 2
+		}
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -81,6 +91,20 @@ func runMCP(args []string) int {
 		return 1
 	}
 	return 0
+}
+
+// broadRoot says why dir is too broad to serve without an explicit --root: the
+// filesystem root or the user's home directory.
+func broadRoot(dir string) string {
+	if filepath.Dir(dir) == dir {
+		return "the filesystem root"
+	}
+	if home, err := os.UserHomeDir(); err == nil {
+		if real, err := filepath.EvalSymlinks(home); err == nil && real == dir {
+			return "your home directory"
+		}
+	}
+	return ""
 }
 
 func printMCPTools(asJSON bool) int {

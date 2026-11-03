@@ -1,6 +1,9 @@
 package mcp
 
-import "encoding/json"
+import (
+	"context"
+	"encoding/json"
+)
 
 // The tool table is static: tools are registered once, in this order, with
 // these descriptions and schemas. Nothing about the table depends on the
@@ -160,6 +163,7 @@ const draftOutput = `{
           "spec": {"type": "object"},
           "status": {"type": "string"},
           "explanation": {"type": "string"},
+          "chain_prefix": {"type": "string", "description": "What precedes the line in a chain: .world(FIXTURE.world) for effect checks, which exist only on the object .world() returns."},
           "python": {"type": "string"},
           "typescript": {"type": "string"},
           "error": {"type": "string"}
@@ -204,6 +208,7 @@ const runOutput = `{
           "explanation": {"type": "string"},
           "failure_class": {"type": "string"},
           "spec": {"type": "object"},
+          "chain_prefix": {"type": "string", "description": "What precedes the line in a chain: .world(FIXTURE.world) for effect checks, which exist only on the object .world() returns."},
           "python": {"type": "string"},
           "typescript": {"type": "string"}
         }
@@ -248,7 +253,7 @@ type ToolInfo struct {
 
 type toolDef struct {
 	ToolInfo
-	run func(e *env, args json.RawMessage) (any, error)
+	run func(e *env, ctx context.Context, args json.RawMessage) (any, error)
 }
 
 const deterministicNote = " Runs the deterministic layers only (schema, constraint, trace, content, trace tree, effect). " +
@@ -299,7 +304,7 @@ var tools = []toolDef{
 				`tool_cardinality("issue_refund", per="order_id", at_most=1). ` +
 				"Only these methods exist: " + methodList() + ". Anything else is rejected with a position; nothing is evaluated as code. " +
 				"Effect checks (count, unique, idempotent) read the world from world_path or the fixture. " +
-				"Returns per statement a status (pass, soft_fail, hard_fail, not_evaluated or error), the explanation, the spec and the Python and TypeScript test lines." + deterministicNote,
+				"Returns per statement a status (pass, soft_fail, hard_fail, not_evaluated or error), the explanation, the spec and the Python and TypeScript test lines; effect lines start with the .world(FIXTURE.world) chain prefix." + deterministicNote,
 			InputSchema: json.RawMessage(runInput), OutputSchema: json.RawMessage(runOutput),
 		},
 		run: (*env).runContract,

@@ -64,6 +64,7 @@ func connect(t *testing.T, root string) *mcp.ClientSession {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { r.Close() })
 	ctx := context.Background()
 	ct, st := mcp.NewInMemoryTransports()
 	srv := attestmcp.NewServer(r, "test", slog.New(slog.NewTextHandler(io.Discard, nil)))
@@ -346,7 +347,13 @@ func TestRunContract_EffectChecksUseFixtureWorld(t *testing.T) {
 	if got, want := statuses(t, r), []string{"hard_fail", "pass"}; !reflect.DeepEqual(got, want) {
 		t.Errorf("statuses %v, want %v", got, want)
 	}
-	if _, has := r.Doc["results"].([]any)[0].(map[string]any)["spec"].(map[string]any)["world"]; has {
+	first := r.Doc["results"].([]any)[0].(map[string]any)
+	if first["chain_prefix"] != ".world(FIXTURE.world)" ||
+		first["python"] != `.world(FIXTURE.world).count("refunds", equals=1, order_id="O-1042")` ||
+		first["typescript"] != `.world(FIXTURE.world).count("refunds", { equals: 1, where: { order_id: "O-1042" } })` {
+		t.Errorf("effect lines: %v | %v | %v", first["chain_prefix"], first["python"], first["typescript"])
+	}
+	if _, has := first["spec"].(map[string]any)["world"]; has {
 		t.Error("result spec repeats the world snapshot")
 	}
 }
@@ -682,7 +689,7 @@ func TestPathConfinement_Rejected(t *testing.T) {
 
 func TestPathConfinement_InsideSymlinkAllowed(t *testing.T) {
 	root, _ := project(t)
-	if err := os.Symlink(filepath.Join(root, "fixtures"), filepath.Join(root, "alias")); err != nil {
+	if err := os.Symlink("fixtures", filepath.Join(root, "alias")); err != nil {
 		t.Skip(err)
 	}
 	if r := call(t, connect(t, root), "fixture_info", map[string]any{"path": "alias/incident.attest.json"}); r.IsError {
@@ -805,5 +812,50 @@ func TestEvaluate_SchemaFileRef_NotLoaded(t *testing.T) {
 	})
 	if strings.Contains(r.Text, "sk-live-abc") {
 		t.Errorf("file content leaked: %s", r.Text)
+	}
+}
+
+func TestEvaluate_JudgeAssertionsKeepNotConfiguredReasonAfterDeterministicFailure(t *testing.T) {
+	root, _ := project(t)
+	r := call(t, connect(t, root), "evaluate", map[string]any{
+		"fixture_path": "fixtures/incident.attest.json",
+		"assertions": []map[string]any{
+			{"assertion_id": "fails", "type": "trace", "spec": map[string]any{"check": "tool_cardinality", "tool": "issue_refund", "per": "order_id", "max": 1}},
+			{"assertion_id": "judge", "type": "llm_judge", "spec": map[string]any{"criteria": "polite", "rubric": "default"}},
+			{"assertion_id": "embed", "type": "embedding", "spec": map[string]any{"reference": "x", "threshold": 0.8}},
+		},
+	})
+	if r.IsError {
+		t.Fatal(r.Text)
+	}
+	rows := r.Doc["results"].([]any)
+	var ids []string
+	for _, row := range rows {
+		m := row.(map[string]any)
+		ids = append(ids, m["assertion_id"].(string))
+		if m["assertion_id"] == "fails" {
+			if m["status"] != "hard_fail" {
+				t.Errorf("deterministic assertion: %v", m["status"])
+			}
+			continue
+		}
+		if m["status"] != "not_evaluated" || m["reason"] != "provider_not_configured" {
+			t.Errorf("%v: status %v reason %v, want not_evaluated/provider_not_configured", m["assertion_id"], m["status"], m["reason"])
+		}
+	}
+	if !reflect.DeepEqual(ids, []string{"fails", "judge", "embed"}) {
+		t.Errorf("results out of request order: %v", ids)
+	}
+}
+
+func TestEvaluate_OversizedRegex_Rejected(t *testing.T) {
+	root, _ := project(t)
+	r := call(t, connect(t, root), "evaluate", map[string]any{
+		"fixture_path": "fixtures/incident.attest.json",
+		"assertions": []map[string]any{{"assertion_id": "re", "type": "content",
+			"spec": map[string]any{"check": "regex_match", "target": "output.message", "value": strings.Repeat("a", 5000)}}},
+	})
+	if !r.IsError || !strings.Contains(r.Text, "regular expression is larger") {
+		t.Errorf("got %+v", r)
 	}
 }

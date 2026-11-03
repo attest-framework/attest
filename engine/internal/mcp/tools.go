@@ -44,7 +44,7 @@ func (s *summary) add(status string) {
 
 // ── trace_check ──
 
-func (e *env) traceCheck(raw json.RawMessage) (any, error) {
+func (e *env) traceCheck(ctx context.Context, raw json.RawMessage) (any, error) {
 	var in struct {
 		Path string `json:"path"`
 	}
@@ -79,7 +79,7 @@ type assertionInput struct {
 
 const maxAssertions = 200
 
-func (e *env) evaluate(raw json.RawMessage) (any, error) {
+func (e *env) evaluate(ctx context.Context, raw json.RawMessage) (any, error) {
 	var in struct {
 		TracePath   string           `json:"trace_path"`
 		FixturePath string           `json:"fixture_path"`
@@ -111,6 +111,7 @@ func (e *env) evaluate(raw json.RawMessage) (any, error) {
 	}
 	batch := make([]types.Assertion, 0, len(in.Assertions))
 	seen := map[string]bool{}
+	var unconfigured []types.Assertion
 	for i, a := range in.Assertions {
 		switch {
 		case a.AssertionID == "" || len(a.AssertionID) > 256:
@@ -122,18 +123,89 @@ func (e *env) evaluate(raw json.RawMessage) (any, error) {
 		case len(a.Spec) == 0 || a.Spec[0] != '{':
 			return nil, fmt.Errorf("assertions[%d]: spec must be an object", i)
 		}
+		if err := checkSpec(a.Spec); err != nil {
+			return nil, fmt.Errorf("assertions[%d]: %w", i, err)
+		}
 		seen[a.AssertionID] = true
-		batch = append(batch, types.Assertion{AssertionID: a.AssertionID, Type: a.Type, Spec: a.Spec})
+		as := types.Assertion{AssertionID: a.AssertionID, Type: a.Type, Spec: a.Spec}
+		if a.Type == types.TypeEmbedding || a.Type == types.TypeLLMJudge {
+			unconfigured = append(unconfigured, as)
+			continue
+		}
+		batch = append(batch, as)
 	}
-	res, err := e.pipeline.EvaluateBatch(context.Background(), t, batch)
-	if err != nil {
-		return nil, fmt.Errorf("evaluation failed: %w", err)
+	// Judge and embedding assertions are answered here, before evaluation, so a
+	// deterministic failure in the batch never relabels them short_circuited.
+	byID := map[string]types.AssertionResult{}
+	for _, a := range unconfigured {
+		byID[a.AssertionID] = types.AssertionResult{
+			AssertionID: a.AssertionID, Status: types.StatusNotEvaluated, Reason: types.ReasonProviderNotConfigured,
+			Explanation: fmt.Sprintf("not run: the MCP server has no %s provider and makes no model or network calls", a.Type),
+			Type:        a.Type, Layer: types.LayerForType(a.Type),
+		}
 	}
+	if len(batch) > 0 {
+		res, err := e.pipeline.EvaluateBatch(ctx, t, batch)
+		if err != nil {
+			return nil, fmt.Errorf("evaluation failed: %w", err)
+		}
+		for _, r := range res.Results {
+			byID[r.AssertionID] = r
+		}
+	}
+	results := make([]types.AssertionResult, 0, len(in.Assertions))
 	var sum summary
-	for i := range res.Results {
-		sum.add(res.Results[i].Status)
+	for _, a := range in.Assertions {
+		r := byID[a.AssertionID]
+		results = append(results, r)
+		sum.add(r.Status)
 	}
-	return map[string]any{"summary": sum, "results": res.Results}, nil
+	return map[string]any{"summary": sum, "results": results}, nil
+}
+
+const (
+	// maxSpecBytes caps one assertion spec an agent supplies.
+	maxSpecBytes = 64 << 10
+	// maxPatternBytes caps a regular expression or schema pattern.
+	maxPatternBytes = 4 << 10
+)
+
+// checkSpec refuses an oversized spec or an oversized regular expression in it.
+func checkSpec(spec json.RawMessage) error {
+	if len(spec) > maxSpecBytes {
+		return fmt.Errorf("spec is larger than %d bytes", maxSpecBytes)
+	}
+	var doc any
+	if err := json.Unmarshal(spec, &doc); err != nil {
+		return errors.New("spec is not valid JSON")
+	}
+	return walkPatterns(doc, 0)
+}
+
+func walkPatterns(v any, depth int) error {
+	if depth > 64 {
+		return errors.New("spec is nested too deeply")
+	}
+	switch x := v.(type) {
+	case map[string]any:
+		regexCheck := x["check"] == "regex_match"
+		for k, e := range x {
+			if str, ok := e.(string); ok && len(str) > maxPatternBytes &&
+				(k == "pattern" || k == "regex" || k == "regexp" || (k == "value" && regexCheck)) {
+				return fmt.Errorf("regular expression is larger than %d bytes", maxPatternBytes)
+			}
+			if err := walkPatterns(e, depth+1); err != nil {
+				return err
+			}
+		}
+	case []any:
+		for _, e := range x {
+			if err := walkPatterns(e, depth+1); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 // ── explain_failure ──
@@ -151,7 +223,7 @@ type finding struct {
 	NextStep     string `json:"next_step"`
 }
 
-func (e *env) explainFailure(raw json.RawMessage) (any, error) {
+func (e *env) explainFailure(ctx context.Context, raw json.RawMessage) (any, error) {
 	var in struct {
 		ReportPath string `json:"report_path"`
 		TestID     string `json:"test_id"`
@@ -206,12 +278,13 @@ type draftedContract struct {
 	Spec        json.RawMessage `json:"spec"`
 	Status      string          `json:"status"`
 	Explanation string          `json:"explanation"`
+	ChainPrefix string          `json:"chain_prefix,omitempty"`
 	Python      string          `json:"python,omitempty"`
 	TypeScript  string          `json:"typescript,omitempty"`
 	Error       string          `json:"error,omitempty"`
 }
 
-func (e *env) draftContract(raw json.RawMessage) (any, error) {
+func (e *env) draftContract(ctx context.Context, raw json.RawMessage) (any, error) {
 	var in struct {
 		FixturePath string `json:"fixture_path"`
 		TracePath   string `json:"trace_path"`
@@ -249,7 +322,7 @@ func (e *env) draftContract(raw json.RawMessage) (any, error) {
 			ID: c.ID, Kind: c.Kind, Description: c.Description, Type: c.Type, Spec: c.Spec,
 			Status: status[c.ID].Status, Explanation: status[c.ID].Explanation,
 		}
-		d.Statement, d.Python, d.TypeScript, d.Error = render(c)
+		d.Statement, d.ChainPrefix, d.Python, d.TypeScript, d.Error = render(c)
 		out = append(out, d)
 	}
 	return map[string]any{
@@ -260,25 +333,25 @@ func (e *env) draftContract(raw json.RawMessage) (any, error) {
 
 // render turns a drafted contract into its statement and test lines. A
 // contract with no statement form carries the reason instead.
-func render(c capture.Contract) (statement, python, typescript, errMsg string) {
+func render(c capture.Contract) (statement, prefix, python, typescript, errMsg string) {
 	var spec map[string]any
 	if err := json.Unmarshal(c.Spec, &spec); err != nil {
-		return "", "", "", "spec is not an object"
+		return "", "", "", "", "spec is not an object"
 	}
 	call, err := contractdsl.FromSpec(c.Type, spec)
 	if err != nil {
-		return "", "", "", err.Error()
+		return "", "", "", "", err.Error()
 	}
 	if statement, err = call.Statement(); err != nil {
-		return "", "", "", err.Error()
+		return "", "", "", "", err.Error()
 	}
 	if python, err = call.PythonLine(); err != nil {
-		return "", "", "", err.Error()
+		return "", "", "", "", err.Error()
 	}
 	if typescript, err = call.TypeScriptLine(); err != nil {
-		return "", "", "", err.Error()
+		return "", "", "", "", err.Error()
 	}
-	return statement, python, typescript, ""
+	return statement, call.ChainPrefix(), python, typescript, ""
 }
 
 // ── run_contract ──
@@ -290,13 +363,14 @@ type statementResult struct {
 	Explanation  string         `json:"explanation"`
 	FailureClass string         `json:"failure_class,omitempty"`
 	Spec         map[string]any `json:"spec,omitempty"`
+	ChainPrefix  string         `json:"chain_prefix,omitempty"`
 	Python       string         `json:"python,omitempty"`
 	TypeScript   string         `json:"typescript,omitempty"`
 }
 
 const statusError = "error"
 
-func (e *env) runContract(raw json.RawMessage) (any, error) {
+func (e *env) runContract(ctx context.Context, raw json.RawMessage) (any, error) {
 	var in struct {
 		Statements  []string `json:"statements"`
 		FixturePath string   `json:"fixture_path"`
@@ -348,6 +422,7 @@ func (e *env) runContract(raw json.RawMessage) (any, error) {
 		}
 		spec := call.Spec()
 		results[i].Spec = spec
+		results[i].ChainPrefix = call.ChainPrefix()
 		results[i].Python, _ = call.PythonLine()
 		results[i].TypeScript, _ = call.TypeScriptLine()
 		evalSpec := spec
@@ -369,7 +444,7 @@ func (e *env) runContract(raw json.RawMessage) (any, error) {
 		batch = append(batch, types.Assertion{AssertionID: id, Type: call.Type(), Spec: data})
 	}
 	if len(batch) > 0 {
-		res, err := e.pipeline.EvaluateBatch(context.Background(), src.trace, batch)
+		res, err := e.pipeline.EvaluateBatch(ctx, src.trace, batch)
 		if err != nil {
 			return nil, fmt.Errorf("evaluation failed: %w", err)
 		}
@@ -388,7 +463,7 @@ func (e *env) runContract(raw json.RawMessage) (any, error) {
 
 // ── fixture_info ──
 
-func (e *env) fixtureInfo(raw json.RawMessage) (any, error) {
+func (e *env) fixtureInfo(ctx context.Context, raw json.RawMessage) (any, error) {
 	var in struct {
 		Path string `json:"path"`
 	}

@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -33,15 +34,30 @@ const instructions = "attest checks an agent's recorded behavior without calling
 	"evaluate checks raw assertion specs; explain_failure reads a report. " +
 	"Read the guide with `attest guide mcp`."
 
+const (
+	// callTimeout bounds one tool call.
+	callTimeout = 30 * time.Second
+	// maxConcurrentCalls bounds tool calls running at once.
+	maxConcurrentCalls = 4
+)
+
 // env is what the tool handlers share. It holds no per-call state.
 type env struct {
 	root     *pathguard.Root
 	pipeline *assertion.Pipeline
+	slots    chan struct{}
+}
+
+func newEnv(root *pathguard.Root, pipeline *assertion.Pipeline) *env {
+	return &env{root: root, pipeline: pipeline, slots: make(chan struct{}, maxConcurrentCalls)}
 }
 
 // NewServer builds the server with its fixed toolset. Logs go to logger.
 func NewServer(root *pathguard.Root, version string, logger *slog.Logger) *mcp.Server {
-	e := &env{root: root, pipeline: assertion.NewPipeline(assertion.NewRegistry())}
+	return newServer(newEnv(root, assertion.NewPipeline(assertion.NewRegistry())), version, logger)
+}
+
+func newServer(e *env, version string, logger *slog.Logger) *mcp.Server {
 	srv := mcp.NewServer(&mcp.Implementation{Name: "attest", Version: version}, &mcp.ServerOptions{
 		Instructions: instructions,
 		Logger:       logger,
@@ -65,17 +81,48 @@ func Serve(ctx context.Context, root *pathguard.Root, version string, logs io.Wr
 	return NewServer(root, version, logger).Run(ctx, &mcp.StdioTransport{})
 }
 
+// handler runs one tool call with a deadline and a concurrency slot. A panic
+// in the call becomes a tool error; a call past its deadline is abandoned (its
+// goroutine ends when the work does).
 func (e *env) handler(def toolDef) mcp.ToolHandler {
-	return func(_ context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	return func(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		args := req.Params.Arguments
 		if len(args) > MaxArgumentBytes {
 			return toolError(fmt.Errorf("arguments are larger than %d bytes", MaxArgumentBytes)), nil
 		}
-		out, err := def.run(e, args)
-		if err != nil {
-			return toolError(err), nil
+		ctx, cancel := context.WithTimeout(ctx, callTimeout)
+		defer cancel()
+		select {
+		case e.slots <- struct{}{}:
+		case <-ctx.Done():
+			return toolError(errors.New("the server is busy; try again")), nil
 		}
-		data, err := json.Marshal(out)
+		type outcome struct {
+			out any
+			err error
+		}
+		done := make(chan outcome, 1)
+		go func() {
+			defer func() { <-e.slots }()
+			defer func() {
+				if r := recover(); r != nil {
+					slog.Error("tool call panicked", "tool", def.Name, "panic", fmt.Sprint(r))
+					done <- outcome{err: errors.New("internal error while running the tool")}
+				}
+			}()
+			out, err := def.run(e, ctx, args)
+			done <- outcome{out, err}
+		}()
+		var res outcome
+		select {
+		case res = <-done:
+		case <-ctx.Done():
+			return toolError(fmt.Errorf("the call took longer than %s", callTimeout)), nil
+		}
+		if res.err != nil {
+			return toolError(res.err), nil
+		}
+		data, err := json.Marshal(res.out)
 		if err != nil {
 			return toolError(errors.New("result could not be encoded")), nil
 		}
