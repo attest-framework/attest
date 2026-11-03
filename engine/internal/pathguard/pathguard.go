@@ -54,6 +54,42 @@ func (r *Root) Close() error { return r.fs.Close() }
 // Path is the resolved root directory.
 func (r *Root) Path() string { return r.real }
 
+// RefuseAbsoluteSymlinks checks every component of rel (relative to realRoot,
+// forward slashes) that exists and refuses an absolute symlink, inside the root
+// or not. A writer that opens files through an os.Root needs this: os.Root
+// refuses absolute links, so they must be rejected while planning, with a
+// message that says what to change.
+func RefuseAbsoluteSymlinks(realRoot, rel string) error {
+	cur := realRoot
+	for _, part := range strings.Split(rel, "/") {
+		cur = filepath.Join(cur, part)
+		info, err := os.Lstat(cur)
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if info.Mode()&os.ModeSymlink == 0 {
+			continue
+		}
+		target, err := os.Readlink(cur)
+		if err != nil {
+			return err
+		}
+		if filepath.IsAbs(target) {
+			return fmt.Errorf("%s is an absolute symlink; use a relative link", cur)
+		}
+		// A relative link: continue from where it points.
+		resolved, err := filepath.EvalSymlinks(cur)
+		if err != nil {
+			return nil // a dangling link is reported by ResolveDestination
+		}
+		cur = resolved
+	}
+	return nil
+}
+
 // Within reports whether p is root or lies below it. Both must be cleaned,
 // symlink-free paths.
 func Within(root, p string) bool {
@@ -243,10 +279,6 @@ func ResolveDestination(realRoot, rel string) (string, error) {
 		if info.Mode()&os.ModeSymlink != 0 {
 			if last {
 				return "", fmt.Errorf("%s is a symlink; refusing to overwrite it", next)
-			}
-			if target, err := os.Readlink(next); err == nil && filepath.IsAbs(target) {
-				// Files are opened through an os.Root, which refuses absolute links.
-				return "", fmt.Errorf("%s is an absolute symlink; use a relative link", next)
 			}
 			resolved, err := filepath.EvalSymlinks(next)
 			if errors.Is(err, fs.ErrNotExist) {

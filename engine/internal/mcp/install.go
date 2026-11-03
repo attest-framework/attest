@@ -116,6 +116,9 @@ func Install(dir string, argv []string, force bool) (InstallResult, error) {
 	}
 	var plans []plan
 	for _, t := range configTargets {
+		if err := pathguard.RefuseAbsoluteSymlinks(root.Path(), t.rel); err != nil {
+			return res, err
+		}
 		if _, err := pathguard.ResolveDestination(root.Path(), t.rel); err != nil {
 			return res, err
 		}
