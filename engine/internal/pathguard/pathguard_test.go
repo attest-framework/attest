@@ -234,3 +234,22 @@ func TestResolveDestination_SymlinkOutside_Rejected(t *testing.T) {
 		t.Errorf("new path: %q, %v", got, err)
 	}
 }
+
+func TestResolveDestination_AbsoluteSymlink_Refused(t *testing.T) {
+	r, root, outside := tree(t)
+	for name, target := range map[string]string{"inside": filepath.Join(root, "sub"), "outside": outside} {
+		if err := os.Symlink(target, filepath.Join(root, name)); err != nil {
+			t.Skip(err)
+		}
+		_, err := pathguard.ResolveDestination(r.Path(), name+"/new.json")
+		if err == nil || !strings.Contains(err.Error(), "absolute symlink; use a relative link") {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+	if err := os.Symlink("sub", filepath.Join(root, "rel")); err != nil {
+		t.Skip(err)
+	}
+	if _, err := pathguard.ResolveDestination(r.Path(), "rel/new.json"); err != nil {
+		t.Errorf("relative symlink inside the root: %v", err)
+	}
+}

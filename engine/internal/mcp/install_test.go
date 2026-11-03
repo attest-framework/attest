@@ -326,3 +326,21 @@ func TestInstallCodex_OutputAlwaysParses(t *testing.T) {
 		}
 	}
 }
+
+func TestInstall_AbsoluteSymlinkedDirectory_RefusedWithClearMessage(t *testing.T) {
+	dir := t.TempDir()
+	real := filepath.Join(dir, "real-cursor")
+	if err := os.MkdirAll(real, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(real, filepath.Join(dir, ".cursor")); err != nil {
+		t.Skip(err)
+	}
+	_, err := attestmcp.Install(dir, launch, false)
+	if err == nil || !strings.Contains(err.Error(), "absolute symlink; use a relative link") {
+		t.Fatalf("error %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".mcp.json")); err == nil {
+		t.Error("other configs written despite the refusal")
+	}
+}

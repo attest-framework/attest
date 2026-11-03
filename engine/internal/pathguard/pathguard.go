@@ -244,6 +244,10 @@ func ResolveDestination(realRoot, rel string) (string, error) {
 			if last {
 				return "", fmt.Errorf("%s is a symlink; refusing to overwrite it", next)
 			}
+			if target, err := os.Readlink(next); err == nil && filepath.IsAbs(target) {
+				// Files are opened through an os.Root, which refuses absolute links.
+				return "", fmt.Errorf("%s is an absolute symlink; use a relative link", next)
+			}
 			resolved, err := filepath.EvalSymlinks(next)
 			if errors.Is(err, fs.ErrNotExist) {
 				return "", fmt.Errorf("%s is a symlink whose target does not exist yet; create the target directory or remove the link, then re-run", next)

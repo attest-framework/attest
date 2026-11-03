@@ -223,14 +223,37 @@ func TestSkillsInstall_SymlinkedDirOutsideRoot_RefusesWithNothingWritten(t *test
 
 	_, stderr, code := runEngine(t, bin, dir, "skills", "install", "--dir", dir, "--json")
 
-	if code != 1 || !strings.Contains(stderr, "outside") {
-		t.Errorf("exit %d, stderr %q; want 1 naming the outside target", code, stderr)
+	if code != 1 || !strings.Contains(stderr, "absolute symlink; use a relative link") {
+		t.Errorf("exit %d, stderr %q; want 1 refusing the absolute symlink", code, stderr)
 	}
 	if n := countFiles(t, elsewhere); n != 0 {
 		t.Errorf("%d files written through the symlink", n)
 	}
 	if n := countFiles(t, filepath.Join(dir, ".agents")); n != 0 {
 		t.Errorf("%d files written under .agents before the refusal", n)
+	}
+}
+
+func TestSkillsInstall_AbsoluteSymlinkInsideRoot_RefusesWithClearMessage(t *testing.T) {
+	bin := buildEngineBinary(t)
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, ".agents", "skills"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(dir, ".claude"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(dir, ".agents", "skills"), filepath.Join(dir, ".claude", "skills")); err != nil {
+		t.Fatal(err)
+	}
+
+	_, stderr, code := runEngine(t, bin, dir, "skills", "install", "--dir", dir, "--json")
+
+	if code != 1 || !strings.Contains(stderr, "absolute symlink; use a relative link") {
+		t.Errorf("exit %d, stderr %q", code, stderr)
+	}
+	if n := countFiles(t, filepath.Join(dir, ".agents")); n != 0 {
+		t.Errorf("%d files written before the refusal", n)
 	}
 }
 
