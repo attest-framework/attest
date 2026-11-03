@@ -21,7 +21,9 @@ import (
 type fakeUpstream struct {
 	srv     *httptest.Server
 	release chan struct{}
-	seq     atomic.Int64
+	// canceled receives when a streaming request is dropped mid-stream.
+	canceled chan struct{}
+	seq      atomic.Int64
 	// auth holds the last Authorization or x-api-key header seen.
 	auth atomic.Value
 	// deltas, when set, replace every streamed response's text deltas.
@@ -37,7 +39,7 @@ func (f *fakeUpstream) deltasOr(defaults ...string) []string {
 
 func newFakeUpstream(t *testing.T) *fakeUpstream {
 	t.Helper()
-	f := &fakeUpstream{release: make(chan struct{}, 16)}
+	f := &fakeUpstream{release: make(chan struct{}, 16), canceled: make(chan struct{}, 16)}
 	f.srv = httptest.NewServer(http.HandlerFunc(f.serve))
 	t.Cleanup(f.srv.Close)
 	return f
@@ -119,6 +121,10 @@ func (f *fakeUpstream) serve(w http.ResponseWriter, r *http.Request) {
 	fl.Flush()
 	select {
 	case <-f.release:
+	case <-r.Context().Done():
+		// The proxy dropped the upstream request: its client went away.
+		f.canceled <- struct{}{}
+		return
 	case <-time.After(5 * time.Second):
 	}
 	for _, e := range events[1:] {

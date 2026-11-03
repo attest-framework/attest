@@ -251,7 +251,13 @@ func TestSession_ClientCancelsStream_ExchangeIncomplete(t *testing.T) {
 
 	cancel()
 	resp.Body.Close()
-	up.release <- struct{}{}
+	// Wait until the proxy has dropped the upstream request; the upstream
+	// never sends the rest of the stream.
+	select {
+	case <-up.canceled:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the proxy never dropped the upstream request")
+	}
 	if err := s.Close(); err != nil {
 		t.Fatal(err)
 	}
