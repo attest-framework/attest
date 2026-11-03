@@ -10,7 +10,7 @@ attest guide            # list the shipped guides
 attest guide <topic>    # print one guide as Markdown, offline
 ```
 
-`attest help --json` prints `{"commands": [{"name", "summary", "schema", "subcommands", "exit_codes"}]}`. `schema` and each subcommand's `schema` are paths relative to `proto/attest/v1/` in the attest repository. Run through the SDK (`uv run attest help --json`, `npx attest help --json`), the document also lists `init`, which the SDK implements itself (schema `cli/init.schema.json`; exit 0 success, 1 `--skills` could not install, 2 usage error). The text form (`attest help`) is unchanged.
+`attest help --json` prints `{"commands": [{"name", "summary", "schema", "subcommands", "exit_codes"}]}`. `schema` and each subcommand's `schema` are paths relative to `proto/attest/v1/` in the attest repository. Run through the SDK (`uv run attest help --json`, `npx attest help --json`), the document also lists `init`, which the SDK implements itself (schema `cli/init.schema.json`; exit 0 success, 1 `--skills` or `--mcp` could not install, 2 usage error). The text form (`attest help`) is unchanged.
 
 ## JSON output
 
@@ -32,6 +32,8 @@ Commands that run a child process (`capture`, `replay`, `world` with `-- <comman
 | `capture` | `cli/capture.schema.json` |
 | `doctor` | `doctor.schema.json` |
 | `guide` | `cli/guide.schema.json` |
+| `mcp tools` (`mcp --tools --json`) | `cli/mcp-tools.schema.json` |
+| `mcp install` | `cli/mcp-install.schema.json` |
 | `policy evaluate` | `cli/policy-evaluate.schema.json` |
 | `replay` | `cli/replay.schema.json` |
 | `report junit` | `cli/report-junit.schema.json` |
@@ -74,6 +76,9 @@ The table is checked against the engine's command registry by a test; a change t
 | `guide` | 0 | guide list or guide printed |
 | `guide` | 1 | an embedded guide is unreadable or has no title |
 | `guide` | 2 | unknown topic or usage error |
+| `mcp` | 0 | the client disconnected, the tools were listed, or the client configs were written |
+| `mcp` | 1 | the server failed, the project root is unusable, or a config could not be read or written |
+| `mcp` | 2 | usage error |
 | `policy` | 0 | pass: every rule satisfied |
 | `policy` | 1 | block: a block-severity rule was violated |
 | `policy` | 2 | warn: only warn-severity rules were violated |

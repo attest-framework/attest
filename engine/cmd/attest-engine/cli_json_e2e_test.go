@@ -27,6 +27,12 @@ var cliJSONRunners = map[string]cliJSONRunner{
 	"guide": func(t *testing.T, bin string, env []string, tmp string) []byte {
 		return cliRun(t, bin, env, tmp, 0, "guide", "capture", "--json")
 	},
+	"mcp tools": func(t *testing.T, bin string, env []string, tmp string) []byte {
+		return cliRun(t, bin, env, tmp, 0, "mcp", "--tools", "--json")
+	},
+	"mcp install": func(t *testing.T, bin string, env []string, tmp string) []byte {
+		return cliRun(t, bin, env, tmp, 0, "mcp", "install", "--dir", filepath.Join(tmp, "project"), "--command", `["attest","mcp"]`, "--json")
+	},
 	"skills list": func(t *testing.T, bin string, env []string, tmp string) []byte {
 		return cliRun(t, bin, env, tmp, 0, "skills", "list", "--json")
 	},

@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://attest-framework.github.io/schemas/v1/cli/mcp-install.schema.json",
+  "title": "attest-engine mcp install --json",
+  "description": "The MCP client configs written for the project: Claude Code (.mcp.json), Cursor (.cursor/mcp.json) and Codex (.codex/config.toml). Each path is in exactly one list, relative to dir with forward slashes. conflict lists configs that already hold a different attest entry and were left alone; --force replaces them.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "dir",
+    "created",
+    "updated",
+    "unchanged",
+    "conflict"
+  ],
+  "properties": {
+    "dir": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Absolute project directory."
+    },
+    "created": {
+      "$ref": "#/$defs/paths"
+    },
+    "updated": {
+      "$ref": "#/$defs/paths"
+    },
+    "unchanged": {
+      "$ref": "#/$defs/paths"
+    },
+    "conflict": {
+      "$ref": "#/$defs/paths"
+    }
+  },
+  "$defs": {
+    "paths": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "enum": [
+          ".mcp.json",
+          ".cursor/mcp.json",
+          ".codex/config.toml"
+        ]
+      }
+    }
+  }
+}
