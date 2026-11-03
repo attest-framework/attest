@@ -1,10 +1,15 @@
-.PHONY: record-judge-fixtures all engine engine-test engine-lint engine-benchmark sdk-python sdk-python-test sdk-python-lint security protocol-benchmark test clean dev-setup verify-versions
+.PHONY: record-judge-fixtures all generate engine engine-test engine-lint engine-benchmark sdk-python sdk-python-test sdk-python-lint security protocol-benchmark test clean dev-setup verify-versions
 
 # ── Version source-of-truth ──
 verify-versions:
 	bash scripts/verify-versions.sh
 
 # ── Engine ──
+# Stage docs/guides and skills into the engine for go:embed and write the
+# plugin manifests; engine-test fails until this has been run after an edit.
+generate:
+	cd engine && go generate ./internal/assets/
+
 engine: verify-versions
 	cd engine && go build -o ../bin/attest-engine ./cmd/attest-engine/
 

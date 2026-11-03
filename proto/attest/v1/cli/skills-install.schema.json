@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://attest-framework.github.io/schemas/v1/cli/skills-install.schema.json",
+  "title": "attest-engine skills install --json",
+  "description": "The files written under <dir>/.agents/skills and <dir>/.claude/skills, classified by what the install did. Paths are relative to dir, with forward slashes, sorted.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["dir", "created", "updated", "unchanged"],
+  "properties": {
+    "dir": { "type": "string", "minLength": 1, "description": "Absolute install directory." },
+    "created": { "$ref": "#/$defs/paths" },
+    "updated": { "$ref": "#/$defs/paths" },
+    "unchanged": { "$ref": "#/$defs/paths" }
+  },
+  "$defs": {
+    "paths": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "type": "string", "pattern": "^\\.(agents|claude)/skills/[^/]+/.+$" }
+    }
+  }
+}
