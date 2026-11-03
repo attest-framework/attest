@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites>
+  <testsuite name="tests/test_judge.py" tests="1" failures="0" errors="0" skipped="1" time="0.005">
+    <testcase name="test_tone" classname="tests/test_judge.py" file="tests/test_judge.py" line="7" time="0.005">
+      <skipped message="not evaluated: provider_not_configured"></skipped>
+    </testcase>
+  </testsuite>
+  <testsuite name="tests/test_refund.py" tests="2" failures="1" errors="0" skipped="0" time="1.520">
+    <testcase name="test_live_agent" classname="tests/test_refund.py" file="tests/test_refund.py" line="40" time="1.500">
+      <failure message="effect violated: 2 refunds for O-1042 (expected 1)" type="effect">effect effect_refunds: effect violated: 2 refunds for O-1042 (expected 1)</failure>
+    </testcase>
+    <testcase name="test_ok" classname="tests/test_refund.py" file="tests/test_refund.py" line="10" time="0.020"></testcase>
+  </testsuite>
+  <testsuite name="tests/test_replay.py" tests="2" failures="1" errors="0" skipped="1" time="0.070">
+    <testcase name="test_auto" classname="tests/test_replay.py" file="tests/test_replay.py" line="12" time="0.030">
+      <skipped message="not evaluated: replay_miss"></skipped>
+    </testcase>
+    <testcase name="test_strict" classname="tests/test_replay.py" file="tests/test_replay.py" line="30" time="0.040">
+      <failure message="replay miss: tools changed (hash 1111111→2222222)" type="replay">replay replay_inc-1042: replay miss: tools changed (hash 1111111→2222222)</failure>
+    </testcase>
+  </testsuite>
+</testsuites>

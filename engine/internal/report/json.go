@@ -266,3 +266,38 @@ func durationPercentiles(results []types.AssertionResult) (p50, p95 int64) {
 	sort.Slice(durations, func(i, j int) bool { return durations[i] < durations[j] })
 	return percentile(durations, 50), percentile(durations, 95)
 }
+
+// layerName is the report name of a 1-8 pipeline layer.
+func layerName(layer int) string {
+	switch layer {
+	case 1:
+		return "schema"
+	case 2:
+		return "constraint"
+	case 3:
+		return "trace"
+	case 4:
+		return "content"
+	case 5:
+		return "embedding"
+	case 6:
+		return "llm_judge"
+	case 7:
+		return "trace_tree"
+	case 8:
+		return "plugin"
+	default:
+		return "uncategorized"
+	}
+}
+
+func percentile(xs []int64, p int) int64 {
+	if len(xs) == 0 {
+		return 0
+	}
+	idx := (p * len(xs)) / 100
+	if idx >= len(xs) {
+		idx = len(xs) - 1
+	}
+	return xs[idx]
+}

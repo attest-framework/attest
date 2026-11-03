@@ -3,103 +3,138 @@ package report
 import (
 	"encoding/xml"
 	"fmt"
+	"sort"
 	"strconv"
-
-	"github.com/attest-ai/attest/engine/pkg/types"
+	"strings"
 )
 
+// JUnitTestSuites is the root element of a JUnit XML document.
 type JUnitTestSuites struct {
 	XMLName xml.Name         `xml:"testsuites"`
 	Suites  []JUnitTestSuite `xml:"testsuite"`
 }
 
+// JUnitTestSuite groups the tests of one source file.
 type JUnitTestSuite struct {
 	Name     string          `xml:"name,attr"`
 	Tests    int             `xml:"tests,attr"`
 	Failures int             `xml:"failures,attr"`
 	Errors   int             `xml:"errors,attr"`
+	Skipped  int             `xml:"skipped,attr"`
 	Time     string          `xml:"time,attr"`
 	Cases    []JUnitTestCase `xml:"testcase"`
 }
 
+// JUnitTestCase is one test. file and line are the extended attributes GitHub
+// and most CI viewers use to place a failure on its source line.
 type JUnitTestCase struct {
 	Name      string        `xml:"name,attr"`
 	ClassName string        `xml:"classname,attr"`
+	File      string        `xml:"file,attr,omitempty"`
+	Line      int           `xml:"line,attr,omitempty"`
 	Time      string        `xml:"time,attr"`
 	Failure   *JUnitFailure `xml:"failure,omitempty"`
-	SystemOut string        `xml:"system-out,omitempty"`
+	Skipped   *JUnitSkipped `xml:"skipped,omitempty"`
 }
 
+// JUnitFailure is a failed test.
 type JUnitFailure struct {
 	Message string `xml:"message,attr"`
 	Type    string `xml:"type,attr,omitempty"`
 	Content string `xml:",chardata"`
 }
 
-// GenerateJUnitXML generates a JUnit XML report from assertion results.
-func GenerateJUnitXML(results []types.AssertionResult, totalDurationMS int64) ([]byte, error) {
-	var failures int
-	var cases []JUnitTestCase
-
-	for _, result := range results {
-		testCase := JUnitTestCase{
-			Name:      result.AssertionID,
-			ClassName: getAssertionType(result.AssertionID),
-			Time:      formatDuration(result.DurationMS),
-		}
-
-		if result.Status == types.StatusHardFail || result.Status == types.StatusSoftFail {
-			failures++
-			failureType := ""
-			if result.Status == types.StatusSoftFail {
-				failureType = "soft_fail"
-			}
-			testCase.Failure = &JUnitFailure{
-				Message: result.Explanation,
-				Type:    failureType,
-				Content: result.Status,
-			}
-		} else if result.Status == types.StatusPass {
-			testCase.SystemOut = result.Explanation
-		}
-
-		cases = append(cases, testCase)
-	}
-
-	suite := JUnitTestSuite{
-		Name:     "attest",
-		Tests:    len(results),
-		Failures: failures,
-		Errors:   0,
-		Time:     formatDuration(totalDurationMS),
-		Cases:    cases,
-	}
-
-	suites := JUnitTestSuites{
-		Suites: []JUnitTestSuite{suite},
-	}
-
-	output, err := xml.MarshalIndent(suites, "", "  ")
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal XML: %w", err)
-	}
-
-	// Add XML declaration
-	xmlWithDecl := append([]byte(xml.Header), output...)
-	return xmlWithDecl, nil
+// JUnitSkipped is a test with no verdict (not_evaluated).
+type JUnitSkipped struct {
+	Message string `xml:"message,attr"`
 }
 
-// getAssertionType extracts the assertion type from the assertion ID.
-// Falls back to parsing assertion description or returns "unknown".
-func getAssertionType(assertionID string) string {
-	// Parse assertion ID format: "assert_NNN" or similar
-	// For now, return a generic classname based on ID pattern
-	// In practice, you'd want to pass type information through results
-	return "assertion"
+// GenerateJUnitXML renders the tests of r as JUnit XML: one testsuite per
+// source file in sorted order, one testcase per test in report order. A failed
+// test carries a <failure> listing its failing assertions and replay misses; a
+// skipped test (not_evaluated) carries a <skipped> naming the reasons.
+func GenerateJUnitXML(r *CIReport) ([]byte, error) {
+	rowsByTest := map[string][]FindingRow{}
+	for _, row := range FindingRows(r) {
+		rowsByTest[row.TestID] = append(rowsByTest[row.TestID], row)
+	}
+
+	suites := map[string]*JUnitTestSuite{}
+	durations := map[string]int64{}
+	var files []string
+	for _, t := range r.Tests {
+		suiteName := suiteKey(t.File)
+		suite, ok := suites[suiteName]
+		if !ok {
+			suite = &JUnitTestSuite{Name: suiteName}
+			suites[suiteName] = suite
+			files = append(files, suiteName)
+		}
+		tc := JUnitTestCase{
+			Name:      t.Name,
+			ClassName: suiteName,
+			File:      t.File,
+			Line:      t.Line,
+			Time:      formatDuration(t.DurationMS),
+		}
+		switch t.Outcome {
+		case OutcomeFailed:
+			tc.Failure = failureFor(rowsByTest[t.TestID])
+			suite.Failures++
+		case OutcomeSkipped:
+			tc.Skipped = &JUnitSkipped{Message: skippedMessage(t.NotEvaluatedReasons)}
+			suite.Skipped++
+		}
+		suite.Tests++
+		durations[suiteName] += t.DurationMS
+		suite.Cases = append(suite.Cases, tc)
+	}
+
+	sort.Strings(files)
+	doc := JUnitTestSuites{Suites: make([]JUnitTestSuite, 0, len(files))}
+	for _, f := range files {
+		suite := suites[f]
+		suite.Time = formatDuration(durations[f])
+		doc.Suites = append(doc.Suites, *suite)
+	}
+
+	out, err := xml.MarshalIndent(doc, "", "  ")
+	if err != nil {
+		return nil, fmt.Errorf("marshal JUnit XML: %w", err)
+	}
+	return append([]byte(xml.Header), out...), nil
+}
+
+func suiteKey(file string) string {
+	if file == "" {
+		return "attest"
+	}
+	return file
+}
+
+func failureFor(rows []FindingRow) *JUnitFailure {
+	if len(rows) == 0 {
+		return &JUnitFailure{Message: "test failed"}
+	}
+	var lines []string
+	for _, row := range rows {
+		lines = append(lines, fmt.Sprintf("%s %s: %s", row.Type, row.AssertionID, row.Explanation))
+	}
+	return &JUnitFailure{
+		Message: rows[0].Explanation,
+		Type:    rows[0].Type,
+		Content: strings.Join(lines, "\n"),
+	}
+}
+
+func skippedMessage(reasons []string) string {
+	if len(reasons) == 0 {
+		return "not evaluated"
+	}
+	return "not evaluated: " + strings.Join(reasons, ", ")
 }
 
 // formatDuration converts milliseconds to seconds as a string for XML.
 func formatDuration(ms int64) string {
-	seconds := float64(ms) / 1000.0
-	return strconv.FormatFloat(seconds, 'f', 3, 64)
+	return strconv.FormatFloat(float64(ms)/1000.0, 'f', 3, 64)
 }

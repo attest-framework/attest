@@ -33,6 +33,7 @@ dev = [
     "mypy>=1.10",
     "twine>=6.0",
     "build>=1.0",
+    "junitparser>=3.2",
 ]
 openai = ["openai>=1.30"]
 anthropic = ["anthropic>=0.30"]

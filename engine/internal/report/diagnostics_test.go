@@ -1,10 +1,7 @@
 package report
 
 import (
-	"bytes"
-	"strings"
 	"testing"
-	"time"
 
 	"github.com/segmentio/encoding/json"
 
@@ -92,91 +89,6 @@ func allLayersFixture() []types.AssertionResult {
 			Explanation:   "plugin pii_scan no findings",
 			TraceNodePath: "output", Cost: 0.001, DurationMS: 7,
 		},
-	}
-}
-
-func TestGenerateMarkdown_Hierarchical_AllLayers(t *testing.T) {
-	results := allLayersFixture()
-	var buf bytes.Buffer
-	r := &MarkdownReport{
-		Title:      "All-layer snapshot",
-		RunAt:      time.Date(2026, 4, 30, 12, 0, 0, 0, time.UTC),
-		Results:    results,
-		TotalCost:  0.0131,
-		DurationMS: 1841,
-	}
-	if err := GenerateMarkdown(&buf, r); err != nil {
-		t.Fatalf("GenerateMarkdown: %v", err)
-	}
-	out := buf.String()
-
-	// Summary block must include latency percentiles + cost.
-	for _, want := range []string{
-		"### Summary",
-		"| Total |",
-		"| Cost | $0.01",
-		"| Latency P50 |",
-		"| Latency P95 |",
-	} {
-		if !strings.Contains(out, want) {
-			t.Errorf("summary missing %q\n--- output ---\n%s", want, out)
-		}
-	}
-
-	// Failure section must contain expected/actual + suggested action.
-	for _, want := range []string{
-		"### Failures",
-		"`constraint_001`",
-		"**Trace path:** `metadata.cost_usd`",
-		"**Expected:** metadata.cost_usd lt 0.01",
-		"**Actual:** metadata.cost_usd = 0.05",
-		"**Suggested action:** Reduce model cost",
-	} {
-		if !strings.Contains(out, want) {
-			t.Errorf("failure block missing %q\n--- output ---\n%s", want, out)
-		}
-	}
-
-	// Judge metadata block.
-	for _, want := range []string{
-		"**Judge model:** `gpt-4.1`",
-		"**Rubric:** correctness @ v3",
-		"**Prompt hash:** `abcd1234`",
-		"**Sample scores:** [0.40, 0.40, 0.60]",
-	} {
-		if !strings.Contains(out, want) {
-			t.Errorf("judge block missing %q\n--- output ---\n%s", want, out)
-		}
-	}
-
-	// Layer breakdown headers.
-	for _, name := range []string{
-		"#### Layer 1 (schema)",
-		"#### Layer 2 (constraint)",
-		"#### Layer 3 (trace)",
-		"#### Layer 4 (content)",
-		"#### Layer 5 (embedding)",
-		"#### Layer 6 (llm_judge)",
-		"#### Layer 7 (trace_tree)",
-		"#### Layer 8 (plugin)",
-	} {
-		if !strings.Contains(out, name) {
-			t.Errorf("layer breakdown missing %q\n--- output ---\n%s", name, out)
-		}
-	}
-}
-
-func TestGenerateMarkdown_NoFailuresNoSection(t *testing.T) {
-	results := []types.AssertionResult{
-		{AssertionID: "ok", Status: types.StatusPass, Score: 1.0, Type: types.TypeSchema, Layer: 1},
-	}
-	var buf bytes.Buffer
-	if err := GenerateMarkdown(&buf, &MarkdownReport{Results: results}); err != nil {
-		t.Fatalf("GenerateMarkdown: %v", err)
-	}
-	out := buf.String()
-	if strings.Contains(out, "### Failures") {
-		t.Errorf("unexpected Failures section on all-pass run:\n%s", out)
 	}
 }
 

@@ -1,10 +1,7 @@
 package report_test
 
 import (
-	"bytes"
-	"strings"
 	"testing"
-	"time"
 
 	"github.com/attest-ai/attest/engine/internal/cache"
 	"github.com/attest-ai/attest/engine/internal/report"
@@ -102,57 +99,5 @@ func TestComputeBaselineDelta_RegressedAssertionIDs(t *testing.T) {
 	got := d.RegressedAssertionIDs()
 	if len(got) != 2 {
 		t.Fatalf("RegressedAssertionIDs = %v, want 2 items", got)
-	}
-}
-
-func TestGenerateMarkdown_RendersBaselineSection(t *testing.T) {
-	baseline := []cache.BaselineEntry{
-		{AssertionID: "a1", Status: types.StatusPass, Score: 1.0, Cost: 0.0, DurationMS: 5},
-		{AssertionID: "a2", Status: types.StatusPass, Score: 1.0, Cost: 0.01, DurationMS: 50},
-	}
-	current := []types.AssertionResult{
-		{AssertionID: "a1", Status: types.StatusHardFail, Score: 0.0, DurationMS: 6, Layer: 1, Type: "schema", FailureClass: types.FailureClassBrokenCode},
-		{AssertionID: "a2", Status: types.StatusPass, Score: 1.0, Cost: 0.02, DurationMS: 60, Layer: 1, Type: "schema"},
-	}
-	delta := report.ComputeBaselineDelta("v0.9.0", baseline, current)
-
-	r := &report.MarkdownReport{
-		Title:    "Run",
-		RunAt:    time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC),
-		Results:  current,
-		Baseline: &delta,
-	}
-	var buf bytes.Buffer
-	if err := report.GenerateMarkdown(&buf, r); err != nil {
-		t.Fatalf("GenerateMarkdown: %v", err)
-	}
-	out := buf.String()
-	if !strings.Contains(out, "vs `v0.9.0`") {
-		t.Errorf("markdown missing baseline header; got:\n%s", out)
-	}
-	if !strings.Contains(out, "Regressions (1)") {
-		t.Errorf("markdown missing regressions row; got:\n%s", out)
-	}
-	if !strings.Contains(out, "broken_code") {
-		t.Errorf("markdown missing failure class; got:\n%s", out)
-	}
-	if !strings.Contains(out, "Pass rate") {
-		t.Errorf("markdown missing pass-rate row; got:\n%s", out)
-	}
-}
-
-func TestGenerateMarkdown_OmitsBaselineSectionWhenNil(t *testing.T) {
-	r := &report.MarkdownReport{
-		Title: "Run",
-		Results: []types.AssertionResult{
-			{AssertionID: "a1", Status: types.StatusPass, Score: 1.0, Layer: 1, Type: "schema"},
-		},
-	}
-	var buf bytes.Buffer
-	if err := report.GenerateMarkdown(&buf, r); err != nil {
-		t.Fatalf("GenerateMarkdown: %v", err)
-	}
-	if strings.Contains(buf.String(), "vs `") {
-		t.Errorf("markdown rendered baseline section without delta; got:\n%s", buf.String())
 	}
 }
