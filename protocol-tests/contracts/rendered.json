@@ -2,108 +2,270 @@
   "cases": [
     {
       "statement": "tool_cardinality(\"issue_refund\", per=\"order_id\", at_most=1)",
+      "type": "trace",
+      "spec": {
+        "check": "tool_cardinality",
+        "max": 1,
+        "per": "order_id",
+        "soft": false,
+        "tool": "issue_refund"
+      },
       "chain_prefix": "",
       "python": ".tool_cardinality(\"issue_refund\", per=\"order_id\", at_most=1)",
       "typescript": ".toolCardinality(\"issue_refund\", { per: \"order_id\", atMost: 1 })"
     },
     {
       "statement": "tool_cardinality(\"lookup_order\", at_least=1, at_most=1, soft=True)",
+      "type": "trace",
+      "spec": {
+        "check": "tool_cardinality",
+        "max": 1,
+        "min": 1,
+        "soft": true,
+        "tool": "lookup_order"
+      },
       "chain_prefix": "",
       "python": ".tool_cardinality(\"lookup_order\", at_most=1, at_least=1, soft=True)",
       "typescript": ".toolCardinality(\"lookup_order\", { atMost: 1, atLeast: 1, soft: true })"
     },
     {
       "statement": "required_tools([\"lookup_order\", \"issue_refund\"])",
+      "type": "trace",
+      "spec": {
+        "check": "required_tools",
+        "soft": false,
+        "tools": [
+          "lookup_order",
+          "issue_refund"
+        ]
+      },
       "chain_prefix": "",
       "python": ".required_tools([\"lookup_order\", \"issue_refund\"])",
       "typescript": ".requiredTools([\"lookup_order\", \"issue_refund\"])"
     },
     {
       "statement": "forbidden_tools([\"delete_order\"])",
+      "type": "trace",
+      "spec": {
+        "check": "forbidden_tools",
+        "soft": false,
+        "tools": [
+          "delete_order"
+        ]
+      },
       "chain_prefix": "",
       "python": ".forbidden_tools([\"delete_order\"])",
       "typescript": ".forbiddenTools([\"delete_order\"])"
     },
     {
       "statement": "trajectory([\"lookup_order\", \"issue_refund\"], mode=\"superset\")",
+      "type": "trace",
+      "spec": {
+        "check": "trajectory",
+        "mode": "superset",
+        "soft": false,
+        "tools": [
+          "lookup_order",
+          "issue_refund"
+        ]
+      },
       "chain_prefix": "",
       "python": ".trajectory([\"lookup_order\", \"issue_refund\"], mode=\"superset\")",
       "typescript": ".trajectory([\"lookup_order\", \"issue_refund\"], { mode: \"superset\" })"
     },
     {
       "statement": "trajectory_partial_order([[\"lookup_order\", \"issue_refund\"]], tools=[\"lookup_order\"])",
+      "type": "trace",
+      "spec": {
+        "check": "trajectory",
+        "mode": "partial_order",
+        "order": [
+          [
+            "lookup_order",
+            "issue_refund"
+          ]
+        ],
+        "soft": false,
+        "tools": [
+          "lookup_order"
+        ]
+      },
       "chain_prefix": "",
       "python": ".trajectory_partial_order([[\"lookup_order\", \"issue_refund\"]], tools=[\"lookup_order\"])",
       "typescript": ".trajectoryPartialOrder([[\"lookup_order\", \"issue_refund\"]], { tools: [\"lookup_order\"] })"
     },
     {
       "statement": "tool_called_before(\"lookup_order\", \"issue_refund\")",
+      "type": "trace",
+      "spec": {
+        "after": "issue_refund",
+        "before": "lookup_order",
+        "check": "tool_order",
+        "soft": false
+      },
       "chain_prefix": "",
       "python": ".tool_called_before(\"lookup_order\", \"issue_refund\")",
       "typescript": ".toolCalledBefore(\"lookup_order\", \"issue_refund\")"
     },
     {
       "statement": "no_tool_cycles(2, min_repeats=3)",
+      "type": "trace",
+      "spec": {
+        "check": "cycle",
+        "min_repeats": 3,
+        "period": 2,
+        "soft": false
+      },
       "chain_prefix": "",
       "python": ".no_tool_cycles(2, min_repeats=3)",
       "typescript": ".noToolCycles(2, { minRepeats: 3 })"
     },
     {
       "statement": "max_tool_failure_streak(1)",
+      "type": "trace",
+      "spec": {
+        "check": "failure_streak",
+        "max": 1,
+        "soft": false
+      },
       "chain_prefix": "",
       "python": ".max_tool_failure_streak(1)",
       "typescript": ".maxToolFailureStreak(1)"
     },
     {
       "statement": "tool_arg_satisfies(\"issue_refund\", \"amount_cents\", \"lte\", 5000)",
+      "type": "trace",
+      "spec": {
+        "arg": "amount_cents",
+        "check": "arg_predicate",
+        "op": "lte",
+        "soft": false,
+        "tool": "issue_refund",
+        "value": 5000
+      },
       "chain_prefix": "",
       "python": ".tool_arg_satisfies(\"issue_refund\", \"amount_cents\", \"lte\", 5000)",
       "typescript": ".toolArgSatisfies(\"issue_refund\", \"amount_cents\", \"lte\", 5000)"
     },
     {
       "statement": "tool_arg_satisfies(\"issue_refund\", \"order_id\", \"in\", [\"O-1042\"], soft=True)",
+      "type": "trace",
+      "spec": {
+        "arg": "order_id",
+        "check": "arg_predicate",
+        "op": "in",
+        "soft": true,
+        "tool": "issue_refund",
+        "value": [
+          "O-1042"
+        ]
+      },
       "chain_prefix": "",
       "python": ".tool_arg_satisfies(\"issue_refund\", \"order_id\", \"in\", [\"O-1042\"], soft=True)",
       "typescript": ".toolArgSatisfies(\"issue_refund\", \"order_id\", \"in\", [\"O-1042\"], { soft: true })"
     },
     {
       "statement": "output_matches_schema({\"type\": \"object\", \"required\": [\"refund_id\"]})",
+      "type": "schema",
+      "spec": {
+        "schema": {
+          "required": [
+            "refund_id"
+          ],
+          "type": "object"
+        },
+        "target": "output.structured"
+      },
       "chain_prefix": "",
       "python": ".output_matches_schema({ \"required\": [\"refund_id\"], \"type\": \"object\" })",
       "typescript": ".outputMatchesSchema({ required: [\"refund_id\"], type: \"object\" })"
     },
     {
       "statement": "cost_under(0.05)",
+      "type": "constraint",
+      "spec": {
+        "field": "metadata.cost_usd",
+        "operator": "lte",
+        "soft": false,
+        "value": 0.05
+      },
       "chain_prefix": "",
       "python": ".cost_under(0.05)",
       "typescript": ".costUnder(0.05)"
     },
     {
       "statement": "count(\"refunds\", equals=1, order_id=\"O-1042\")",
+      "type": "effect",
+      "spec": {
+        "check": "count",
+        "equals": 1,
+        "resource": "refunds",
+        "where": {
+          "order_id": "O-1042"
+        }
+      },
       "chain_prefix": ".world(FIXTURE.world)",
       "python": ".world(FIXTURE.world).count(\"refunds\", equals=1, order_id=\"O-1042\")",
       "typescript": ".world(FIXTURE.world).count(\"refunds\", { equals: 1, where: { order_id: \"O-1042\" } })"
     },
     {
       "statement": "count(\"refunds\", at_least=1, at_most=2)",
+      "type": "effect",
+      "spec": {
+        "at_least": 1,
+        "at_most": 2,
+        "check": "count",
+        "resource": "refunds"
+      },
       "chain_prefix": ".world(FIXTURE.world)",
       "python": ".world(FIXTURE.world).count(\"refunds\", at_most=2, at_least=1)",
       "typescript": ".world(FIXTURE.world).count(\"refunds\", { atMost: 2, atLeast: 1 })"
     },
     {
       "statement": "unique(\"refunds\", by=[\"order_id\", \"amount_cents\"])",
+      "type": "effect",
+      "spec": {
+        "check": "unique",
+        "fields": [
+          "order_id",
+          "amount_cents"
+        ],
+        "resource": "refunds"
+      },
       "chain_prefix": ".world(FIXTURE.world)",
       "python": ".world(FIXTURE.world).unique(\"refunds\", by=[\"order_id\", \"amount_cents\"])",
       "typescript": ".world(FIXTURE.world).unique(\"refunds\", { by: [\"order_id\", \"amount_cents\"] })"
     },
     {
       "statement": "idempotent(\"refunds\", key=\"idempotency_key\", where={\"key\": \"k1\", \"by\": \"x\"})",
+      "type": "effect",
+      "spec": {
+        "check": "idempotent",
+        "field": "idempotency_key",
+        "resource": "refunds",
+        "where": {
+          "by": "x",
+          "key": "k1"
+        }
+      },
       "chain_prefix": ".world(FIXTURE.world)",
       "python": ".world(FIXTURE.world).idempotent(\"refunds\", key=\"idempotency_key\", where={ \"by\": \"x\", \"key\": \"k1\" })",
       "typescript": ".world(FIXTURE.world).idempotent(\"refunds\", { key: \"idempotency_key\", where: { by: \"x\", key: \"k1\" } })"
     },
     {
       "statement": "forbidden_tools([\"a​b\", \"c­d\", \"e‮f\", \"g󠁁h\", \"i\u2028j\"])",
+      "type": "trace",
+      "spec": {
+        "check": "forbidden_tools",
+        "soft": false,
+        "tools": [
+          "a​b",
+          "c­d",
+          "e‮f",
+          "g󠁁h",
+          "i\u2028j"
+        ]
+      },
       "chain_prefix": "",
       "python": ".forbidden_tools([\"a\\u200bb\", \"c\\u00add\", \"e\\u202ef\", \"g\\U000e0041h\", \"i\\u2028j\"])",
       "typescript": ".forbiddenTools([\"a\\u200bb\", \"c\\u00add\", \"e\\u202ef\", \"g\\u{e0041}h\", \"i\\u2028j\"])"

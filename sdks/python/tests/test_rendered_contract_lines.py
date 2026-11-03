@@ -37,5 +37,12 @@ def test_rendered_python_line_applies_to_a_real_chain(case: dict[str, Any]) -> N
     )
 
     assert len(result.assertions) == before + 1
+    recorded = result.assertions[-1]
+    spec = dict(recorded.spec)
+    if recorded.type == "effect":
+        # An effect spec embeds the world it checks; it must be the fixture's.
+        assert spec.pop("world") == _FIXTURE.world
+    assert recorded.type == case["type"]
+    assert spec == case["spec"]
     if case["chain_prefix"]:
         assert case["python"].startswith(case["chain_prefix"])

@@ -37,10 +37,12 @@ var renderedExamples = []string{
 }
 
 type renderedCase struct {
-	Statement   string `json:"statement"`
-	ChainPrefix string `json:"chain_prefix"`
-	Python      string `json:"python"`
-	TypeScript  string `json:"typescript"`
+	Statement   string         `json:"statement"`
+	Type        string         `json:"type"`
+	Spec        map[string]any `json:"spec"`
+	ChainPrefix string         `json:"chain_prefix"`
+	Python      string         `json:"python"`
+	TypeScript  string         `json:"typescript"`
 }
 
 func renderExamples(t *testing.T) []renderedCase {
@@ -61,7 +63,7 @@ func renderExamples(t *testing.T) []renderedCase {
 		if err != nil {
 			t.Fatal(err)
 		}
-		out = append(out, renderedCase{Statement: stmt, ChainPrefix: call.ChainPrefix(), Python: py, TypeScript: ts})
+		out = append(out, renderedCase{Statement: stmt, Type: call.Type(), Spec: call.Spec(), ChainPrefix: call.ChainPrefix(), Python: py, TypeScript: ts})
 	}
 	for _, m := range contractdsl.Methods() {
 		if !covered[m.Name] {
