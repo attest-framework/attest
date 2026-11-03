@@ -320,6 +320,16 @@ Capabilities are additive. New capabilities never remove or alter old ones, with
 | `budget.max_judge_calls` | int ≥ 0 | Judge-provider requests this batch may send (judges, `repeat` runs, bias probes, retries). |
 | `budget.max_cost_usd` | number ≥ 0 | USD this batch may spend on judge and embedding calls. |
 
+**Optional `context` param:** `params.context` names the test that sent the batch. It is additive and optional; the engine uses it only to label recorded assertion specs (see `ATTEST_CONTRACTS_DIR` below), so an engine that predates it ignores it and a batch without it is valid.
+
+| Field | Type | Meaning |
+|---|---|---|
+| `context.test_id` | string | The running test's id (the pytest node id, or the Vitest report test id). |
+| `context.file` | string | The test's source file. |
+| `context.line` | int ≥ 1 | The line the test starts on. |
+
+**Contract recording:** when the engine process is started with `ATTEST_CONTRACTS_DIR` set, it appends one NDJSON line per assertion of every `evaluate_batch` that passes trace and budget validation, for assertion types the engine knows, to a file in that directory named `contracts-<pid>-<random>.ndjson` (directory created `0700`, file `0600`; one file per engine process). Batches rejected before evaluation are not recorded. A line is `{"test_id"?, "file"?, "line"?, "assertion": {"assertion_id", "type", "spec"}}`. Traces, assertion `request_id`s and results are not recorded; an effect spec keeps the world snapshot it embeds. A directory that cannot be created or written is an engine error: the engine refuses to start (creation) or fails the batch (write). `attest mutate --contracts <dir>` reads these files.
+
 Every model call reserves one call and its worst-case cost (price × prompt bytes + price × output-token limit) against both budgets before it is sent and is reconciled to the reported usage afterwards. A call that cannot reserve is not sent; its assertion returns `not_evaluated` with reason `budget_exhausted`. A negative limit is error 2001.
 
 #### Response

@@ -79,6 +79,17 @@ type Policy struct {
 	// regressed (Severity, default block → exit 1), inconclusive (warn →
 	// exit 2) or pass. `regression: {}` applies the defaults.
 	Regression *RegressionRule `yaml:"regression" json:"regression,omitempty"`
+	// MinMutationScore requires the mutation score from `attest mutate`
+	// (`policy evaluate --mutation <mutate.json>`) to reach a threshold.
+	MinMutationScore *MutationRule `yaml:"min_mutation_score" json:"min_mutation_score,omitempty"`
+}
+
+// MutationRule is the min_mutation_score rule: Score is the lowest
+// acceptable killed/(killed+survived) ratio, in [0, 1]. Severity defaults to
+// the policy severity, then to block.
+type MutationRule struct {
+	Score    *float64 `yaml:"score" json:"score,omitempty"`
+	Severity string   `yaml:"severity" json:"severity,omitempty"`
 }
 
 // RegressionRule configures the statistical baseline comparison. Nil
@@ -231,6 +242,17 @@ func (p *Policy) Validate() error {
 			return fmt.Errorf("regression.tolerance must be in [0, 1); got %g", *r.Tolerance)
 		}
 		if err := validateSeverity("regression", r.Severity); err != nil {
+			return err
+		}
+	}
+	if r := p.MinMutationScore; r != nil {
+		if r.Score == nil {
+			return fmt.Errorf("min_mutation_score.score is required")
+		}
+		if math.IsNaN(*r.Score) || *r.Score < 0 || *r.Score > 1 {
+			return fmt.Errorf("min_mutation_score.score must be between 0 and 1; got %g", *r.Score)
+		}
+		if err := validateSeverity("min_mutation_score", r.Severity); err != nil {
 			return err
 		}
 	}
@@ -505,4 +527,31 @@ func statusRegressions(baseline *report.BaselineDelta, compared map[string]bool)
 		}
 	}
 	return out
+}
+
+// MutationViolation applies the min_mutation_score rule to the score from
+// `attest mutate`. A nil score (no mutant had an applicable contract) cannot
+// meet a threshold and is a violation. It reports no violation when the
+// policy has no such rule.
+func MutationViolation(p *Policy, score *float64) (Violation, bool) {
+	if p == nil || p.MinMutationScore == nil {
+		return Violation{}, false
+	}
+	r := p.MinMutationScore
+	sev := resolvedSeverity(r.Severity, p.Severity)
+	switch {
+	case score == nil:
+		return Violation{
+			Rule:     "min_mutation_score",
+			Detail:   fmt.Sprintf("no mutation score (no mutant was scored); required at least %g", *r.Score),
+			Severity: sev,
+		}, true
+	case *score < *r.Score:
+		return Violation{
+			Rule:     "min_mutation_score",
+			Detail:   fmt.Sprintf("mutation score %.4g is below the required %g", *score, *r.Score),
+			Severity: sev,
+		}, true
+	}
+	return Violation{}, false
 }

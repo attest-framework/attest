@@ -16,6 +16,7 @@ import {
 } from "@attest-ai/core";
 import {
   assignAssertionIds,
+  batchContextOf,
   attemptState,
   inTrial,
   recordAgentSpend,
@@ -189,11 +190,10 @@ export class AttestEngineFixture {
       // Outside a test the budget covers this one evaluation.
       batchBudget = remainingBudget(budget, zeroUsage(), chain.trace.metadata?.cost_usd ?? 0);
     }
-    const result = await this.client.evaluateBatch(
-      chain.trace,
-      assertions,
-      batchBudget === undefined ? undefined : { budget: batchBudget },
-    );
+    const result = await this.client.evaluateBatch(chain.trace, assertions, {
+      ...(batchBudget === undefined ? {} : { budget: batchBudget }),
+      ...(test === undefined ? {} : { context: batchContextOf(test) }),
+    });
 
     globalThis.__attest_session_cost__ =
       (globalThis.__attest_session_cost__ ?? 0) + (result.total_cost ?? 0);

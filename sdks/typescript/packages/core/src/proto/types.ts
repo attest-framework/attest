@@ -369,11 +369,25 @@ export interface BatchBudget {
   readonly max_cost_usd?: number;
 }
 
+/**
+ * The test an evaluate_batch call belongs to. The engine records it next to
+ * each assertion spec when ATTEST_CONTRACTS_DIR is set and uses it for
+ * nothing else.
+ */
+export interface BatchContext {
+  readonly test_id?: string;
+  readonly file?: string;
+  /** 1-based line the test starts on. */
+  readonly line?: number;
+}
+
 export interface EvaluateBatchParams {
   readonly trace: Trace;
   readonly assertions: readonly Assertion[];
   /** Omitted when no per-batch budget applies. */
   readonly budget?: BatchBudget;
+  /** Omitted outside a test. */
+  readonly context?: BatchContext;
 }
 
 /**

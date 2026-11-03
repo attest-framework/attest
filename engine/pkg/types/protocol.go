@@ -62,6 +62,18 @@ type EvaluateBatchParams struct {
 	// of the session budget (ATTEST_MAX_JUDGE_CALLS, ATTEST_BUDGET_USD).
 	// SDKs send the remainder of a per-test budget marker here.
 	Budget *BatchBudget `json:"budget,omitempty"`
+	// Context names the test that sent the batch. The engine records it next
+	// to each assertion spec when ATTEST_CONTRACTS_DIR is set and uses it for
+	// nothing else.
+	Context *BatchContext `json:"context,omitempty"`
+}
+
+// BatchContext identifies the test an evaluate_batch call belongs to. Every
+// field is optional.
+type BatchContext struct {
+	TestID string `json:"test_id,omitempty"`
+	File   string `json:"file,omitempty"`
+	Line   int    `json:"line,omitempty"`
 }
 
 // BatchBudget limits one evaluate_batch call. A nil field means no limit.

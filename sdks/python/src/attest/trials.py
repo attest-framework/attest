@@ -22,6 +22,7 @@ from attest._proto.types import (
     STATUS_HARD_FAIL,
     AssertionResult,
     BatchBudget,
+    BatchContext,
     Trace,
     Usage,
 )
@@ -133,9 +134,16 @@ class TestRun:
     usage: Usage = field(default_factory=Usage)
     agent_spend_usd: float = 0.0
     results_by_trial: dict[int, list[AgentResult]] = field(default_factory=dict)
+    #: Source file and 1-based line of the test, sent with each batch as its context.
+    file: str | None = None
+    line: int | None = None
     _ordinal: int = 0
     _spent_trace_ids: set[str] = field(default_factory=set)
     _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
+
+    def batch_context(self) -> BatchContext:
+        """The ``evaluate_batch`` context naming this test."""
+        return BatchContext(test_id=self.test_id, file=self.file, line=self.line)
 
     def next_assertion_id(self) -> str:
         """The next deterministic ID; the ordinal restarts with each trial."""

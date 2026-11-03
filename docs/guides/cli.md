@@ -34,6 +34,7 @@ Commands that run a child process (`capture`, `replay`, `world` with `-- <comman
 | `guide` | `cli/guide.schema.json` |
 | `mcp tools` (`mcp --tools --json`) | `cli/mcp-tools.schema.json` |
 | `mcp install` | `cli/mcp-install.schema.json` |
+| `mutate` | `cli/mutate.schema.json` |
 | `policy evaluate` | `cli/policy-evaluate.schema.json` |
 | `replay` | `cli/replay.schema.json` |
 | `report junit` | `cli/report-junit.schema.json` |
@@ -79,10 +80,13 @@ The table is checked against the engine's command registry by a test; a change t
 | `mcp` | 0 | the client disconnected, the tools were listed, or the client configs were written |
 | `mcp` | 1 | the server failed, the project root is unusable, or a config could not be read or written |
 | `mcp` | 2 | usage error |
+| `mutate` | 0 | a mutation report was produced |
+| `mutate` | 1 | no contract applies to any fixture, so there is no score |
+| `mutate` | 2 | usage error, or a fixture or contracts directory could not be loaded |
 | `policy` | 0 | pass: every rule satisfied |
 | `policy` | 1 | block: a block-severity rule was violated |
 | `policy` | 2 | warn: only warn-severity rules were violated |
-| `policy` | 3 | usage error, or the policy, report or baseline failed to load |
+| `policy` | 3 | usage error, or the policy, report, baseline or mutation report failed to load, or the policy sets min_mutation_score without --mutation |
 | `replay` | 0 | every request was served and the command exited 0 |
 | `replay` | 1 | the command exited non-zero (its code is not propagated; --json reports it as exit_code), a request missed, or the fixture could not be loaded or served |
 | `replay` | 2 | usage error or an invalid --world file |
