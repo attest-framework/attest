@@ -30,6 +30,9 @@ on:
       - "VERSION"
       - ".github/workflows/ci-engine.yml"
 
+permissions:
+  contents: read
+
 jobs:
   test:
     runs-on: ubuntu-latest
