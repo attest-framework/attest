@@ -62,7 +62,7 @@ The engine renders report-v2 files for CI. Each command takes `--report` one or 
 
 ```bash
 # JUnit XML for CI test views: one suite per test file, a <failure> for a failed test,
-# a <skipped> carrying the reasons for a test with no verdict.
+# a <skipped> for a skipped test, naming the reasons when its assertions were not evaluated.
 uv run attest report junit --report attest-report.json --out junit.xml
 
 # Markdown summary for a PR comment.
