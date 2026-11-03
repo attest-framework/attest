@@ -85,19 +85,67 @@ func isTestFile(p string) bool {
 	return pytestTestRe.MatchString(base) || vitestTestRe.MatchString(base)
 }
 
-// Select computes the selection for the repository at repo against base.
+// Select computes the selection for the repository at repo against base. The
+// diff covers the whole git repository: a lockfile or source change outside
+// repo still selects everything. Paths in the result are relative to repo.
 func Select(repo, base string) (*Result, error) {
-	changed, err := changedPaths(repo, base)
+	top, prefix, err := repoRoot(repo)
 	if err != nil {
 		return nil, err
 	}
-	return selectFor(repo, changed)
+	changed, err := changedPaths(top, base)
+	if err != nil {
+		return nil, err
+	}
+	var reasons []Reason
+	for _, p := range changed {
+		class := Classify(p)
+		if prefix != "" {
+			if rel, ok := strings.CutPrefix(p, prefix+"/"); ok {
+				p = rel
+			} else if class != ClassAll && class != ClassUnknown {
+				continue // a test, fixture or doc outside repo is not repo's concern
+			}
+		}
+		reasons = append(reasons, Reason{Path: p, Class: class})
+	}
+	return selectFor(repo, reasons)
 }
 
-func selectFor(repo string, changed []string) (*Result, error) {
-	res := &Result{Mode: ModeSubset, Tests: []string{}, Reasons: []Reason{}}
-	for _, p := range changed {
-		res.Reasons = append(res.Reasons, Reason{Path: p, Class: Classify(p)})
+// repoRoot returns the git top-level directory of repo and repo's path
+// relative to it ("" when repo is the top level), both slash-separated.
+func repoRoot(repo string) (top, prefix string, err error) {
+	out, err := git(repo, "rev-parse", "--show-toplevel")
+	if err != nil {
+		return "", "", err
+	}
+	top = strings.TrimSpace(string(out))
+	absTop, err := filepath.EvalSymlinks(top)
+	if err != nil {
+		return "", "", fmt.Errorf("resolve %s: %w", top, err)
+	}
+	absRepo, err := filepath.Abs(repo)
+	if err != nil {
+		return "", "", err
+	}
+	absRepo, err = filepath.EvalSymlinks(absRepo)
+	if err != nil {
+		return "", "", fmt.Errorf("resolve %s: %w", repo, err)
+	}
+	rel, err := filepath.Rel(absTop, absRepo)
+	if err != nil {
+		return "", "", err
+	}
+	if rel == "." {
+		rel = ""
+	}
+	return top, filepath.ToSlash(rel), nil
+}
+
+func selectFor(repo string, reasons []Reason) (*Result, error) {
+	res := &Result{Mode: ModeSubset, Tests: []string{}, Reasons: reasons}
+	if res.Reasons == nil {
+		res.Reasons = []Reason{}
 	}
 	for _, r := range res.Reasons {
 		if r.Class == ClassAll || r.Class == ClassUnknown {
@@ -109,10 +157,13 @@ func selectFor(repo string, changed []string) (*Result, error) {
 	if err != nil {
 		return nil, err
 	}
-	var testFiles []string
+	var testFiles, otherSources []string
 	for _, f := range candidates {
-		if isTestFile(f) {
+		switch {
+		case isTestFile(f):
 			testFiles = append(testFiles, f)
+		case isSourceFile(f):
+			otherSources = append(otherSources, f)
 		}
 	}
 
@@ -136,30 +187,44 @@ func selectFor(repo string, changed []string) (*Result, error) {
 		}
 	}
 
-	if len(fixtures) > 0 {
-		sources := map[string][]byte{}
-		for _, f := range testFiles {
-			data, err := os.ReadFile(filepath.Join(repo, filepath.FromSlash(f)))
-			if err != nil {
-				return nil, fmt.Errorf("read test file %s: %w", f, err)
-			}
-			sources[f] = data
+	for _, fx := range fixtures {
+		name, err := fixtureName(repo, fx)
+		if err != nil {
+			return allResult(res.Reasons), nil
 		}
-		for _, fx := range fixtures {
-			name, err := fixtureName(repo, fx)
+		referenced := false
+		for _, f := range testFiles {
+			hit, err := fileReferences(repo, f, name)
 			if err != nil {
+				return nil, err
+			}
+			if hit {
+				selected[f] = true
+				referenced = true
+			}
+		}
+		for _, f := range otherSources {
+			hit, err := fileReferences(repo, f, name)
+			if err != nil {
+				return nil, err
+			}
+			if !hit {
+				continue
+			}
+			referenced = true
+			if path.Base(f) != "conftest.py" {
+				// A helper module can reach any test; the diff cannot say which.
 				return allResult(res.Reasons), nil
 			}
-			referenced := false
-			for _, f := range testFiles {
-				if references(sources[f], name) {
-					selected[f] = true
-					referenced = true
+			dir := path.Dir(f)
+			for _, t := range testFiles {
+				if dir == "." || strings.HasPrefix(t, dir+"/") {
+					selected[t] = true
 				}
 			}
-			if !referenced {
-				return allResult(res.Reasons), nil
-			}
+		}
+		if !referenced {
+			return allResult(res.Reasons), nil
 		}
 	}
 
@@ -203,6 +268,22 @@ func references(src []byte, name string) bool {
 		}
 	}
 	return bytes.Contains(src, []byte(name+".attest.json"))
+}
+
+func isSourceFile(p string) bool {
+	switch path.Ext(p) {
+	case ".py", ".ts", ".tsx", ".js", ".mjs":
+		return true
+	}
+	return false
+}
+
+func fileReferences(repo, rel, name string) (bool, error) {
+	data, err := os.ReadFile(filepath.Join(repo, filepath.FromSlash(rel)))
+	if err != nil {
+		return false, fmt.Errorf("read %s: %w", rel, err)
+	}
+	return references(data, name), nil
 }
 
 func exists(repo, rel string) bool {

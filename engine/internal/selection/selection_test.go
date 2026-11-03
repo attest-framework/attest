@@ -259,3 +259,79 @@ func TestClassify_Paths(t *testing.T) {
 		}
 	}
 }
+
+func TestSelect_FixtureReferencedFromConftest_SelectsTestsBelowIt(t *testing.T) {
+	dir := newRepo(t)
+	write(t, dir, "tests/conftest.py", "def refund():\n    return attest_replay(\"inc-1042\")\n")
+	write(t, dir, "tests/test_a.py", "def test_a(refund):\n    pass\n")
+	run(t, dir, "add", "-A")
+	run(t, dir, "commit", "-q", "-m", "conftest")
+	run(t, dir, "checkout", "-q", "-b", "feature2")
+	write(t, dir, "tests/attest/fixtures/inc-1042.attest.json", `{"fixture_version": 1, "name": "inc-1042", "x": 4}`)
+	commit(t, dir)
+
+	res, err := selection.Select(dir, "feature")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"tests/test_a.py", "tests/test_other.py", "tests/test_refund.py"}
+	if res.Mode != selection.ModeSubset || !reflect.DeepEqual(res.Tests, want) {
+		t.Errorf("got %+v, want subset %v", res, want)
+	}
+}
+
+func TestSelect_FixtureReferencedFromHelperModule_SelectsAll(t *testing.T) {
+	dir := newRepo(t)
+	write(t, dir, "tests/helpers.py", "NAME = 'inc-1042'\n")
+	run(t, dir, "add", "-A")
+	run(t, dir, "commit", "-q", "-m", "helper")
+	run(t, dir, "checkout", "-q", "-b", "feature2")
+	write(t, dir, "tests/attest/fixtures/inc-1042.attest.json", `{"fixture_version": 1, "name": "inc-1042", "x": 5}`)
+	commit(t, dir)
+
+	res, err := selection.Select(dir, "feature")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Mode != selection.ModeAll {
+		t.Errorf("mode = %s, want all", res.Mode)
+	}
+}
+
+func TestSelect_RepoSubdirectory_RootLockfileSelectsAll(t *testing.T) {
+	dir := newRepo(t)
+	write(t, dir, "pkg/tests/test_p.py", "def test_p():\n    pass\n")
+	run(t, dir, "add", "-A")
+	run(t, dir, "commit", "-q", "-m", "pkg")
+	run(t, dir, "checkout", "-q", "-b", "feature2")
+	write(t, dir, "uv.lock", "v3\n")
+	commit(t, dir)
+
+	res, err := selection.Select(filepath.Join(dir, "pkg"), "feature")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Mode != selection.ModeAll {
+		t.Errorf("mode = %s, want all", res.Mode)
+	}
+}
+
+func TestSelect_RepoSubdirectory_PathsAreRelativeAndOutsideDocsIgnored(t *testing.T) {
+	dir := newRepo(t)
+	write(t, dir, "pkg/tests/test_p.py", "def test_p():\n    pass\n")
+	run(t, dir, "add", "-A")
+	run(t, dir, "commit", "-q", "-m", "pkg")
+	run(t, dir, "checkout", "-q", "-b", "feature2")
+	write(t, dir, "pkg/tests/test_p.py", "def test_p():\n    assert True\n")
+	write(t, dir, "tests/test_refund.py", "def test_it():\n    assert True\n")
+	write(t, dir, "README.md", "changed\n")
+	commit(t, dir)
+
+	res, err := selection.Select(filepath.Join(dir, "pkg"), "feature")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Mode != selection.ModeSubset || !reflect.DeepEqual(res.Tests, []string{"tests/test_p.py"}) {
+		t.Errorf("got %+v, want subset [tests/test_p.py]", res)
+	}
+}
