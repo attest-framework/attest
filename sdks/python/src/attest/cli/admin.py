@@ -34,10 +34,12 @@ _SDK_USAGE = (
     "usage: attest <command> [args]\n"
     "\n"
     "SDK commands:\n"
-    "  init [--ci github] [--skills] [--json]\n"
+    "  init [--ci github] [--skills] [--mcp] [--json]\n"
     "                      scaffold a sample test and merge policy in the current directory\n"
     "                      (--ci github also writes .github/workflows/attest.yml;\n"
     "                      --skills installs the agent skills with attest-engine;\n"
+    "                      --mcp writes the MCP client configs (.mcp.json, .cursor/mcp.json,\n"
+    "                      .codex/config.toml) with attest-engine;\n"
     "                      --json prints {created, updated, skipped} paths as JSON)\n"
     "\n"
     "`attest capture` (engine) also drafts tests/attest/test_<name>.py (name lowercased,\n"
@@ -138,13 +140,15 @@ def _engine_providing(command: str) -> str | None:
 
 _INIT_HELP_ENTRY: dict[str, object] = {
     "name": "init",
-    "summary": "scaffold a sample test and policy; --ci github, --skills, --json",
+    "summary": "scaffold a sample test and policy; --ci github, --skills, --mcp, --json",
     "schema": "cli/init.schema.json",
     "exit_codes": [
         {"code": 0, "meaning": "success"},
         {
             "code": 1,
-            "meaning": "--skills could not install: the engine is missing, too old or failed",
+            "meaning": (
+                "--skills or --mcp could not install: the engine is missing, too old or failed"
+            ),
         },
         {"code": 2, "meaning": "usage error"},
     ],
@@ -255,19 +259,28 @@ def _capture_and_emit(engine: str, args: Sequence[str]) -> int:
 
 
 _INIT_USAGE = (
-    "usage: attest init [--ci github] [--skills] [--json]  (scaffolds into the current directory)"
+    "usage: attest init [--ci github] [--skills] [--mcp] [--json]  "
+    "(scaffolds into the current directory)"
 )
 
 _INIT_KINDS = ("created", "updated", "skipped")
 
 # `attest-engine skills install --json` key -> `attest init --json` key.
 _SKILLS_KINDS = {"created": "created", "updated": "updated", "unchanged": "skipped"}
+# `attest-engine mcp install --json` key -> `attest init --json` key. A conflict is left
+# alone, like an unchanged file.
+_MCP_KINDS = {
+    "created": "created",
+    "updated": "updated",
+    "unchanged": "skipped",
+    "conflict": "skipped",
+}
 
 
-def _parse_init_args(args: Sequence[str]) -> tuple[str | None, bool, bool] | None:
-    """Return ``(ci, skills, json)`` for ``attest init`` args, or ``None`` on a usage error."""
+def _parse_init_args(args: Sequence[str]) -> tuple[str | None, bool, bool, bool] | None:
+    """Return ``(ci, skills, mcp, json)`` for ``attest init`` args, or ``None`` on a usage error."""
     ci: str | None = None
-    skills = as_json = False
+    skills = mcp = as_json = False
     rest = list(args)
     while rest:
         arg = rest.pop(0)
@@ -278,26 +291,30 @@ def _parse_init_args(args: Sequence[str]) -> tuple[str | None, bool, bool] | Non
             ci = "github"
         elif arg == "--skills" and not skills:
             skills = True
+        elif arg == "--mcp" and not mcp:
+            mcp = True
         elif arg == "--json" and not as_json:
             as_json = True
         else:
             return None
-    return ci, skills, as_json
+    return ci, skills, mcp, as_json
 
 
-def _install_skills(engine: str, root: Path) -> dict[str, list[str]]:
-    """Run ``<engine> skills install --dir <root> --json`` and map its paths to init kinds.
+def _run_engine_install(
+    engine: str, subcommand: Sequence[str], kinds: dict[str, str], what: str
+) -> dict[str, list[str]]:
+    """Run ``<engine> <subcommand> --json`` and map its path lists to init kinds.
 
     Raises :class:`AttestError` when the engine fails or prints an unexpected document.
     """
-    argv = [engine, "skills", "install", "--dir", str(root), "--json"]
+    argv = [engine, *subcommand, "--json"]
     proc = subprocess.run(
         argv, stdin=subprocess.DEVNULL, capture_output=True, text=True, check=False
     )
     if proc.returncode != 0:
         detail = proc.stderr.strip()
         raise AttestError(
-            f"skills install failed (`{' '.join(argv)}` exited {exit_status(proc.returncode)})"
+            f"{what} failed (`{' '.join(argv)}` exited {exit_status(proc.returncode)})"
             + (f": {detail}" if detail else "")
         )
     sys.stderr.write(proc.stderr)
@@ -308,7 +325,7 @@ def _install_skills(engine: str, root: Path) -> dict[str, list[str]]:
     if not isinstance(doc, dict):
         raise AttestError(f"`{' '.join(argv)}` printed {type(doc).__name__}, not an object")
     result: dict[str, list[str]] = {kind: [] for kind in _INIT_KINDS}
-    for engine_kind, init_kind in _SKILLS_KINDS.items():
+    for engine_kind, init_kind in kinds.items():
         paths = doc.get(engine_kind)
         if not isinstance(paths, list) or not all(isinstance(p, str) for p in paths):
             raise AttestError(
@@ -316,6 +333,29 @@ def _install_skills(engine: str, root: Path) -> dict[str, list[str]]:
             )
         result[init_kind].extend(paths)
     return result
+
+
+def _install_skills(engine: str, root: Path) -> dict[str, list[str]]:
+    """Run ``<engine> skills install --dir <root> --json`` and map its paths to init kinds."""
+    return _run_engine_install(
+        engine, ["skills", "install", "--dir", str(root)], _SKILLS_KINDS, "skills install"
+    )
+
+
+def mcp_launch_command(root: Path) -> list[str]:
+    """The command an MCP client runs to start the server: ``uv run attest mcp`` in a uv
+    project (``uv.lock`` in ``root``), else ``attest mcp``."""
+    return ["uv", "run", "attest", "mcp"] if (root / "uv.lock").is_file() else ["attest", "mcp"]
+
+
+def _install_mcp(engine: str, root: Path) -> dict[str, list[str]]:
+    """Run ``<engine> mcp install --dir <root> --command <launch> --json``."""
+    return _run_engine_install(
+        engine,
+        ["mcp", "install", "--dir", str(root), "--command", json.dumps(mcp_launch_command(root))],
+        _MCP_KINDS,
+        "mcp install",
+    )
 
 
 def _print_skills(root: Path, skills: dict[str, list[str]]) -> None:
@@ -328,9 +368,10 @@ def _print_skills(root: Path, skills: dict[str, list[str]]) -> None:
 
 
 def init(args: Sequence[str]) -> int:
-    """Run ``attest init [--ci github] [--skills] [--json]`` in the current directory.
+    """Run ``attest init [--ci github] [--skills] [--mcp] [--json]`` in the current directory.
 
-    ``--skills`` installs the agent skills with ``attest-engine skills install`` before
+    ``--skills`` installs the agent skills with ``attest-engine skills install`` and ``--mcp``
+    writes the MCP client configs with ``attest-engine mcp install``, both before
     scaffolding; a missing or failing engine exits 1 with nothing scaffolded. ``--json``
     prints one ``{"created", "updated", "skipped"}`` document (paths relative to the
     current directory, sorted) as the only stdout; everything else goes to stderr.
@@ -342,19 +383,24 @@ def init(args: Sequence[str]) -> int:
     if parsed is None:
         print(_INIT_USAGE, file=sys.stderr)
         return 2
-    ci, skills, as_json = parsed
+    ci, skills, mcp, as_json = parsed
     from attest.scaffold import scaffold_project
 
     root = Path.cwd()
     result: dict[str, list[str]] = {kind: [] for kind in _INIT_KINDS}
     # Under --json, stdout carries the document only: anything else printed goes to stderr.
     with contextlib.redirect_stdout(sys.stderr) if as_json else contextlib.nullcontext():
-        if skills:
-            engine = _engine_providing("skills")
+        for wanted, command, install in (
+            (skills, "skills", _install_skills),
+            (mcp, "mcp", _install_mcp),
+        ):
+            if not wanted:
+                continue
+            engine = _engine_providing(command)
             if engine is None:
                 return 1
             try:
-                installed = _install_skills(engine, root)
+                installed = install(engine, root)
             except AttestError as exc:
                 print(f"attest: {exc}", file=sys.stderr)
                 return 1

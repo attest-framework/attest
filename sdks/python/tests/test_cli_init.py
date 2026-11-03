@@ -114,7 +114,14 @@ def test_main_init_ci_github_writes_workflow(
 
 @pytest.mark.parametrize(
     "args",
-    [["--ci"], ["--ci", "gitlab"], ["somedir"], ["--json", "--json"], ["--skills", "--skills"]],
+    [
+        ["--ci"],
+        ["--ci", "gitlab"],
+        ["somedir"],
+        ["--json", "--json"],
+        ["--skills", "--skills"],
+        ["--mcp", "--mcp"],
+    ],
 )
 def test_main_init_bad_arguments_exit_2_without_scaffolding(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, args: list[str]
@@ -201,6 +208,100 @@ def _skills_engine(tmp_path: Path, skills_body: str) -> Path:
     )
     target.chmod(target.stat().st_mode | stat.S_IXUSR)
     return target
+
+
+def _mcp_engine(tmp_path: Path, mcp_body: str) -> Path:
+    """An attest-engine stand-in whose help lists ``mcp`` and whose ``mcp`` command runs
+    ``mcp_body`` (shell builtins only: PATH is isolated)."""
+    from attest import ENGINE_VERSION
+
+    target = tmp_path / "engine" / "attest-engine"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(
+        "#!/bin/sh\n"
+        'case "$1" in\n'
+        f"  version) echo 'attest-engine {ENGINE_VERSION}' ;;\n"
+        "  help) echo 'commands:'; echo '  mcp  serve attest over MCP' ;;\n"
+        '  mcp) echo "$*" > "$0.calls"; ' + mcp_body + " ;;\n"
+        "esac\n"
+    )
+    target.chmod(target.stat().st_mode | stat.S_IXUSR)
+    return target
+
+
+_MCP_DOC = (
+    'echo \'{"dir":"/x","created":[".mcp.json"],"updated":[".cursor/mcp.json"],'
+    '"unchanged":[".codex/config.toml"],"conflict":[]}\''
+)
+
+
+@pytest.mark.parametrize(
+    ("lockfile", "launch"),
+    [(True, ["uv", "run", "attest", "mcp"]), (False, ["attest", "mcp"])],
+    ids=["uv-project", "plain-project"],
+)
+def test_main_init_mcp_json_merges_engine_paths_and_passes_launch_command(
+    isolated_engine_env: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    lockfile: bool,
+    launch: list[str],
+) -> None:
+    engine = _mcp_engine(tmp_path, _MCP_DOC)
+    monkeypatch.setenv("ATTEST_ENGINE_PATH", str(engine))
+    project = tmp_path / "project"
+    project.mkdir()
+    if lockfile:
+        (project / "uv.lock").write_text("")
+    monkeypatch.chdir(project)
+
+    doc = _init_json(capsys, "--mcp")
+
+    assert doc == {
+        "created": sorted([*_SAMPLE_FILES, ".mcp.json"]),
+        "updated": [".cursor/mcp.json"],
+        "skipped": [".codex/config.toml"],
+    }
+    calls = Path(f"{engine}.calls").read_text().split("\n", 1)[0]
+    assert calls == f"mcp install --dir {project} --command {json.dumps(launch)} --json"
+
+
+def test_main_init_mcp_conflict_is_reported_as_skipped(
+    isolated_engine_env: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    engine = _mcp_engine(
+        tmp_path,
+        'echo \'{"dir":"/x","created":[],"updated":[],"unchanged":[],"conflict":[".mcp.json"]}\'',
+    )
+    monkeypatch.setenv("ATTEST_ENGINE_PATH", str(engine))
+    monkeypatch.chdir(tmp_path)
+
+    doc = _init_json(capsys, "--mcp")
+
+    assert ".mcp.json" in doc["skipped"]
+
+
+def test_main_init_mcp_engine_failure_exits_1_without_scaffolding(
+    isolated_engine_env: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("ATTEST_ENGINE_PATH", str(_mcp_engine(tmp_path, "echo boom >&2; exit 3")))
+    project = tmp_path / "project"
+    project.mkdir()
+    monkeypatch.chdir(project)
+
+    assert main(["init", "--mcp", "--json"]) == 1
+
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "mcp install" in captured.err
+    assert not (project / "tests").exists()
 
 
 def test_main_init_skills_json_merges_engine_paths(

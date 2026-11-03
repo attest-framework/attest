@@ -29,10 +29,12 @@ const SDK_USAGE =
   "usage: attest <command> [args]\n" +
   "\n" +
   "SDK commands:\n" +
-  "  init [--ci github] [--skills] [--json]\n" +
+  "  init [--ci github] [--skills] [--mcp] [--json]\n" +
   "                      scaffold a sample test and merge policy here\n" +
   "                      (--ci github also writes .github/workflows/attest.yml;\n" +
   "                      --skills installs the agent skills with attest-engine;\n" +
+  "                      --mcp writes the MCP client configs (.mcp.json, .cursor/mcp.json,\n" +
+  "                      .codex/config.toml) with attest-engine;\n" +
   "                      --json prints {created, updated, skipped} paths as JSON)\n" +
   "\n" +
   "`attest capture` (engine) also drafts tests/attest/<name>.test.ts from a verified\n" +
@@ -139,11 +141,14 @@ async function engineProviding(command: string): Promise<string | null> {
 
 const INIT_HELP_ENTRY = {
   name: "init",
-  summary: "scaffold a sample test and policy; --ci github, --skills, --json",
+  summary: "scaffold a sample test and policy; --ci github, --skills, --mcp, --json",
   schema: "cli/init.schema.json",
   exit_codes: [
     { code: 0, meaning: "success" },
-    { code: 1, meaning: "--skills could not install: the engine is missing, too old or failed" },
+    {
+      code: 1,
+      meaning: "--skills or --mcp could not install: the engine is missing, too old or failed",
+    },
     { code: 2, meaning: "usage error" },
   ],
 };
@@ -251,7 +256,7 @@ function captureAndEmit(engine: string, args: string[]): number {
 }
 
 const INIT_USAGE =
-  "usage: attest init [--ci github] [--skills] [--json]  (scaffolds into the current directory)";
+  "usage: attest init [--ci github] [--skills] [--mcp] [--json]  (scaffolds into the current directory)";
 
 const INIT_KINDS = ["created", "updated", "skipped"] as const;
 type InitKind = (typeof INIT_KINDS)[number];
@@ -264,15 +269,25 @@ const SKILLS_KINDS = [
   ["unchanged", "skipped"],
 ] as const;
 
+// `attest-engine mcp install --json` key -> `attest init --json` key. A conflict is left
+// alone, like an unchanged file.
+const MCP_KINDS = [
+  ["created", "created"],
+  ["updated", "updated"],
+  ["unchanged", "skipped"],
+  ["conflict", "skipped"],
+] as const;
+
 interface InitArgs {
   ci: boolean;
   skills: boolean;
+  mcp: boolean;
   json: boolean;
 }
 
 /** Parse `attest init` args; null on a usage error. */
 function parseInitArgs(args: string[]): InitArgs | null {
-  const parsed: InitArgs = { ci: false, skills: false, json: false };
+  const parsed: InitArgs = { ci: false, skills: false, mcp: false, json: false };
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
     if (arg === "--ci" && args[i + 1] === "github" && !parsed.ci) {
@@ -282,6 +297,8 @@ function parseInitArgs(args: string[]): InitArgs | null {
       parsed.ci = true;
     } else if (arg === "--skills" && !parsed.skills) {
       parsed.skills = true;
+    } else if (arg === "--mcp" && !parsed.mcp) {
+      parsed.mcp = true;
     } else if (arg === "--json" && !parsed.json) {
       parsed.json = true;
     } else {
@@ -296,11 +313,16 @@ function emptyInitResult(): InitResult {
 }
 
 /**
- * Run `<engine> skills install --dir <root> --json` and map its paths to init kinds.
+ * Run `<engine> <subcommand> --json` and map its path lists to init kinds.
  * Throws when the engine fails or prints an unexpected document.
  */
-function installSkills(engine: string, root: string): InitResult {
-  const argv = ["skills", "install", "--dir", root, "--json"];
+function runEngineInstall(
+  engine: string,
+  subcommand: string[],
+  kinds: readonly (readonly [string, InitKind])[],
+  what: string,
+): InitResult {
+  const argv = [...subcommand, "--json"];
   const shown = [engine, ...argv].join(" ");
   const proc = spawnSync(engine, argv, {
     stdio: ["ignore", "pipe", "pipe"],
@@ -310,7 +332,7 @@ function installSkills(engine: string, root: string): InitResult {
   if (proc.status !== 0) {
     const detail = proc.stderr.trim();
     throw new Error(
-      `skills install failed (\`${shown}\` exited ${String(exitStatus(proc.status, proc.signal))})` +
+      `${what} failed (\`${shown}\` exited ${String(exitStatus(proc.status, proc.signal))})` +
         (detail === "" ? "" : `: ${detail}`),
     );
   }
@@ -326,7 +348,7 @@ function installSkills(engine: string, root: string): InitResult {
   }
   const record = doc as Record<string, unknown>;
   const result = emptyInitResult();
-  for (const [engineKind, initKind] of SKILLS_KINDS) {
+  for (const [engineKind, initKind] of kinds) {
     const paths = record[engineKind];
     if (!Array.isArray(paths) || !paths.every((p): p is string => typeof p === "string")) {
       throw new Error(`\`${shown}\` printed no \`${engineKind}\` list of paths: ${proc.stdout}`);
@@ -334,6 +356,31 @@ function installSkills(engine: string, root: string): InitResult {
     result[initKind].push(...paths);
   }
   return result;
+}
+
+/** Run `<engine> skills install --dir <root> --json` and map its paths to init kinds. */
+function installSkills(engine: string, root: string): InitResult {
+  return runEngineInstall(engine, ["skills", "install", "--dir", root], SKILLS_KINDS, "skills install");
+}
+
+/**
+ * The command an MCP client runs to start the server: `pnpm exec attest mcp` in a pnpm
+ * project (`pnpm-lock.yaml` in `root`), else `npx attest mcp`.
+ */
+function mcpLaunchCommand(root: string): string[] {
+  return fs.existsSync(path.join(root, "pnpm-lock.yaml"))
+    ? ["pnpm", "exec", "attest", "mcp"]
+    : ["npx", "attest", "mcp"];
+}
+
+/** Run `<engine> mcp install --dir <root> --command <launch> --json`. */
+function installMcp(engine: string, root: string): InitResult {
+  return runEngineInstall(
+    engine,
+    ["mcp", "install", "--dir", root, "--command", JSON.stringify(mcpLaunchCommand(root))],
+    MCP_KINDS,
+    "mcp install",
+  );
 }
 
 function printSkills(root: string, skills: InitResult): void {
@@ -345,12 +392,17 @@ function printSkills(root: string, skills: InitResult): void {
 
 async function runInit(parsed: InitArgs, root: string): Promise<InitResult | null> {
   const result = emptyInitResult();
-  if (parsed.skills) {
-    const engine = await engineProviding("skills");
+  const installs: [boolean, string, (engine: string, root: string) => InitResult][] = [
+    [parsed.skills, "skills", installSkills],
+    [parsed.mcp, "mcp", installMcp],
+  ];
+  for (const [wanted, command, install] of installs) {
+    if (!wanted) continue;
+    const engine = await engineProviding(command);
     if (engine === null) return null;
     let installed: InitResult;
     try {
-      installed = installSkills(engine, root);
+      installed = install(engine, root);
     } catch (err) {
       process.stderr.write(`attest: ${errorMessage(err)}\n`);
       return null;
@@ -368,7 +420,7 @@ async function runInit(parsed: InitArgs, root: string): Promise<InitResult | nul
 }
 
 /**
- * Run `attest init [--ci github] [--skills] [--json]` in the current directory.
+ * Run `attest init [--ci github] [--skills] [--mcp] [--json]` in the current directory.
  *
  * `--skills` installs the agent skills with `attest-engine skills install` before
  * scaffolding; a missing or failing engine exits 1 with nothing scaffolded. `--json`
