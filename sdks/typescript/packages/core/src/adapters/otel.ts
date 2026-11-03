@@ -92,12 +92,21 @@ export class OTelAdapter {
  * Run `attest-engine trace convert` with `payload` on stdin and return its stdout.
  *
  * Asynchronous on purpose: `spawnSync` with `input` occasionally never returns under
- * parallel load (observed on macOS: about 1 run in 130 with 8 concurrent callers, each
+ * parallel load (observed on macOS: about 1 call in 100 with 8 concurrent callers, each
  * hanging until the timeout), and it blocks the event loop while the engine runs.
  */
 function runConvert(engine: string, args: string[], payload: string | Uint8Array): Promise<string> {
   return new Promise((resolve, reject) => {
     const child = spawn(engine, args, { stdio: ["pipe", "pipe", "pipe"] });
+    let timer: NodeJS.Timeout | undefined;
+    // Registered first: a spawn that fails (ENOENT, or EMFILE/ENFILE under load) emits
+    // "error" on the next tick, and with EMFILE/ENFILE its stdio streams are null.
+    child.on("error", (e) => {
+      clearTimeout(timer);
+      reject(e);
+    });
+    const { stdin, stdout, stderr } = child;
+    if (stdin === null || stdout === null || stderr === null) return;
     const out: Buffer[] = [];
     const err: Buffer[] = [];
     let outBytes = 0;
@@ -106,14 +115,14 @@ function runConvert(engine: string, args: string[], payload: string | Uint8Array
       failure ??= e;
       child.kill("SIGKILL");
     };
-    const timer = setTimeout(() => {
+    timer = setTimeout(() => {
       fail(
         new OTLPConversionError(
           `attest-engine trace convert timed out after ${CONVERT_TIMEOUT_MS / 1000}s`,
         ),
       );
     }, CONVERT_TIMEOUT_MS);
-    child.stdout.on("data", (chunk: Buffer) => {
+    stdout.on("data", (chunk: Buffer) => {
       outBytes += chunk.length;
       if (outBytes > MAX_TRACE_OUTPUT_BYTES) {
         fail(
@@ -125,14 +134,10 @@ function runConvert(engine: string, args: string[], payload: string | Uint8Array
       }
       out.push(chunk);
     });
-    child.stderr.on("data", (chunk: Buffer) => err.push(chunk));
+    stderr.on("data", (chunk: Buffer) => err.push(chunk));
     // An engine that exits before reading all of stdin (for example on a usage error)
     // makes the write fail with EPIPE; its exit status and stderr report the real error.
-    child.stdin.on("error", () => undefined);
-    child.on("error", (e) => {
-      clearTimeout(timer);
-      reject(e);
-    });
+    stdin.on("error", () => undefined);
     child.on("close", (code, signal) => {
       clearTimeout(timer);
       if (failure !== null) {
@@ -150,7 +155,7 @@ function runConvert(engine: string, args: string[], payload: string | Uint8Array
       }
       resolve(Buffer.concat(out).toString("utf8"));
     });
-    child.stdin.end(payload);
+    stdin.end(payload);
   });
 }
 
