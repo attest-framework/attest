@@ -109,6 +109,7 @@ The methods are a closed catalog. Each is accepted under its Python name or its 
 | Method | Arguments | Layer |
 |---|---|---|
 | `tool_cardinality` | `tool`, `per`, `at_most`, `at_least`, `soft` (one bound required) | trace |
+| `required_tools` | `tools`, `soft` | trace |
 | `forbidden_tools` | `tools`, `soft` | trace |
 | `trajectory` | `tools`, `mode` (`strict`, `unordered`, `subset`, `superset`), `soft` | trace |
 | `trajectory_partial_order` | `order` (list of `[before, after]`), `tools`, `soft` | trace |

@@ -435,3 +435,46 @@ func TestRender_BidiControl_NotPassedThrough(t *testing.T) {
 		t.Errorf("typescript line %q", line)
 	}
 }
+
+// The specs `attest mutate` suggests as contracts that would kill a surviving
+// mutant (engine/internal/mutate) each have a statement form, so an agent can
+// run a suggestion through run_contract.
+func TestFromSpec_MutateSuggestionSpecs_HaveStatementForms(t *testing.T) {
+	cases := []struct {
+		typ, spec string
+	}{
+		{"trace", `{"check":"required_tools","tools":["issue_refund"],"soft":false}`},
+		{"trace", `{"check":"tool_cardinality","tool":"issue_refund","min":2,"soft":false}`},
+		{"trace", `{"check":"tool_cardinality","tool":"issue_refund","per":"order_id","max":1,"soft":false}`},
+		{"trace", `{"check":"tool_cardinality","tool":"issue_refund","max":2,"soft":false}`},
+		{"trace", `{"check":"tool_order","before":"lookup_order","after":"issue_refund","soft":false}`},
+		{"trace", `{"check":"arg_predicate","tool":"issue_refund","arg":"amount_cents","op":"lte","value":4999,"soft":false}`},
+		{"trace", `{"check":"failure_streak","max":1,"soft":false}`},
+		{"effect", `{"check":"count","resource":"refunds","equals":1}`},
+		{"effect", `{"check":"idempotent","resource":"refunds","field":"idempotency_key"}`},
+	}
+	for _, c := range cases {
+		var spec map[string]any
+		if err := json.Unmarshal([]byte(c.spec), &spec); err != nil {
+			t.Fatal(err)
+		}
+		call, err := contractdsl.FromSpec(c.typ, spec)
+		if err != nil {
+			t.Errorf("%s: %v", c.spec, err)
+			continue
+		}
+		stmt, err := call.Statement()
+		if err != nil {
+			t.Errorf("%s: %v", c.spec, err)
+			continue
+		}
+		again, err := contractdsl.Parse(stmt)
+		if err != nil {
+			t.Errorf("%s: statement %q: %v", c.spec, stmt, err)
+			continue
+		}
+		if got, want := norm(t, again.Spec()), norm(t, spec); !reflect.DeepEqual(got, want) {
+			t.Errorf("%s: round trip %v", c.spec, got)
+		}
+	}
+}

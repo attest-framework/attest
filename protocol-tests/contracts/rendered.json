@@ -13,6 +13,12 @@
       "typescript": ".toolCardinality(\"lookup_order\", { atMost: 1, atLeast: 1, soft: true })"
     },
     {
+      "statement": "required_tools([\"lookup_order\", \"issue_refund\"])",
+      "chain_prefix": "",
+      "python": ".required_tools([\"lookup_order\", \"issue_refund\"])",
+      "typescript": ".requiredTools([\"lookup_order\", \"issue_refund\"])"
+    },
+    {
       "statement": "forbidden_tools([\"delete_order\"])",
       "chain_prefix": "",
       "python": ".forbidden_tools([\"delete_order\"])",

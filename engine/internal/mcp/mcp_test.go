@@ -859,3 +859,22 @@ func TestEvaluate_OversizedRegex_Rejected(t *testing.T) {
 		t.Errorf("got %+v", r)
 	}
 }
+
+// The engine's contract recording (ATTEST_CONTRACTS_DIR) belongs to the
+// JSON-RPC server; the MCP server must stay read-only even when it is set.
+func TestEvaluate_ContractRecordingEnv_WritesNothing(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("ATTEST_CONTRACTS_DIR", dir)
+	root, _ := project(t)
+	r := call(t, connect(t, root), "evaluate", map[string]any{
+		"fixture_path": "fixtures/incident.attest.json",
+		"assertions": []map[string]any{{"assertion_id": "a", "type": "trace",
+			"spec": map[string]any{"check": "forbidden_tools", "tools": []string{"x"}}}},
+	})
+	if r.IsError {
+		t.Fatal(r.Text)
+	}
+	if entries, _ := os.ReadDir(dir); len(entries) != 0 {
+		t.Errorf("the MCP server recorded specs: %v", entries)
+	}
+}

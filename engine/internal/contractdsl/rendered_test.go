@@ -18,6 +18,7 @@ const renderedGolden = contractsDir + "rendered.json"
 var renderedExamples = []string{
 	`tool_cardinality("issue_refund", per="order_id", at_most=1)`,
 	`tool_cardinality("lookup_order", at_least=1, at_most=1, soft=True)`,
+	`required_tools(["lookup_order", "issue_refund"])`,
 	`forbidden_tools(["delete_order"])`,
 	`trajectory(["lookup_order", "issue_refund"], mode="superset")`,
 	`trajectory_partial_order([["lookup_order", "issue_refund"]], tools=["lookup_order"])`,

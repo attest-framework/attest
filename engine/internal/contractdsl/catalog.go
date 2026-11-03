@@ -112,6 +112,14 @@ var catalog = []*Method{
 		check: atLeastOne("at_most", "at_least"),
 	},
 	{
+		Name: "required_tools", TS: "requiredTools", Type: types.TypeTrace,
+		fixed: map[string]any{"check": "required_tools"},
+		params: []param{
+			{name: "tools", specKey: "tools", kind: kStrings, positional: true, required: true},
+			soft(),
+		},
+	},
+	{
 		Name: "forbidden_tools", TS: "forbiddenTools", Type: types.TypeTrace,
 		fixed: map[string]any{"check": "forbidden_tools"},
 		params: []param{
