@@ -5,7 +5,7 @@ go 1.25.0
 require (
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.2
 	github.com/segmentio/encoding v0.5.4
-	github.com/yalue/onnxruntime_go v1.31.0
+	github.com/yalue/onnxruntime_go v1.38.0
 	go.opentelemetry.io/proto/otlp v1.10.0
 	golang.org/x/time v0.15.0
 	google.golang.org/protobuf v1.36.11
