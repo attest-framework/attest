@@ -147,7 +147,7 @@ A fixture follows `proto/attest/v1/fixture-v1.schema.json`:
 | `exchanges` | every model call in request order: provider, API (`chat_completions`, `responses`, `messages`, `other`), path, request body, response status, content type and body (the JSON value, or the event-stream text for a streamed call), and its `key` |
 | `contracts` | the drafted contracts as engine assertion specs |
 | `verification` | `verified`, `expect_fail`, the capture-time trace check, each contract's status and explanation, and `expected_failures` |
-| `world` | the final state of the [world](world-fixtures.md) hosted with `--world` (`world_version`, `definition_sha256`, `state`, `faults_fired`), redacted like the rest of the fixture; `null` for a capture without `--world` |
+| `world` | the final state of the [world](world-fixtures.md) hosted with `--world` (`world_version`, `definition_sha256`, `state`, `faults_fired`, `faults_fired_count`), redacted like the rest of the fixture, with email addresses templated to the trace's `{{email_N}}` tokens (ids and timestamps in records are kept as they were); evidence only, never fed back into a replay's world; `null` for a capture without `--world` |
 
 Each exchange's `key` identifies the request: the `model`, the request parameters other than the prompt and the tools (`params`), and SHA-256 hashes of the prompt (`messages`; `input` and `instructions`; `system` and `messages`) and of the tool schemas. Fixtures record the exchanges and their keys; replaying them is not part of this release.
 
@@ -170,7 +170,7 @@ It prints the JSON path of each hit (never the secret; an object key holding one
 
 ### Templating
 
-Values that differ between two runs of the same scenario become stable placeholders, the same placeholder for the same value across the trace, the exchanges and the keys:
+Values that differ between two runs of the same scenario become stable placeholders, the same placeholder for the same value across the trace, the exchanges and the keys (and, for email addresses, the `world` section):
 
 | Value | Becomes |
 | --- | --- |

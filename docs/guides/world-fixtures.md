@@ -141,6 +141,8 @@ They run as two engine processes and their environment variables merge: `OPENAI_
 
 `attest.record("inc-1042", world="tests/payments.world.yaml")` and `record("inc-1042", fn, { world })` pass `--world` to `attest capture --serve`, set the world's base URL variable for the block, and save the world's final state in the fixture's `world` section. See [capture](capture.md#the-fixture).
 
+The section is redacted like the rest of the fixture, and email addresses in record keys and values become `{{email_N}}` with the same numbering as the trace: one address is one token across the fixture, and no clear-text address is stored. Ids and timestamps in records are kept as the world held them. The section is evidence only. `replay --world` (and `attest_world` / `useWorld`) start a fresh world from `world.yaml`, never from the fixture, so templating does not affect a replay; effect checks run against the live world's `state()`, which holds the real values. A check that filters on an email address matches the live state, not a stored snapshot.
+
 ## Limits
 
 - HTTP and JSON only: collections with create, list and get. No updates, deletes, nested resources, auth, streaming or arbitrary handlers. A world is not a general service-virtualization platform; for anything it cannot express, write a real fake.
