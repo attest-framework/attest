@@ -147,3 +147,34 @@ func TestFindingRows_StrictAndAutoMissSharingATestID_BothListed(t *testing.T) {
 		t.Fatalf("rows = %+v, want a hard_fail and a not_evaluated row", rows)
 	}
 }
+
+func TestFindingRows_PassedTestWithFailedTrial_HasNoRow(t *testing.T) {
+	r := &report.CIReport{ReportVersion: 2,
+		Results: []report.CIResult{{AssertionID: "a1", Status: "hard_fail", Type: "content", TestID: "t.py::test_x", File: "t.py", Line: 3}},
+		Tests:   []report.CITest{{TestID: "t.py::test_x", File: "t.py", Line: 3, Outcome: "passed"}},
+	}
+	if rows := report.FindingRows(r); len(rows) != 0 {
+		t.Errorf("rows = %+v, want none for a passed test", rows)
+	}
+}
+
+func TestFindingRows_StrictMissInAutoLabelledTest_IsListed(t *testing.T) {
+	r := &report.CIReport{ReportVersion: 2, Tests: []report.CITest{{
+		TestID: "t.py::test_a", File: "t.py", Line: 3, Outcome: "failed",
+		Replay: &report.CITestReplay{Fixtures: []string{"inc-9"}, Mode: "auto", Misses: 1, Miss: "replay miss: x"},
+	}}}
+	if rows := report.FindingRows(r); len(rows) != 1 || rows[0].Status != "hard_fail" {
+		t.Errorf("rows = %+v, want one hard_fail replay_miss row", rows)
+	}
+}
+
+func TestFindingRows_FailedTestWithAutoMissRow_IsNotDuplicated(t *testing.T) {
+	r := &report.CIReport{ReportVersion: 2,
+		Results: []report.CIResult{{AssertionID: "replay_inc-9", Status: "not_evaluated", Reason: "replay_miss", TestID: "t.py::test_a", File: "t.py", Line: 3}},
+		Tests: []report.CITest{{TestID: "t.py::test_a", File: "t.py", Line: 3, Outcome: "failed",
+			Replay: &report.CITestReplay{Fixtures: []string{"inc-9"}, Mode: "auto", Misses: 1, Miss: "replay miss: x"}}},
+	}
+	if rows := report.FindingRows(r); len(rows) != 1 {
+		t.Errorf("rows = %+v, want one", rows)
+	}
+}

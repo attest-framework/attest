@@ -48,6 +48,10 @@ type CIResult struct {
 	TestID       string `json:"test_id,omitempty"`
 	File         string `json:"file,omitempty"`
 	Line         int    `json:"line,omitempty"`
+
+	// src is the index of the report the row came from in MergeCI; it keeps
+	// rows of different reports apart when their test ids collide.
+	src int
 }
 
 // CITest is a report-v2 `tests[]` row.
@@ -60,6 +64,8 @@ type CITest struct {
 	NotEvaluatedReasons []string      `json:"not_evaluated_reasons,omitempty"`
 	DurationMS          int64         `json:"duration_ms,omitempty"`
 	Replay              *CITestReplay `json:"replay,omitempty"`
+
+	src int
 }
 
 // CISummary is the report-v2 `summary` block.
@@ -103,9 +109,15 @@ func LoadCI(path string) (*CIReport, error) {
 // MergeCI concatenates reports in the order given and sums their summaries.
 func MergeCI(reports []*CIReport) *CIReport {
 	merged := &CIReport{ReportVersion: 2}
-	for _, r := range reports {
-		merged.Results = append(merged.Results, r.Results...)
-		merged.Tests = append(merged.Tests, r.Tests...)
+	for i, r := range reports {
+		for _, res := range r.Results {
+			res.src = i
+			merged.Results = append(merged.Results, res)
+		}
+		for _, t := range r.Tests {
+			t.src = i
+			merged.Tests = append(merged.Tests, t)
+		}
 		s := &merged.Summary
 		s.Total += r.Summary.Total
 		s.Passed += r.Summary.Passed
@@ -169,17 +181,31 @@ const (
 
 // FindingRows returns the failures and replay misses of r, sorted by file,
 // line, test id and assertion id. A row is a hard failure or a not_evaluated
-// result whose reason is replay_miss. A strict-mode replay miss fails its test
-// and the SDKs write no assertion row for it, so a failed strict-mode test
-// whose replay block holds a miss message contributes a hard_fail row with
+// result whose reason is replay_miss. A hard_fail row of a test whose outcome
+// is not failed is dropped: a test can pass with failing trials when a minimum
+// pass rate is set. A strict-mode replay miss fails its test and the SDKs
+// write no assertion row for it, so a failed test whose replay block holds a
+// miss message and has no replay_miss row yet contributes a hard_fail row with
 // reason replay_miss. A row from a result without test context has an empty
 // file and line 0.
 func FindingRows(r *CIReport) []FindingRow {
+	type testKey struct {
+		src int
+		id  string
+	}
+	outcomes := map[testKey]string{}
+	for _, t := range r.Tests {
+		outcomes[testKey{t.src, t.TestID}] = t.Outcome
+	}
 	var rows []FindingRow
+	missRows := map[testKey]bool{}
 	for _, res := range r.Results {
 		isFail := res.Status == types.StatusHardFail
 		isMiss := res.Status == types.StatusNotEvaluated && res.Reason == types.ReasonReplayMiss
 		if !isFail && !isMiss {
+			continue
+		}
+		if outcome, known := outcomes[testKey{res.src, res.TestID}]; isFail && known && outcome != OutcomeFailed {
 			continue
 		}
 		kind := res.Type
@@ -189,6 +215,9 @@ func FindingRows(r *CIReport) []FindingRow {
 				kind = replayRowType
 			}
 		}
+		if isMiss {
+			missRows[testKey{res.src, res.TestID}] = true
+		}
 		rows = append(rows, FindingRow{
 			File: res.File, Line: res.Line, TestID: res.TestID,
 			AssertionID: res.AssertionID, Type: kind, Status: res.Status,
@@ -197,7 +226,7 @@ func FindingRows(r *CIReport) []FindingRow {
 	}
 	for _, t := range r.Tests {
 		rp := t.Replay
-		if t.Outcome != OutcomeFailed || rp == nil || rp.Mode != "strict" || rp.Miss == "" || len(rp.Fixtures) == 0 {
+		if t.Outcome != OutcomeFailed || rp == nil || rp.Miss == "" || len(rp.Fixtures) == 0 || missRows[testKey{t.src, t.TestID}] {
 			continue
 		}
 		rows = append(rows, FindingRow{
