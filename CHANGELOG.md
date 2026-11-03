@@ -4,6 +4,10 @@ All notable changes to Attest are documented in this file. The format follows [K
 
 ## [Unreleased]
 
+## [1.0.0-rc.4] — 2026-11-04
+
+Fourth release candidate, themed "Agent-native": coding agents operate attest without the website through `--json` output with published schemas and stable exit codes, offline guides (`attest guide`), installable skills and plugins, and an MCP server whose closed contract grammar drafts and checks contracts. `attest mutate` measures how much of an agent's behavior the suite would actually catch.
+
 ### Added
 
 - `attest mutate <fixture.attest.json...> [--contracts DIR] [--seed N] [--max-mutants N] [--json]` tests the tests: it builds behavior mutants of each fixture (drop, duplicate or reorder tool calls, perturb arguments, inject tool errors, alter world effects, truncate output), evaluates the suite's deterministic contracts on every mutant at no model cost, and reports a mutation score, each surviving mutant and a verified contract that would kill it. The mutant set is identical across runs for a fixed seed. `--json` validates against `cli/mutate.schema.json`; exit 0 report produced, 1 no contract applies to any fixture, 2 usage or load error. See `docs/guides/mutation.md`.
@@ -256,7 +260,8 @@ Tagged, not published to registries. No GitHub release was created.
 
 Versions 0.1.0 through 0.6.0 are described in their [GitHub releases](https://github.com/attest-framework/attest/releases); 0.6.1 exists only as a tag. 0.1.0–0.6.0 were published to PyPI; 0.3.0–0.6.0 were also published to npm.
 
-[Unreleased]: https://github.com/attest-framework/attest/compare/v1.0.0-rc.3...HEAD
+[Unreleased]: https://github.com/attest-framework/attest/compare/v1.0.0-rc.4...HEAD
+[1.0.0-rc.4]: https://github.com/attest-framework/attest/releases/tag/v1.0.0-rc.4
 [1.0.0-rc.3]: https://github.com/attest-framework/attest/releases/tag/v1.0.0-rc.3
 [1.0.0-rc.2]: https://github.com/attest-framework/attest/releases/tag/v1.0.0-rc.2
 [1.0.0-rc.1]: https://github.com/attest-framework/attest/releases/tag/v1.0.0-rc.1
