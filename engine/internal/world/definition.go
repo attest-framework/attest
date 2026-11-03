@@ -368,7 +368,7 @@ func validateSchema(doc any, ref string) error {
 	var walk func(*jsonschema.ValidationError)
 	walk = func(e *jsonschema.ValidationError) {
 		if len(e.Causes) == 0 {
-			path := ""
+			path := "/"
 			if len(e.InstanceLocation) > 0 {
 				path = "/" + strings.Join(e.InstanceLocation, "/")
 			}
