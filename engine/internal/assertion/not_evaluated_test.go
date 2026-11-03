@@ -220,3 +220,9 @@ func TestSimulationModeFromEnv(t *testing.T) {
 		}
 	}
 }
+
+func TestReasonReplayMiss_WireValue_IsSharedWithSDKs(t *testing.T) {
+	if types.ReasonReplayMiss != "replay_miss" {
+		t.Fatalf("ReasonReplayMiss = %q", types.ReasonReplayMiss)
+	}
+}

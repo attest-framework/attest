@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sync"
 	"time"
 
 	"github.com/attest-ai/attest/engine/internal/redact"
@@ -22,11 +23,13 @@ import (
 // and the OTLP/HTTP receiver. The agent under test reaches both through the
 // environment variables Env returns.
 type Session struct {
-	proxy    *Proxy
-	receiver *Receiver
-	server   *http.Server
-	listener net.Listener
-	served   chan error
+	proxy     *Proxy
+	receiver  *Receiver
+	server    *http.Server
+	listener  net.Listener
+	served    chan error
+	closeOnce sync.Once
+	closeErr  error
 	// token is the first path segment of every capture URL: 128 random
 	// bits, so only the process given the environment can reach the
 	// listener's routes.
@@ -40,6 +43,34 @@ func Start(up Upstreams) (*Session, error) {
 	if err != nil {
 		return nil, err
 	}
+	return startWith(proxy)
+}
+
+// StartReplay starts a session whose proxy answers from a fixture. The
+// receiver still runs, so an agent that exports spans does not fail; the
+// spans are discarded with the session.
+func StartReplay(o ReplayOptions) (*Session, error) {
+	rp, err := NewReplayer(o)
+	if err != nil {
+		return nil, err
+	}
+	proxy, err := NewProxy(o.Upstreams)
+	if err != nil {
+		return nil, err
+	}
+	proxy.replay = rp
+	return startWith(proxy)
+}
+
+// ReplaySummary reports what a replay session served. It is valid after
+// Close, once every in-flight request has finished.
+func (s *Session) ReplaySummary() ReplaySummary {
+	sum := s.proxy.replay.Summary()
+	sum.LiveCostUSD, sum.UnpricedLiveCalls = s.proxy.liveCost()
+	return sum
+}
+
+func startWith(proxy *Proxy) (*Session, error) {
 	raw := make([]byte, 16)
 	if _, err := rand.Read(raw); err != nil {
 		return nil, fmt.Errorf("capture token: %w", err)
@@ -84,6 +115,11 @@ func (s *Session) Env() map[string]string {
 // never used holds Shutdown for its full timeout, and an exchange cut off
 // here is incomplete, which fails the capture anyway.
 func (s *Session) Close() error {
+	s.closeOnce.Do(func() { s.closeErr = s.close() })
+	return s.closeErr
+}
+
+func (s *Session) close() error {
 	ctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 	defer cancel()
 	err := s.server.Shutdown(ctx)

@@ -16,6 +16,8 @@ import (
 	"syscall"
 	"text/tabwriter"
 
+	"github.com/mattn/go-isatty"
+
 	"github.com/attest-ai/attest/engine/internal/capture"
 	"github.com/attest-ai/attest/engine/internal/redact"
 	"github.com/attest-ai/attest/engine/internal/trace"
@@ -28,6 +30,7 @@ func init() {
 const captureUsage = `usage: attest-engine capture --name <name> [options] -- <command> [args...]
        attest-engine capture --name <name> --from <otlp.json> [options]
        attest-engine capture --name <name> --serve [options]
+       attest-engine capture --refresh <name> [options]
        attest-engine capture --check-redaction <fixture.attest.json>
 
 Runs <command> with OPENAI_BASE_URL and ANTHROPIC_BASE_URL pointing at a
@@ -40,9 +43,16 @@ options:
   --out-dir <dir>        fixture directory (default tests/attest/fixtures)
   --expect-fail          save an incident reproduction: verified when drafted
                          contracts fail, recorded as expected failures
-  --agent-id <id>        trace agent_id (default: the first turn's agent name)
+  --agent-id <id>        trace agent_id (default: the first turn's agent name;
+                         with --refresh, the fixture's)
   --result-file <path>   also write {"fixture", "verified"} JSON to <path>
   --from <otlp.json>     build from an OTLP/JSON export (trace only; no replay)
+  --yes                  with --refresh: run the recorded command without asking
+  --refresh <name>       re-run the fixture's recorded command with its
+                         original flags (--expect-fail included) and overwrite
+                         it; refuses when the command's arguments were
+                         redacted or templated, or the fixture has no
+                         command (--from, in-process)
   --serve                in-process capture: print the environment as one JSON
                          line, then finalize when stdin sends "finalize" or
                          {"finalize":true,"environ":[...]} (secrets in that
@@ -61,6 +71,8 @@ type captureOptions struct {
 	from           string
 	serve          bool
 	checkRedaction string
+	refresh        string
+	yes            bool
 	command        []string
 }
 
@@ -76,6 +88,8 @@ func parseCaptureArgs(args []string, stderr io.Writer) (*captureOptions, bool) {
 	fs.StringVar(&o.from, "from", "", "")
 	fs.BoolVar(&o.serve, "serve", false, "")
 	fs.StringVar(&o.checkRedaction, "check-redaction", "", "")
+	fs.StringVar(&o.refresh, "refresh", "", "")
+	fs.BoolVar(&o.yes, "yes", false, "")
 	if err := fs.Parse(args); err != nil {
 		fmt.Fprintf(stderr, "capture: %s\n%s\n", terminalSafe(err.Error()), captureUsage)
 		return nil, false
@@ -88,6 +102,18 @@ func parseCaptureArgs(args []string, stderr io.Writer) (*captureOptions, bool) {
 	if o.checkRedaction != "" {
 		if o.name != "" || o.from != "" || o.serve || len(o.command) > 0 {
 			return usage("--check-redaction takes only a fixture path")
+		}
+		return o, true
+	}
+	if o.yes && o.refresh == "" {
+		return usage("--yes applies to --refresh only")
+	}
+	if o.refresh != "" {
+		if o.name != "" || o.from != "" || o.serve || o.expectFail || len(o.command) > 0 {
+			return usage("--refresh takes only a fixture name, --out-dir, --agent-id and --result-file")
+		}
+		if err := capture.ValidateName(o.refresh); err != nil {
+			return usage(terminalSafe(err.Error()))
 		}
 		return o, true
 	}
@@ -113,6 +139,15 @@ func runCapture(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	}
 	if o.checkRedaction != "" {
 		return runCheckRedaction(o.checkRedaction, stdout, stderr)
+	}
+	if o.refresh != "" {
+		if err := resolveRefresh(o); err != nil {
+			fmt.Fprintf(stderr, "capture: %s\n", terminalSafe(err.Error()))
+			return 1
+		}
+		if code, ok := confirmRefresh(o, stdin, stderr); !ok {
+			return code
+		}
 	}
 	environ := os.Environ()
 	in := capture.BuildInput{
@@ -476,4 +511,79 @@ func runCheckRedaction(path string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stdout, "  %s\t%s\n", h.Kind, terminalSafe(h.Path))
 	}
 	return 1
+}
+
+// resolveRefresh fills o from the fixture named by --refresh: its command and
+// its --expect-fail flag. A command whose arguments were redacted cannot be
+// run again, and neither can a fixture that has no command.
+func resolveRefresh(o *captureOptions) error {
+	path := filepath.Join(o.outDir, capture.FixtureFile(o.refresh))
+	f, err := capture.LoadFixture(path)
+	if err != nil {
+		return fmt.Errorf("--refresh %s: %w", o.refresh, err)
+	}
+	if f.Source.Kind != capture.SourceCommand || len(f.Source.Command) == 0 {
+		return fmt.Errorf("--refresh %s: the fixture was captured from %s, not from a command; re-run the capture that produced it", o.refresh, f.Source.Kind)
+	}
+	for _, a := range f.Source.Command {
+		switch {
+		case strings.Contains(a, redact.Marker):
+			return fmt.Errorf("--refresh %s: the recorded command has redacted arguments; re-run `attest capture --name %s%s -- <command>` yourself", o.refresh, o.refresh, expectFailFlag(f.Verification.ExpectFail))
+		case capture.HasPlaceholder(a):
+			return fmt.Errorf("--refresh %s: the recorded command has templated arguments (an id, timestamp or email replaced by a placeholder); re-run `attest capture --name %s%s -- <command>` yourself", o.refresh, o.refresh, expectFailFlag(f.Verification.ExpectFail))
+		}
+	}
+	o.name, o.command, o.expectFail = o.refresh, f.Source.Command, f.Verification.ExpectFail
+	if o.agentID == "" {
+		o.agentID = f.Trace.AgentID
+	}
+	return nil
+}
+
+func expectFailFlag(on bool) string {
+	if on {
+		return " --expect-fail"
+	}
+	return ""
+}
+
+// confirmRefresh shows the command a refresh is about to run and asks for
+// consent. The command comes from the fixture file, which a pull request can
+// change, so it is never run unseen: --yes, or "y" typed at a terminal.
+// Without either it refuses (exit 2) and nothing runs.
+func confirmRefresh(o *captureOptions, stdin io.Reader, stderr io.Writer) (int, bool) {
+	fmt.Fprintf(stderr, "capture: --refresh %s will run, from the fixture's source.command:\n  %s\n", terminalSafe(o.refresh), terminalSafe(shellQuote(o.command)))
+	if o.yes {
+		return 0, true
+	}
+	f, isFile := stdin.(*os.File)
+	if !isFile || !isTerminal(f) {
+		fmt.Fprintf(stderr, "capture: refusing to run it without confirmation: review the command above (it is source.command in the fixture), then re-run with --yes\n")
+		return 2, false
+	}
+	fmt.Fprint(stderr, "Run it? [y/N] ")
+	line, _ := bufio.NewReader(stdin).ReadString('\n')
+	if a := strings.ToLower(strings.TrimSpace(line)); a != "y" && a != "yes" {
+		fmt.Fprintln(stderr, "capture: not run")
+		return 2, false
+	}
+	return 0, true
+}
+
+func isTerminal(f *os.File) bool {
+	return isatty.IsTerminal(f.Fd()) || isatty.IsCygwinTerminal(f.Fd())
+}
+
+// shellQuote renders argv as one shell command line, quoting every word that
+// is not plainly safe.
+func shellQuote(argv []string) string {
+	words := make([]string, len(argv))
+	for i, a := range argv {
+		if a != "" && strings.Trim(a, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_@%+=:,./-") == "" {
+			words[i] = a
+			continue
+		}
+		words[i] = "'" + strings.ReplaceAll(a, "'", `'\''`) + "'"
+	}
+	return strings.Join(words, " ")
 }

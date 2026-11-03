@@ -65,6 +65,9 @@ type Proxy struct {
 	mu     sync.Mutex
 	log    []*rawExchange
 	budget *byteBudget
+	// replay, when set, answers requests from a fixture; a request it lets
+	// through is forwarded and recorded like a capture.
+	replay *Replayer
 }
 
 // Upstreams holds the provider base URLs the proxy forwards to.
@@ -181,7 +184,30 @@ func (p *Proxy) forward(r route, prefix string) http.Handler {
 		if req.URL.RawQuery != "" {
 			path += "?" + req.URL.RawQuery
 		}
+		var liveRec *ReplayRecord
+		if p.replay != nil {
+			d := p.replay.decide(r.provider, req.Method, path, requestCredential(req.Header), body)
+			switch {
+			case d.hit != nil:
+				writeReplayed(w, d.hit.ex)
+				return
+			case !d.live:
+				writeMiss(w, r.provider, d.miss)
+				return
+			}
+			liveRec = &d.rec
+		}
 		ex, ok := p.begin(r.provider, req.Method, path, body)
+		if liveRec != nil {
+			// A live request counts once the proxy has accepted it; one it
+			// refuses is a miss, so the summary never shows a call that was
+			// not made.
+			if !ok {
+				liveRec.Outcome = OutcomeMiss
+				liveRec.Message = fmt.Sprintf("live request refused: the session recorded more than %d bytes", MaxSessionBytes)
+			}
+			p.replay.record(*liveRec)
+		}
 		if !ok {
 			http.Error(w, fmt.Sprintf("attest capture: the session recorded more than %d bytes", MaxSessionBytes), http.StatusInsufficientStorage)
 			return
