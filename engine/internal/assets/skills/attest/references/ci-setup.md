@@ -56,7 +56,7 @@ elif [ -n "$tests" ]; then uv run pytest $tests --attest-report=attest-report.js
 else echo "no tests selected"; fi
 ```
 
-`attest select --base origin/main --json` prints `{mode, tests, reasons}`. A source, lockfile, policy or world change selects `all`; a fixture change selects the tests that name it (`attest_replay("inc-1042")`). Keep a full run on pushes to `main`.
+`attest select --base origin/main --json` prints `{mode, tests, reasons}`. A source, lockfile, policy or world change selects `all`; a fixture change selects the tests that name it (example: `attest_replay("checkout-timeout")`). Keep a full run on pushes to `main`.
 
 ## 6. Verify
 

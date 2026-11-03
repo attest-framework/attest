@@ -10,7 +10,7 @@ Output: one skill per agent, written twice with identical content:
 - `.agents/skills/verify-<agent>/SKILL.md` (Codex, Cursor and other Agent Skills readers)
 - `.claude/skills/verify-<agent>/SKILL.md` (Claude Code)
 
-`<agent>` is a lowercase kebab-case slug of the agent's name (`refund-desk`). The frontmatter `name` must equal the directory name `verify-<agent>`. Use the template in `references/template.md`. General attest procedures live in the `attest` skill; the generated skill holds only this repo's facts and commands.
+`<agent>` is a lowercase kebab-case slug of the agent's name (example: `shop-assistant`). The frontmatter `name` must equal the directory name `verify-<agent>`. Use the template in `references/template.md`. General attest procedures live in the `attest` skill; the generated skill holds only this repo's facts and commands.
 
 ## 1. Discover
 

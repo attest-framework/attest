@@ -75,7 +75,7 @@ Started: <YYYY-MM-DD> · Last updated: <YYYY-MM-DD>
 
 | Case | Source assertions | Attest assertions | Layer | Fixture | Status | Test |
 | --- | --- | --- | --- | --- | --- | --- |
-| <id or description> | <e.g. icontains "refund"; llm-rubric "polite"> | <e.g. output_contains("refund"); passes_judge("polite")> | <L4, L6> | <tests/attest/fixtures/x.attest.json> | <todo / captured / passing / not_evaluated: reason / not migrated> | <tests/test_x.py::test_case> |
+| <id or description> | <e.g. icontains "charge"; llm-rubric "polite"> | <e.g. output_contains("charge"); passes_judge("polite")> | <L4, L6> | <tests/attest/fixtures/x.attest.json> | <todo / captured / passing / not_evaluated: reason / not migrated> | <tests/test_x.py::test_case> |
 
 ## Decisions log
 
