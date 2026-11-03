@@ -74,11 +74,14 @@ func Diagnose(logger *slog.Logger) (*Diagnosis, error) {
 		cfg := provs.judgeConfig
 		model := provs.judge.DefaultModel()
 		d.Judge = JudgeDiagnosis{
-			Configured:   true,
-			Provider:     &cfg.provider,
-			Model:        &model,
-			BaseURL:      &cfg.baseURL,
-			APIKeySource: &cfg.keySource,
+			Configured: true,
+			Provider:   &cfg.provider,
+			Model:      &model,
+		}
+		// The local ACP judge has neither an endpoint nor an API key.
+		if cfg.provider != "acp" {
+			d.Judge.BaseURL = &cfg.baseURL
+			d.Judge.APIKeySource = &cfg.keySource
 		}
 		if cfg.insecure {
 			d.Judge.Warning = insecureNote

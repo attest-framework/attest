@@ -1,0 +1,134 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://attest-framework.github.io/schemas/attest/v1/fixture-v1.schema.json",
+  "title": "Attest capture fixture v1",
+  "description": "A captured run, written by `attest capture` to `tests/attest/fixtures/<name>.attest.json`: the run's trace-v2 trace, every model exchange recorded by the capture proxy with its replay key, the contracts drafted from the run and their verification on it. Secrets are redacted to `[redacted]`; volatile values (trace and span ids, provider response ids, timestamps, durations, emails) are templated to stable placeholders, consistently across the trace, the exchanges and the keys. `world` is reserved for simulated-world state (world-v1) and is null until then.",
+  "type": "object",
+  "required": ["fixture_version", "name", "source", "trace", "exchanges", "contracts", "verification", "world"],
+  "additionalProperties": false,
+  "properties": {
+    "fixture_version": { "const": 1 },
+    "name": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$" },
+    "source": {
+      "type": "object",
+      "required": ["kind", "replay_capable"],
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "enum": ["command", "in_process", "otlp_file"],
+          "description": "command: `attest capture -- <command>`; in_process: `attest.record()` / `record()`; otlp_file: `attest capture --from <otlp.json>`, trace only."
+        },
+        "replay_capable": { "type": "boolean", "description": "True when model exchanges were recorded through the capture proxy." },
+        "command": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
+        "exit_code": { "type": "integer" }
+      },
+      "if": { "properties": { "kind": { "const": "otlp_file" } } },
+      "then": { "properties": { "replay_capable": { "const": false } } }
+    },
+    "trace": { "$ref": "trace-v2.schema.json" },
+    "exchanges": { "type": "array", "items": { "$ref": "#/$defs/exchange" } },
+    "contracts": { "type": "array", "items": { "$ref": "#/$defs/contract" } },
+    "verification": { "$ref": "#/$defs/verification" },
+    "world": {
+      "description": "Reserved for simulated-world state. Null in fixture v1 captures; a world section carries its own world_version.",
+      "oneOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "required": ["world_version"],
+          "properties": { "world_version": { "type": "integer", "minimum": 1 } }
+        }
+      ]
+    }
+  },
+  "$defs": {
+    "hash": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+    "exchange": {
+      "type": "object",
+      "required": ["index", "provider", "api", "method", "path", "stream", "key", "request", "response"],
+      "additionalProperties": false,
+      "properties": {
+        "index": { "type": "integer", "minimum": 0 },
+        "provider": { "enum": ["openai", "anthropic"] },
+        "api": { "enum": ["chat_completions", "responses", "messages", "other"] },
+        "method": { "type": "string", "minLength": 1 },
+        "path": { "type": "string", "pattern": "^/" },
+        "stream": { "type": "boolean" },
+        "key": {
+          "type": "object",
+          "description": "Replay identity, computed from the templated request: the model, the request parameters other than the prompt and tools, and hashes of the prompt and the tool schemas.",
+          "required": ["model", "params", "prompt_hash", "tool_schema_hash"],
+          "additionalProperties": false,
+          "properties": {
+            "model": { "type": "string" },
+            "params": { "type": "object" },
+            "prompt_hash": { "$ref": "#/$defs/hash" },
+            "tool_schema_hash": { "oneOf": [{ "$ref": "#/$defs/hash" }, { "type": "null" }] }
+          }
+        },
+        "request": { "description": "The request body: its JSON value, or the text when it is not JSON. Request headers are never recorded." },
+        "response": {
+          "type": "object",
+          "required": ["status", "content_type", "body"],
+          "additionalProperties": false,
+          "properties": {
+            "status": { "type": "integer", "minimum": 100, "maximum": 599 },
+            "content_type": { "type": "string" },
+            "body": { "description": "The JSON value for a JSON response; the text for an event stream or any other response." },
+            "truncated": { "const": true, "description": "Present when the response was cut short or exceeded the recording limit." }
+          }
+        }
+      }
+    },
+    "contract": {
+      "type": "object",
+      "required": ["id", "kind", "description", "type", "spec"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "pattern": "^\\S+$" },
+        "kind": { "enum": ["tools", "order", "cardinality", "output_schema", "cost"] },
+        "description": { "type": "string" },
+        "type": { "enum": ["trace", "schema", "constraint"], "description": "Engine assertion type; spec is the assertion spec the SDK DSL emits." },
+        "spec": { "type": "object" }
+      }
+    },
+    "verification": {
+      "type": "object",
+      "required": ["verified", "expect_fail", "trace_check", "results", "expected_failures"],
+      "additionalProperties": false,
+      "properties": {
+        "verified": {
+          "type": "boolean",
+          "description": "Without expect_fail: every contract passed and the captured trace passed trace check. With expect_fail (an incident reproduction): at least one contract failed, the rest passed, and the trace passed trace check."
+        },
+        "expect_fail": { "type": "boolean" },
+        "trace_check": {
+          "type": "object",
+          "required": ["ok", "errors", "warnings"],
+          "additionalProperties": false,
+          "properties": {
+            "ok": { "type": "boolean" },
+            "errors": { "type": "integer", "minimum": 0 },
+            "warnings": { "type": "integer", "minimum": 0 }
+          }
+        },
+        "results": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["contract", "status", "explanation"],
+            "additionalProperties": false,
+            "properties": {
+              "contract": { "type": "string", "minLength": 1 },
+              "status": { "enum": ["pass", "soft_fail", "hard_fail", "not_evaluated"] },
+              "explanation": { "type": "string" }
+            }
+          }
+        },
+        "expected_failures": { "type": "array", "items": { "type": "string", "minLength": 1 }, "uniqueItems": true }
+      },
+      "if": { "properties": { "expect_fail": { "const": false } } },
+      "then": { "properties": { "expected_failures": { "maxItems": 0 } } }
+    }
+  }
+}

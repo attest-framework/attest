@@ -634,7 +634,7 @@ jobs:
         uses: peter-evans/repository-dispatch@28959ce8df70de7be546dd1250a005dd32156697 # v4.0.1
         with:
           token: ${{ secrets.DOCS_DEPLOY_TOKEN }}
-          repository: attest-framework/attest-website
+          repository: attest-framework/attest-framework.github.io
           event-type: release-sync
           client-payload: ${{ steps.payload.outputs.json }}
       - name: Write published components into the release notes
@@ -653,7 +653,7 @@ jobs:
           if [[ "$ALL_PUBLISHED" != "true" ]]; then
             website="skipped (not every component published)"
           elif [[ "$HAS_TOKEN" == "true" ]]; then
-            website="dispatched (release-sync to attest-framework/attest-website)"
+            website="dispatched (release-sync to attest-framework/attest-framework.github.io)"
           else
             website="skipped (no DOCS_DEPLOY_TOKEN)"
           fi

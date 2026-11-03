@@ -1,0 +1,2 @@
+go test fuzz v1
+[]byte("{\"resourceSpans\":[{\"scopeSpans\":[{\"spans\":[{\"traceId\":\"4bf92f3577b34da6a3ce929d0e0e4736\",\"spanId\":\"a000000000000001\",\"name\":\"chat x\",\"startTimeUnixNano\":\"18446744073709551615\",\"endTimeUnixNano\":\"0\",\"attributes\":[{\"key\":\"gen_ai.operation.name\",\"value\":{\"stringValue\":\"chat\"}}]}]}]}]}")

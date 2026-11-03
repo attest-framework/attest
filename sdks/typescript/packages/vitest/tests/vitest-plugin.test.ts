@@ -133,6 +133,22 @@ describe("AttestEngineFixture", () => {
     await fixture.stop();
   });
 
+  it("evaluate() rejects a negative test budget before evaluating", async () => {
+    const fixture = new AttestEngineFixture();
+    await fixture.start();
+
+    const chain = {
+      trace: { trace_id: "trc_1", output: {}, steps: [] },
+      assertions: [{ assertion_id: "a1", type: "schema", spec: {} }],
+    };
+
+    await expect(fixture.evaluate(chain as never, { testBudget: { maxCostUsd: -1 } })).rejects.toThrow(
+      "maxCostUsd must be a number >= 0",
+    );
+
+    await fixture.stop();
+  });
+
   it("accepts enginePath and logLevel options", () => {
     const fixture = new AttestEngineFixture({
       enginePath: "/custom/engine",

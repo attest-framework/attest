@@ -1,4 +1,4 @@
-[![Attest](assets/banner.png)](https://attest-framework.github.io/attest/)
+[![Attest](assets/banner.png)](https://attest-framework.github.io/)
 
 ---
 
@@ -6,7 +6,7 @@
 
 **Test your AI agents like you test your code.**
 
-[Documentation](https://attest-framework.github.io/attest-website/) | [Examples](https://github.com/attest-framework/attest-examples) | [Contributing](CONTRIBUTING.md)
+[Documentation](https://attest-framework.github.io/) | [Examples](https://github.com/attest-framework/attest-examples) | [Contributing](CONTRIBUTING.md)
 
 Attest is an open-source testing framework purpose-built for AI agents and LLM-powered systems. It treats deterministic assertions as first-class citizens alongside probabilistic evaluation — because 70% of your agent's testable surface is deterministic.
 
@@ -101,7 +101,7 @@ SDK (Python/TS/Go) ──stdin/stdout──▶ Engine Process (Go)
 - **Cost as a test metric** — assert on token usage, API cost, and latency
 - **Soft-failure limit** — cap soft failures per engine session via `ATTEST_MAX_SOFT_FAILURES`
 - **`attest-engine doctor`** — reports engine version, capabilities and judge/embedding configuration (`--json` for tooling); see [configuration](docs/guides/configuration.md)
-- **OpenAI-compatible judge** — point Layer 6 at any compatible endpoint with `ATTEST_JUDGE_BASE_URL`
+- **Judges on four provider families** — Layer 6 runs natively on OpenAI, Anthropic and Gemini, or any OpenAI-compatible endpoint via `ATTEST_JUDGE_BASE_URL`, each with its own rate limit, plus a local-only ACP judge on your Claude Code or Codex subscription; see [judges](docs/guides/judges.md)
 - **Python & TypeScript SDKs** — `attest-ai` (PyPI) + `@attest-ai/core` / `@attest-ai/vitest` (npm)
 - **`attest init`** — scaffolds a passing sample test, a merge policy and, with `--ci github`, a GitHub Actions merge gate (Python + TypeScript)
 - **CJS/ESM dual output** — TypeScript SDK supports both `require()` and `import`, tree-shakeable
@@ -148,7 +148,7 @@ No API key, model or network access is needed: the sample test checks a recorded
 
 ```bash
 uv init --bare my-agent-tests && cd my-agent-tests
-uv add attest-ai pytest
+uv add "attest-ai>=1.0.0rc1" pytest
 uv run attest init
 uv run pytest
 ```
@@ -233,12 +233,12 @@ uv run attest init --ci github
 
 ```bash
 npm init -y && npm pkg set type=module
-npm install -D @attest-ai/core @attest-ai/vitest vitest
+npm install -D "@attest-ai/core@>=1.0.0-rc.1" "@attest-ai/vitest@>=1.0.0-rc.1" vitest
 npx attest init
 npx vitest run
 ```
 
-`npx attest init` writes `tests/my-agent.test.ts` and `attest.policy.yaml`; the line marked `ATTEST-DEMO` works the same way. `npx vitest run --reporter=default --reporter=@attest-ai/vitest/reporter --outputFile.attest=attest-report.json` writes the report and `npx attest init --ci github` writes the workflow.
+`npx attest init` writes `tests/my-agent.test.ts` and `attest.policy.yaml`; the line marked `ATTEST-DEMO` works the same way. `npx vitest run --reporter=default --reporter=@attest-ai/vitest/reporter --outputFile.attest=attest-report.json` writes the report and `npx attest init --ci github` writes the workflow, which installs with `npm ci` from the `package-lock.json` that `npm install` writes.
 
 ### Build from source
 

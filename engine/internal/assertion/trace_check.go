@@ -12,96 +12,158 @@ import (
 // TraceEvaluator implements Layer 3: trace structural inspection.
 type TraceEvaluator struct{}
 
+// traceSpec is the union of every trace check's fields. Each check reads the
+// fields it needs and validates them in its runner.
+type traceSpec struct {
+	Check          string          `json:"check"`
+	Tools          []string        `json:"tools,omitempty"`
+	Tool           string          `json:"tool,omitempty"`
+	MaxRepetitions int             `json:"max_repetitions,omitempty"`
+	Per            string          `json:"per,omitempty"`
+	Min            *int            `json:"min,omitempty"`
+	Max            *int            `json:"max,omitempty"`
+	Mode           string          `json:"mode,omitempty"`
+	Order          [][]string      `json:"order,omitempty"`
+	Before         string          `json:"before,omitempty"`
+	After          string          `json:"after,omitempty"`
+	Period         int             `json:"period,omitempty"`
+	MinRepeats     *int            `json:"min_repeats,omitempty"`
+	Arg            string          `json:"arg,omitempty"`
+	Op             string          `json:"op,omitempty"`
+	Value          json.RawMessage `json:"value,omitempty"`
+	Soft           bool            `json:"soft"`
+}
+
+// checkOutcome is a trace check's verdict. A non-empty missing marks the
+// check not_evaluated(missing_evidence) with missing as the explanation.
+type checkOutcome struct {
+	passed      bool
+	explanation string
+	missing     string
+}
+
+// traceCheckRunner evaluates one check. A returned error is a spec error.
+type traceCheckRunner func(trace *types.Trace, spec *traceSpec) (checkOutcome, error)
+
+var traceChecks = map[string]traceCheckRunner{
+	"contains_in_order": runContainsInOrder,
+	"exact_order":       runExactOrder,
+	"loop_detection":    runLoopDetection,
+	"no_duplicates":     runNoDuplicates,
+	"required_tools":    runRequiredTools,
+	"forbidden_tools":   runForbiddenTools,
+	"tool_cardinality":  runToolCardinality,
+	"trajectory":        runTrajectory,
+	"tool_order":        runToolOrder,
+	"cycle":             runCycle,
+	"failure_streak":    runFailureStreak,
+	"arg_predicate":     runArgPredicate,
+}
+
 func (e *TraceEvaluator) Evaluate(trace *types.Trace, assertion *types.Assertion) *types.AssertionResult {
 	start := time.Now()
 
-	var spec struct {
-		Check          string   `json:"check"`
-		Tools          []string `json:"tools,omitempty"`
-		Tool           string   `json:"tool,omitempty"`
-		MaxRepetitions int      `json:"max_repetitions,omitempty"`
-		Soft           bool     `json:"soft"`
-	}
+	var spec traceSpec
 	if err := json.Unmarshal(assertion.Spec, &spec); err != nil {
 		return failResult(assertion, start, fmt.Sprintf("invalid trace spec: %v", err))
 	}
 	if spec.Check == "" {
 		return failResult(assertion, start, "trace spec missing required field: check")
 	}
-
-	failStatus := types.StatusHardFail
-	if spec.Soft {
-		failStatus = types.StatusSoftFail
-	}
-
-	stepNames := make([]string, len(trace.Steps))
-	for i, s := range trace.Steps {
-		stepNames[i] = s.Name
-	}
-
-	var explanation string
-	var passed bool
-
-	switch spec.Check {
-	case "contains_in_order":
-		if len(spec.Tools) == 0 {
-			return failResult(assertion, start, "contains_in_order requires 'tools'")
-		}
-		passed, explanation = checkContainsInOrder(stepNames, spec.Tools)
-
-	case "exact_order":
-		if len(spec.Tools) == 0 {
-			return failResult(assertion, start, "exact_order requires 'tools'")
-		}
-		passed, explanation = checkExactOrder(stepNames, spec.Tools)
-
-	case "loop_detection":
-		if spec.Tool == "" {
-			return failResult(assertion, start, "loop_detection requires 'tool'")
-		}
-		if spec.MaxRepetitions <= 0 {
-			return failResult(assertion, start, "loop_detection requires 'max_repetitions' > 0")
-		}
-		passed, explanation = checkLoopDetection(stepNames, spec.Tool, spec.MaxRepetitions)
-
-	case "no_duplicates":
-		passed, explanation = checkNoDuplicates(stepNames)
-
-	case "required_tools":
-		if len(spec.Tools) == 0 {
-			return failResult(assertion, start, "required_tools requires 'tools'")
-		}
-		passed, explanation = checkRequiredTools(stepNames, spec.Tools)
-
-	case "forbidden_tools":
-		if len(spec.Tools) == 0 {
-			return failResult(assertion, start, "forbidden_tools requires 'tools'")
-		}
-		passed, explanation = checkForbiddenTools(stepNames, spec.Tools)
-
-	default:
+	run, ok := traceChecks[spec.Check]
+	if !ok {
 		return failResult(assertion, start, fmt.Sprintf("unsupported check type: %s", spec.Check))
 	}
-
-	if !passed {
+	outcome, err := run(trace, &spec)
+	if err != nil {
+		return failResult(assertion, start, err.Error())
+	}
+	if outcome.missing != "" {
+		return notEvaluatedResult(assertion, start, types.ReasonMissingEvidence, outcome.missing)
+	}
+	if !outcome.passed {
+		status := types.StatusHardFail
+		if spec.Soft {
+			status = types.StatusSoftFail
+		}
 		return &types.AssertionResult{
 			AssertionID: assertion.AssertionID,
-			Status:      failStatus,
+			Status:      status,
 			Score:       0.0,
-			Explanation: explanation,
+			Explanation: outcome.explanation,
 			DurationMS:  time.Since(start).Milliseconds(),
 			RequestID:   assertion.RequestID,
 		}
 	}
+	return passResult(assertion, start, outcome.explanation)
+}
 
-	return &types.AssertionResult{
-		AssertionID: assertion.AssertionID,
-		Status:      types.StatusPass,
-		Score:       1.0,
-		Explanation: explanation,
-		DurationMS:  time.Since(start).Milliseconds(),
-		RequestID:   assertion.RequestID,
+// stepNames returns the name of every step, whatever its type. The original
+// trace checks match on all steps; the behavior-contract checks match on
+// tool calls only (see toolCalls).
+func stepNames(trace *types.Trace) []string {
+	names := make([]string, len(trace.Steps))
+	for i, s := range trace.Steps {
+		names[i] = s.Name
 	}
+	return names
+}
+
+func requireTools(spec *traceSpec) error {
+	if len(spec.Tools) == 0 {
+		return fmt.Errorf("%s requires 'tools'", spec.Check)
+	}
+	return nil
+}
+
+func outcomeOf(passed bool, explanation string) checkOutcome {
+	return checkOutcome{passed: passed, explanation: explanation}
+}
+
+func runContainsInOrder(trace *types.Trace, spec *traceSpec) (checkOutcome, error) {
+	if err := requireTools(spec); err != nil {
+		return checkOutcome{}, err
+	}
+	return outcomeOf(checkContainsInOrder(stepNames(trace), spec.Tools)), nil
+}
+
+func runExactOrder(trace *types.Trace, spec *traceSpec) (checkOutcome, error) {
+	if err := requireTools(spec); err != nil {
+		return checkOutcome{}, err
+	}
+	return outcomeOf(checkExactOrder(stepNames(trace), spec.Tools)), nil
+}
+
+// runLoopDetection is tool_cardinality without a key over every step (not
+// only tool calls), kept under its original name and fields.
+func runLoopDetection(trace *types.Trace, spec *traceSpec) (checkOutcome, error) {
+	if spec.Tool == "" {
+		return checkOutcome{}, fmt.Errorf("loop_detection requires 'tool'")
+	}
+	if spec.MaxRepetitions <= 0 {
+		return checkOutcome{}, fmt.Errorf("loop_detection requires 'max_repetitions' > 0")
+	}
+	maxN := spec.MaxRepetitions
+	calls := indexSteps(trace, func(s *types.Step) bool { return s.Name == spec.Tool })
+	return cardinality(spec.Tool, calls, "", nil, &maxN), nil
+}
+
+func runNoDuplicates(trace *types.Trace, _ *traceSpec) (checkOutcome, error) {
+	return outcomeOf(checkNoDuplicates(stepNames(trace))), nil
+}
+
+func runRequiredTools(trace *types.Trace, spec *traceSpec) (checkOutcome, error) {
+	if err := requireTools(spec); err != nil {
+		return checkOutcome{}, err
+	}
+	return outcomeOf(checkRequiredTools(stepNames(trace), spec.Tools)), nil
+}
+
+func runForbiddenTools(trace *types.Trace, spec *traceSpec) (checkOutcome, error) {
+	if err := requireTools(spec); err != nil {
+		return checkOutcome{}, err
+	}
+	return outcomeOf(checkForbiddenTools(stepNames(trace), spec.Tools)), nil
 }
 
 // checkContainsInOrder verifies that tools appear in stepNames in order (non-contiguously).
@@ -148,20 +210,6 @@ func checkExactOrder(stepNames []string, tools []string) (bool, string) {
 		}
 	}
 	return false, fmt.Sprintf("tool sequence %v not found in exact contiguous order", tools)
-}
-
-// checkLoopDetection verifies that a specific tool does not appear more than maxRepetitions times.
-func checkLoopDetection(stepNames []string, tool string, maxRepetitions int) (bool, string) {
-	count := 0
-	for _, name := range stepNames {
-		if name == tool {
-			count++
-		}
-	}
-	if count > maxRepetitions {
-		return false, fmt.Sprintf("tool %q called %d times, exceeds max_repetitions %d", tool, count, maxRepetitions)
-	}
-	return true, fmt.Sprintf("tool %q called %d times, within max_repetitions %d.", tool, count, maxRepetitions)
 }
 
 // checkNoDuplicates verifies that no step name appears more than once.

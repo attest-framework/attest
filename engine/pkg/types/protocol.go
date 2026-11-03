@@ -58,6 +58,50 @@ type InitializeResult struct {
 type EvaluateBatchParams struct {
 	Trace      Trace       `json:"trace"`
 	Assertions []Assertion `json:"assertions"`
+	// Budget caps the attest-initiated model calls of this batch, on top
+	// of the session budget (ATTEST_MAX_JUDGE_CALLS, ATTEST_BUDGET_USD).
+	// SDKs send the remainder of a per-test budget marker here.
+	Budget *BatchBudget `json:"budget,omitempty"`
+}
+
+// BatchBudget limits one evaluate_batch call. A nil field means no limit.
+type BatchBudget struct {
+	MaxJudgeCalls *int     `json:"max_judge_calls,omitempty"`
+	MaxCostUSD    *float64 `json:"max_cost_usd,omitempty"`
+}
+
+// Usage counts attest-initiated model calls (L5 embeddings, L6 judges,
+// judge repeats, bias probes and simulated-user messages). JudgeCalls is
+// the judge-provider part of ModelCalls, the count max_judge_calls limits.
+// CostUSD is
+// reconciled from reported token usage at the configured price;
+// RetryCostUSD is the part of CostUSD spent on retried calls.
+// UnpricedCalls counts calls whose model has no price, so CostUSD
+// understates the spend when it is non-zero. BudgetRefused counts calls
+// that were not sent because no budget remained.
+type Usage struct {
+	ModelCalls    int     `json:"model_calls"`
+	JudgeCalls    int     `json:"judge_calls"`
+	InputTokens   int64   `json:"input_tokens"`
+	OutputTokens  int64   `json:"output_tokens"`
+	CachedTokens  int64   `json:"cached_tokens"`
+	CostUSD       float64 `json:"cost_usd"`
+	RetryCostUSD  float64 `json:"retry_cost_usd"`
+	UnpricedCalls int     `json:"unpriced_calls"`
+	BudgetRefused int     `json:"budget_refused"`
+}
+
+// Add accumulates o into u.
+func (u *Usage) Add(o Usage) {
+	u.ModelCalls += o.ModelCalls
+	u.JudgeCalls += o.JudgeCalls
+	u.InputTokens += o.InputTokens
+	u.OutputTokens += o.OutputTokens
+	u.CachedTokens += o.CachedTokens
+	u.CostUSD += o.CostUSD
+	u.RetryCostUSD += o.RetryCostUSD
+	u.UnpricedCalls += o.UnpricedCalls
+	u.BudgetRefused += o.BudgetRefused
 }
 
 // EvaluateBatchResult holds the result of the evaluate_batch method.
@@ -71,6 +115,8 @@ type EvaluateBatchResult struct {
 	TotalCost       float64           `json:"total_cost"`
 	TotalDurationMS int64             `json:"total_duration_ms"`
 	Simulated       bool              `json:"simulated"`
+	// Usage is the model usage of this batch.
+	Usage Usage `json:"usage"`
 }
 
 // ShutdownResult holds the result of the shutdown method.

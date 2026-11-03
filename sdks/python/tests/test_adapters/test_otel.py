@@ -1,786 +1,380 @@
-"""Tests for the OTelAdapter."""
+"""OTelAdapter: OTLP/JSON encoding, the engine call contract and the export side.
+
+The OTLP → trace mapping lives in the engine and is tested there
+(engine/internal/trace). These tests cover what the Python adapter owns;
+tests/integration/test_otel_engine.py runs the real engine.
+"""
 
 from __future__ import annotations
 
-import sys
-from collections.abc import Generator
-from contextlib import contextmanager
-from unittest.mock import MagicMock, patch
+import json
+import stat
+import subprocess
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any
+from unittest.mock import patch
 
 import pytest
 
-from attest._proto.types import (
-    STEP_AGENT_CALL,
-    STEP_LLM_CALL,
-    STEP_RETRIEVAL,
-    STEP_TOOL_CALL,
+from attest import ENGINE_VERSION
+from attest._proto.types import STEP_LLM_CALL, STEP_TOOL_CALL, Step, StepError, Trace
+from attest.adapters.otel import (
+    OTelAdapter,
+    _any_value,
+    _readable_spans_to_otlp,
+    _span_dicts_to_otlp,
+    to_otel_spans,
 )
-from attest.adapters.otel import OTelAdapter, _require_numeric_attr, to_otel_spans
+from attest.exceptions import OTLPConversionError
 from attest.trace import TraceBuilder
 
-
-def _make_span(
-    name: str,
-    attrs: dict[str, object],
-    *,
-    trace_id: int = 0xDEADBEEF12345678DEADBEEF12345678,
-    span_id: int = 0x1234567890ABCDEF,
-    parent_span_id: int | None = None,
-    start_time: int = 1_000_000_000,
-    end_time: int = 2_000_000_000,
-) -> MagicMock:
-    """Build a minimal mock ReadableSpan."""
-    span = MagicMock()
-    span.name = name
-    span.attributes = attrs
-    span.start_time = start_time
-    span.end_time = end_time
-
-    ctx = MagicMock()
-    ctx.trace_id = trace_id
-    ctx.span_id = span_id
-    span.context = ctx
-
-    if parent_span_id is None:
-        span.parent = None
-    else:
-        parent = MagicMock()
-        parent.span_id = parent_span_id
-        span.parent = parent
-
-    return span
+# ---------------------------------------------------------------------------
+# ReadableSpan stand-ins (opentelemetry-sdk is an optional extra)
+# ---------------------------------------------------------------------------
 
 
-@contextmanager
-def _otel_available() -> Generator[None, None, None]:
-    """Patch _require_otel to be a no-op (simulates otel being installed)."""
-    with patch("attest.adapters.otel._require_otel"):
-        yield
+@dataclass
+class _Ctx:
+    trace_id: int
+    span_id: int
 
 
-class TestOTelAdapterImportGuard:
-    """Verify ImportError when opentelemetry is not installed."""
+@dataclass
+class _StatusCode:
+    value: int
 
-    def test_raises_import_error_when_otel_missing(self) -> None:
+
+@dataclass
+class _Status:
+    status_code: _StatusCode = field(default_factory=lambda: _StatusCode(0))
+    description: str | None = None
+
+
+@dataclass
+class _Span:
+    name: str
+    context: _Ctx | None
+    parent: _Ctx | None = None
+    start_time: int | None = 1_000
+    end_time: int | None = 2_000
+    attributes: dict[str, Any] = field(default_factory=dict)
+    status: _Status = field(default_factory=_Status)
+
+
+_TRACE_ID = 0x4BF92F3577B34DA6A3CE929D0E0E4736
+
+
+class TestAnyValue:
+    def test_any_value_scalars_and_collections_encode_as_otlp(self) -> None:
+        assert _any_value(True) == {"boolValue": True}
+        assert _any_value(42) == {"intValue": "42"}
+        assert _any_value(1.5) == {"doubleValue": 1.5}
+        assert _any_value("x") == {"stringValue": "x"}
+        assert _any_value(b"hi") == {"bytesValue": "aGk="}
+        assert _any_value(["a", 1]) == {
+            "arrayValue": {"values": [{"stringValue": "a"}, {"intValue": "1"}]}
+        }
+        assert _any_value({"k": False}) == {
+            "kvlistValue": {"values": [{"key": "k", "value": {"boolValue": False}}]}
+        }
+
+    @pytest.mark.parametrize("value", [float("nan"), float("inf")])
+    def test_any_value_non_finite_float_raises_value_error(self, value: float) -> None:
+        with pytest.raises(ValueError, match="finite"):
+            _any_value(value)
+
+    def test_any_value_unsupported_type_raises_type_error(self) -> None:
+        with pytest.raises(TypeError, match="object"):
+            _any_value(object())
+
+
+class TestReadableSpanEncoding:
+    def test_readable_spans_encode_ids_parent_times_status_and_attributes(self) -> None:
+        root = _Span("invoke_agent a", _Ctx(_TRACE_ID, 1), attributes={"gen_ai.agent.name": "a"})
+        child = _Span(
+            "chat m",
+            _Ctx(_TRACE_ID, 2),
+            parent=_Ctx(_TRACE_ID, 1),
+            start_time=1_100,
+            end_time=1_900,
+            attributes={"gen_ai.usage.input_tokens": 3},
+            status=_Status(_StatusCode(2), "rate limited"),
+        )
+
+        doc = _readable_spans_to_otlp([root, child])  # type: ignore[list-item]
+
+        spans = doc["resourceSpans"][0]["scopeSpans"][0]["spans"]
+        assert spans[0] == {
+            "traceId": "4bf92f3577b34da6a3ce929d0e0e4736",
+            "spanId": "0000000000000001",
+            "name": "invoke_agent a",
+            "startTimeUnixNano": "1000",
+            "endTimeUnixNano": "2000",
+            "attributes": [{"key": "gen_ai.agent.name", "value": {"stringValue": "a"}}],
+        }
+        assert spans[1]["parentSpanId"] == "0000000000000001"
+        assert spans[1]["status"] == {"code": 2, "message": "rate limited"}
+        assert spans[1]["attributes"] == [
+            {"key": "gen_ai.usage.input_tokens", "value": {"intValue": "3"}}
+        ]
+
+    def test_readable_span_without_context_raises_value_error(self) -> None:
+        with pytest.raises(ValueError, match="no span context"):
+            _readable_spans_to_otlp([_Span("x", None)])  # type: ignore[list-item]
+
+    def test_from_spans_without_otel_installed_raises_import_error(self) -> None:
+        with patch.dict("sys.modules", {"opentelemetry.sdk.trace": None}):
+            with pytest.raises(ImportError, match="otel"):
+                OTelAdapter.from_spans([])
+
+
+class TestSpanDictEncoding:
+    def test_span_dicts_encode_to_otlp_spans(self) -> None:
+        doc = _span_dicts_to_otlp(
+            [
+                {
+                    "trace_id": "4bf92f3577b34da6a3ce929d0e0e4736",
+                    "span_id": "0000000000000002",
+                    "parent_span_id": "0000000000000001",
+                    "name": "execute_tool t",
+                    "start_time_unix_nano": 5,
+                    "end_time_unix_nano": 9,
+                    "attributes": {"gen_ai.tool.name": "t"},
+                    "status": {"code": 2, "message": "boom"},
+                }
+            ]
+        )
+
+        span = doc["resourceSpans"][0]["scopeSpans"][0]["spans"][0]
+        assert span == {
+            "traceId": "4bf92f3577b34da6a3ce929d0e0e4736",
+            "spanId": "0000000000000002",
+            "parentSpanId": "0000000000000001",
+            "name": "execute_tool t",
+            "startTimeUnixNano": "5",
+            "endTimeUnixNano": "9",
+            "attributes": [{"key": "gen_ai.tool.name", "value": {"stringValue": "t"}}],
+            "status": {"code": 2, "message": "boom"},
+        }
+
+    def test_span_dict_attributes_not_a_mapping_raises_value_error(self) -> None:
+        with pytest.raises(ValueError, match="mapping"):
+            _span_dicts_to_otlp([{"attributes": ["x"]}])
+
+
+# ---------------------------------------------------------------------------
+# Engine call contract (scripted engine; the real engine runs in integration)
+# ---------------------------------------------------------------------------
+
+_SCRIPT = """#!/bin/sh
+case "$1" in
+  version) echo "attest-engine {version}" ;;
+  trace) printf '%s\\n' "$@" > "{dir}/args"; cat > "{dir}/stdin"; cat "{dir}/response"
+         printf '%s' "{stderr}" >&2; exit {code} ;;
+esac
+"""
+
+
+def _script_engine(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, response: str, code: int = 0, stderr: str = ""
+) -> Path:
+    (tmp_path / "response").write_text(response)
+    engine = tmp_path / "attest-engine"
+    engine.write_text(
+        _SCRIPT.format(version=ENGINE_VERSION, dir=tmp_path, code=code, stderr=stderr)
+    )
+    engine.chmod(engine.stat().st_mode | stat.S_IXUSR)
+    monkeypatch.setenv("ATTEST_ENGINE_PATH", str(engine))
+    return tmp_path
+
+
+class TestEngineCall:
+    def test_from_otlp_mapping_sends_json_to_trace_convert_and_parses_trace(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        trace = {
+            "schema_version": 2,
+            "trace_id": "otel_4bf92f3577b34da6",
+            "agent_id": "custom",
+            "input": {},
+            "output": {"message": "ok"},
+            "steps": [
+                {
+                    "type": "tool_call",
+                    "name": "t",
+                    "args": {},
+                    "result": {},
+                    "tool_call_id": "c1",
+                    "error": {"type": "timeout"},
+                }
+            ],
+        }
+        work = _script_engine(tmp_path, monkeypatch, json.dumps(trace))
+        otlp = {"resourceSpans": []}
+
+        result = OTelAdapter.from_otlp(otlp, agent_id="custom")
+
+        assert (work / "args").read_text().split() == [
+            "trace",
+            "convert",
+            "--agent-id",
+            "custom",
+            "-",
+        ]
+        assert json.loads((work / "stdin").read_text()) == otlp
+        assert result.to_dict() == trace
+        assert result.steps[0].error == StepError(type="timeout")
+
+    def test_from_otlp_accepts_path_text_and_bytes(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        trace = {"schema_version": 2, "trace_id": "t", "output": {"message": ""}, "steps": []}
+        work = _script_engine(tmp_path, monkeypatch, json.dumps(trace))
+        path = tmp_path / "export.json"
+        path.write_text('{"resourceSpans":[1]}')
+
+        for source in (path, '{"resourceSpans":[1]}', b'{"resourceSpans":[1]}'):
+            OTelAdapter.from_otlp(source)
+            assert (work / "stdin").read_text() == '{"resourceSpans":[1]}'
+
+    def test_from_otlp_engine_output_not_json_raises_otlp_conversion_error(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _script_engine(tmp_path, monkeypatch, "not json")
+
+        with pytest.raises(OTLPConversionError, match="not JSON"):
+            OTelAdapter.from_otlp({"resourceSpans": []})
+
+    def test_from_otlp_engine_timeout_raises_otlp_conversion_error(self) -> None:
+        timeout = subprocess.TimeoutExpired(cmd="attest-engine", timeout=60)
         with (
-            patch.dict(sys.modules, {"opentelemetry.sdk.trace": None}),
-            pytest.raises(ImportError, match="Install otel extras"),
+            patch("attest.engine_manager.resolve_engine", return_value="attest-engine"),
+            patch("subprocess.run", side_effect=timeout),
+            pytest.raises(OTLPConversionError, match="timed out"),
         ):
-            OTelAdapter.from_spans([])  # type: ignore[arg-type]
+            OTelAdapter.from_otlp({"resourceSpans": []})
 
-
-class TestOTelAdapterFromSpans:
-    """Tests for OTelAdapter.from_spans() with mocked spans.
-
-    All tests patch _require_otel to bypass the opentelemetry install check.
-    """
-
-    def test_empty_spans_returns_trace(self) -> None:
-        with _otel_available():
-            trace = OTelAdapter.from_spans([])
-        assert trace is not None
-        assert trace.steps == []
-
-    def test_llm_call_span_becomes_llm_step(self) -> None:
-        span = _make_span(
-            "chat",
-            {
-                "gen_ai.operation.name": "chat",
-                "gen_ai.request.model": "gpt-4.1",
-                "gen_ai.completion": "Hello world",
-                "gen_ai.usage.input_tokens": 10,
-                "gen_ai.usage.output_tokens": 5,
-            },
-        )
-        with _otel_available():
-            trace = OTelAdapter.from_spans([span])
-        assert len(trace.steps) == 1
-        step = trace.steps[0]
-        assert step.type == STEP_LLM_CALL
-        assert step.args is not None
-        assert step.args.get("model") == "gpt-4.1"
-        assert step.args.get("operation") == "chat"
-        assert step.result is not None
-        assert step.result.get("completion") == "Hello world"
-
-    def test_tool_call_span_becomes_tool_step(self) -> None:
-        span = _make_span(
-            "tool_call",
-            {
-                "gen_ai.tool.name": "search_web",
-                "gen_ai.tool.parameters": '{"query": "Paris"}',
-                "gen_ai.tool.output": '{"results": []}',
-            },
-        )
-        with _otel_available():
-            trace = OTelAdapter.from_spans([span])
-        assert len(trace.steps) == 1
-        step = trace.steps[0]
-        assert step.type == STEP_TOOL_CALL
-        assert step.name == "search_web"
-
-    def test_output_message_from_last_llm_completion(self) -> None:
-        span = _make_span(
-            "completion",
-            {
-                "gen_ai.operation.name": "completion",
-                "gen_ai.completion": "Paris is the answer.",
-            },
-        )
-        with _otel_available():
-            trace = OTelAdapter.from_spans([span])
-        assert trace.output.get("message") == "Paris is the answer."
-
-    def test_latency_computed_from_root_span(self) -> None:
-        # 1 second = 1_000_000_000 ns → 1000 ms
-        span = _make_span(
-            "chat",
-            {"gen_ai.operation.name": "chat", "gen_ai.completion": "hi"},
-            start_time=0,
-            end_time=1_000_000_000,
-        )
-        with _otel_available():
-            trace = OTelAdapter.from_spans([span])
-        assert trace.metadata is not None
-        assert trace.metadata.latency_ms == 1000
-
-    def test_token_accumulation(self) -> None:
-        span = _make_span(
-            "chat",
-            {
-                "gen_ai.operation.name": "chat",
-                "gen_ai.completion": "ok",
-                "gen_ai.usage.input_tokens": 50,
-                "gen_ai.usage.output_tokens": 25,
-            },
-        )
-        with _otel_available():
-            trace = OTelAdapter.from_spans([span])
-        assert trace.metadata is not None
-        assert trace.metadata.total_tokens == 75
-
-    def test_model_extracted_from_response_model(self) -> None:
-        span = _make_span(
-            "chat",
-            {
-                "gen_ai.operation.name": "chat",
-                "gen_ai.response.model": "gpt-4.1-mini",
-                "gen_ai.completion": "response",
-            },
-        )
-        with _otel_available():
-            trace = OTelAdapter.from_spans([span])
-        assert trace.metadata is not None
-        assert trace.metadata.model == "gpt-4.1-mini"
-
-    def test_model_falls_back_to_request_model(self) -> None:
-        span = _make_span(
-            "chat",
-            {
-                "gen_ai.operation.name": "chat",
-                "gen_ai.request.model": "gpt-4.1",
-                "gen_ai.completion": "response",
-            },
-        )
-        with _otel_available():
-            trace = OTelAdapter.from_spans([span])
-        assert trace.metadata is not None
-        assert trace.metadata.model == "gpt-4.1"
-
-    def test_trace_id_derived_from_otel_trace_id(self) -> None:
-        span = _make_span(
-            "chat",
-            {"gen_ai.operation.name": "chat", "gen_ai.completion": "ok"},
-            trace_id=0xAABBCCDD11223344AABBCCDD11223344,
-        )
-        with _otel_available():
-            trace = OTelAdapter.from_spans([span])
-        assert trace.trace_id.startswith("otel_")
-
-    def test_multiple_spans_multiple_steps(self) -> None:
-        llm_span = _make_span(
-            "chat",
-            {
-                "gen_ai.operation.name": "chat",
-                "gen_ai.completion": "I'll search for that.",
-            },
-            start_time=0,
-            end_time=500_000_000,
-        )
-        tool_span = _make_span(
-            "tool_call",
-            {
-                "gen_ai.tool.name": "search",
-                "gen_ai.tool.output": "results",
-            },
-            start_time=500_000_000,
-            end_time=800_000_000,
-            parent_span_id=0x1234567890ABCDEF,
-        )
-        with _otel_available():
-            trace = OTelAdapter.from_spans([llm_span, tool_span])
-        assert len(trace.steps) == 2
-        assert trace.steps[0].type == STEP_LLM_CALL
-        assert trace.steps[1].type == STEP_TOOL_CALL
-
-    def test_unknown_span_skipped(self) -> None:
-        span = _make_span("http.request", {"http.method": "GET", "http.url": "https://example.com"})
-        with _otel_available():
-            trace = OTelAdapter.from_spans([span])
-        assert trace.steps == []
-
-    def test_agent_id_set_on_trace(self) -> None:
-        span = _make_span(
-            "chat",
-            {"gen_ai.operation.name": "chat", "gen_ai.completion": "ok"},
-        )
-        with _otel_available():
-            trace = OTelAdapter.from_spans([span], agent_id="my-agent")
-        assert trace.agent_id == "my-agent"
-
-    def test_step_duration_metadata(self) -> None:
-        span = _make_span(
-            "chat",
-            {"gen_ai.operation.name": "chat", "gen_ai.completion": "hi"},
-            start_time=0,
-            end_time=200_000_000,  # 200ms
-        )
-        with _otel_available():
-            trace = OTelAdapter.from_spans([span])
-        assert trace.steps[0].metadata is not None
-        assert trace.steps[0].metadata.get("duration_ms") == 200
-
-    def test_tool_name_from_attribute(self) -> None:
-        span = _make_span(
-            "some_span_name",
-            {"gen_ai.tool.name": "my_tool"},
-        )
-        with _otel_available():
-            trace = OTelAdapter.from_spans([span])
-        assert trace.steps[0].name == "my_tool"
-
-    def test_from_spans_with_agent_id(self) -> None:
-        span = _make_span(
-            "chat",
-            {"gen_ai.operation.name": "chat", "gen_ai.completion": "response"},
-        )
-        with _otel_available():
-            trace = OTelAdapter.from_spans([span], agent_id="inst-agent")
-        assert trace.agent_id == "inst-agent"
-
-
-class TestOTelAdapterGenAiOperationCoverage:
-    """New OTel GenAI operation names: text_completion, embeddings, invoke_agent, execute_tool."""
-
-    def test_text_completion_classified_as_llm_call(self) -> None:
-        span = _make_span(
-            "text_completion gpt-4.1",
-            {
-                "gen_ai.operation.name": "text_completion",
-                "gen_ai.request.model": "gpt-4.1",
-                "gen_ai.prompt": "Once upon a time",
-                "gen_ai.completion": "there was a llama.",
-            },
-        )
-        with _otel_available():
-            trace = OTelAdapter.from_spans([span])
-        assert trace.steps[0].type == STEP_LLM_CALL
-        assert trace.steps[0].args is not None
-        assert trace.steps[0].args.get("operation") == "text_completion"
-
-    def test_embeddings_classified_as_llm_call(self) -> None:
-        span = _make_span(
-            "embeddings text-embedding-3-small",
-            {
-                "gen_ai.operation.name": "embeddings",
-                "gen_ai.request.model": "text-embedding-3-small",
-                "gen_ai.usage.input_tokens": 8,
-            },
-        )
-        with _otel_available():
-            trace = OTelAdapter.from_spans([span])
-        assert trace.steps[0].type == STEP_LLM_CALL
-        assert trace.steps[0].args is not None
-        assert trace.steps[0].args.get("operation") == "embeddings"
-
-    def test_execute_tool_classified_as_tool_call(self) -> None:
-        span = _make_span(
-            "execute_tool web_search",
-            {
-                "gen_ai.operation.name": "execute_tool",
-                "gen_ai.tool.name": "web_search",
-                "gen_ai.tool.call.id": "call_abc",
-            },
-        )
-        with _otel_available():
-            trace = OTelAdapter.from_spans([span])
-        assert trace.steps[0].type == STEP_TOOL_CALL
-        assert trace.steps[0].name == "web_search"
-        assert trace.steps[0].args is not None
-        assert trace.steps[0].args.get("call_id") == "call_abc"
-
-    def test_invoke_agent_classified_as_agent_call(self) -> None:
-        span = _make_span(
-            "invoke_agent researcher",
-            {
-                "gen_ai.operation.name": "invoke_agent",
-                "gen_ai.agent.id": "agent-001",
-                "gen_ai.agent.name": "researcher",
-                "gen_ai.agent.description": "Research assistant",
-            },
-        )
-        with _otel_available():
-            trace = OTelAdapter.from_spans([span])
-        assert trace.steps[0].type == STEP_AGENT_CALL
-        assert trace.steps[0].name == "researcher"
-        assert trace.steps[0].args is not None
-        assert trace.steps[0].args.get("agent_id") == "agent-001"
-        assert trace.steps[0].args.get("description") == "Research assistant"
-
-    def test_retrieval_classified_via_operation_name(self) -> None:
-        span = _make_span(
-            "retrieval",
-            {
-                "gen_ai.operation.name": "retrieval",
-                "gen_ai.retrieval.query": "Capital of France",
-                "gen_ai.retrieval.source": "vector_store",
-                "gen_ai.retrieval.documents.count": 3,
-            },
-        )
-        with _otel_available():
-            trace = OTelAdapter.from_spans([span])
-        assert trace.steps[0].type == STEP_RETRIEVAL
-        assert trace.steps[0].args is not None
-        assert trace.steps[0].args.get("query") == "Capital of France"
-        assert trace.steps[0].args.get("source") == "vector_store"
-        assert trace.steps[0].result is not None
-        assert trace.steps[0].result.get("documents_count") == 3
-
-    def test_retrieval_classified_via_attribute_family(self) -> None:
-        # Producer omits operation.name but emits gen_ai.retrieval.* attrs.
-        span = _make_span(
-            "vector-search",
-            {
-                "gen_ai.retrieval.query": "Paris",
-                "gen_ai.retrieval.documents.count": 5,
-            },
-        )
-        with _otel_available():
-            trace = OTelAdapter.from_spans([span])
-        assert trace.steps[0].type == STEP_RETRIEVAL
-
-
-class TestOTelAdapterAgentHierarchy:
-    """gen_ai.agent.* attributes propagate onto Step.agent_id / agent_role."""
-
-    def test_llm_call_inherits_agent_attributes(self) -> None:
-        span = _make_span(
-            "chat",
-            {
-                "gen_ai.operation.name": "chat",
-                "gen_ai.completion": "ok",
-                "gen_ai.agent.id": "agent-42",
-                "gen_ai.agent.name": "support_bot",
-            },
-        )
-        with _otel_available():
-            trace = OTelAdapter.from_spans([span])
-        step = trace.steps[0]
-        assert step.agent_id == "agent-42"
-        assert step.agent_role == "support_bot"
-
-    def test_tool_call_inherits_agent_attributes(self) -> None:
-        span = _make_span(
-            "execute_tool",
-            {
-                "gen_ai.operation.name": "execute_tool",
-                "gen_ai.tool.name": "calculator",
-                "gen_ai.agent.id": "agent-7",
-                "gen_ai.agent.name": "math_agent",
-            },
-        )
-        with _otel_available():
-            trace = OTelAdapter.from_spans([span])
-        step = trace.steps[0]
-        assert step.agent_id == "agent-7"
-        assert step.agent_role == "math_agent"
-
-    def test_invoke_agent_step_records_agent_identity(self) -> None:
-        span = _make_span(
-            "invoke_agent",
-            {
-                "gen_ai.operation.name": "invoke_agent",
-                "gen_ai.agent.id": "agent-99",
-                "gen_ai.agent.name": "delegator",
-            },
-        )
-        with _otel_available():
-            trace = OTelAdapter.from_spans([span])
-        step = trace.steps[0]
-        assert step.type == STEP_AGENT_CALL
-        assert step.agent_id == "agent-99"
-        assert step.agent_role == "delegator"
-
-    def test_missing_agent_attributes_yield_none(self) -> None:
-        span = _make_span(
-            "chat",
-            {"gen_ai.operation.name": "chat", "gen_ai.completion": "ok"},
-        )
-        with _otel_available():
-            trace = OTelAdapter.from_spans([span])
-        step = trace.steps[0]
-        assert step.agent_id is None
-        assert step.agent_role is None
-
-
-class TestOTelAdapterClassifierStrictness:
-    """Span name fallback is narrow: arbitrary substrings no longer match."""
-
-    def test_arbitrary_span_name_with_chat_substring_does_not_match(self) -> None:
-        # Old behavior: `"chat" in name.lower()` matched "rich-chat-history".
-        # New behavior: only first token equality matches.
-        span = _make_span("rich-chat-history", {"http.method": "GET"})
-        with _otel_available():
-            trace = OTelAdapter.from_spans([span])
-        assert trace.steps == []
-
-    def test_first_token_chat_classified_as_llm_call(self) -> None:
-        # OTel legacy span name format: `chat <model>`.
-        span = _make_span("chat gpt-4.1", {})
-        with _otel_available():
-            trace = OTelAdapter.from_spans([span])
-        assert len(trace.steps) == 1
-        assert trace.steps[0].type == STEP_LLM_CALL
-
-    def test_completion_attribute_alone_classifies_as_llm(self) -> None:
-        # Producer that emits gen_ai.completion but omits operation.name.
-        span = _make_span("anonymous-span", {"gen_ai.completion": "result"})
-        with _otel_available():
-            trace = OTelAdapter.from_spans([span])
-        assert len(trace.steps) == 1
-        assert trace.steps[0].type == STEP_LLM_CALL
-
-    def test_agent_attribute_without_operation_classifies_as_agent(self) -> None:
-        span = _make_span("anonymous-span", {"gen_ai.agent.name": "researcher"})
-        with _otel_available():
-            trace = OTelAdapter.from_spans([span])
-        assert len(trace.steps) == 1
-        assert trace.steps[0].type == STEP_AGENT_CALL
-
-
-class TestRequireNumericAttr:
-    """Tests for _require_numeric_attr helper used to read OTel usage counters."""
-
-    def test_missing_key_returns_zero(self) -> None:
-        assert _require_numeric_attr({}, "gen_ai.usage.input_tokens") == 0
-
-    def test_none_value_returns_zero(self) -> None:
-        assert (
-            _require_numeric_attr({"gen_ai.usage.input_tokens": None}, "gen_ai.usage.input_tokens")
-            == 0
+    def test_from_otlp_engine_rejection_raises_otlp_conversion_error(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _script_engine(
+            tmp_path, monkeypatch, "", code=1, stderr="trace convert: traceId is not hex"
         )
 
-    def test_int_value_returned_unchanged(self) -> None:
-        assert (
-            _require_numeric_attr({"gen_ai.usage.input_tokens": 42}, "gen_ai.usage.input_tokens")
-            == 42
-        )
-
-    def test_float_value_truncated_to_int(self) -> None:
-        assert (
-            _require_numeric_attr({"gen_ai.usage.input_tokens": 3.7}, "gen_ai.usage.input_tokens")
-            == 3
-        )
-
-    def test_bool_value_rejected(self) -> None:
-        with pytest.raises(TypeError, match="must be numeric"):
-            _require_numeric_attr({"gen_ai.usage.input_tokens": True}, "gen_ai.usage.input_tokens")
-
-    def test_sequence_value_rejected(self) -> None:
-        with pytest.raises(TypeError, match="must be numeric"):
-            _require_numeric_attr(
-                {"gen_ai.usage.input_tokens": [1, 2]}, "gen_ai.usage.input_tokens"
-            )
-
-    def test_string_value_rejected(self) -> None:
-        with pytest.raises(TypeError, match="must be numeric"):
-            _require_numeric_attr({"gen_ai.usage.input_tokens": "5"}, "gen_ai.usage.input_tokens")
-
-    def test_error_message_names_offending_key_and_type(self) -> None:
-        with pytest.raises(TypeError) as exc:
-            _require_numeric_attr(
-                {"gen_ai.usage.output_tokens": [1.0]}, "gen_ai.usage.output_tokens"
-            )
-        assert "gen_ai.usage.output_tokens" in str(exc.value)
-        assert "list" in str(exc.value)
+        with pytest.raises(OTLPConversionError, match="traceId is not hex"):
+            OTelAdapter.from_otlp({"resourceSpans": []})
 
 
-def _valid_span_dict(**overrides: object) -> dict[str, object]:
-    """Build a well-formed OTLP span dict with optional field overrides.
-
-    Use ``overrides`` to vary a single field per test (e.g. ``trace_id="bad"``)
-    while keeping the rest of the shape valid. Pass ``trace_id=None`` to drop
-    the field entirely.
-    """
-    base: dict[str, object] = {
-        "name": "chat",
-        "trace_id": "deadbeefdeadbeefdeadbeefdeadbeef",
-        "span_id": "0000000000000001",
-        "attributes": {"gen_ai.operation.name": "chat", "gen_ai.completion": "ok"},
-        "start_time_unix_nano": 0,
-        "end_time_unix_nano": 1_000_000,
-    }
-    for key, value in overrides.items():
-        if value is None:
-            base.pop(key, None)
-        else:
-            base[key] = value
-    return base
+# ---------------------------------------------------------------------------
+# Export
+# ---------------------------------------------------------------------------
 
 
-class TestFromOtelSpanDictsValidation:
-    """Strict validation of span dict shape: malformed input fails loud."""
-
-    def test_empty_input_yields_empty_trace(self) -> None:
-        with _otel_available():
-            trace = OTelAdapter.from_otel_span_dicts([])
-        assert trace.steps == []
-
-    def test_invalid_trace_id_hex_raises(self) -> None:
-        with _otel_available(), pytest.raises(ValueError, match="trace_id"):
-            OTelAdapter.from_otel_span_dicts([_valid_span_dict(trace_id="not-hex-zzz")])
-
-    def test_non_string_trace_id_raises(self) -> None:
-        with _otel_available(), pytest.raises(ValueError, match="trace_id"):
-            OTelAdapter.from_otel_span_dicts([_valid_span_dict(trace_id=12345)])
-
-    def test_invalid_parent_span_id_raises(self) -> None:
-        with _otel_available(), pytest.raises(ValueError, match="parent_span_id"):
-            OTelAdapter.from_otel_span_dicts([_valid_span_dict(parent_span_id="not-hex")])
-
-    def test_non_mapping_attributes_raises(self) -> None:
-        with _otel_available(), pytest.raises(ValueError, match="attributes"):
-            OTelAdapter.from_otel_span_dicts([_valid_span_dict(attributes=["not", "a", "dict"])])
-
-    def test_missing_trace_id_treated_as_empty(self) -> None:
-        # Missing trace_id is allowed (some producers omit it on in-process
-        # spans). The resulting Trace just won't carry an otel_-prefixed id.
-        with _otel_available():
-            trace = OTelAdapter.from_otel_span_dicts([_valid_span_dict(trace_id=None)])
-        assert len(trace.steps) == 1
+def _spans_by_name(trace: Trace) -> dict[str, dict[str, Any]]:
+    return {s["name"]: s for s in to_otel_spans(trace)}
 
 
-class TestExtractLlmStepTokenStrictness:
-    """_extract_llm_step routes token attrs through _require_numeric_attr."""
-
-    def test_non_numeric_input_tokens_raises_typed_error(self) -> None:
-        span = _make_span(
-            "chat",
-            {
-                "gen_ai.operation.name": "chat",
-                "gen_ai.completion": "ok",
-                "gen_ai.usage.input_tokens": ["bad"],
-                "gen_ai.usage.output_tokens": 5,
-            },
-        )
-        with _otel_available(), pytest.raises(TypeError, match="must be numeric"):
-            OTelAdapter.from_spans([span])
-
-
-class TestToOtelSpansExport:
-    """to_otel_spans produces OTLP-compatible dicts with gen_ai.* attributes."""
-
-    def test_empty_trace_yields_empty_spans(self) -> None:
-        trace = TraceBuilder().set_input(prompt="hi").set_output(message="ok").build()
-        assert to_otel_spans(trace) == []
-
-    def test_llm_step_emits_chat_span_with_model(self) -> None:
+class TestToOtelSpans:
+    def test_export_roots_steps_under_an_invoke_agent_span(self) -> None:
         trace = (
-            TraceBuilder()
-            .add_llm_call(
-                name="chat gpt-4.1",
-                args={"model": "gpt-4.1"},
-                result={
-                    "completion": "hello",
-                    "input_tokens": 12,
-                    "output_tokens": 4,
-                    "model": "gpt-4.1",
-                },
-                metadata={"duration_ms": 150},
-            )
-            .set_output(message="hello")
-            .build()
-        )
-        spans = to_otel_spans(trace)
-        assert len(spans) == 1
-        attrs = spans[0]["attributes"]
-        assert attrs["gen_ai.operation.name"] == "chat"
-        assert attrs["gen_ai.request.model"] == "gpt-4.1"
-        assert attrs["gen_ai.response.model"] == "gpt-4.1"
-        assert attrs["gen_ai.completion"] == "hello"
-        assert attrs["gen_ai.usage.input_tokens"] == 12
-        assert attrs["gen_ai.usage.output_tokens"] == 4
-        # Duration encoded in nanoseconds
-        assert spans[0]["end_time_unix_nano"] - spans[0]["start_time_unix_nano"] == 150_000_000
-
-    def test_tool_step_emits_execute_tool_span(self) -> None:
-        trace = (
-            TraceBuilder()
-            .add_tool_call(
-                name="web_search",
-                args={"call_id": "c1", "parameters": {"q": "Paris"}},
-                result={"output": "results"},
-            )
+            TraceBuilder(agent_id="desk")
+            .add_llm_call("chat m", args={"model": "m"}, metadata={"duration_ms": 5})
+            .add_tool_call("lookup", args={"id": 1}, metadata={"duration_ms": 3})
             .set_output(message="done")
             .build()
         )
+
         spans = to_otel_spans(trace)
-        assert spans[0]["attributes"]["gen_ai.operation.name"] == "execute_tool"
-        assert spans[0]["attributes"]["gen_ai.tool.name"] == "web_search"
-        assert spans[0]["attributes"]["gen_ai.tool.call.id"] == "c1"
 
-    def test_agent_attributes_round_trip_via_step_fields(self) -> None:
-        trace = (
-            TraceBuilder()
-            .add_llm_call(
-                name="chat",
-                args={"model": "gpt-4.1"},
-                result={"completion": "ok"},
-                agent_id="agent-42",
-                agent_role="support",
-            )
-            .set_output(message="ok")
-            .build()
-        )
-        attrs = to_otel_spans(trace)[0]["attributes"]
-        assert attrs["gen_ai.agent.id"] == "agent-42"
-        assert attrs["gen_ai.agent.name"] == "support"
+        root = spans[0]
+        assert root["name"] == "invoke_agent desk"
+        assert root["parent_span_id"] is None
+        assert root["attributes"] == {
+            "gen_ai.operation.name": "invoke_agent",
+            "gen_ai.agent.name": "desk",
+        }
+        assert [s["parent_span_id"] for s in spans[1:]] == [root["span_id"]] * 2
+        assert [(s["start_time_unix_nano"], s["end_time_unix_nano"]) for s in spans] == [
+            (0, 8_000_000),
+            (0, 5_000_000),
+            (5_000_000, 8_000_000),
+        ]
 
-    def test_operation_override_preserved(self) -> None:
-        # Producer ingested an embeddings span; export should preserve op name.
-        trace = (
-            TraceBuilder()
-            .add_llm_call(
-                name="embeddings text-embedding-3-small",
-                args={"operation": "embeddings", "model": "text-embedding-3-small"},
-                result={},
-            )
-            .set_output(message="")
-            .build()
-        )
-        attrs = to_otel_spans(trace)[0]["attributes"]
-        assert attrs["gen_ai.operation.name"] == "embeddings"
-
-    def test_parent_span_id_chain(self) -> None:
-        # First span is root (no parent); subsequent spans share root as parent.
-        trace = (
-            TraceBuilder()
-            .add_llm_call(
-                name="chat", args={"model": "gpt-4.1"}, result={"completion": "calling tool"}
-            )
-            .add_tool_call(name="search", args={}, result={"output": "x"})
-            .set_output(message="x")
-            .build()
-        )
-        spans = to_otel_spans(trace)
-        assert spans[0]["parent_span_id"] is None
-        assert spans[1]["parent_span_id"] == spans[0]["span_id"]
-
-
-class TestOtelRoundTrip:
-    """to_otel_spans → OTelAdapter.from_otel_span_dicts preserves step structure."""
-
-    def test_round_trip_preserves_step_types(self) -> None:
-        original = (
-            TraceBuilder()
-            .add_llm_call(
-                name="chat gpt-4.1",
-                args={"model": "gpt-4.1"},
-                result={"completion": "hi", "input_tokens": 5, "output_tokens": 2},
-                metadata={"duration_ms": 100},
-            )
-            .add_tool_call(
-                name="search",
-                args={"call_id": "c1", "parameters": {"q": "Paris"}},
-                result={"output": "results"},
-                metadata={"duration_ms": 50},
-            )
-            .set_output(message="hi")
-            .build()
-        )
-        spans = to_otel_spans(original)
-        with _otel_available():
-            roundtripped = OTelAdapter.from_otel_span_dicts(spans)
-
-        assert [s.type for s in roundtripped.steps] == [STEP_LLM_CALL, STEP_TOOL_CALL]
-        assert roundtripped.steps[1].name == "search"
-        assert roundtripped.steps[0].result is not None
-        assert roundtripped.steps[0].result.get("completion") == "hi"
-        assert roundtripped.steps[0].result.get("input_tokens") == 5
-
-    def test_round_trip_preserves_agent_hierarchy(self) -> None:
-        original = (
-            TraceBuilder()
-            .add_llm_call(
-                name="chat",
-                args={"model": "gpt-4.1"},
-                result={"completion": "ok"},
-                agent_id="agent-42",
-                agent_role="support",
-            )
-            .set_output(message="ok")
-            .build()
-        )
-        spans = to_otel_spans(original)
-        with _otel_available():
-            roundtripped = OTelAdapter.from_otel_span_dicts(spans)
-        assert roundtripped.steps[0].agent_id == "agent-42"
-        assert roundtripped.steps[0].agent_role == "support"
-
-    def test_round_trip_preserves_invoke_agent_step(self) -> None:
-        from attest._proto.types import Step
-
-        original = (
-            TraceBuilder()
-            .add_step(
+    def test_export_tool_step_writes_current_semconv_attributes(self) -> None:
+        trace = Trace(
+            trace_id="trc",
+            output={"message": ""},
+            steps=[
                 Step(
-                    type=STEP_AGENT_CALL,
-                    name="researcher",
-                    args={
-                        "agent_id": "agent-99",
-                        "agent_name": "researcher",
-                        "description": "Research bot",
-                    },
-                    result={"completion": "found it"},
-                    agent_id="agent-99",
-                    agent_role="researcher",
+                    type=STEP_TOOL_CALL,
+                    name="issue_refund",
+                    args={"order_id": "O-1"},
+                    result={"error": "timeout"},
+                    tool_call_id="call_2",
+                    error=StepError(type="payments_timeout", message="slow"),
                 )
-            )
-            .set_output(message="found it")
-            .build()
+            ],
         )
-        spans = to_otel_spans(original)
-        with _otel_available():
-            roundtripped = OTelAdapter.from_otel_span_dicts(spans)
-        assert roundtripped.steps[0].type == STEP_AGENT_CALL
-        assert roundtripped.steps[0].agent_id == "agent-99"
 
-    def test_round_trip_preserves_retrieval_step(self) -> None:
-        original = (
-            TraceBuilder()
-            .add_retrieval(
-                name="vector_search",
-                args={"query": "Paris", "source": "vector_store"},
-                result={"documents_count": 3},
-            )
-            .set_output(message="ok")
-            .build()
+        span = _spans_by_name(trace)["execute_tool issue_refund"]
+
+        assert span["attributes"] == {
+            "gen_ai.operation.name": "execute_tool",
+            "gen_ai.tool.name": "issue_refund",
+            "gen_ai.tool.call.id": "call_2",
+            "gen_ai.tool.call.arguments": '{"order_id": "O-1"}',
+            "gen_ai.tool.call.result": '{"error": "timeout"}',
+            "error.type": "payments_timeout",
+        }
+        assert span["status"] == {"code": 2, "message": "slow"}
+
+    def test_export_llm_step_writes_usage_cost_and_models(self) -> None:
+        trace = Trace(
+            trace_id="trc",
+            output={"message": ""},
+            steps=[
+                Step(
+                    type=STEP_LLM_CALL,
+                    name="chat",
+                    args={"model": "gpt-4.1", "provider": "openai", "operation": "chat"},
+                    result={
+                        "input_tokens": 3,
+                        "output_tokens": 4,
+                        "cost_usd": 0.01,
+                        "model": "gpt-4.1-2025",
+                        "finish_reasons": ["stop"],
+                    },
+                )
+            ],
         )
-        spans = to_otel_spans(original)
-        with _otel_available():
-            roundtripped = OTelAdapter.from_otel_span_dicts(spans)
-        assert roundtripped.steps[0].type == STEP_RETRIEVAL
-        assert roundtripped.steps[0].args is not None
-        assert roundtripped.steps[0].args.get("query") == "Paris"
-        assert roundtripped.steps[0].result is not None
-        assert roundtripped.steps[0].result.get("documents_count") == 3
+
+        span = _spans_by_name(trace)["chat gpt-4.1"]
+
+        assert span["attributes"] == {
+            "gen_ai.operation.name": "chat",
+            "gen_ai.request.model": "gpt-4.1",
+            "gen_ai.provider.name": "openai",
+            "gen_ai.usage.input_tokens": 3,
+            "gen_ai.usage.output_tokens": 4,
+            "gen_ai.usage.cost": 0.01,
+            "gen_ai.response.model": "gpt-4.1-2025",
+            "gen_ai.response.finish_reasons": ["stop"],
+        }
+
+    def test_export_tool_step_keeps_non_object_result_and_omits_absent_args(self) -> None:
+        trace = Trace(
+            trace_id="trc",
+            output={"message": ""},
+            steps=[Step(type=STEP_TOOL_CALL, name="t", result="plain")],  # type: ignore[arg-type]
+        )
+
+        attrs = _spans_by_name(trace)["execute_tool t"]["attributes"]
+
+        assert attrs["gen_ai.tool.call.result"] == '"plain"'
+        assert "gen_ai.tool.call.arguments" not in attrs
+
+    def test_export_derives_trace_id_from_otel_prefix(self) -> None:
+        trace = Trace(trace_id="otel_4bf92f3577b34da6", output={"message": ""})
+
+        assert to_otel_spans(trace)[0]["trace_id"] == "4bf92f3577b34da60000000000000000"

@@ -15,7 +15,10 @@ func withoutProviders(t *testing.T, simulation string) {
 	t.Setenv("ATTEST_JUDGE_PROVIDER", "")
 	t.Setenv("ATTEST_JUDGE_API_KEY", "")
 	t.Setenv("ATTEST_JUDGE_BASE_URL", "")
-	t.Setenv("OPENAI_API_KEY", "")
+	t.Setenv("ATTEST_JUDGE_MODEL", "")
+	for _, k := range []string{"OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY"} {
+		t.Setenv(k, "")
+	}
 	t.Setenv("ATTEST_EMBEDDING_PROVIDER", "")
 	t.Setenv("ATTEST_CACHE_DIR", t.TempDir())
 	t.Setenv("ATTEST_SIMULATION", simulation)

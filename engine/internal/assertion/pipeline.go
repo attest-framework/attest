@@ -239,7 +239,12 @@ func (p *Pipeline) EvaluateBatchWithBudget(ctx context.Context, trace *types.Tra
 				l56Results[idx] = *ar
 				return
 			}
-			ar := eval.Evaluate(trace, &l56[idx])
+			var ar *types.AssertionResult
+			if ce, ok := eval.(ContextEvaluator); ok {
+				ar = ce.EvaluateContext(ctx, trace, &l56[idx])
+			} else {
+				ar = eval.Evaluate(trace, &l56[idx])
+			}
 			p.applyDynamicThreshold(ar, &l56[idx])
 			annotateDiagnostics(ar, &l56[idx])
 			l56Results[idx] = *ar

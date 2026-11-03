@@ -7,7 +7,7 @@ This guide takes a project from no tests to a GitHub Actions job that blocks mer
 Python:
 
 ```bash
-uv add attest-ai pytest
+uv add "attest-ai>=1.0.0rc1" pytest
 uv run attest init
 uv run pytest            # 1 passed
 ```
@@ -15,9 +15,9 @@ uv run pytest            # 1 passed
 TypeScript:
 
 ```bash
-npm install -D @attest-ai/core @attest-ai/vitest vitest
+npm install -D "@attest-ai/core@>=1.0.0-rc.1" "@attest-ai/vitest@>=1.0.0-rc.1" vitest
 npx attest init
-npx vitest run           # 1 passed
+npx vitest run          # 1 passed
 ```
 
 `attest init` never overwrites a file that exists. It writes:

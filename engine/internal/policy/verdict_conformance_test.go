@@ -26,6 +26,8 @@ var validReasons = map[string]bool{
 	types.ReasonSimulation:            true,
 	types.ReasonMissingEvidence:       true,
 	types.ReasonShortCircuited:        true,
+	types.ReasonBudgetExhausted:       true,
+	types.ReasonJudgeAbstained:        true,
 }
 
 func loadVerdictFixtures(t *testing.T) []verdictFixture {
@@ -88,6 +90,7 @@ func TestVerdictFixtures_WireFormatAndPolicyExit(t *testing.T) {
 		types.StatusPass, types.StatusSoftFail, types.StatusHardFail, types.StatusNotEvaluated,
 		types.ReasonProviderUnavailable, types.ReasonProviderNotConfigured, types.ReasonSimulation,
 		types.ReasonMissingEvidence, types.ReasonShortCircuited,
+		types.ReasonBudgetExhausted, types.ReasonJudgeAbstained,
 	} {
 		if !seen[want] {
 			t.Errorf("verdict fixtures do not cover %q", want)

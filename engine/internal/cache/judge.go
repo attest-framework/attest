@@ -66,9 +66,13 @@ func NewJudgeCache(dbPath string, maxMB int, endpoint string) (*JudgeCache, erro
 	return &JudgeCache{db: db, maxMB: maxMB, endpoint: endpoint}, nil
 }
 
-// JudgeContentHash returns the SHA-256 hex digest of the agent output text.
-func JudgeContentHash(agentOutput string) string {
-	sum := sha256.Sum256([]byte(agentOutput))
+// JudgePromptKey returns the SHA-256 hex digest of everything that shapes
+// a judge prompt besides rubric name and model (which are separate key
+// columns): the rubric version and the user message, which carries the
+// criteria and the agent output. Two assertions on one output with
+// different criteria therefore never share a cached score.
+func JudgePromptKey(rubricVersion, userContent string) string {
+	sum := sha256.Sum256([]byte(rubricVersion + "\x00" + userContent))
 	return hex.EncodeToString(sum[:])
 }
 

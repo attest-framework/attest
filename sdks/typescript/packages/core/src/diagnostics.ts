@@ -149,7 +149,8 @@ function appendJudgeMetadata(lines: string[], meta: JudgeMetadata): void {
     if (meta.rubric_version) {
       rubric = `${rubric} @ ${meta.rubric_version}`;
     }
-    lines.push(`      judge:      ${meta.model} / ${rubric}`);
+    const judge = meta.provider ? `${meta.provider}/${meta.model}` : meta.model;
+    lines.push(`      judge:      ${judge} / ${rubric}`);
   }
   if (meta.prompt_hash) {
     lines.push(`      prompt:     #${meta.prompt_hash}`);

@@ -114,6 +114,34 @@ export interface TraceMetadata {
   readonly timestamp?: string;
 }
 
+/** Trace v2: a step whose span ended in error. */
+export interface StepError {
+  readonly type: string;
+  readonly message?: string;
+}
+
+/** Trace v2: a recorded model request/response pair. */
+export interface Exchange {
+  readonly request: Record<string, unknown>;
+  readonly response: Record<string, unknown>;
+}
+
+/** Trace v2: one conversation turn and the indices of its steps. */
+export interface Turn {
+  readonly index: number;
+  readonly span_id?: string;
+  readonly input?: unknown;
+  readonly output?: unknown;
+  readonly step_indices: readonly number[];
+}
+
+/** Trace v2: control passing from one agent to another at an agent_call step. */
+export interface Handoff {
+  readonly from_agent: string;
+  readonly to_agent: string;
+  readonly step_index: number;
+}
+
 export interface Step {
   readonly type: string;
   readonly name: string;
@@ -125,6 +153,13 @@ export interface Step {
   readonly ended_at_ms?: number;
   readonly agent_id?: string;
   readonly agent_role?: string;
+  // Trace v2 (schema_version 2) fields.
+  readonly span_id?: string;
+  readonly parent_span_id?: string;
+  readonly tool_call_id?: string;
+  readonly retry_of?: number;
+  readonly error?: StepError;
+  readonly exchange?: Exchange;
 }
 
 export interface Trace {
@@ -136,6 +171,10 @@ export interface Trace {
   readonly steps: readonly Step[];
   readonly metadata?: TraceMetadata;
   readonly parent_trace_id?: string;
+  // Trace v2 (schema_version 2) fields.
+  readonly conversation_id?: string;
+  readonly turns?: readonly Turn[];
+  readonly handoffs?: readonly Handoff[];
 }
 
 export interface Assertion {
@@ -152,6 +191,7 @@ export interface Assertion {
  * reviewers need to triage a judge failure.
  */
 export interface JudgeMetadata {
+  readonly provider?: string;
   readonly model?: string;
   readonly rubric_name?: string;
   readonly rubric_version?: string;
@@ -303,15 +343,47 @@ export interface InitializeResult {
   readonly max_steps_per_trace?: number;
 }
 
+/**
+ * Limits for one evaluate_batch call on top of the session budget. A judge or
+ * embedding call that cannot reserve against them is not sent and its
+ * assertion is not_evaluated with reason "budget_exhausted".
+ */
+export interface BatchBudget {
+  readonly max_judge_calls?: number;
+  readonly max_cost_usd?: number;
+}
+
 export interface EvaluateBatchParams {
   readonly trace: Trace;
   readonly assertions: readonly Assertion[];
+  /** Omitted when no per-batch budget applies. */
+  readonly budget?: BatchBudget;
+}
+
+/**
+ * Attest-initiated model usage (embeddings, judges, judge repeats, bias
+ * probes, simulated-user messages). Agent calls not routed through attest
+ * are not counted.
+ */
+export interface Usage {
+  readonly model_calls: number;
+  /** Judge-provider requests, the part of model_calls that max_judge_calls limits. */
+  readonly judge_calls: number;
+  readonly input_tokens: number;
+  readonly output_tokens: number;
+  readonly cached_tokens: number;
+  readonly cost_usd: number;
+  readonly retry_cost_usd: number;
+  readonly unpriced_calls: number;
+  readonly budget_refused: number;
 }
 
 export interface EvaluateBatchResult {
   readonly results: readonly AssertionResult[];
   readonly total_cost?: number;
   readonly total_duration_ms?: number;
+  /** Always sent by the engine; validated by AttestClient.evaluateBatch. */
+  readonly usage: Usage;
   /**
    * True when this result was produced by an SDK simulation shim rather
    * than a real engine evaluation. Engine-produced results always carry

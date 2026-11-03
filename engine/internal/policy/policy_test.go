@@ -1,10 +1,12 @@
 package policy_test
 
 import (
+	"math"
 	"os"
 	"path/filepath"
 	"testing"
 
+	"github.com/attest-ai/attest/engine/internal/cache"
 	"github.com/attest-ai/attest/engine/internal/policy"
 	"github.com/attest-ai/attest/engine/internal/report"
 	"github.com/attest-ai/attest/engine/pkg/types"
@@ -367,5 +369,143 @@ func TestEvaluate_UnknownStatusCountsAsNotEvaluated(t *testing.T) {
 	}
 	if want := `1 assertions not evaluated (unknown status "error": 1)`; r.Violations[0].Detail != want {
 		t.Errorf("detail = %q, want %q", r.Violations[0].Detail, want)
+	}
+}
+
+func TestValidate_RegressionOutOfRange_ReturnsError(t *testing.T) {
+	cases := map[string]*policy.RegressionRule{
+		"confidence 1":   {Confidence: ptr(1.0)},
+		"confidence 0":   {Confidence: ptr(0.0)},
+		"tolerance -0.1": {Tolerance: ptr(-0.1)},
+		"tolerance 1":    {Tolerance: ptr(1.0)},
+		"severity typo":  {Severity: "blokc"},
+		"confidence NaN": {Confidence: ptr(math.NaN())},
+		"tolerance +Inf": {Tolerance: ptr(math.Inf(1))},
+	}
+	for name, rule := range cases {
+		t.Run(name, func(t *testing.T) {
+			p := &policy.Policy{Regression: rule}
+			if err := p.Validate(); err == nil {
+				t.Errorf("Validate(%+v) = nil", rule)
+			}
+		})
+	}
+}
+
+func TestEvaluate_RegressionRuleWithoutMatchingIDs_IsInconclusive(t *testing.T) {
+	p := &policy.Policy{Regression: &policy.RegressionRule{}}
+	delta := report.ComputeBaselineDelta("base", nil, nil)
+	results := []types.AssertionResult{
+		{AssertionID: "new-id", Status: types.StatusPass, Trial: 1},
+		{AssertionID: "new-id", Status: types.StatusPass, Trial: 2},
+	}
+
+	got := policy.Evaluate(p, results, 0, &delta)
+
+	if got.Verdict != report.TrialInconclusive || got.ExitCode() != policy.ExitWarn {
+		t.Errorf("verdict=%q exit=%d, want inconclusive and exit 2", got.Verdict, got.ExitCode())
+	}
+}
+
+func TestEvaluate_RegressionSeverityWarn_RegressedExitsTwo(t *testing.T) {
+	p := &policy.Policy{Regression: &policy.RegressionRule{Severity: policy.SeverityWarn}}
+	delta := report.BaselineDelta{BaselineTag: "base", BaselineCounts: map[string]report.PassCount{"a": {Passes: 20, Evaluated: 20}}}
+	var results []types.AssertionResult
+	for i := range 20 {
+		status := types.StatusHardFail
+		if i < 2 {
+			status = types.StatusPass
+		}
+		results = append(results, types.AssertionResult{AssertionID: "a", Status: status, Trial: i + 1})
+	}
+
+	got := policy.Evaluate(p, results, 0, &delta)
+
+	if got.Verdict != report.TrialRegressed || got.ExitCode() != policy.ExitWarn {
+		t.Errorf("verdict=%q exit=%d, want regressed downgraded to exit 2", got.Verdict, got.ExitCode())
+	}
+}
+
+func TestEvaluate_RegressionRuleWithoutBaseline_WarnsInconclusive(t *testing.T) {
+	p := &policy.Policy{Regression: &policy.RegressionRule{}}
+
+	got := policy.Evaluate(p, []types.AssertionResult{{AssertionID: "a", Status: types.StatusPass}}, 0, nil)
+
+	if got.Verdict != report.TrialInconclusive || got.ExitCode() != policy.ExitWarn {
+		t.Errorf("verdict=%q exit=%d, want inconclusive and exit 2", got.Verdict, got.ExitCode())
+	}
+}
+
+func TestEvaluate_BlockOnRegressionWithRegressionRule_IgnoresTrialRows(t *testing.T) {
+	// 19 of 20 trials pass against a 20/20 baseline: the folded worst status
+	// is hard_fail, but the statistical rule decides trial assertions.
+	p := &policy.Policy{BlockOnRegression: ptr(true), Regression: &policy.RegressionRule{Tolerance: ptr(0.3)}}
+	var results []types.AssertionResult
+	for i := range 20 {
+		status := types.StatusPass
+		if i == 0 {
+			status = types.StatusHardFail
+		}
+		results = append(results, types.AssertionResult{AssertionID: "a", Status: status, Trial: i + 1})
+	}
+	baseline := []cache.BaselineEntry{{AssertionID: "a", Status: types.StatusPass, Passes: 20, Evaluated: 20}}
+	delta := report.ComputeBaselineDelta("base", baseline, results)
+
+	got := policy.Evaluate(p, results, 0, &delta)
+
+	if got.Verdict != report.TrialPass || got.ExitCode() != policy.ExitPass {
+		t.Errorf("verdict=%q exit=%d violations=%+v, want pass and exit 0", got.Verdict, got.ExitCode(), got.Violations)
+	}
+}
+
+func trialRun(id, status string, n int) []types.AssertionResult {
+	out := make([]types.AssertionResult, n)
+	for i := range out {
+		out[i] = types.AssertionResult{AssertionID: id, Status: status, Trial: i + 1}
+	}
+	return out
+}
+
+func TestEvaluate_BaselineNotEvaluatedCurrentAllFail_BlocksOnStatusRegression(t *testing.T) {
+	// Baseline pinned while A was not evaluated: the Wilson rule cannot
+	// compare it, so the status rule must still see not_evaluated → hard_fail.
+	p := &policy.Policy{BlockOnRegression: ptr(true), Regression: &policy.RegressionRule{}}
+	results := trialRun("A", types.StatusHardFail, 20)
+	baseline := []cache.BaselineEntry{{AssertionID: "A", Status: types.StatusNotEvaluated, NotEvaluated: 20}}
+	delta := report.ComputeBaselineDelta("base", baseline, results)
+
+	got := policy.Evaluate(p, results, 0, &delta)
+
+	if got.ExitCode() != policy.ExitBlock {
+		t.Fatalf("exit = %d (%+v), want 1", got.ExitCode(), got.Violations)
+	}
+	if len(got.Trials) != 0 || got.Verdict != report.TrialInconclusive {
+		t.Errorf("trials=%+v verdict=%q, want A uncompared and inconclusive", got.Trials, got.Verdict)
+	}
+}
+
+func TestEvaluate_SingleRunsWithRegressionRule_UseStatusComparisonOnly(t *testing.T) {
+	p := &policy.Policy{BlockOnRegression: ptr(true), Regression: &policy.RegressionRule{}}
+	results := []types.AssertionResult{{AssertionID: "A", Status: types.StatusHardFail}}
+	baseline := []cache.BaselineEntry{{AssertionID: "A", Status: types.StatusPass, Passes: 1, Evaluated: 1}}
+	delta := report.ComputeBaselineDelta("base", baseline, results)
+
+	got := policy.Evaluate(p, results, 0, &delta)
+
+	if got.Verdict != "" || len(got.Trials) != 0 || got.ExitCode() != policy.ExitBlock {
+		t.Errorf("verdict=%q trials=%+v exit=%d, want no Wilson verdict and a status block", got.Verdict, got.Trials, got.ExitCode())
+	}
+}
+
+func TestEvaluate_TrialsAgainstSingleRunBaseline_NotCompared(t *testing.T) {
+	p := &policy.Policy{Regression: &policy.RegressionRule{}}
+	results := trialRun("A", types.StatusPass, 20)
+	baseline := []cache.BaselineEntry{{AssertionID: "A", Status: types.StatusPass, Passes: 1, Evaluated: 1}}
+	delta := report.ComputeBaselineDelta("base", baseline, results)
+
+	got := policy.Evaluate(p, results, 0, &delta)
+
+	if len(got.Trials) != 0 || got.Verdict != report.TrialInconclusive || got.ExitCode() != policy.ExitWarn {
+		t.Errorf("trials=%+v verdict=%q exit=%d, want uncompared, inconclusive, exit 2", got.Trials, got.Verdict, got.ExitCode())
 	}
 }

@@ -19,6 +19,11 @@ type Trace struct {
 	Output        json.RawMessage `json:"output"`
 	Metadata      *TraceMetadata  `json:"metadata,omitempty"`
 	ParentTraceID *string         `json:"parent_trace_id,omitempty"`
+
+	// Trace v2 (schema_version 2) fields. All optional; see trace_v2.go.
+	ConversationID string    `json:"conversation_id,omitempty"`
+	Turns          []Turn    `json:"turns,omitempty"`
+	Handoffs       []Handoff `json:"handoffs,omitempty"`
 }
 
 // Step represents a single step within a trace.
@@ -33,6 +38,14 @@ type Step struct {
 	EndedAtMs   *int64          `json:"ended_at_ms,omitempty"`
 	AgentID     string          `json:"agent_id,omitempty"`
 	AgentRole   string          `json:"agent_role,omitempty"`
+
+	// Trace v2 (schema_version 2) fields. All optional; see trace_v2.go.
+	SpanID       string     `json:"span_id,omitempty"`
+	ParentSpanID string     `json:"parent_span_id,omitempty"`
+	ToolCallID   string     `json:"tool_call_id,omitempty"`
+	RetryOf      *int       `json:"retry_of,omitempty"`
+	Error        *StepError `json:"error,omitempty"`
+	Exchange     *Exchange  `json:"exchange,omitempty"`
 }
 
 // TraceMetadata holds optional metadata about a trace execution.

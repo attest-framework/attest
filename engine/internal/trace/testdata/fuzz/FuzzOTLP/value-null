@@ -1,0 +1,2 @@
+go test fuzz v1
+[]byte("{\"resourceSpans\":[{\"scopeSpans\":[{\"spans\":[{\"traceId\":\"4bf92f3577b34da6a3ce929d0e0e4736\",\"spanId\":\"a000000000000001\",\"name\":\"x\",\"startTimeUnixNano\":\"1\",\"endTimeUnixNano\":\"2\",\"attributes\":[{\"key\":\"k\",\"value\":null},{\"key\":\"j\",\"value\":{\"intValue\":null}}]}]}]}]}")

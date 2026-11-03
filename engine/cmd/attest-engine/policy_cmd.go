@@ -73,10 +73,15 @@ func policyEvaluate(args []string) {
 
 	result := policy.Evaluate(pol, env.Results, env.TotalCost, delta)
 
-	emitJSON(map[string]any{
+	out := map[string]any{
 		"violations": result.Violations,
 		"exit_code":  result.ExitCode(),
 		"passed":     result.Passed(),
-	})
+	}
+	if result.Verdict != "" {
+		out["verdict"] = result.Verdict
+		out["trials"] = result.Trials
+	}
+	emitJSON(out)
 	os.Exit(result.ExitCode())
 }

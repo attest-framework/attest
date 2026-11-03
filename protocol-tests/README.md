@@ -39,7 +39,7 @@ To add a new scenario:
 
 ## Verdict fixtures
 
-`verdicts/` holds verdict fixtures: an engine `evaluate_batch` result list and the outcome every implementation must derive from it. They cover `pass`, `soft_fail`, `hard_fail` and `not_evaluated` with each reason (`provider_unavailable`, `provider_not_configured`, `simulation`, `missing_evidence`, `short_circuited`). Each fixture matches `verdicts/verdict.schema.json`:
+`verdicts/` holds verdict fixtures: an engine `evaluate_batch` result list and the outcome every implementation must derive from it. They cover `pass`, `soft_fail`, `hard_fail` and `not_evaluated` with each reason (`provider_unavailable`, `provider_not_configured`, `simulation`, `missing_evidence`, `short_circuited`, `budget_exhausted`, `judge_abstained`). Each fixture matches `verdicts/verdict.schema.json`:
 
 | Field | Description |
 |---|---|
@@ -61,3 +61,33 @@ Go checks the wire format and `policyExit` (`engine/internal/policy/verdict_conf
 ## Report fixtures
 
 `report-v2/` holds examples of the report-v2 file (`proto/attest/v1/report-v2.schema.json`) that `pytest --attest-report`, the Vitest `AttestReporter` and the engine report generator write and that `attest policy evaluate` and the pr-annotate action read: every file in `report-v2/valid/` must match the schema and every file in `report-v2/invalid/` must not. Go (`engine/internal/report/report_v2_schema_test.go`, which also validates `GenerateJSONReport` output), Python (`tests/test_report_v2.py`) and TypeScript (`tests/conformance/report-v2-conformance.test.ts`) check them; the SDK tests also validate the reports their test runners write.
+
+## Trace fixtures
+
+`trace-v2/` covers the trace schema version 2 (`proto/attest/v1/trace-v2.schema.json`) and the engine's OTLP/JSON conversion:
+
+- `valid/` and `invalid/`: traces that must and must not match the schema.
+- `otlp/<name>.otlp.json` with `otlp/<name>.trace.json`: an OTLP/JSON export and the exact trace `attest-engine trace convert` produces for it. The golden traces must also match the schema. `inc-1042-refund` is the refund-desk INC-1042 incident export.
+- `otlp-invalid/`: malformed OTLP/JSON inputs that conversion must reject with an error. They also seed the engine fuzz target.
+
+The engine tests in `engine/internal/trace/` (`trace_v2_schema_test.go`, `otlp_test.go`, `fuzz_test.go`) check them. Python checks the schema fixtures and that every golden trace survives `Trace.from_dict(...).to_dict()` unchanged (`tests/test_trace_v2.py`), and that `OTelAdapter.from_otlp` returns each golden trace and rejects each malformed input (`tests/integration/test_otel_engine.py`, with the engine built by `make engine`). TypeScript checks the schema fixtures and runs `OTelAdapter.fromOtlp` against the same golden and malformed files (`tests/conformance/trace-v2-conformance.test.ts`), so both SDKs produce identical trace v2 JSON for the same export.
+
+## Capture fixtures
+
+`fixture-v1/` covers the capture fixture schema (`proto/attest/v1/fixture-v1.schema.json`), which embeds `trace-v2.schema.json` by reference:
+
+- `valid/`: fixtures written by `attest-engine capture` (a command capture of a scripted run through the recording proxy saved with `--expect-fail`, and a trace-only `--from` capture of `trace-v2/otlp/inc-1042-refund.otlp.json`), one with a reserved `world` section, and a verified fixture whose trace has structured output and a cost, so every drafted contract kind appears. The engine test checks that each valid fixture's contracts are exactly what the drafter writes for its trace.
+- `invalid/`: each breaks one rule (missing `world`, a replay-capable trace-only fixture, a non-sha256 prompt hash, expected failures without `expect_fail`, recorded request headers, a non-hex span id in the trace, and others).
+
+The engine checks them in `engine/internal/capture/fixture_v1_schema_test.go`, which also validates a fresh capture against the schema; Python checks the schema fixtures and that `load_fixture` reads each valid fixture with its trace unchanged (`tests/test_fixture_v1.py`); TypeScript checks the schema fixtures and `loadFixture` (`tests/conformance/fixture-v1-conformance.test.ts`).
+
+## Contract fixtures
+
+`contracts/traces/` holds traces for the behavior-contract trace checks (`proto/attest/v1/protocol-spec.md`, Layer 3):
+
+- `inc-1042-ts.trace.json`: the refund-desk INC-1042 TypeScript export converted by `attest-engine trace convert`. The Python export is `trace-v2/otlp/inc-1042-refund.trace.json`. In both, the second `issue_refund` retries the first after a payments timeout.
+- `inc-1042-corrected.trace.json`: the Python trace with the retry replaced by a `lookup_order` that finds the refund, so `issue_refund` runs once for `O-1042`.
+
+`engine/internal/assertion/trace_contracts_test.go` checks that `tool_cardinality` per `order_id` reports `issue_refund called 2× for order_id=O-1042 (max 1)` on both incident traces and passes on the corrected one.
+
+`contracts/dsl.json` lists one case per behavior-contract DSL call: the Python call (`method`, `args`, `kwargs`), the TypeScript call (`method`, `args`), the spec both must emit, and the engine result (`status`, optionally the exact `explanation`) on each named trace. `traces` maps names to trace files under `protocol-tests/`; `contracts/traces/abab.trace.json` is a search/rephrase loop (A→B→A→B) ending in two failed tool calls. Python checks the emitted specs and the trace files against the trace v2 schema (`tests/test_contract_conformance.py`), TypeScript checks the emitted specs (`tests/conformance/contract-dsl-conformance.test.ts`), and the engine evaluates each spec (`engine/internal/assertion/trace_contracts_conformance_test.go`). The integration suites (`tests/integration/test_behavior_contracts.py`, `tests/integration/behavior-contracts.test.ts`) run the INC-1042 contract through a built engine.

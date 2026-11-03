@@ -5,17 +5,17 @@ Test framework for AI agents. Deterministic assertions (schema validation, cost 
 ## Install
 
 ```bash
-pip install attest-ai
+uv add "attest-ai>=1.0.0rc1"
 ```
 
 With LLM provider support:
 
 ```bash
-pip install attest-ai[openai]      # OpenAI
-pip install attest-ai[anthropic]   # Anthropic
-pip install attest-ai[gemini]      # Google Gemini
-pip install attest-ai[ollama]      # Ollama (local)
-pip install attest-ai[all]         # All providers
+uv add "attest-ai[openai]>=1.0.0rc1"      # OpenAI
+uv add "attest-ai[anthropic]>=1.0.0rc1"   # Anthropic
+uv add "attest-ai[gemini]>=1.0.0rc1"      # Google Gemini
+uv add "attest-ai[ollama]>=1.0.0rc1"      # Ollama (local)
+uv add "attest-ai[all]>=1.0.0rc1"         # All providers
 ```
 
 ## Quick start

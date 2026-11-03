@@ -43,6 +43,8 @@ type JSONSummary struct {
 type JSONSummaryV2 struct {
 	JSONSummary
 	NotEvaluated int `json:"not_evaluated"`
+	// Usage is the run's attest-initiated model usage, when known.
+	Usage *types.Usage `json:"usage,omitempty"`
 }
 
 // JSONReportV2 is the diagnostic-rich envelope. AssertionResult already
@@ -105,6 +107,8 @@ type ReportOptions struct {
 	// Baseline, when non-nil, embeds a baseline-delta block in the v2
 	// envelope. Ignored for v1.
 	Baseline *BaselineDelta
+	// Usage, when non-nil, is written to summary.usage. Ignored for v1.
+	Usage *types.Usage
 }
 
 // GenerateJSONReport emits a JSON report. By default it returns v2. Pass
@@ -142,7 +146,7 @@ func generateJSONV1(results []types.AssertionResult, totalCost float64, totalDur
 }
 
 func generateJSONV2(results []types.AssertionResult, totalCost float64, totalDurationMS int64, opt ReportOptions) ([]byte, error) {
-	summary := JSONSummaryV2{JSONSummary: buildSummary(results)}
+	summary := JSONSummaryV2{JSONSummary: buildSummary(results), Usage: opt.Usage}
 	for _, r := range results {
 		if r.Status == types.StatusNotEvaluated {
 			summary.NotEvaluated++
