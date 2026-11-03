@@ -264,16 +264,17 @@ _INIT_USAGE = (
 )
 
 _INIT_KINDS = ("created", "updated", "skipped")
+# ``--mcp`` adds a fourth kind: configs that hold a different ``attest`` entry.
+_INIT_KINDS_WITH_CONFLICT = (*_INIT_KINDS, "conflict")
 
 # `attest-engine skills install --json` key -> `attest init --json` key.
 _SKILLS_KINDS = {"created": "created", "updated": "updated", "unchanged": "skipped"}
-# `attest-engine mcp install --json` key -> `attest init --json` key. A conflict is left
-# alone, like an unchanged file.
+# `attest-engine mcp install --json` key -> `attest init --json` key.
 _MCP_KINDS = {
     "created": "created",
     "updated": "updated",
     "unchanged": "skipped",
-    "conflict": "skipped",
+    "conflict": "conflict",
 }
 
 
@@ -324,7 +325,7 @@ def _run_engine_install(
         raise AttestError(f"`{' '.join(argv)}` printed invalid JSON: {exc}") from exc
     if not isinstance(doc, dict):
         raise AttestError(f"`{' '.join(argv)}` printed {type(doc).__name__}, not an object")
-    result: dict[str, list[str]] = {kind: [] for kind in _INIT_KINDS}
+    result: dict[str, list[str]] = {kind: [] for kind in _INIT_KINDS_WITH_CONFLICT}
     for engine_kind, init_kind in kinds.items():
         paths = doc.get(engine_kind)
         if not isinstance(paths, list) or not all(isinstance(p, str) for p in paths):
@@ -365,6 +366,12 @@ def _print_skills(root: Path, skills: dict[str, list[str]]) -> None:
         print(f"Updated: {root / rel}")
     for rel in skills["skipped"]:
         print(f"Skipped (unchanged): {root / rel}", file=sys.stderr)
+    for rel in skills["conflict"]:
+        print(
+            f"Conflict (a different attest entry, left as it is; "
+            f"`attest-engine mcp install --force` replaces it): {root / rel}",
+            file=sys.stderr,
+        )
 
 
 def init(args: Sequence[str]) -> int:
@@ -387,7 +394,7 @@ def init(args: Sequence[str]) -> int:
     from attest.scaffold import scaffold_project
 
     root = Path.cwd()
-    result: dict[str, list[str]] = {kind: [] for kind in _INIT_KINDS}
+    result: dict[str, list[str]] = {kind: [] for kind in _INIT_KINDS_WITH_CONFLICT}
     # Under --json, stdout carries the document only: anything else printed goes to stderr.
     with contextlib.redirect_stdout(sys.stderr) if as_json else contextlib.nullcontext():
         for wanted, command, install in (
@@ -406,13 +413,14 @@ def init(args: Sequence[str]) -> int:
                 return 1
             if not as_json:
                 _print_skills(root, installed)
-            for kind in _INIT_KINDS:
+            for kind in _INIT_KINDS_WITH_CONFLICT:
                 result[kind].extend(installed[kind])
         scaffolded = scaffold_project(root, ci=ci, quiet=as_json)
     result["created"].extend(scaffolded.created)
     result["skipped"].extend(scaffolded.skipped)
     if as_json:
-        print(json.dumps({kind: sorted(result[kind]) for kind in _INIT_KINDS}))
+        kinds = _INIT_KINDS_WITH_CONFLICT if mcp else _INIT_KINDS
+        print(json.dumps({kind: sorted(result[kind]) for kind in kinds}))
     return 0
 
 

@@ -304,7 +304,7 @@ describe("attest init --json and --skills", () => {
 
   it.each([
     ["pnpm-lock.yaml", ["pnpm", "exec", "attest", "mcp"]],
-    [null, ["npx", "attest", "mcp"]],
+    [null, ["npx", "--no", "attest", "mcp"]],
   ])("--mcp --json merges the engine's paths (lockfile %s)", async (lockfile, launch) => {
     const engine = useMcpEngine(MCP_DOC);
     if (lockfile !== null) fs.writeFileSync(path.join(project, lockfile), "");
@@ -315,20 +315,41 @@ describe("attest init --json and --skills", () => {
       created: [".mcp.json", "attest.policy.yaml", "tests/my-agent.test.ts"],
       updated: [".cursor/mcp.json"],
       skipped: [".codex/config.toml"],
+      conflict: [],
     });
     expect(fs.readFileSync(`${engine}.calls`, "utf-8").trim()).toBe(
       `mcp install --dir ${process.cwd()} --command ${JSON.stringify(launch)} --json`,
     );
   });
 
-  it("--mcp reports a conflicting config as skipped", async () => {
+  it("--mcp reports a conflicting config under its own label", async () => {
     useMcpEngine(
       "echo '{\"dir\":\"/x\",\"created\":[],\"updated\":[],\"unchanged\":[],\"conflict\":[\".mcp.json\"]}'",
     );
 
     await expect(main(["init", "--mcp", "--json"])).resolves.toBe(0);
 
-    expect(initDoc().skipped).toContain(".mcp.json");
+    const doc = initDoc();
+    expect(doc.conflict).toEqual([".mcp.json"]);
+    expect(doc.skipped).not.toContain(".mcp.json");
+  });
+
+  it("--mcp conflicts are not printed as unchanged", async () => {
+    useMcpEngine(
+      "echo '{\"dir\":\"/x\",\"created\":[],\"updated\":[],\"unchanged\":[],\"conflict\":[\".mcp.json\"]}'",
+    );
+
+    await expect(main(["init", "--mcp"])).resolves.toBe(0);
+
+    const err = stderr.join("");
+    expect(err).toContain("Conflict");
+    expect(err).not.toContain(`Skipped (unchanged): ${path.join(process.cwd(), ".mcp.json")}`);
+  });
+
+  it("init without --mcp has no conflict key", async () => {
+    await expect(main(["init", "--json"])).resolves.toBe(0);
+
+    expect(initDoc()).not.toHaveProperty("conflict");
   });
 
   it("--mcp with an engine that fails exits 1 and scaffolds nothing", async () => {

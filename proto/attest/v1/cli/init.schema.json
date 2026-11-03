@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://attest-framework.github.io/schemas/v1/cli/init.schema.json",
   "title": "attest init --json",
-  "description": "Files `attest init` (Python and TypeScript SDK CLIs) wrote or left alone in the project root. Paths are relative to the project root, use forward slashes and are sorted. With --skills, the agent skills from `attest-engine skills install` are included: its created and updated paths as created and updated, its unchanged paths as skipped. With --mcp, the client configs from `attest-engine mcp install` are included the same way: its created and updated paths, and its unchanged and conflict paths as skipped.",
+  "description": "Files `attest init` (Python and TypeScript SDK CLIs) wrote or left alone in the project root. Paths are relative to the project root, use forward slashes and are sorted. With --skills, the agent skills from `attest-engine skills install` are included: its created and updated paths as created and updated, its unchanged paths as skipped. With --mcp, the client configs from `attest-engine mcp install` are included the same way: its created and updated paths, and its unchanged paths as skipped. Its conflict paths (a config already holding a different attest entry, left as it is) are listed under conflict, a key present only with --mcp.",
   "type": "object",
   "additionalProperties": false,
   "required": ["created", "updated", "skipped"],
@@ -17,6 +17,10 @@
     },
     "skipped": {
       "description": "Existing files left unchanged.",
+      "$ref": "#/$defs/paths"
+    },
+    "conflict": {
+      "description": "With --mcp: client configs that already hold a different attest entry and were left as they are. Absent without --mcp.",
       "$ref": "#/$defs/paths"
     }
   },

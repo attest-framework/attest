@@ -259,7 +259,9 @@ const INIT_USAGE =
   "usage: attest init [--ci github] [--skills] [--mcp] [--json]  (scaffolds into the current directory)";
 
 const INIT_KINDS = ["created", "updated", "skipped"] as const;
-type InitKind = (typeof INIT_KINDS)[number];
+// `--mcp` adds a fourth kind: configs that already hold a different `attest` entry.
+const INIT_KINDS_WITH_CONFLICT = [...INIT_KINDS, "conflict"] as const;
+type InitKind = (typeof INIT_KINDS_WITH_CONFLICT)[number];
 type InitResult = Record<InitKind, string[]>;
 
 // `attest-engine skills install --json` key -> `attest init --json` key.
@@ -269,13 +271,12 @@ const SKILLS_KINDS = [
   ["unchanged", "skipped"],
 ] as const;
 
-// `attest-engine mcp install --json` key -> `attest init --json` key. A conflict is left
-// alone, like an unchanged file.
+// `attest-engine mcp install --json` key -> `attest init --json` key.
 const MCP_KINDS = [
   ["created", "created"],
   ["updated", "updated"],
   ["unchanged", "skipped"],
-  ["conflict", "skipped"],
+  ["conflict", "conflict"],
 ] as const;
 
 interface InitArgs {
@@ -309,7 +310,7 @@ function parseInitArgs(args: string[]): InitArgs | null {
 }
 
 function emptyInitResult(): InitResult {
-  return { created: [], updated: [], skipped: [] };
+  return { created: [], updated: [], skipped: [], conflict: [] };
 }
 
 /**
@@ -365,12 +366,13 @@ function installSkills(engine: string, root: string): InitResult {
 
 /**
  * The command an MCP client runs to start the server: `pnpm exec attest mcp` in a pnpm
- * project (`pnpm-lock.yaml` in `root`), else `npx attest mcp`.
+ * project (`pnpm-lock.yaml` in `root`), else `npx --no attest mcp`. `--no` makes a missing
+ * local install fail instead of letting npx fetch the unscoped `attest` package.
  */
 function mcpLaunchCommand(root: string): string[] {
   return fs.existsSync(path.join(root, "pnpm-lock.yaml"))
     ? ["pnpm", "exec", "attest", "mcp"]
-    : ["npx", "attest", "mcp"];
+    : ["npx", "--no", "attest", "mcp"];
 }
 
 /** Run `<engine> mcp install --dir <root> --command <launch> --json`. */
@@ -388,6 +390,12 @@ function printSkills(root: string, skills: InitResult): void {
   for (const rel of skills.created) process.stdout.write(`Created: ${abs(rel)}\n`);
   for (const rel of skills.updated) process.stdout.write(`Updated: ${abs(rel)}\n`);
   for (const rel of skills.skipped) process.stderr.write(`Skipped (unchanged): ${abs(rel)}\n`);
+  for (const rel of skills.conflict) {
+    process.stderr.write(
+      `Conflict (a different attest entry, left as it is; ` +
+        `\`attest-engine mcp install --force\` replaces it): ${abs(rel)}\n`,
+    );
+  }
 }
 
 async function runInit(parsed: InitArgs, root: string): Promise<InitResult | null> {
@@ -408,7 +416,7 @@ async function runInit(parsed: InitArgs, root: string): Promise<InitResult | nul
       return null;
     }
     if (!parsed.json) printSkills(root, installed);
-    for (const kind of INIT_KINDS) result[kind].push(...installed[kind]);
+    for (const kind of INIT_KINDS_WITH_CONFLICT) result[kind].push(...installed[kind]);
   }
   const scaffolded = scaffoldProject(root, {
     ...(parsed.ci ? { ci: "github" as const } : {}),
@@ -424,7 +432,7 @@ async function runInit(parsed: InitArgs, root: string): Promise<InitResult | nul
  *
  * `--skills` installs the agent skills with `attest-engine skills install` before
  * scaffolding; a missing or failing engine exits 1 with nothing scaffolded. `--json`
- * prints one `{created, updated, skipped}` document (paths relative to the current
+ * prints one `{created, updated, skipped}` document (plus `conflict` with `--mcp`) (paths relative to the current
  * directory, sorted) as the only stdout; everything else goes to stderr.
  */
 async function cmdInit(args: string[]): Promise<number> {
@@ -450,7 +458,8 @@ async function cmdInit(args: string[]): Promise<number> {
   }
   if (result === null) return 1;
   const done = result;
-  const sorted = Object.fromEntries(INIT_KINDS.map((k) => [k, [...done[k]].sort()]));
+  const kinds = parsed.mcp ? INIT_KINDS_WITH_CONFLICT : INIT_KINDS;
+  const sorted = Object.fromEntries(kinds.map((k) => [k, [...done[k]].sort()]));
   process.stdout.write(`${JSON.stringify(sorted)}\n`);
   return 0;
 }

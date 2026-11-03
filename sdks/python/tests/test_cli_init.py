@@ -262,12 +262,13 @@ def test_main_init_mcp_json_merges_engine_paths_and_passes_launch_command(
         "created": sorted([*_SAMPLE_FILES, ".mcp.json"]),
         "updated": [".cursor/mcp.json"],
         "skipped": [".codex/config.toml"],
+        "conflict": [],
     }
     calls = Path(f"{engine}.calls").read_text().split("\n", 1)[0]
     assert calls == f"mcp install --dir {project} --command {json.dumps(launch)} --json"
 
 
-def test_main_init_mcp_conflict_is_reported_as_skipped(
+def test_main_init_mcp_conflict_has_its_own_label(
     isolated_engine_env: Path,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -282,7 +283,36 @@ def test_main_init_mcp_conflict_is_reported_as_skipped(
 
     doc = _init_json(capsys, "--mcp")
 
-    assert ".mcp.json" in doc["skipped"]
+    assert doc["conflict"] == [".mcp.json"]
+    assert ".mcp.json" not in doc["skipped"]
+
+
+def test_main_init_mcp_conflict_text_is_not_printed_as_unchanged(
+    isolated_engine_env: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    engine = _mcp_engine(
+        tmp_path,
+        'echo \'{"dir":"/x","created":[],"updated":[],"unchanged":[],"conflict":[".mcp.json"]}\'',
+    )
+    monkeypatch.setenv("ATTEST_ENGINE_PATH", str(engine))
+    monkeypatch.chdir(tmp_path)
+
+    assert main(["init", "--mcp"]) == 0
+
+    err = capsys.readouterr().err
+    assert "Conflict" in err
+    assert "Skipped (unchanged): " + str(tmp_path / ".mcp.json") not in err
+
+
+def test_main_init_without_mcp_has_no_conflict_key(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.chdir(tmp_path)
+
+    assert "conflict" not in _init_json(capsys)
 
 
 def test_main_init_mcp_engine_failure_exits_1_without_scaffolding(
