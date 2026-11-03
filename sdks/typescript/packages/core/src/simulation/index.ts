@@ -1,4 +1,5 @@
 export { FRIENDLY_USER, ADVERSARIAL_USER, CONFUSED_USER, COOPERATIVE_USER } from "../personas.js";
+export type { SimulatePersona } from "../proto/types.js";
 export { config, isSimulationMode } from "../config.js";
 export { activeMockRegistry } from "./context.js";
 export type { MockToolFn } from "./context.js";

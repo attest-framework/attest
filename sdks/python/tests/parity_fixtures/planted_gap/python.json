@@ -1,0 +1,9 @@
+{
+  "adapters": [],
+  "exports": ["Agent", "planted_python_only"],
+  "expect_chain": [],
+  "init_flags": [],
+  "plugins": [],
+  "simulation": [],
+  "test_runner": []
+}

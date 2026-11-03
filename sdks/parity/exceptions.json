@@ -1,0 +1,48 @@
+{
+  "aliases": {
+    "BaseAdapter": "TraceAdapter",
+    "LangChainCallbackHandler": "LangChainAdapter",
+    "Persona": "SimulatePersona",
+    "attest_budget": "evaluate",
+    "attest_engine": "useAttest",
+    "attest_min_pass_rate": "trials",
+    "attest_replay": "useReplay",
+    "attest_tier": "filterByTier",
+    "attest_world": "useWorld",
+    "configure": "config",
+    "expect": "attestExpect",
+    "load_entrypoint_plugins": "loadPackagePlugins"
+  },
+  "exceptions": [
+    {
+      "python": "BaseProviderAdapter",
+      "reason": "language_idiom",
+      "note": "TypeScript adapters implement the `TraceAdapter` interface directly; there is no template-method base class."
+    },
+    {
+      "python": "CrewAIAdapter",
+      "reason": "upstream_python_only",
+      "note": "CrewAI has no TypeScript release."
+    },
+    {
+      "python": "GoogleADKAdapter",
+      "reason": "otel_capture",
+      "note": "Capture Google ADK runs through its OpenTelemetry spans with `attest capture`."
+    },
+    {
+      "python": "LlamaIndexInstrumentationHandler",
+      "reason": "otel_capture",
+      "note": "Capture LlamaIndex runs through its OpenTelemetry spans with `attest capture`."
+    },
+    {
+      "python": "attest",
+      "reason": "language_idiom",
+      "note": "Vitest selects Attest tests by file glob and `describe`; no marker is needed."
+    },
+    {
+      "python": "integration",
+      "reason": "language_idiom",
+      "note": "Vitest splits integration tests with a separate include glob or `test:integration` script."
+    }
+  ]
+}
