@@ -1,0 +1,21 @@
+{
+  "report_version": 2,
+  "timestamp": "2026-11-03T10:00:00Z",
+  "summary": {
+    "total": 2, "passed": 0, "soft_fail": 0, "hard_fail": 1, "not_evaluated": 1,
+    "usage": {"model_calls": 0, "judge_calls": 0, "input_tokens": 0, "output_tokens": 0, "cached_tokens": 0, "cost_usd": 0, "retry_cost_usd": 0, "unpriced_calls": 0, "budget_refused": 0},
+    "replay": {"replayed": 1, "live": 0, "misses": 0, "live_cost_usd": 0, "unpriced_live_calls": 0}
+  },
+  "results": [
+    {"assertion_id": "effect_refunds", "status": "hard_fail", "type": "effect", "explanation": "effect violated: 2 refunds for O-1042 (expected 1)", "test_id": "tests/test_inc.py::test_current_agent", "file": "tests/test_inc.py", "line": 12},
+    {"assertion_id": "judge_1", "status": "not_evaluated", "reason": "provider_not_configured", "type": "llm_judge", "test_id": "tests/test_judge.py::test_tone", "file": "tests/test_judge.py", "line": 7}
+  ],
+  "tests": [
+    {"test_id": "tests/test_ok.py::test_ok", "name": "test_ok", "file": "tests/test_ok.py", "line": 3, "outcome": "passed", "duration_ms": 10},
+    {"test_id": "tests/test_inc.py::test_current_agent", "name": "test_current_agent", "file": "tests/test_inc.py", "line": 12, "outcome": "skipped", "duration_ms": 40,
+     "replay": {"fixtures": ["inc-1042"], "mode": "strict", "replayed": 1, "live": 0, "misses": 0}},
+    {"test_id": "tests/test_plain.py::test_wip", "name": "test_wip", "file": "tests/test_plain.py", "line": 5, "outcome": "skipped", "duration_ms": 1},
+    {"test_id": "tests/test_judge.py::test_tone", "name": "test_tone", "file": "tests/test_judge.py", "line": 7, "outcome": "skipped", "not_evaluated_reasons": ["provider_not_configured"], "duration_ms": 5}
+  ],
+  "total_cost": 0, "total_duration_ms": 56
+}

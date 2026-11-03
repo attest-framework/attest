@@ -1,8 +1,6 @@
 package report
 
 import (
-	"fmt"
-
 	"github.com/attest-ai/attest/engine/internal/cache"
 	"github.com/attest-ai/attest/engine/pkg/types"
 )
@@ -169,77 +167,6 @@ func (d BaselineDelta) RegressedAssertionIDs() []string {
 		out = append(out, t.AssertionID)
 	}
 	return out
-}
-
-// writeBaselineSection emits a markdown block summarising the diff. Only
-// invoked when GenerateMarkdown is given a non-nil Baseline pointer.
-func writeBaselineSection(sw *stickyWriter, d *BaselineDelta) {
-	sw.printf("### vs `%s`\n\n", d.BaselineTag)
-	sw.println("| Metric | Baseline | Current | Δ |")
-	sw.println("|--------|----------|---------|---|")
-	sw.printf("| Pass rate | %.1f%% | %.1f%% | %+.1f%% |\n",
-		d.PassRateBaseline*100, d.PassRateCurrent*100, d.PassRateDelta*100)
-	if d.CostBaseline > 0 || d.CostCurrent > 0 {
-		sw.printf("| Cost | $%.6f | $%.6f | %s |\n",
-			d.CostBaseline, d.CostCurrent, formatCostDelta(d.CostDelta))
-	}
-	if d.DurationBaseline > 0 || d.DurationCurrent > 0 {
-		sw.printf("| Duration | %dms | %dms | %s |\n",
-			d.DurationBaseline, d.DurationCurrent, formatDurationDelta(d.DurationDelta))
-	}
-	sw.println()
-
-	if len(d.Regressions) > 0 {
-		sw.printf("**Regressions (%d):**\n\n", len(d.Regressions))
-		writeTransitionTable(sw, d.Regressions)
-	}
-	if len(d.Improvements) > 0 {
-		sw.printf("**Improvements (%d):**\n\n", len(d.Improvements))
-		writeTransitionTable(sw, d.Improvements)
-	}
-	if len(d.AssertionsAdded) > 0 {
-		sw.printf("**Added (%d):** ", len(d.AssertionsAdded))
-		writeIDList(sw, d.AssertionsAdded)
-	}
-	if len(d.AssertionsRemoved) > 0 {
-		sw.printf("**Removed (%d):** ", len(d.AssertionsRemoved))
-		writeIDList(sw, d.AssertionsRemoved)
-	}
-}
-
-func writeTransitionTable(sw *stickyWriter, ts []AssertionTransition) {
-	sw.println("| Assertion | Was | Now | Score Δ |")
-	sw.println("|-----------|-----|-----|---------|")
-	for _, t := range ts {
-		sw.printf("| `%s` | %s | %s | %.3f → %.3f |\n",
-			t.AssertionID, t.BaselineStatus, t.CurrentStatus, t.BaselineScore, t.CurrentScore)
-	}
-	sw.println()
-}
-
-func writeIDList(sw *stickyWriter, ids []string) {
-	for i, id := range ids {
-		if i > 0 {
-			sw.printf(", ")
-		}
-		sw.printf("`%s`", id)
-	}
-	sw.println()
-	sw.println()
-}
-
-func formatCostDelta(d float64) string {
-	if d == 0 {
-		return "0"
-	}
-	return fmt.Sprintf("%+.6f", d)
-}
-
-func formatDurationDelta(d int64) string {
-	if d == 0 {
-		return "0ms"
-	}
-	return fmt.Sprintf("%+dms", d)
 }
 
 // FoldRuns folds result rows that share an assertion id (fixed-N trials)

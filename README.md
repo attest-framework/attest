@@ -101,6 +101,7 @@ SDK (Python/TS/Go) ──stdin/stdout──▶ Engine Process (Go)
 - **Cost as a test metric** — assert on token usage, API cost, and latency
 - **Soft-failure limit** — cap soft failures per engine session via `ATTEST_MAX_SOFT_FAILURES`
 - **`attest-engine doctor`** — reports engine version, capabilities and judge/embedding configuration (`--json` for tooling); see [configuration](docs/guides/configuration.md)
+- **CI reports and selection** — `attest report junit|summary|rows` render report-v2 as JUnit XML, a pull-request summary (pass / fail / not evaluated, replayed vs live model calls, usage and retry cost) and annotation rows; `attest select --base <ref>` lists the tests a diff needs. Guides: [policies](docs/guides/policies.md), [baselines](docs/guides/baselines.md), [selection](docs/guides/selection.md)
 - **Judges on four provider families** — Layer 6 runs natively on OpenAI, Anthropic and Gemini, or any OpenAI-compatible endpoint via `ATTEST_JUDGE_BASE_URL`, each with its own rate limit, plus a local-only ACP judge on your Claude Code or Codex subscription; see [judges](docs/guides/judges.md)
 - **Python & TypeScript SDKs** — `attest-ai` (PyPI) + `@attest-ai/core` / `@attest-ai/vitest` (npm)
 - **`attest init`** — scaffolds a passing sample test, a merge policy and, with `--ci github`, a GitHub Actions merge gate (Python + TypeScript)

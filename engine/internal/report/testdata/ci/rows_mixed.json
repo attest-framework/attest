@@ -1,0 +1,32 @@
+[
+  {
+    "file": "tests/test_refund.py",
+    "line": 40,
+    "test_id": "tests/test_refund.py::test_live_agent",
+    "assertion_id": "effect_refunds",
+    "type": "effect",
+    "status": "hard_fail",
+    "reason": "",
+    "explanation": "effect violated: 2 refunds for O-1042 (expected 1)"
+  },
+  {
+    "file": "tests/test_replay.py",
+    "line": 12,
+    "test_id": "tests/test_replay.py::test_auto",
+    "assertion_id": "replay_inc-1042",
+    "type": "replay",
+    "status": "not_evaluated",
+    "reason": "replay_miss",
+    "explanation": "replay miss: system prompt changed (hash a1b2c3d→e4f5a6b) | re-record"
+  },
+  {
+    "file": "tests/test_replay.py",
+    "line": 30,
+    "test_id": "tests/test_replay.py::test_strict",
+    "assertion_id": "replay_inc-1042",
+    "type": "replay",
+    "status": "hard_fail",
+    "reason": "replay_miss",
+    "explanation": "replay miss: tools changed (hash 1111111→2222222)"
+  }
+]
