@@ -4,6 +4,10 @@ All notable changes to Attest are documented in this file. The format follows [K
 
 ## [Unreleased]
 
+## [1.0.0-rc.3] — 2026-11-03
+
+Third release candidate, themed "Flight recorder": capture a real run or incident as a verified fixture, replay the agent's real code against it in CI with zero model calls, check what the agent did to a simulated world with effect contracts, and get a pull-request summary, inline annotations, JUnit and diff-based test selection.
+
 ### Added
 
 - `attest capture --name <name> -- <command>` turns a run into a regression fixture. The engine starts a loopback listener hosting a recording proxy for OpenAI Chat Completions, OpenAI Responses and Anthropic Messages (streaming and not) and an OTLP/HTTP trace receiver (`http/protobuf` and `http/json`, optionally gzip), runs the command with `OPENAI_BASE_URL`, `ANTHROPIC_BASE_URL` and `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` pointing at it, forwards model calls to the upstreams set by those variables in the capture's own environment (default `https://api.openai.com/v1` and `https://api.anthropic.com`), and writes `tests/attest/fixtures/<name>.attest.json` (`--out-dir` to change). Request headers are never recorded; values of environment variables whose names end in `KEY`, `TOKEN`, `SECRET` or `PASSWORD` and key-shaped strings (`sk-…`, `AKIA…`, `ghp_…`, bearer credentials, private keys) are replaced by `[redacted]` in keys and values. Trace and span ids, provider response and tool-call ids, timestamps, durations and emails are templated to stable placeholders across the trace, the exchanges and their replay keys, so capturing the same scripted run twice writes the same bytes (timestamps, numeric or ISO-8601, are numbered by position, never by value: the fixture is walked with each object's start-like keys first and end-like keys last, so every start precedes its end and a parent brackets its children, and runs that differ only in timing write the same bytes). A model call the agent cancels or does not read to the end, and an OTLP export request still in flight at the end or rejected, fail the capture, since the fixture could not replay the run. SIGINT and SIGTERM sent to `attest capture` are forwarded to the command. `--from <otlp.json>` builds a trace-only fixture (not replay-capable) from an export; `--serve` hosts the listeners for in-process helpers. `attest capture --check-redaction <fixture>` exits 1, naming the JSON path, when a fixture holds a secret.
@@ -230,7 +234,8 @@ Tagged, not published to registries. No GitHub release was created.
 
 Versions 0.1.0 through 0.6.0 are described in their [GitHub releases](https://github.com/attest-framework/attest/releases); 0.6.1 exists only as a tag. 0.1.0–0.6.0 were published to PyPI; 0.3.0–0.6.0 were also published to npm.
 
-[Unreleased]: https://github.com/attest-framework/attest/compare/v1.0.0-rc.2...HEAD
+[Unreleased]: https://github.com/attest-framework/attest/compare/v1.0.0-rc.3...HEAD
+[1.0.0-rc.3]: https://github.com/attest-framework/attest/releases/tag/v1.0.0-rc.3
 [1.0.0-rc.2]: https://github.com/attest-framework/attest/releases/tag/v1.0.0-rc.2
 [1.0.0-rc.1]: https://github.com/attest-framework/attest/releases/tag/v1.0.0-rc.1
 [1.0.0-rc]: https://github.com/attest-framework/attest/releases/tag/v1.0.0-rc
