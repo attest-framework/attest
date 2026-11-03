@@ -10,10 +10,10 @@ import (
 	"path"
 	"path/filepath"
 	"sort"
-	"strings"
 	"text/tabwriter"
 
 	"github.com/attest-ai/attest/engine/internal/assets"
+	"github.com/attest-ai/attest/engine/internal/pathguard"
 )
 
 func init() {
@@ -178,7 +178,7 @@ func installSkills(root string) (skillsInstallResult, error) {
 			}
 			for _, target := range skillTargets {
 				rel := path.Join(target, p)
-				real, err := resolveSkillDestination(realRoot, rel)
+				real, err := pathguard.ResolveDestination(realRoot, rel)
 				if err != nil {
 					return err
 				}
@@ -216,60 +216,6 @@ func installSkills(root string) (skillsInstallResult, error) {
 	sort.Strings(res.Updated)
 	sort.Strings(res.Unchanged)
 	return res, nil
-}
-
-// resolveSkillDestination returns the real path rel (relative to realRoot)
-// would be written to. It follows existing directory symlinks, refuses any that
-// resolve outside realRoot, refuses an existing non-directory in the path, and
-// refuses an existing destination that is not a regular file.
-func resolveSkillDestination(realRoot, rel string) (string, error) {
-	parts := strings.Split(rel, "/")
-	cur := realRoot
-	for i, part := range parts {
-		next := filepath.Join(cur, part)
-		info, err := os.Lstat(next)
-		if errors.Is(err, fs.ErrNotExist) {
-			return filepath.Join(append([]string{cur}, parts[i:]...)...), nil
-		}
-		if err != nil {
-			return "", err
-		}
-		last := i == len(parts)-1
-		if info.Mode()&os.ModeSymlink != 0 {
-			if last {
-				return "", fmt.Errorf("%s is a symlink; refusing to overwrite it", next)
-			}
-			resolved, err := filepath.EvalSymlinks(next)
-			if errors.Is(err, fs.ErrNotExist) {
-				return "", fmt.Errorf("%s is a symlink whose target does not exist yet; create the target directory or remove the link, then re-run", next)
-			}
-			if err != nil {
-				return "", fmt.Errorf("%s: %w", next, err)
-			}
-			if !within(realRoot, resolved) {
-				return "", fmt.Errorf("%s resolves to %s, outside %s; refusing to install through it", next, resolved, realRoot)
-			}
-			next = resolved
-			if info, err = os.Stat(next); err != nil {
-				return "", err
-			}
-		}
-		if last {
-			if !info.Mode().IsRegular() {
-				return "", fmt.Errorf("%s exists and is not a regular file", next)
-			}
-		} else if !info.IsDir() {
-			return "", fmt.Errorf("%s exists and is not a directory", next)
-		}
-		cur = next
-	}
-	return cur, nil
-}
-
-// within reports whether p is root or lies below it.
-func within(root, p string) bool {
-	rel, err := filepath.Rel(root, p)
-	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
 // writeSkillFile makes dst hold data and reports "created", "updated", or
