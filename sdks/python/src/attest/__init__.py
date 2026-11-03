@@ -35,6 +35,14 @@ from attest.continuous import AlertDispatcher, ContinuousEvalRunner, Sampler
 from attest.delegate import delegate
 from attest.exceptions import EngineTimeoutError
 from attest.expect import ExpectChain, expect
+from attest.replay import (
+    ReplayError,
+    ReplayMissError,
+    ReplayNotEvaluatedError,
+    ReplaySession,
+    ReplaySummary,
+    start_replay,
+)
 from attest.result import AgentResult
 from attest.tier import TIER_1, TIER_2, TIER_3, tier
 from attest.trace import TraceBuilder
@@ -66,6 +74,12 @@ __all__ = [
     "expect",
     # Capture
     "CaptureError",
+    "ReplayError",
+    "ReplayMissError",
+    "ReplayNotEvaluatedError",
+    "ReplaySession",
+    "ReplaySummary",
+    "start_replay",
     "Fixture",
     "load_fixture",
     "record",

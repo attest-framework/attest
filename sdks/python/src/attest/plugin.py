@@ -7,13 +7,14 @@ import inspect
 import logging
 import os
 import threading
-from collections.abc import Generator
+from collections.abc import Callable, Generator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, TypeVar
 
 import pytest
 
+from attest import egress
 from attest._proto.types import BatchBudget, Trace, Usage
 from attest.cli.diagnostics import render_diagnostics
 from attest.client import AttestClient, require_simulation_capability
@@ -21,6 +22,15 @@ from attest.config import is_simulation_mode
 from attest.engine_manager import EngineManager
 from attest.exceptions import EngineVersionMismatchError
 from attest.expect import ExpectChain
+from attest.replay import (
+    ReplayNotEvaluatedError,
+    ReplaySession,
+    ReplaySummary,
+    fixtures_dir_for,
+    live_line,
+    resolve_mode,
+    start_replay,
+)
 from attest.report_v2 import TEST_OUTCOMES, TestRecord, write_report
 from attest.result import OUTCOME_FAIL, OUTCOME_SKIP, AgentResult, Verdict
 from attest.trials import (
@@ -70,6 +80,11 @@ _session_trials_run: dict[str, int] = {}
 _session_trial_lines: dict[str, list[str]] = {}
 
 _ATTEST_FIXTURES = frozenset({"attest", "attest_engine"})
+
+# Replay summaries per test, filled when a test's replay sessions finish, and the
+# sessions each running test has started (attest_replay fixture).
+_session_replay: dict[str, list[ReplaySummary]] = {}
+_item_replays: dict[str, list[ReplaySession]] = {}
 
 
 def _record_result(agent_result: AgentResult) -> None:
@@ -132,6 +147,23 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         "--attest-engine",
         default=None,
         help="Path to attest-engine binary",
+    )
+    group.addoption(
+        "--attest-replay",
+        default=None,
+        choices=["strict", "auto", "off"],
+        help="Replay mode for tests bound to a fixture with attest_replay(): strict fails a "
+        "request with no recording and names what changed; auto goes live when a provider key "
+        "is set, otherwise the test is not evaluated (replay_miss); off runs live. "
+        "Default: ATTEST_REPLAY, else strict when CI is set, else auto",
+    )
+    group.addoption(
+        "--attest-egress",
+        default=None,
+        choices=["block", "allow"],
+        help="block makes connections to model-provider hosts (api.openai.com, "
+        "api.anthropic.com, ...) from this process fail; loopback is always allowed. "
+        "Default: ATTEST_EGRESS, else allow",
     )
     group.addoption(
         "--attest-log-level",
@@ -263,6 +295,26 @@ def pytest_terminal_summary(terminalreporter: Any, exitstatus: int, config: pyte
     usage = usage_line(_session_usage)
     if usage is not None:
         terminalreporter.write_line(usage)
+    replay = replay_line(_session_replay)
+    if replay is not None:
+        terminalreporter.write_line(replay)
+
+
+def replay_line(replay: dict[str, list[ReplaySummary]]) -> str | None:
+    """The replay summary line (``N live model calls · $X.XX``), or ``None`` when no test
+    ran against a fixture."""
+    summaries = [s for sums in replay.values() for s in sums]
+    if not summaries:
+        return None
+    replayed = sum(s.replayed for s in summaries)
+    live = live_line(
+        sum(s.live for s in summaries),
+        sum(s.live_cost_usd for s in summaries),
+        sum(s.unpriced_live_calls for s in summaries),
+    )
+    misses = sum(s.misses for s in summaries)
+    suffix = f" · {misses} missed" if misses else ""
+    return f"attest replay: {replayed} replayed · {live}{suffix}"
 
 
 def usage_line(usage: Usage) -> str | None:
@@ -303,10 +355,87 @@ def pytest_runtest_call(item: pytest.Item) -> Generator[None, Any, None]:
     if run is not None:
         begin_run(run)
     try:
-        yield
+        outcome = yield
     finally:
         if run is not None:
             end_run()
+    _finish_replays(item, outcome)
+
+
+def _finish_replays(item: pytest.Item, outcome: Any) -> None:
+    """Stop the test's replay sessions, record what they served and turn a miss into the
+    test's outcome: a failure naming the miss in strict mode (whatever the agent raised),
+    a skip with ``not evaluated: replay_miss`` in auto mode (a failure under
+    ``--attest-strict``)."""
+    sessions = _item_replays.pop(item.nodeid, [])
+    error: Exception | None = None
+    for session in sessions:
+        summary = session.finish()
+        if summary is None:
+            continue
+        _session_replay.setdefault(item.nodeid, []).append(summary)
+        error = error or session.error()
+    if error is None:
+        return
+    strict = bool(item.config.getoption("--attest-strict", default=False)) or (
+        os.environ.get("ATTEST_STRICT", "").strip().lower() in ("1", "true", "yes")
+    )
+    try:
+        if isinstance(error, ReplayNotEvaluatedError) and not strict:
+            pytest.skip(f"not evaluated: replay_miss: {error}")
+        pytest.fail(str(error), pytrace=False)
+    except (pytest.skip.Exception, pytest.fail.Exception) as exc:
+        outcome.force_exception(exc)
+
+
+def _egress_mode(config: pytest.Config) -> str:
+    mode: str | None = config.getoption("--attest-egress", default=None)
+    mode = mode or os.environ.get("ATTEST_EGRESS", "").strip().lower() or "allow"
+    if mode not in ("block", "allow"):
+        raise pytest.UsageError(f"ATTEST_EGRESS must be block or allow, got {mode!r}")
+    return mode
+
+
+@pytest.fixture
+def attest_replay(
+    request: pytest.FixtureRequest,
+) -> Generator[Callable[..., ReplaySession], None, None]:
+    """Bind the test to a fixture: ``attest_replay("inc-1042")`` starts the replay proxy and
+    points ``OPENAI_BASE_URL`` / ``ANTHROPIC_BASE_URL`` at it, so the agent's real code runs
+    with its model responses served from the recording.
+
+    Construct model clients after the call. Use it as ``with attest_replay("name"):`` to end
+    the replay at the end of the block, or call it and let the test end it. The mode is
+    ``--attest-replay`` (strict, auto or off). A miss fails the test in strict mode, with the
+    message naming the changed component and the ``attest capture --refresh`` command; in
+    auto mode without a provider key the test is ``not_evaluated`` (``replay_miss``).
+
+    Keyword arguments: ``mode``, ``fixtures_dir`` (default ``tests/attest/fixtures`` under
+    the pytest root) and ``engine_path`` (default ``--attest-engine``).
+    """
+    config = request.config
+    nodeid = request.node.nodeid
+
+    def start(
+        name: str,
+        *,
+        mode: str | None = None,
+        fixtures_dir: str | os.PathLike[str] | None = None,
+        engine_path: str | None = None,
+    ) -> ReplaySession:
+        chosen = resolve_mode(mode or config.getoption("--attest-replay", default=None))
+        session = start_replay(
+            name,
+            mode=chosen,
+            fixtures_dir=fixtures_dir_for(config.rootpath, fixtures_dir),
+            engine_path=engine_path or config.getoption("--attest-engine", default=None),
+        )
+        _item_replays.setdefault(nodeid, []).append(session)
+        return session
+
+    yield start
+    for session in _item_replays.pop(nodeid, []):
+        session.finish()
 
 
 def _is_coroutine_test(item: pytest.Function) -> bool:
@@ -430,6 +559,7 @@ def _record_test_phase(item: pytest.Item, report: pytest.TestReport) -> TestReco
             record.outcome = report.outcome
     if report.when == "call":
         record.trials = _session_trials_run.pop(item.nodeid, None)
+        record.replay = list(_session_replay.get(item.nodeid, []))
     return record
 
 
@@ -444,6 +574,7 @@ class _SessionState:
     usage: Usage
     test_results: list[AgentResult]
     run: TestRun | None
+    replay: dict[str, list[ReplaySummary]]
 
 
 _saved_sessions: list[_SessionState] = []
@@ -465,8 +596,12 @@ def pytest_sessionstart(session: pytest.Session) -> None:
             usage=_session_usage,
             test_results=stashed,
             run=current_run(),
+            replay=dict(_session_replay),
         )
     )
+    _session_replay.clear()
+    if _egress_mode(session.config) == "block":
+        egress.install()
     _session_tests.clear()
     _session_trials_run.clear()
     _session_trial_lines.clear()
@@ -480,8 +615,11 @@ def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> Generator[
     restore the enclosing session's state."""
     yield
     _write_session_report(session)
+    egress.uninstall()
     global _session_usage
     saved = _saved_sessions.pop()
+    _session_replay.clear()
+    _session_replay.update(saved.replay)
     _session_tests.clear()
     _session_tests.update(saved.tests)
     _session_trials_run.clear()

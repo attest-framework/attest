@@ -91,13 +91,16 @@ def _post(url: str, body: dict[str, object], headers: dict[str, str]) -> None:
         resp.read()
 
 
-def _scripted_agent(refunds: int, note: str = "") -> None:
+def _scripted_agent(refunds: int, note: str = "", system: str | None = None) -> None:
     """One model call and an INC-1042-shaped trace, configured from the environment."""
     _post(
         os.environ["OPENAI_BASE_URL"] + "/chat/completions",
         {
             "model": "gpt-test",
-            "messages": [{"role": "user", "content": f"refund O-9 for {_PLANTED_EMAIL}{note}"}],
+            "messages": [
+                *([{"role": "system", "content": system}] if system else []),
+                {"role": "user", "content": f"refund O-9 for {_PLANTED_EMAIL}{note}"},
+            ],
         },
         {"Authorization": f"Bearer {os.environ['OPENAI_API_KEY']}"},
     )

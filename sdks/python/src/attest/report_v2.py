@@ -16,12 +16,15 @@ from pathlib import Path
 from typing import Any
 
 from attest._proto.types import (
+    REASON_REPLAY_MISS,
     STATUS_HARD_FAIL,
     STATUS_NOT_EVALUATED,
     STATUS_PASS,
     STATUS_SOFT_FAIL,
+    AssertionResult,
     Usage,
 )
+from attest.replay import MODE_AUTO, ReplaySummary
 from attest.result import AgentResult
 
 REPORT_VERSION = 2
@@ -44,6 +47,8 @@ class TestRecord:
     agent_results: list[AgentResult] = field(default_factory=list)
     #: Fixed-N trials actually run (``--attest-trials`` > 1); ``None`` for a single run.
     trials: int | None = None
+    #: What the test's replay sessions served; empty when it did not replay a fixture.
+    replay: list[ReplaySummary] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         if self.line < 1:
@@ -80,6 +85,13 @@ def build_report(tests: list[TestRecord], *, simulated: bool, usage: Usage) -> d
                     assertion_ids.append(result.assertion_id)
                 if result.status == STATUS_NOT_EVALUATED and result.reason not in reasons:
                     reasons.append(str(result.reason))
+        for summary in test.replay:
+            if summary.mode == MODE_AUTO and summary.misses:
+                row = _replay_miss_result(summary).to_dict()
+                rows.append({**row, "test_id": test.test_id, "file": test.file, "line": test.line})
+                assertion_ids.append(row["assertion_id"])
+                if REASON_REPLAY_MISS not in reasons:
+                    reasons.append(REASON_REPLAY_MISS)
         test_row: dict[str, Any] = {
             "test_id": test.test_id,
             "name": test.name,
@@ -93,26 +105,68 @@ def build_report(tests: list[TestRecord], *, simulated: bool, usage: Usage) -> d
             test_row["not_evaluated_reasons"] = reasons
         if test.trials is not None:
             test_row["trials"] = test.trials
+        if test.replay:
+            test_row["replay"] = _test_replay(test.replay)
         test_rows.append(test_row)
 
     statuses = [row["status"] for row in rows]
+    summary_block: dict[str, Any] = {
+        "total": len(rows),
+        "passed": statuses.count(STATUS_PASS),
+        "soft_fail": statuses.count(STATUS_SOFT_FAIL),
+        "hard_fail": statuses.count(STATUS_HARD_FAIL),
+        "not_evaluated": statuses.count(STATUS_NOT_EVALUATED),
+        "usage": usage.to_dict(),
+    }
+    replays = [s for test in tests for s in test.replay]
+    if replays:
+        summary_block["replay"] = {
+            "replayed": sum(s.replayed for s in replays),
+            "live": sum(s.live for s in replays),
+            "misses": sum(s.misses for s in replays),
+            "live_cost_usd": sum(s.live_cost_usd for s in replays),
+            "unpriced_live_calls": sum(s.unpriced_live_calls for s in replays),
+        }
     return {
         "report_version": REPORT_VERSION,
         "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "simulated": simulated,
-        "summary": {
-            "total": len(rows),
-            "passed": statuses.count(STATUS_PASS),
-            "soft_fail": statuses.count(STATUS_SOFT_FAIL),
-            "hard_fail": statuses.count(STATUS_HARD_FAIL),
-            "not_evaluated": statuses.count(STATUS_NOT_EVALUATED),
-            "usage": usage.to_dict(),
-        },
+        "summary": summary_block,
         "results": rows,
         "tests": test_rows,
         "total_cost": total_cost,
         "total_duration_ms": total_duration_ms,
     }
+
+
+def _replay_miss_result(summary: ReplaySummary) -> AssertionResult:
+    """The ``not_evaluated`` row of a test whose auto-mode replay missed with no provider key."""
+    return AssertionResult(
+        assertion_id=f"replay_{summary.fixture}",
+        status=STATUS_NOT_EVALUATED,
+        score=0.0,
+        explanation=summary.first_miss or "replay miss",
+        reason=REASON_REPLAY_MISS,
+    )
+
+
+def _test_replay(summaries: list[ReplaySummary]) -> dict[str, Any]:
+    """The ``tests[].replay`` object: one session's, or the sum of a test's sessions."""
+    if len(summaries) == 1:
+        return summaries[0].to_report()
+    fixtures = list(dict.fromkeys(s.fixture for s in summaries))
+    modes = {s.mode for s in summaries}
+    row: dict[str, Any] = {
+        "fixtures": fixtures,
+        "mode": summaries[0].mode if len(modes) == 1 else MODE_AUTO,
+        "replayed": sum(s.replayed for s in summaries),
+        "live": sum(s.live for s in summaries),
+        "misses": sum(s.misses for s in summaries),
+    }
+    miss = next((s.first_miss for s in summaries if s.first_miss), None)
+    if miss is not None:
+        row["miss"] = miss
+    return row
 
 
 def write_report(path: Path, tests: list[TestRecord], *, simulated: bool, usage: Usage) -> None:
