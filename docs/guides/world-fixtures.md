@@ -53,7 +53,7 @@ A fault fires on a resource and route, by request ordinal (`on_requests`, 1-base
 | `timeout_after_commit` | `create` only. The record is committed, then the response is held until the client disconnects (at most 30 seconds). The client sees a timeout and retries; the retry is the double refund. |
 | `429`, `500` | The request answers with that status and commits nothing. |
 
-The same `seed` and the same request sequence give the same outcomes. Fired faults are listed in the snapshot's `faults_fired`.
+The same `seed` and the same request sequence give the same outcomes. Fired faults are listed in the snapshot's `faults_fired` (the first 1,000; `faults_fired_count` is the exact total).
 
 ### Idempotency
 
@@ -67,7 +67,7 @@ attest capture --name inc-1042 --expect-fail --world world.yaml -- npm run incid
 attest-engine replay --name inc-1042 --world world.yaml -- npm run agent
 ```
 
-`GET <base URL>/_attest/state` returns the current world-v1 snapshot: `world_version`, `definition_sha256`, `state` (the records of each resource) and `faults_fired`. `attest-engine world --file world.yaml --serve` is the protocol the SDK helpers use: the engine prints `{"env": {...}}`, serves until a `stop` line (or end of input) arrives on stdin, then prints `{"world": <final snapshot>}`.
+`GET <base URL>/_attest/state` returns the current world-v1 snapshot: `world_version`, `definition_sha256`, `state` (the records of each resource), `faults_fired` and `faults_fired_count`. `attest-engine world --file world.yaml --serve` is the protocol the SDK helpers use: the engine prints `{"env": {...}}`, serves until a `stop` line (or end of input) arrives on stdin, then prints `{"world": <final snapshot>}`.
 
 ## In a test
 
@@ -106,11 +106,11 @@ Outside a test framework use `attest.start_world(path)` (a context manager) or `
 
 | Python | TypeScript | Fails when |
 | --- | --- | --- |
-| `count(resource, *, equals=None, at_most=None, at_least=None, **where)` | `count(resource, { equals?, atMost?, atLeast?, where? })` | the number of records matching `where` is out of bounds. Give `equals` or `at_most` and/or `at_least`; both SDKs raise on no bound and on `equals` with another bound. |
-| `unique(resource, *, by, **where)` | `unique(resource, { by, where? })` | two matching records share the same values for the field(s) in `by` (a name or a list). |
-| `idempotent(resource, *, key="idempotency_key", **where)` | `idempotent(resource, { key?, where? })` | a matching record has no value in `key` (the record field that stores the idempotency key), or two share one. |
+| `count(resource, /, *, equals=None, at_most=None, at_least=None, where=None, **filters)` | `count(resource, { equals?, atMost?, atLeast?, where? })` | the number of records matching `where` is out of bounds. Give `equals` or `at_most` and/or `at_least`; both SDKs raise on no bound and on `equals` with another bound. |
+| `unique(resource, /, *, by, where=None, **filters)` | `unique(resource, { by, where? })` | two matching records share the same values for the field(s) in `by` (a name or a list). |
+| `idempotent(resource, /, *, key="idempotency_key", where=None, **filters)` | `idempotent(resource, { key?, where? })` | a matching record has no value in `key` (the record field that stores the idempotency key), or two share one. |
 
-`where` is exact-match filters on record fields. The INC-1042 double refund fails `count` with exactly:
+`where` is exact-match filters on record fields. In Python pass them as keywords (`order_id="O-1042"`) or as a `where` dict; use the dict for fields named like a parameter (`key`, `by`, `equals`), and a key given both ways raises `TypeError`. The INC-1042 double refund fails `count` with exactly:
 
 ```text
 effect violated: 2 refunds for O-1042 (expected 1)
@@ -145,7 +145,8 @@ They run as two engine processes and their environment variables merge: `OPENAI_
 
 - HTTP and JSON only: collections with create, list and get. No updates, deletes, nested resources, auth, streaming or arbitrary handlers. A world is not a general service-virtualization platform; for anything it cannot express, write a real fake.
 - A world replaces an external HTTP system. In-process `mock_tools` still stand in for tool functions and are not replaced.
-- At most 32 resources, 10,000 records, 8 MiB of state, 1 MiB per request body and 256 KiB of `world.yaml`.
+- At most 32 resources, 10,000 records, 1 MiB of state (fired faults included), 1,000 listed fired faults, 1 MiB per request body and 256 KiB of `world.yaml`. Numbers must be finite and integers within ±(2^53−1); quote larger ones as strings.
+- Every effect check embeds the snapshot in the request the engine reads, and a request line is limited to 10 MiB. `expect(...).world(snapshot)` measures the snapshot once and raises before sending when the checks of one chain would add up to more than 9 MiB (`MAX_WORLD_BYTES`); use fewer checks per test or keep the world small.
 - The world listens on `127.0.0.1` under a random path token and serves nothing else.
 
 See also: [capture](capture.md), [replay](replay.md), [behavior contracts](behavior-contracts.md).

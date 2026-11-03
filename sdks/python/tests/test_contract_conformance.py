@@ -82,3 +82,34 @@ def test_count_equals_with_another_bound_raises() -> None:
 def test_unique_without_fields_raises() -> None:
     with pytest.raises(ValueError, match="at least one field"):
         expect(_trace("inc-1042-py")).world(None).unique("refunds", by=[])
+
+
+def test_effect_where_dict_and_keywords_merge() -> None:
+    chain = expect(_trace("inc-1042-py"))
+
+    chain.world(None).count("refunds", equals=1, where={"key": "k"}, order_id="O-1042")
+
+    assert chain.assertions[0].spec["where"] == {"key": "k", "order_id": "O-1042"}
+
+
+def test_effect_filter_given_twice_raises() -> None:
+    with pytest.raises(TypeError, match="both in where and as a keyword: order_id"):
+        expect(_trace("inc-1042-py")).world(None).count(
+            "refunds", equals=1, where={"order_id": "O-1"}, order_id="O-1042"
+        )
+
+
+def test_effect_resource_is_positional_only() -> None:
+    with pytest.raises(TypeError):
+        expect(_trace("inc-1042-py")).world(None).count(resource="refunds", equals=1)  # type: ignore[call-arg]
+
+
+def test_world_checks_over_the_request_limit_raise_before_sending() -> None:
+    big = {"world_version": 1, "state": {"refunds": [{"note": "é" * (2 * 1024 * 1024)}]}}
+    chain = expect(_trace("inc-1042-py"))
+    world = chain.world(big)
+
+    world.count("refunds", equals=0)
+    world.count("refunds", equals=0)
+    with pytest.raises(ValueError, match="over the 9437184-byte limit"):
+        world.count("refunds", equals=0)

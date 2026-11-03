@@ -16,6 +16,12 @@ import { AgentResult } from "./result.js";
 type TrajectoryMode = "strict" | "unordered" | "subset" | "superset";
 type ArgOperator = "eq" | "ne" | "lt" | "lte" | "gt" | "gte" | "in" | "not_in";
 
+/**
+ * Each effect assertion embeds the world snapshot, and the engine refuses a request line over
+ * 10 MiB; 1 MiB of that is left for the rest of the batch.
+ */
+export const MAX_WORLD_BYTES = 9 * 1024 * 1024;
+
 /** A resource's records filtered by exact field values. */
 type Where = Record<string, unknown>;
 
@@ -88,6 +94,7 @@ export class WorldChecks<C> {
 export class ExpectChain {
   private readonly _result: AgentResult;
   private readonly _assertions: Assertion[] = [];
+  private _worldBytes = 0;
 
   constructor(result: AgentResult) {
     this._result = result;
@@ -573,7 +580,19 @@ export class ExpectChain {
    * a world helper: the checks are `not_evaluated` (`missing_evidence`).
    */
   world(snapshot: Record<string, unknown> | null): WorldChecks<this> {
-    return new WorldChecks<this>(snapshot, (spec) => this.add(TYPE_EFFECT, spec));
+    const size = new TextEncoder().encode(JSON.stringify(snapshot)).length;
+    return new WorldChecks<this>(snapshot, (spec) => {
+      this._worldBytes += size;
+      if (this._worldBytes > MAX_WORLD_BYTES) {
+        throw new Error(
+          `effect checks would send the ${size}-byte world snapshot ` +
+            `${Math.floor(this._worldBytes / Math.max(size, 1))} times (${this._worldBytes} bytes), ` +
+            `over the ${MAX_WORLD_BYTES}-byte limit of one request; use fewer checks per test ` +
+            `or scope the world to less state`,
+        );
+      }
+      return this.add(TYPE_EFFECT, spec);
+    });
   }
 
   // -- Layer 4: Content --

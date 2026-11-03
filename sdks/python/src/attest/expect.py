@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import uuid
 from typing import Any, Literal
 
@@ -25,18 +26,46 @@ TrajectoryMode = Literal["strict", "unordered", "subset", "superset"]
 ArgOperator = Literal["eq", "ne", "lt", "lte", "gt", "gte", "in", "not_in"]
 
 
+# Each effect assertion embeds the world snapshot, and the engine refuses a request line over
+# 10 MiB; 1 MiB of that is left for the rest of the batch.
+MAX_WORLD_BYTES = 9 * 1024 * 1024
+
+
+def _merge_where(where: dict[str, Any] | None, filters: dict[str, Any]) -> dict[str, Any]:
+    """Merge an explicit ``where`` dict with keyword filters; a key in both is an error."""
+    merged = dict(where or {})
+    clash = sorted(set(merged) & set(filters))
+    if clash:
+        raise TypeError(f"filter given both in where and as a keyword: {', '.join(clash)}")
+    merged.update(filters)
+    return merged
+
+
 class WorldChecks:
     """Effect checks against one world snapshot, from :meth:`ExpectChain.world`.
 
     Each method adds an ``effect`` assertion (Layer 3) to the parent chain and returns it.
-    ``where`` keyword arguments are exact-match filters on the resource's records.
+    Keyword arguments, or the ``where`` dict (use it for fields named like a parameter, such as
+    ``key`` or ``by``), are exact-match filters on the resource's records.
     """
 
     def __init__(self, chain: ExpectChain, snapshot: dict[str, Any] | None) -> None:
         self._chain = chain
         self._snapshot = snapshot
+        # The snapshot is measured once, as the engine will read it (UTF-8, not \\u-escaped).
+        self._size = len(
+            json.dumps(snapshot, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+        )
 
     def _add(self, spec: dict[str, Any], where: dict[str, Any]) -> ExpectChain:
+        self._chain._world_bytes += self._size
+        if self._chain._world_bytes > MAX_WORLD_BYTES:
+            raise ValueError(
+                f"effect checks would send the {self._size}-byte world snapshot "
+                f"{self._chain._world_bytes // max(self._size, 1)} times "
+                f"({self._chain._world_bytes} bytes), over the {MAX_WORLD_BYTES}-byte limit "
+                "of one request; use fewer checks per test or scope the world to less state"
+            )
         spec["world"] = self._snapshot
         if where:
             spec["where"] = where
@@ -45,11 +74,13 @@ class WorldChecks:
     def count(
         self,
         resource: str,
+        /,
         *,
         equals: int | None = None,
         at_most: int | None = None,
         at_least: int | None = None,
-        **where: Any,
+        where: dict[str, Any] | None = None,
+        **filters: Any,
     ) -> ExpectChain:
         """Assert how many records of ``resource`` match ``where``.
 
@@ -67,21 +98,41 @@ class WorldChecks:
         for key, bound in (("equals", equals), ("at_most", at_most), ("at_least", at_least)):
             if bound is not None:
                 spec[key] = bound
-        return self._add(spec, where)
+        return self._add(spec, _merge_where(where, filters))
 
-    def unique(self, resource: str, *, by: str | list[str], **where: Any) -> ExpectChain:
+    def unique(
+        self,
+        resource: str,
+        /,
+        *,
+        by: str | list[str],
+        where: dict[str, Any] | None = None,
+        **filters: Any,
+    ) -> ExpectChain:
         """Assert no two matching records share the same values for field(s) ``by``."""
         fields = [by] if isinstance(by, str) else list(by)
         if not fields:
             raise ValueError("unique needs at least one field in by")
-        return self._add({"check": "unique", "resource": resource, "fields": fields}, where)
+        return self._add(
+            {"check": "unique", "resource": resource, "fields": fields},
+            _merge_where(where, filters),
+        )
 
     def idempotent(
-        self, resource: str, *, key: str = "idempotency_key", **where: Any
+        self,
+        resource: str,
+        /,
+        *,
+        key: str = "idempotency_key",
+        where: dict[str, Any] | None = None,
+        **filters: Any,
     ) -> ExpectChain:
         """Assert every matching record carries a distinct value in field ``key``, the
         record field that stores the idempotency key."""
-        return self._add({"check": "idempotent", "resource": resource, "field": key}, where)
+        return self._add(
+            {"check": "idempotent", "resource": resource, "field": key},
+            _merge_where(where, filters),
+        )
 
 
 class ExpectChain:
@@ -90,6 +141,7 @@ class ExpectChain:
     def __init__(self, result: AgentResult) -> None:
         self._result = result
         self._assertions: list[Assertion] = []
+        self._world_bytes = 0
 
     @property
     def assertions(self) -> list[Assertion]:

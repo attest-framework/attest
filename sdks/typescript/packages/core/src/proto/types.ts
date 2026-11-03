@@ -298,6 +298,7 @@ export function layerForType(assertionType: string | undefined): number {
       return 2;
     case "trace":
     case "trace_tree":
+    case "effect":
       return 3;
     case "content":
       return 4;

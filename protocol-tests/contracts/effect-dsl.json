@@ -20,7 +20,8 @@
           }
         ]
       },
-      "faults_fired": []
+      "faults_fired": [],
+      "faults_fired_count": 0
     }
   },
   "cases": [
@@ -263,6 +264,49 @@
       },
       "result": {
         "status": "not_evaluated"
+      }
+    },
+    {
+      "name": "idempotent-filter-on-parameter-named-fields",
+      "world": "doubled",
+      "python": {
+        "method": "idempotent",
+        "args": [
+          "refunds"
+        ],
+        "kwargs": {
+          "key": "idempotency_key",
+          "where": {
+            "key": "k1",
+            "by": "x"
+          }
+        }
+      },
+      "typescript": {
+        "method": "idempotent",
+        "args": [
+          "refunds",
+          {
+            "key": "idempotency_key",
+            "where": {
+              "key": "k1",
+              "by": "x"
+            }
+          }
+        ]
+      },
+      "spec": {
+        "check": "idempotent",
+        "resource": "refunds",
+        "field": "idempotency_key",
+        "where": {
+          "key": "k1",
+          "by": "x"
+        }
+      },
+      "result": {
+        "status": "pass",
+        "explanation": "effect holds: 0 refunds, each with its own idempotency key"
       }
     }
   ]

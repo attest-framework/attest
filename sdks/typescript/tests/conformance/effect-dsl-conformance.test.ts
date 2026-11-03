@@ -9,7 +9,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { attestExpect } from "../../packages/core/src/expect.js";
-import type { Trace } from "../../packages/core/src/proto/types.js";
+import { layerForType, type Trace } from "../../packages/core/src/proto/types.js";
 
 interface EffectCase {
   name: string;
@@ -64,5 +64,22 @@ describe("effect DSL conformance", () => {
 
   it("unique without fields throws", () => {
     expect(() => attestExpect(trace).world(null).unique("refunds", { by: [] })).toThrow("at least one field");
+  });
+});
+
+describe("effect checks and the request limit", () => {
+  const trace = { trace_id: "trc_limit", output: { message: "" }, steps: [] } as unknown as Trace;
+
+  it("raises before sending when the snapshot repeated per check exceeds 9 MiB", () => {
+    const big = { world_version: 1, state: { refunds: [{ note: "é".repeat(2 * 1024 * 1024) }] } };
+    const world = attestExpect(trace).world(big);
+
+    world.count("refunds", { equals: 0 });
+    world.count("refunds", { equals: 0 });
+    expect(() => world.count("refunds", { equals: 0 })).toThrow(/over the 9437184-byte limit/);
+  });
+
+  it("maps the effect type to layer 3 like the engine", () => {
+    expect(layerForType("effect")).toBe(3);
   });
 });
