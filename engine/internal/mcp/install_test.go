@@ -181,3 +181,148 @@ func TestValidateCommand_Rejects(t *testing.T) {
 		}
 	}
 }
+
+func TestInstall_ExistingFileKeepsItsPermissionBits(t *testing.T) {
+	dir := t.TempDir()
+	write(t, filepath.Join(dir, ".mcp.json"), `{"mcpServers": {}}`)
+	if err := os.Chmod(filepath.Join(dir, ".mcp.json"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := attestmcp.Install(dir, launch, false); err != nil {
+		t.Fatal(err)
+	}
+	if info, _ := os.Stat(filepath.Join(dir, ".mcp.json")); info.Mode().Perm() != 0o600 {
+		t.Errorf("existing file mode %v, want 0600", info.Mode().Perm())
+	}
+	if info, _ := os.Stat(filepath.Join(dir, ".cursor", "mcp.json")); info.Mode().Perm() != 0o644 {
+		t.Errorf("new file mode %v, want 0644", info.Mode().Perm())
+	}
+	entries, _ := os.ReadDir(dir)
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), ".attest-tmp") {
+			t.Errorf("temp file left behind: %s", e.Name())
+		}
+	}
+}
+
+func TestInstall_TrailingContentAfterJSON_RefusesWithoutWriting(t *testing.T) {
+	for name, tail := range map[string]string{
+		"conflict marker": "\n<<<<<<< HEAD\n{}\n=======\n",
+		"second object":   "\n{}",
+		"stray token":     " x",
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			body := `{"mcpServers": {"other": {"command": "x"}}}` + tail
+			write(t, filepath.Join(dir, ".mcp.json"), body)
+			if _, err := attestmcp.Install(dir, launch, false); err == nil || !strings.Contains(err.Error(), "trailing content") {
+				t.Fatalf("error %v, want trailing content", err)
+			}
+			if got := read(t, filepath.Join(dir, ".mcp.json")); got != body {
+				t.Errorf("file was modified: %q", got)
+			}
+			if _, err := os.Stat(filepath.Join(dir, ".codex")); err == nil {
+				t.Error("other configs written despite the refusal")
+			}
+		})
+	}
+}
+
+func codexInstall(t *testing.T, existing string, force bool) (attestmcp.InstallResult, string) {
+	t.Helper()
+	dir := t.TempDir()
+	write(t, filepath.Join(dir, ".codex/config.toml"), existing)
+	res, err := attestmcp.Install(dir, launch, force)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return res, read(t, filepath.Join(dir, ".codex/config.toml"))
+}
+
+func TestInstallCodex_AttestInAnyForm_IsDetected(t *testing.T) {
+	same := `command = "uv"` + "\n" + `args = ["run", "attest", "mcp"]`
+	forms := map[string]struct{ existing, wantState string }{
+		"table, same":             {"[mcp_servers.attest]\n" + same + "\n", "unchanged"},
+		"inline table, same":      {"[mcp_servers]\nattest = { command = \"uv\", args = [\"run\", \"attest\", \"mcp\"] }\n", "unchanged"},
+		"dotted keys, same":       {"[mcp_servers]\nattest.command = \"uv\"\nattest.args = [\"run\", \"attest\", \"mcp\"]\n", "unchanged"},
+		"quoted header, same":     {"[mcp_servers.\"attest\"]\n" + same + "\n", "unchanged"},
+		"inline table, other":     {"[mcp_servers]\nattest = { command = \"old\" }\n", "conflict"},
+		"dotted keys, other":      {"[mcp_servers]\nattest.command = \"old\"\n", "conflict"},
+		"top-level dotted, other": {"mcp_servers.attest.command = \"old\"\n", "conflict"},
+		"table, other":            {"[mcp_servers.attest]\ncommand = \"old\"\n", "conflict"},
+	}
+	for name, f := range forms {
+		t.Run(name, func(t *testing.T) {
+			res, got := codexInstall(t, f.existing, false)
+			var state string
+			switch {
+			case len(res.Unchanged) > 0 && contains(res.Unchanged, ".codex/config.toml"):
+				state = "unchanged"
+			case contains(res.Conflict, ".codex/config.toml"):
+				state = "conflict"
+			default:
+				state = "other"
+			}
+			if state != f.wantState {
+				t.Errorf("state %s, want %s (result %+v)", state, f.wantState, res)
+			}
+			if got != f.existing {
+				t.Errorf("file modified:\n%s", got)
+			}
+		})
+	}
+}
+
+func contains(l []string, s string) bool {
+	for _, e := range l {
+		if e == s {
+			return true
+		}
+	}
+	return false
+}
+
+func TestInstallCodex_Force_ReplacesOnlyTableForm(t *testing.T) {
+	res, got := codexInstall(t, "model = \"m\"\n\n[mcp_servers.attest]\ncommand = \"old\"\n\n[other]\nx = 1\n", true)
+	if !contains(res.Updated, ".codex/config.toml") {
+		t.Fatalf("result %+v", res)
+	}
+	if strings.Contains(got, "old") || !strings.Contains(got, `command = "uv"`) || !strings.Contains(got, "model = \"m\"") || !strings.Contains(got, "[other]\nx = 1") {
+		t.Errorf("forced config:\n%s", got)
+	}
+
+	for name, existing := range map[string]string{
+		"inline": "[mcp_servers]\nattest = { command = \"old\" }\n",
+		"dotted": "[mcp_servers]\nattest.command = \"old\"\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			res, got := codexInstall(t, existing, true)
+			if !contains(res.Conflict, ".codex/config.toml") || got != existing {
+				t.Errorf("force overrode a non-table form: %+v\n%s", res, got)
+			}
+		})
+	}
+}
+
+func TestInstallCodex_InvalidExisting_Refuses(t *testing.T) {
+	dir := t.TempDir()
+	write(t, filepath.Join(dir, ".codex/config.toml"), "model = \n[broken")
+	if _, err := attestmcp.Install(dir, launch, false); err == nil || !strings.Contains(err.Error(), "not valid TOML") {
+		t.Errorf("error %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".mcp.json")); err == nil {
+		t.Error("other configs written despite the refusal")
+	}
+}
+
+func TestInstallCodex_OutputAlwaysParses(t *testing.T) {
+	for _, argv := range [][]string{{"uv", "run", "attest", "mcp"}, {"a b", `q"uote`, `back\slash`, "tab\there"}} {
+		dir := t.TempDir()
+		write(t, filepath.Join(dir, ".codex/config.toml"), "[features]\nx = true\n")
+		if _, err := attestmcp.Install(dir, argv, false); err == nil {
+			continue
+		} else if !strings.Contains(err.Error(), "control") {
+			t.Errorf("%q: %v", argv, err)
+		}
+	}
+}
