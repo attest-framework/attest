@@ -112,7 +112,11 @@ def _escape_property(value: str) -> str:
 
 
 def action_version() -> str:
-    """The release version of this action: the repository ``VERSION`` file two levels above it."""
+    """The release version of this action: the ``VERSION`` file at the repository root.
+
+    The script is ``.github/actions/pr-annotate/post_annotations.py``, so the root is three
+    directories up.
+    """
     version_file = Path(__file__).resolve().parents[3] / "VERSION"
     try:
         return version_file.read_text(encoding="utf-8").strip()
@@ -128,7 +132,9 @@ def resolve_engine(binary: str, version: str, env: dict[str, str]) -> str | None
     A custom ``engine-binary`` is used as given. The default name is resolved
     in the SDKs' order: ``ATTEST_ENGINE_PATH``, then PATH, then the
     auto-download cache of exactly this version,
-    ``~/.attest/bin/<version>/attest-engine``.
+    ``~/.attest/bin/<version>/attest-engine``. An empty ``version`` means the
+    action's own; it is read only when the cache is reached, so a missing
+    ``VERSION`` file matters only then.
     """
     if binary != DEFAULT_ENGINE:
         return shutil.which(binary, path=env.get("PATH"))
@@ -138,7 +144,7 @@ def resolve_engine(binary: str, version: str, env: dict[str, str]) -> str | None
     found = shutil.which(binary, path=env.get("PATH"))
     if found:
         return found
-    cached = Path.home() / ".attest" / "bin" / version / "attest-engine"
+    cached = Path.home() / ".attest" / "bin" / (version or action_version()) / "attest-engine"
     return str(cached) if os.access(cached, os.X_OK) else None
 
 
@@ -434,14 +440,16 @@ def _identity(api: str, token: str) -> str:
     return login
 
 
-def _marker_comments(api: str, repo: str, pr: int, token: str) -> list[int]:
+def _marker_comments(api: str, repo: str, pr: int, token: str, author: str = "") -> list[int]:
     """Ids of the PR's marker comments written by this token's identity, oldest first.
 
     The marker alone proves nothing: anyone who can comment can plant it, and a
     token with write access could then edit their comment. Only comments by the
-    token's own login are updated.
+    token's own login are updated: ``author`` when given (a GitHub App token
+    gets the same 403 as the workflow token, so its login cannot be looked up),
+    else the login GET /user reports. A ``[bot]`` login also needs type Bot.
     """
-    me = _identity(api, token)
+    me = author or _identity(api, token)
     ids: list[int] = []
     for page in range(1, MAX_COMMENT_PAGES + 1):
         batch = _api("GET", f"{api}/repos/{repo}/issues/{pr}/comments?per_page=100&page={page}", token)
@@ -454,14 +462,16 @@ def _marker_comments(api: str, repo: str, pr: int, token: str) -> list[int]:
             and MARKER in str(c.get("body", ""))
             and isinstance(c.get("user"), dict)
             and c["user"].get("login") == me
-            and (me != BOT_LOGIN or c["user"].get("type") == "Bot")
+            and (not me.endswith("[bot]") or c["user"].get("type") == "Bot")
         ]
         if len(batch) < 100:
             break
     return ids
 
 
-def post_comment(api: str, repo: str, pr: int, token: str, body: str) -> str:
+def post_comment(
+    api: str, repo: str, pr: int, token: str, body: str, author: str = ""
+) -> str:
     """Update the marker comment in place, or create it; return "updated" or "created".
 
     Marker comments by other authors are ignored (see _marker_comments). A
@@ -469,7 +479,7 @@ def post_comment(api: str, repo: str, pr: int, token: str, body: str) -> str:
     skipped; when none remains a new comment is created.
     """
     payload = {"body": f"{MARKER}\n{body}"}
-    for comment_id in _marker_comments(api, repo, pr, token):
+    for comment_id in _marker_comments(api, repo, pr, token, author):
         try:
             _api("PATCH", f"{api}/repos/{repo}/issues/comments/{comment_id}", token, payload)
             return "updated"
@@ -508,7 +518,7 @@ def write_step_summary(summary: str, env: dict[str, str]) -> None:
         print(_neutralize(summary))
 
 
-def publish_comment(summary: str, env: dict[str, str]) -> None:
+def publish_comment(summary: str, env: dict[str, str], author: str = "") -> None:
     """Post the PR comment where the token can; the job summary is already written."""
     number = _same_repo_pull_request(env)
     if number is None:
@@ -523,7 +533,7 @@ def publish_comment(summary: str, env: dict[str, str]) -> None:
         return
     api = env.get("GITHUB_API_URL", "https://api.github.com").rstrip("/")
     try:
-        action = post_comment(api, repo, number, token, summary)
+        action = post_comment(api, repo, number, token, summary, author)
     except urllib.error.HTTPError as exc:
         print(
             f"::warning::Attest summary comment not posted (GitHub API returned {exc.code}); "
@@ -547,7 +557,7 @@ def run(args: argparse.Namespace, env: dict[str, str]) -> int:
 
     # The engine never needs the token: it is used only by publish_comment.
     engine_env = {k: v for k, v in env.items() if k not in _TOKEN_VARS}
-    engine = resolve_engine(args.engine, args.engine_version or action_version(), engine_env)
+    engine = resolve_engine(args.engine, args.engine_version, engine_env)
     code, result = evaluate_policies(
         engine, reports, args.policy, args.baseline_tag, engine_env
     )
@@ -571,7 +581,7 @@ def run(args: argparse.Namespace, env: dict[str, str]) -> int:
     write_step_summary(summary, env)
     for command in build_annotations(collect_rows(engine, reports, workspace, engine_env)):
         print(command)
-    publish_comment(summary, env)
+    publish_comment(summary, env, args.comment_author)
     return 0
 
 
@@ -581,6 +591,9 @@ def main(argv: list[str] | None = None, env: dict[str, str] | None = None) -> in
     parser.add_argument("--policy", default="", help="attest.policy.yaml; empty skips evaluation")
     parser.add_argument("--baseline-tag", default="", help="baseline tag for regression rules")
     parser.add_argument("--engine", default=DEFAULT_ENGINE, help="attest-engine binary")
+    parser.add_argument(
+        "--comment-author", default="", help="login whose marker comments may be updated"
+    )
     parser.add_argument(
         "--engine-version", default="", help="cached engine version; default: the action's VERSION"
     )

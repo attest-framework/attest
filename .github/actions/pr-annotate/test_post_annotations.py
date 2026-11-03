@@ -162,8 +162,16 @@ class ActionCase(unittest.TestCase):
             )
         return str(path)
 
-    def run_action(self, *reports: str, policy: str = "", extra: dict[str, str] | None = None):
+    def run_action(
+        self,
+        *reports: str,
+        policy: str = "",
+        extra: dict[str, str] | None = None,
+        author: str = "",
+    ):
         argv = ["--report", "\n".join(reports), "--engine", _STUB]
+        if author:
+            argv += ["--comment-author", author]
         if policy:
             argv += ["--policy", policy]
         out = io.StringIO()
@@ -507,6 +515,65 @@ class TestIdentity(ActionCase):
 
         self.assertEqual(code, 0, out)
         self.assertIn("::warning::Attest summary comment not posted", out)
+
+
+class TestCommentAuthor(ActionCase):
+    def test_app_token_updates_only_the_named_apps_comment_without_asking_who_it_is(self) -> None:
+        ours = {"id": 1, "body": f"{_pa.MARKER}\nold", "user": {"login": "my-app[bot]", "type": "Bot"}}
+        actions_bot = {
+            "id": 2,
+            "body": f"{_pa.MARKER} other",
+            "user": {"login": _pa.BOT_LOGIN, "type": "Bot"},
+        }
+        self.github.comments += [actions_bot, ours]
+
+        code, out = self.run_action(self.report(), author="my-app[bot]")
+
+        self.assertEqual(code, 0, out)
+        self.assertIn("### attest:", ours["body"])
+        self.assertEqual(actions_bot["body"], f"{_pa.MARKER} other")
+        self.assertEqual(len(self.github.comments), 2)
+        self.assertNotIn(("GET", "/user"), self.github.calls)
+
+    def test_named_bot_author_still_requires_type_bot(self) -> None:
+        planted = {"id": 1, "body": f"{_pa.MARKER} x", "user": {"login": "my-app[bot]", "type": "User"}}
+        self.github.comments.append(planted)
+
+        self.run_action(self.report(), author="my-app[bot]")
+
+        self.assertEqual(planted["body"], f"{_pa.MARKER} x")
+        self.assertEqual(len(self.github.comments), 2)
+
+
+class TestMissingVersionFile(ActionCase):
+    def test_explicit_engine_binary_does_not_need_the_version_file(self) -> None:
+        with unittest.mock.patch.object(
+            _pa, "action_version", side_effect=_pa.ActionError("no VERSION")
+        ) as version:
+            code, out = self.run_action(self.report())
+
+        self.assertEqual(code, 0, out)
+        version.assert_not_called()
+
+    def test_engine_on_path_does_not_need_the_version_file(self) -> None:
+        exe = self.root / "bin" / "attest-engine"
+        exe.parent.mkdir()
+        exe.write_text("#!/bin/sh\n")
+        exe.chmod(0o755)
+        with unittest.mock.patch.object(
+            _pa, "action_version", side_effect=_pa.ActionError("no VERSION")
+        ) as version:
+            found = _pa.resolve_engine("attest-engine", "", {"PATH": str(exe.parent)})
+
+        self.assertEqual(found, str(exe))
+        version.assert_not_called()
+
+    def test_cache_fallback_reads_the_version_file(self) -> None:
+        with unittest.mock.patch.object(
+            _pa, "action_version", side_effect=_pa.ActionError("no VERSION")
+        ):
+            with self.assertRaises(_pa.ActionError):
+                _pa.resolve_engine("attest-engine", "", {"PATH": ""})
 
 
 class TestResolveEngine(ActionCase):

@@ -31,6 +31,10 @@ inputs:
     description: 'Path to attest-engine binary. The default name is resolved as ATTEST_ENGINE_PATH, then PATH, then ~/.attest/bin/<engine-version>/attest-engine.'
     required: false
     default: 'attest-engine'
+  comment-author:
+    description: 'Login whose summary comment is updated. Leave empty for the workflow token (github-actions[bot]) or a personal token (the user). Set it to <app-slug>[bot] when github-token is a GitHub App installation token.'
+    required: false
+    default: ''
   engine-version:
     description: 'Engine version whose download cache (~/.attest/bin/<version>/) is searched. Defaults to the version of this action (the repository VERSION file at the action path).'
     required: false
@@ -61,6 +65,7 @@ runs:
         ATTEST_BASELINE_TAG: ${{ inputs.baseline-tag }}
         ATTEST_ENGINE_BIN: ${{ inputs.engine-binary }}
         ATTEST_ENGINE_VERSION: ${{ inputs.engine-version }}
+        ATTEST_COMMENT_AUTHOR: ${{ inputs.comment-author }}
         GITHUB_TOKEN: ${{ inputs.github-token }}
         ACTION_PATH: ${{ github.action_path }}
       run: |
@@ -69,7 +74,8 @@ runs:
           --policy "$ATTEST_POLICY" \
           --baseline-tag "$ATTEST_BASELINE_TAG" \
           --engine "$ATTEST_ENGINE_BIN" \
-          --engine-version "$ATTEST_ENGINE_VERSION"
+          --engine-version "$ATTEST_ENGINE_VERSION" \
+          --comment-author "$ATTEST_COMMENT_AUTHOR"
 
     - name: Fail on blocking policy violation
       if: inputs.fail-on-violation == 'true' && steps.evaluate.outputs.exit_code == '1'

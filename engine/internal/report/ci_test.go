@@ -252,6 +252,9 @@ func TestRenderSummary_HostileReport_IsInert(t *testing.T) {
 			t.Errorf("%q appears outside a code span:\n%s", trigger, outside)
 		}
 	}
+	if !strings.Contains(got, "| `tests/t.py:5` | `tests/t.py::test_pipe` | `effect` | `a\\\\|b` |") {
+		t.Errorf("a backslash before a pipe must render as a backslash and an escaped pipe in one cell:\n%s", got)
+	}
 	for _, line := range strings.Split(got, "\n") {
 		if strings.HasPrefix(line, "| `") && strings.Count(strings.ReplaceAll(line, `\|`, ""), "|") != 5 {
 			t.Errorf("table row has extra unescaped pipes: %s", line)
