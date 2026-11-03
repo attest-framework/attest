@@ -68,7 +68,7 @@ var (
 // idKeys hold a provider id as their whole value.
 var idKeys = map[string]bool{
 	"id": true, "tool_call_id": true, "call_id": true, "tool_use_id": true,
-	"item_id": true, "response_id": true, "gen_ai.tool.call.id": true,
+	"item_id": true, "response_id": true,
 }
 
 // templater holds the value → placeholder maps for one fixture.

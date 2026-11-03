@@ -173,6 +173,25 @@ func TestTemplate_DigitlessIDsInIDFields_TemplatedSoRecaptureIsStable(t *testing
 	}
 }
 
+// Ids that appear only inside JSON held as text (an OTel message attribute,
+// an event-stream body), with no structured copy, are templated too.
+func TestTemplate_DigitlessIDsOnlyInTextHeldJSON_Templated(t *testing.T) {
+	for name, doc := range map[string]string{
+		"attribute": `{"attr":"[{\"parts\":[{\"type\":\"tool_call\",\"id\":\"call_fcdafade\"}]}]"}`,
+		"stream":    `{"body":"data: {\"id\":\"chatcmpl-AbCdEfGhIjKl\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"id\": \"call_AbCdEfGhIjKlMnOpQrStUvWx\"}]}}]}\n\n"}`,
+	} {
+		got := templated(t, doc)
+		for _, gone := range []string{"fcdafade", "AbCdEfGh"} {
+			if strings.Contains(got, gone) {
+				t.Errorf("%s: id %s left untemplated: %s", name, gone, got)
+			}
+		}
+		if !strings.Contains(got, "{{id_1}}") {
+			t.Errorf("%s: no id placeholder: %s", name, got)
+		}
+	}
+}
+
 func TestTemplate_NumbersKeepPrecision(t *testing.T) {
 	got := templated(t, `{"amount":12345678901234567890,"price":0.1}`)
 
