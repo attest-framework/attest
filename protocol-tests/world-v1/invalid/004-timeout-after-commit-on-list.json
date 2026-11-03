@@ -1,0 +1,1 @@
+{"world_version":1,"base_url_env":"X_URL","resources":{"things":{"path":"/things","routes":["create","list"]}},"faults":[{"resource":"things","route":"list","fault":"timeout_after_commit","on_requests":[1]}]}

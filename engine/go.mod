@@ -8,6 +8,7 @@ require (
 	github.com/segmentio/encoding v0.5.4
 	github.com/yalue/onnxruntime_go v1.31.0
 	go.opentelemetry.io/proto/otlp v1.10.0
+	golang.org/x/text v0.34.0
 	golang.org/x/time v0.16.0
 	google.golang.org/protobuf v1.36.11
 	gopkg.in/yaml.v3 v3.0.1
@@ -23,7 +24,6 @@ require (
 	github.com/rogpeppe/go-internal v1.16.0 // indirect
 	github.com/segmentio/asm v1.1.3 // indirect
 	golang.org/x/sys v0.49.0 // indirect
-	golang.org/x/text v0.34.0 // indirect
 	gopkg.in/check.v1 v1.0.0-20201130134442-10cb98267c6c // indirect
 	modernc.org/libc v1.79.0 // indirect
 	modernc.org/mathutil v1.7.1 // indirect

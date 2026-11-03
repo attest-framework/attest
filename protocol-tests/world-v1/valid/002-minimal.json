@@ -1,0 +1,7 @@
+{
+  "world_version": 1,
+  "base_url_env": "TICKETS_BASE_URL",
+  "resources": {
+    "tickets": { "path": "/tickets", "routes": ["create"] }
+  }
+}
