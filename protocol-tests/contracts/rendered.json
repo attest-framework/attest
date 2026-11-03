@@ -1,0 +1,107 @@
+{
+  "cases": [
+    {
+      "statement": "tool_cardinality(\"issue_refund\", per=\"order_id\", at_most=1)",
+      "chain_prefix": "",
+      "python": ".tool_cardinality(\"issue_refund\", per=\"order_id\", at_most=1)",
+      "typescript": ".toolCardinality(\"issue_refund\", { per: \"order_id\", atMost: 1 })"
+    },
+    {
+      "statement": "tool_cardinality(\"lookup_order\", at_least=1, at_most=1, soft=True)",
+      "chain_prefix": "",
+      "python": ".tool_cardinality(\"lookup_order\", at_most=1, at_least=1, soft=True)",
+      "typescript": ".toolCardinality(\"lookup_order\", { atMost: 1, atLeast: 1, soft: true })"
+    },
+    {
+      "statement": "forbidden_tools([\"delete_order\"])",
+      "chain_prefix": "",
+      "python": ".forbidden_tools([\"delete_order\"])",
+      "typescript": ".forbiddenTools([\"delete_order\"])"
+    },
+    {
+      "statement": "trajectory([\"lookup_order\", \"issue_refund\"], mode=\"superset\")",
+      "chain_prefix": "",
+      "python": ".trajectory([\"lookup_order\", \"issue_refund\"], mode=\"superset\")",
+      "typescript": ".trajectory([\"lookup_order\", \"issue_refund\"], { mode: \"superset\" })"
+    },
+    {
+      "statement": "trajectory_partial_order([[\"lookup_order\", \"issue_refund\"]], tools=[\"lookup_order\"])",
+      "chain_prefix": "",
+      "python": ".trajectory_partial_order([[\"lookup_order\", \"issue_refund\"]], tools=[\"lookup_order\"])",
+      "typescript": ".trajectoryPartialOrder([[\"lookup_order\", \"issue_refund\"]], { tools: [\"lookup_order\"] })"
+    },
+    {
+      "statement": "tool_called_before(\"lookup_order\", \"issue_refund\")",
+      "chain_prefix": "",
+      "python": ".tool_called_before(\"lookup_order\", \"issue_refund\")",
+      "typescript": ".toolCalledBefore(\"lookup_order\", \"issue_refund\")"
+    },
+    {
+      "statement": "no_tool_cycles(2, min_repeats=3)",
+      "chain_prefix": "",
+      "python": ".no_tool_cycles(2, min_repeats=3)",
+      "typescript": ".noToolCycles(2, { minRepeats: 3 })"
+    },
+    {
+      "statement": "max_tool_failure_streak(1)",
+      "chain_prefix": "",
+      "python": ".max_tool_failure_streak(1)",
+      "typescript": ".maxToolFailureStreak(1)"
+    },
+    {
+      "statement": "tool_arg_satisfies(\"issue_refund\", \"amount_cents\", \"lte\", 5000)",
+      "chain_prefix": "",
+      "python": ".tool_arg_satisfies(\"issue_refund\", \"amount_cents\", \"lte\", 5000)",
+      "typescript": ".toolArgSatisfies(\"issue_refund\", \"amount_cents\", \"lte\", 5000)"
+    },
+    {
+      "statement": "tool_arg_satisfies(\"issue_refund\", \"order_id\", \"in\", [\"O-1042\"], soft=True)",
+      "chain_prefix": "",
+      "python": ".tool_arg_satisfies(\"issue_refund\", \"order_id\", \"in\", [\"O-1042\"], soft=True)",
+      "typescript": ".toolArgSatisfies(\"issue_refund\", \"order_id\", \"in\", [\"O-1042\"], { soft: true })"
+    },
+    {
+      "statement": "output_matches_schema({\"type\": \"object\", \"required\": [\"refund_id\"]})",
+      "chain_prefix": "",
+      "python": ".output_matches_schema({ \"required\": [\"refund_id\"], \"type\": \"object\" })",
+      "typescript": ".outputMatchesSchema({ required: [\"refund_id\"], type: \"object\" })"
+    },
+    {
+      "statement": "cost_under(0.05)",
+      "chain_prefix": "",
+      "python": ".cost_under(0.05)",
+      "typescript": ".costUnder(0.05)"
+    },
+    {
+      "statement": "count(\"refunds\", equals=1, order_id=\"O-1042\")",
+      "chain_prefix": ".world(FIXTURE.world)",
+      "python": ".world(FIXTURE.world).count(\"refunds\", equals=1, order_id=\"O-1042\")",
+      "typescript": ".world(FIXTURE.world).count(\"refunds\", { equals: 1, where: { order_id: \"O-1042\" } })"
+    },
+    {
+      "statement": "count(\"refunds\", at_least=1, at_most=2)",
+      "chain_prefix": ".world(FIXTURE.world)",
+      "python": ".world(FIXTURE.world).count(\"refunds\", at_most=2, at_least=1)",
+      "typescript": ".world(FIXTURE.world).count(\"refunds\", { atMost: 2, atLeast: 1 })"
+    },
+    {
+      "statement": "unique(\"refunds\", by=[\"order_id\", \"amount_cents\"])",
+      "chain_prefix": ".world(FIXTURE.world)",
+      "python": ".world(FIXTURE.world).unique(\"refunds\", by=[\"order_id\", \"amount_cents\"])",
+      "typescript": ".world(FIXTURE.world).unique(\"refunds\", { by: [\"order_id\", \"amount_cents\"] })"
+    },
+    {
+      "statement": "idempotent(\"refunds\", key=\"idempotency_key\", where={\"key\": \"k1\", \"by\": \"x\"})",
+      "chain_prefix": ".world(FIXTURE.world)",
+      "python": ".world(FIXTURE.world).idempotent(\"refunds\", key=\"idempotency_key\", where={ \"by\": \"x\", \"key\": \"k1\" })",
+      "typescript": ".world(FIXTURE.world).idempotent(\"refunds\", { key: \"idempotency_key\", where: { by: \"x\", key: \"k1\" } })"
+    },
+    {
+      "statement": "forbidden_tools([\"a​b\", \"c­d\", \"e‮f\", \"g󠁁h\", \"i\u2028j\"])",
+      "chain_prefix": "",
+      "python": ".forbidden_tools([\"a\\u200bb\", \"c\\u00add\", \"e\\u202ef\", \"g\\U000e0041h\", \"i\\u2028j\"])",
+      "typescript": ".forbiddenTools([\"a\\u200bb\", \"c\\u00add\", \"e\\u202ef\", \"g\\u{e0041}h\", \"i\\u2028j\"])"
+    }
+  ],
+  "description": "Chain lines rendered by the contract catalog for each method (Go: internal/contractdsl). The Python and TypeScript SDK tests apply each line to a real expect chain with FIXTURE bound to an object holding a world snapshot. Regenerate with ATTEST_UPDATE_GOLDEN=1 go test ./internal/contractdsl."
+}

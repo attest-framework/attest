@@ -29,6 +29,8 @@ type dslCase struct {
 	Spec map[string]any `json:"spec"`
 }
 
+func readContracts(file string) ([]byte, error) { return os.ReadFile(contractsDir + file) }
+
 func loadCases(t *testing.T, file string) []dslCase {
 	t.Helper()
 	data, err := os.ReadFile(contractsDir + file)

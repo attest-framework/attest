@@ -1,13 +1,13 @@
 package contractdsl
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"regexp"
 	"sort"
 	"strconv"
 	"strings"
+	"unicode"
 )
 
 // Form is a call in structured form: a method, positional arguments and
@@ -115,7 +115,11 @@ func (c *Call) TypeScript() Form {
 }
 
 // Statement renders the call in the closed grammar, so Parse reads it back.
-func (c *Call) Statement() (string, error) {
+// A string with a character the grammar has no escape for (a control or
+// invisible character) has no statement form.
+func (c *Call) Statement() (string, error) { return c.pythonCall(grammarString) }
+
+func (c *Call) pythonCall(st style) (string, error) {
 	f := c.Python()
 	var b strings.Builder
 	b.WriteString(f.Method + "(")
@@ -128,19 +132,30 @@ func (c *Call) Statement() (string, error) {
 	}
 	for _, a := range f.Args {
 		sep()
-		if err := writeLiteral(&b, a, grammarString); err != nil {
+		if err := writeLiteral(&b, a, st); err != nil {
 			return "", err
 		}
 	}
 	for _, name := range c.keywordOrder(f) {
 		sep()
 		b.WriteString(name + "=")
-		if err := writeLiteral(&b, f.Kwargs[name], grammarString); err != nil {
+		if err := writeLiteral(&b, f.Kwargs[name], st); err != nil {
 			return "", err
 		}
 	}
 	b.WriteString(")")
 	return b.String(), nil
+}
+
+// ChainPrefix is what must precede the call in a contract chain: effect checks
+// exist only on the object returned by .world(snapshot), in both SDKs. FIXTURE
+// is the variable `attest capture` generated tests load the fixture into; use
+// another snapshot expression where the test holds the world elsewhere.
+func (c *Call) ChainPrefix() string {
+	if c.Method.Effect {
+		return ".world(FIXTURE.world)"
+	}
+	return ""
 }
 
 // keywordOrder lists the Python keyword arguments in parameter order, then
@@ -164,20 +179,22 @@ func (c *Call) keywordOrder(f Form) []string {
 	return append(out, rest...)
 }
 
-// PythonLine is the chain line to paste into a pytest contract: ".method(...)".
+// PythonLine is the chain line to paste into a pytest contract: the chain
+// prefix (effect checks only) and ".method(...)". Characters that are invisible
+// or reorder text are written as \u escapes.
 func (c *Call) PythonLine() (string, error) {
-	s, err := c.Statement()
+	s, err := c.pythonCall(pythonLine)
 	if err != nil {
 		return "", err
 	}
-	return "." + s, nil
+	return c.ChainPrefix() + "." + s, nil
 }
 
 // TypeScriptLine is the chain line to paste into a Vitest contract.
 func (c *Call) TypeScriptLine() (string, error) {
 	pos, kw := c.rendered()
 	var b strings.Builder
-	b.WriteString("." + c.Method.TS + "(")
+	b.WriteString(c.ChainPrefix() + "." + c.Method.TS + "(")
 	n := 0
 	for _, a := range pos {
 		if n > 0 {
@@ -221,6 +238,7 @@ type style int
 
 const (
 	grammarString style = iota // Python literals, strings limited to the grammar's escapes
+	pythonLine                 // Python literals for a pasted line: any string, with \u escapes
 	tsObject                   // TypeScript literals
 )
 
@@ -309,24 +327,24 @@ func writeMap(b *strings.Builder, m map[string]any, st style) error {
 
 func formatFloat(f float64, st style) string {
 	s := strconv.FormatFloat(f, 'g', -1, 64)
-	if st == grammarString && !strings.ContainsAny(s, ".eE") {
+	if st != tsObject && !strings.ContainsAny(s, ".eE") {
 		s += ".0"
 	}
 	return s
 }
 
-// quote renders s as a double-quoted literal. The grammar knows five escapes;
-// a string needing any other is not representable as a statement.
+// needsEscape reports a character that must not appear raw in a pasted line:
+// controls, Unicode format characters (bidirectional controls, zero-width and
+// soft-hyphen characters, the tag block), and line and paragraph separators.
+func needsEscape(r rune) bool {
+	return r < 0x20 || r == 0x7f || (r >= 0x80 && r < 0xa0) || r == 0xFFFD ||
+		unicode.Is(unicode.Cf, r) || unicode.Is(unicode.Zl, r) || unicode.Is(unicode.Zp, r)
+}
+
+// quote renders s as a double-quoted literal. The grammar knows five escapes,
+// so a string needing any other has no statement form; the pasted lines write
+// those characters as \u escapes instead.
 func quote(s string, st style) (string, error) {
-	if st == tsObject {
-		var buf bytes.Buffer
-		enc := json.NewEncoder(&buf)
-		enc.SetEscapeHTML(false)
-		if err := enc.Encode(s); err != nil {
-			return "", err
-		}
-		return escapeBidi(strings.TrimSuffix(buf.String(), "\n")), nil
-	}
 	var b strings.Builder
 	b.WriteByte('"')
 	for _, r := range s {
@@ -338,31 +356,18 @@ func quote(s string, st style) (string, error) {
 			b.WriteString(`\n`)
 		case r == '\t':
 			b.WriteString(`\t`)
-		case r < 0x20 || r == 0x7f || r == 0xFFFD || isBidi(r):
-			return "", fmt.Errorf("string contains a character that has no statement form")
-		default:
+		case !needsEscape(r):
 			b.WriteRune(r)
+		case st == grammarString:
+			return "", fmt.Errorf("string contains a character that has no statement form")
+		case r > 0xFFFF && st == tsObject:
+			fmt.Fprintf(&b, `\u{%x}`, r)
+		case r > 0xFFFF:
+			fmt.Fprintf(&b, `\U%08x`, r)
+		default:
+			fmt.Fprintf(&b, `\u%04x`, r)
 		}
 	}
 	b.WriteByte('"')
 	return b.String(), nil
-}
-
-// isBidi reports a Unicode bidirectional control, which can make a pasted line
-// display differently from what it says.
-func isBidi(r rune) bool {
-	return r == 0x061C || r == 0x200E || r == 0x200F || (r >= 0x202A && r <= 0x202E) || (r >= 0x2066 && r <= 0x2069)
-}
-
-// escapeBidi writes bidirectional controls in a JSON string literal as \u escapes.
-func escapeBidi(lit string) string {
-	var b strings.Builder
-	for _, r := range lit {
-		if isBidi(r) {
-			fmt.Fprintf(&b, `\u%04x`, r)
-			continue
-		}
-		b.WriteRune(r)
-	}
-	return b.String()
 }
