@@ -234,6 +234,31 @@ func TestSkillsInstall_SymlinkedDirOutsideRoot_RefusesWithNothingWritten(t *test
 	}
 }
 
+func TestSkillsInstall_AbsoluteSymlinkInsideRoot_Installs(t *testing.T) {
+	bin := buildEngineBinary(t)
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, ".agents", "skills"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(dir, ".claude"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	real, _ := filepath.EvalSymlinks(dir)
+	if err := os.Symlink(filepath.Join(real, ".agents", "skills"), filepath.Join(dir, ".claude", "skills")); err != nil {
+		t.Fatal(err)
+	}
+
+	res := installSkillsJSON(t, bin, dir)
+
+	sources := len(sourceSkillFiles(t))
+	if len(res.Created) != 2*sources {
+		t.Errorf("created %d, want %d", len(res.Created), 2*sources)
+	}
+	if got := countFiles(t, filepath.Join(dir, ".agents")); got != sources {
+		t.Errorf("real files under .agents = %d, want %d", got, sources)
+	}
+}
+
 func TestSkillsInstall_SymlinkedSkillFile_RefusesWithNothingWritten(t *testing.T) {
 	bin := buildEngineBinary(t)
 	dir, elsewhere := t.TempDir(), t.TempDir()

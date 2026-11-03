@@ -125,6 +125,17 @@ func (p *Pipeline) EvaluateBatchWithBudget(ctx context.Context, trace *types.Tra
 	// Phase 1: Evaluate L1-4 sequentially.
 	hardFail := false
 	for i := range l14 {
+		// A cancelled context (a call past its deadline) stops the batch: every
+		// assertion not yet run is reported not evaluated, and the caller gets the
+		// context error with the partial results. Reason short_circuited is the
+		// closest member of the closed C1 set: the batch stopped before the
+		// assertion ran. An uncancelled context changes nothing.
+		if err := ctx.Err(); err != nil {
+			rest := append(append([]types.Assertion{}, l14[i:]...), l56...)
+			result.Results = appendNotEvaluated(result.Results, rest, types.ReasonShortCircuited,
+				"not run: the evaluation was cancelled before this assertion ran")
+			return result, err
+		}
 		eval, err := p.registry.Get(l14[i].Type)
 		if err != nil {
 			ar := types.AssertionResult{

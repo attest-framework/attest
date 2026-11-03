@@ -1,0 +1,67 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://attest-framework.github.io/schemas/v1/cli/mcp-tools.schema.json",
+  "title": "attest-engine mcp --tools --json",
+  "description": "The fixed toolset `attest mcp` serves: six tools, each with its description and its JSON Schema for input and output. The list does not depend on the project or on earlier calls.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "tools"
+  ],
+  "properties": {
+    "tools": {
+      "type": "array",
+      "minItems": 6,
+      "maxItems": 6,
+      "uniqueItems": true,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "description",
+          "input_schema",
+          "output_schema"
+        ],
+        "properties": {
+          "name": {
+            "enum": [
+              "draft_contract",
+              "evaluate",
+              "explain_failure",
+              "fixture_info",
+              "run_contract",
+              "trace_check"
+            ]
+          },
+          "description": {
+            "type": "string",
+            "minLength": 1
+          },
+          "input_schema": {
+            "type": "object",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "const": "object"
+              }
+            }
+          },
+          "output_schema": {
+            "type": "object",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "const": "object"
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

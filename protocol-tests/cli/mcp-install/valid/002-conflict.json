@@ -1,0 +1,13 @@
+{
+  "dir": "/work/project",
+  "created": [
+    ".cursor/mcp.json"
+  ],
+  "updated": [
+    ".codex/config.toml"
+  ],
+  "unchanged": [],
+  "conflict": [
+    ".mcp.json"
+  ]
+}

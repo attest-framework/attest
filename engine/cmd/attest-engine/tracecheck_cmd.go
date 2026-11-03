@@ -134,17 +134,10 @@ func runTraceCheck(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "trace check: %s\n", terminalSafe(err.Error()))
 		return 1
 	}
-	var report *trace.CheckReport
-	fixture := capture.IsFixture(data)
-	if fixture {
-		report = capture.CheckFixture(data)
-	} else {
-		spans, err := trace.ParseOTLP(data)
-		if err != nil {
-			fmt.Fprintf(stderr, "trace check: %s\n", terminalSafe(err.Error()))
-			return 1
-		}
-		report = trace.Check(spans)
+	report, fixture, err := capture.CheckData(data)
+	if err != nil {
+		fmt.Fprintf(stderr, "trace check: %s\n", terminalSafe(err.Error()))
+		return 1
 	}
 	exit := 0
 	if !report.OK {

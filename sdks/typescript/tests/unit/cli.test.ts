@@ -170,6 +170,7 @@ describe("attest init", () => {
     [["--ci", "gitlab"], 2],
     [["--json", "--json"], 2],
     [["--skills", "--skills"], 2],
+    [["--mcp", "--mcp"], 2],
   ])(
     "does not scaffold for %j",
     async (args, code) => {
@@ -227,6 +228,34 @@ function useSkillsEngine(body: string): string {
   return engine;
 }
 
+/**
+ * An attest-engine stand-in whose help lists `mcp` and whose `mcp` command runs `body`
+ * (shell builtins only: PATH is isolated) after recording its arguments.
+ */
+function useMcpEngine(body: string): string {
+  const engine = path.join(env.root, "e", "attest-engine");
+  fs.mkdirSync(path.dirname(engine), { recursive: true });
+  fs.writeFileSync(
+    engine,
+    [
+      "#!/bin/sh",
+      'case "$1" in',
+      `  version) echo 'attest-engine ${ENGINE_VERSION}' ;;`,
+      "  help) echo 'commands:'; echo '  mcp  serve attest over MCP' ;;",
+      `  mcp) echo "$*" > "$0.calls"; ${body} ;;`,
+      "esac",
+      "",
+    ].join("\n"),
+    { mode: 0o755 },
+  );
+  process.env["ATTEST_ENGINE_PATH"] = engine;
+  return engine;
+}
+
+const MCP_DOC =
+  "echo '{\"dir\":\"/x\",\"created\":[\".mcp.json\"],\"updated\":[\".cursor/mcp.json\"]," +
+  "\"unchanged\":[\".codex/config.toml\"],\"conflict\":[]}'";
+
 describe("attest init --json and --skills", () => {
   let originalCwd: string;
   let project: string;
@@ -271,6 +300,66 @@ describe("attest init --json and --skills", () => {
       skipped: ["attest.policy.yaml"],
     });
     expect(fs.readFileSync(path.join(project, "attest.policy.yaml"), "utf-8")).toBe("# mine\n");
+  });
+
+  it.each([
+    ["pnpm-lock.yaml", ["pnpm", "exec", "attest", "mcp"]],
+    [null, ["npx", "--no", "attest", "mcp"]],
+  ])("--mcp --json merges the engine's paths (lockfile %s)", async (lockfile, launch) => {
+    const engine = useMcpEngine(MCP_DOC);
+    if (lockfile !== null) fs.writeFileSync(path.join(project, lockfile), "");
+
+    await expect(main(["init", "--mcp", "--json"])).resolves.toBe(0);
+
+    expect(initDoc()).toEqual({
+      created: [".mcp.json", "attest.policy.yaml", "tests/my-agent.test.ts"],
+      updated: [".cursor/mcp.json"],
+      skipped: [".codex/config.toml"],
+      conflict: [],
+    });
+    expect(fs.readFileSync(`${engine}.calls`, "utf-8").trim()).toBe(
+      `mcp install --dir ${process.cwd()} --command ${JSON.stringify(launch)} --json`,
+    );
+  });
+
+  it("--mcp reports a conflicting config under its own label", async () => {
+    useMcpEngine(
+      "echo '{\"dir\":\"/x\",\"created\":[],\"updated\":[],\"unchanged\":[],\"conflict\":[\".mcp.json\"]}'",
+    );
+
+    await expect(main(["init", "--mcp", "--json"])).resolves.toBe(0);
+
+    const doc = initDoc();
+    expect(doc.conflict).toEqual([".mcp.json"]);
+    expect(doc.skipped).not.toContain(".mcp.json");
+  });
+
+  it("--mcp conflicts are not printed as unchanged", async () => {
+    useMcpEngine(
+      "echo '{\"dir\":\"/x\",\"created\":[],\"updated\":[],\"unchanged\":[],\"conflict\":[\".mcp.json\"]}'",
+    );
+
+    await expect(main(["init", "--mcp"])).resolves.toBe(0);
+
+    const err = stderr.join("");
+    expect(err).toContain("Conflict");
+    expect(err).not.toContain(`Skipped (unchanged): ${path.join(process.cwd(), ".mcp.json")}`);
+  });
+
+  it("init without --mcp has no conflict key", async () => {
+    await expect(main(["init", "--json"])).resolves.toBe(0);
+
+    expect(initDoc()).not.toHaveProperty("conflict");
+  });
+
+  it("--mcp with an engine that fails exits 1 and scaffolds nothing", async () => {
+    useMcpEngine("echo boom >&2; exit 3");
+
+    await expect(main(["init", "--mcp", "--json"])).resolves.toBe(1);
+
+    expect(stdout.join("")).toBe("");
+    expect(stderr.join("")).toContain("mcp install");
+    expect(fs.existsSync(path.join(project, "tests"))).toBe(false);
   });
 
   it("--skills --json merges the engine's paths", async () => {

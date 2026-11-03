@@ -118,6 +118,20 @@ func IsFixture(data []byte) bool {
 	return json.Unmarshal(data, &probe) == nil && probe.FixtureVersion != nil
 }
 
+// CheckData is trace check for a document that is either a capture fixture or
+// an OTLP/JSON export. fixture reports which it was. An OTLP document that does
+// not parse is an error; a fixture that does not decode is a report with errors.
+func CheckData(data []byte) (report *trace.CheckReport, fixture bool, err error) {
+	if IsFixture(data) {
+		return CheckFixture(data), true, nil
+	}
+	spans, err := trace.ParseOTLP(data)
+	if err != nil {
+		return nil, false, err
+	}
+	return trace.Check(spans), false, nil
+}
+
 // CheckFixture is trace check for a fixture: the fixture decodes, its trace
 // passes the engine's trace validation, and the capture-time trace check was
 // clean. An unverified fixture is reported as a warning.

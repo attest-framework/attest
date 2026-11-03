@@ -2,6 +2,9 @@ package assertion
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/attest-ai/attest/engine/pkg/types"
@@ -149,5 +152,24 @@ func TestSchemaEvaluator(t *testing.T) {
 				t.Errorf("got status %q, want %q; explanation: %s", result.Status, tt.wantStatus, result.Explanation)
 			}
 		})
+	}
+}
+
+func TestSchemaEvaluator_ExternalRef_IsNotLoaded(t *testing.T) {
+	dir := t.TempDir()
+	outside := filepath.Join(dir, "secret.json")
+	if err := os.WriteFile(outside, []byte(`{"pattern":"(sk-live-abc"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, ref := range []string{"file://" + outside, "file:///dev/stdin", "http://127.0.0.1:1/x.json"} {
+		spec, _ := json.Marshal(map[string]any{"target": "output.message", "schema": map[string]any{"$ref": ref}})
+		tr := &types.Trace{Output: json.RawMessage(`{"message":"hi"}`)}
+		res := (&SchemaEvaluator{}).Evaluate(tr, &types.Assertion{AssertionID: "a", Type: types.TypeSchema, Spec: spec})
+		if res.Status != types.StatusHardFail {
+			t.Errorf("%s: status %s, want hard_fail", ref, res.Status)
+		}
+		if strings.Contains(res.Explanation, "sk-live-abc") {
+			t.Errorf("%s: explanation leaks file content: %s", ref, res.Explanation)
+		}
 	}
 }

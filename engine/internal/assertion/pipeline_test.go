@@ -409,3 +409,52 @@ func TestPipeline_EvaluateBatch_Empty(t *testing.T) {
 		t.Fatalf("expected 0 results, got %d", len(result.Results))
 	}
 }
+
+type cancelAfterFirst struct{ cancel context.CancelFunc }
+
+func (c cancelAfterFirst) Evaluate(*types.Trace, *types.Assertion) *types.AssertionResult {
+	c.cancel()
+	return &types.AssertionResult{AssertionID: "a1", Status: types.StatusPass, Score: 1}
+}
+
+func TestEvaluateBatch_ContextCancelledMidBatch_StopsAndMarksRestNotEvaluated(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	reg := NewRegistry()
+	reg.Register(types.TypeTrace, cancelAfterFirst{cancel})
+	p := NewPipeline(reg)
+	asserts := []types.Assertion{
+		{AssertionID: "a1", Type: types.TypeTrace, Spec: json.RawMessage(`{}`)},
+		{AssertionID: "a2", Type: types.TypeTrace, Spec: json.RawMessage(`{}`)},
+		{AssertionID: "a3", Type: types.TypeTrace, Spec: json.RawMessage(`{}`)},
+		{AssertionID: "j", Type: types.TypeLLMJudge, Spec: json.RawMessage(`{}`)},
+	}
+
+	res, err := p.EvaluateBatch(ctx, &types.Trace{TraceID: "t"}, asserts)
+
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("error %v, want context.Canceled", err)
+	}
+	if len(res.Results) != 4 {
+		t.Fatalf("%d results, want every assertion accounted for", len(res.Results))
+	}
+	if res.Results[0].Status != types.StatusPass {
+		t.Errorf("first assertion ran before the cancel: %s", res.Results[0].Status)
+	}
+	for _, r := range res.Results[1:] {
+		if r.Status != types.StatusNotEvaluated || r.Reason != types.ReasonShortCircuited {
+			t.Errorf("%s: %s/%s, want not_evaluated/short_circuited", r.AssertionID, r.Status, r.Reason)
+		}
+	}
+}
+
+func TestEvaluateBatch_UncancelledContext_RunsEveryAssertion(t *testing.T) {
+	p := NewPipeline(NewRegistry())
+	asserts := []types.Assertion{
+		{AssertionID: "a", Type: types.TypeTrace, Spec: json.RawMessage(`{"check":"forbidden_tools","tools":["x"]}`)},
+		{AssertionID: "b", Type: types.TypeTrace, Spec: json.RawMessage(`{"check":"forbidden_tools","tools":["y"]}`)},
+	}
+	res, err := p.EvaluateBatch(context.Background(), &types.Trace{TraceID: "t"}, asserts)
+	if err != nil || len(res.Results) != 2 || res.Results[0].Status != types.StatusPass || res.Results[1].Status != types.StatusPass {
+		t.Errorf("%+v, %v", res, err)
+	}
+}
