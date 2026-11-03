@@ -51,6 +51,7 @@ const (
 	TypeLLMJudge   = "llm_judge"
 	TypeTraceTree  = "trace_tree"
 	TypePlugin     = "plugin"
+	TypeEffect     = "effect"
 
 	// ThresholdSource* values describe how the engine classified an
 	// assertion's status. They surface dynamic-threshold degradation so
@@ -63,7 +64,7 @@ const (
 
 // LayerForType returns the assertion-pipeline layer (1–8) for a given
 // assertion type string, or 0 if the type is unknown. Layers map to:
-// 1 schema, 2 constraint, 3 trace and trace_tree, 4 content,
+// 1 schema, 2 constraint, 3 trace, trace_tree and effect, 4 content,
 // 5 embedding, 6 llm_judge, 7 (reserved for trace_tree higher-order checks
 // once they migrate), 8 plugin.
 func LayerForType(assertionType string) int {
@@ -72,7 +73,7 @@ func LayerForType(assertionType string) int {
 		return 1
 	case TypeConstraint:
 		return 2
-	case TypeTrace, TypeTraceTree:
+	case TypeTrace, TypeTraceTree, TypeEffect:
 		return 3
 	case TypeContent:
 		return 4

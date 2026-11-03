@@ -17,6 +17,7 @@ import (
 
 	"github.com/attest-ai/attest/engine/internal/redact"
 	"github.com/attest-ai/attest/engine/internal/trace"
+	"github.com/attest-ai/attest/engine/internal/world"
 )
 
 // Session is one capture: a loopback listener hosting the recording proxy
@@ -34,22 +35,43 @@ type Session struct {
 	// bits, so only the process given the environment can reach the
 	// listener's routes.
 	token string
+	// world is the simulated external system the session also hosts, nil
+	// when none was requested.
+	world *world.World
 }
+
+// Option configures a session.
+type Option func(*sessionConfig)
+
+type sessionConfig struct{ world *world.World }
+
+// WithWorld hosts w on the session's listener. Env then carries w's base URL
+// under the variable the definition names.
+func WithWorld(w *world.World) Option { return func(c *sessionConfig) { c.world = w } }
+
+// worldPrefix is the path segment, after the token, that serves the world.
+const worldPrefix = "/world"
 
 // Start opens the capture listener on an ephemeral 127.0.0.1 port.
 // Upstreams are where the proxy forwards model calls.
-func Start(up Upstreams) (*Session, error) {
+func Start(up Upstreams, opts ...Option) (*Session, error) {
 	proxy, err := NewProxy(up)
 	if err != nil {
 		return nil, err
 	}
-	return startWith(proxy)
+	return startWith(proxy, opts)
+}
+
+// StartWorld opens a listener that hosts only the world: no model proxy, no
+// span receiver.
+func StartWorld(w *world.World) (*Session, error) {
+	return startWith(nil, []Option{WithWorld(w)})
 }
 
 // StartReplay starts a session whose proxy answers from a fixture. The
 // receiver still runs, so an agent that exports spans does not fail; the
 // spans are discarded with the session.
-func StartReplay(o ReplayOptions) (*Session, error) {
+func StartReplay(o ReplayOptions, opts ...Option) (*Session, error) {
 	rp, err := NewReplayer(o)
 	if err != nil {
 		return nil, err
@@ -59,26 +81,45 @@ func StartReplay(o ReplayOptions) (*Session, error) {
 		return nil, err
 	}
 	proxy.replay = rp
-	return startWith(proxy)
+	return startWith(proxy, opts)
 }
 
 // ReplaySummary reports what a replay session served. It is valid after
 // Close, once every in-flight request has finished.
 func (s *Session) ReplaySummary() ReplaySummary {
+	if s.proxy == nil {
+		return ReplaySummary{}
+	}
 	sum := s.proxy.replay.Summary()
 	sum.LiveCostUSD, sum.UnpricedLiveCalls = s.proxy.liveCost()
 	return sum
 }
 
-func startWith(proxy *Proxy) (*Session, error) {
+func startWith(proxy *Proxy, opts []Option) (*Session, error) {
+	var cfg sessionConfig
+	for _, o := range opts {
+		o(&cfg)
+	}
 	raw := make([]byte, 16)
 	if _, err := rand.Read(raw); err != nil {
 		return nil, fmt.Errorf("capture token: %w", err)
 	}
-	s := &Session{proxy: proxy, receiver: &Receiver{budget: proxy.budget}, served: make(chan error, 1), token: hex.EncodeToString(raw)}
+	s := &Session{proxy: proxy, world: cfg.world, served: make(chan error, 1), token: hex.EncodeToString(raw)}
 	mux := http.NewServeMux()
-	proxy.Register(mux, "/"+s.token)
-	s.receiver.Register(mux, "/"+s.token)
+	if proxy != nil {
+		s.receiver = &Receiver{budget: proxy.budget}
+		proxy.Register(mux, "/"+s.token)
+		s.receiver.Register(mux, "/"+s.token)
+		if s.world != nil {
+			if _, taken := s.modelEnv("")[s.world.BaseURLEnv()]; taken {
+				return nil, fmt.Errorf("world base_url_env %s is a variable the capture session sets itself", s.world.BaseURLEnv())
+			}
+		}
+	}
+	if s.world != nil {
+		prefix := "/" + s.token + worldPrefix
+		mux.Handle(prefix+"/", s.world.Handler(prefix))
+	}
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		return nil, fmt.Errorf("capture listener: %w", err)
@@ -103,11 +144,30 @@ func (s *Session) BaseURL() string { return "http://" + s.listener.Addr().String
 // URLs for the proxy and the OTLP traces endpoint for the receiver.
 func (s *Session) Env() map[string]string {
 	base := s.BaseURL() + "/" + s.token
+	env := map[string]string{}
+	if s.proxy != nil {
+		env = s.modelEnv(base)
+	}
+	if s.world != nil {
+		env[s.world.BaseURLEnv()] = base + worldPrefix
+	}
+	return env
+}
+
+func (s *Session) modelEnv(base string) map[string]string {
 	return map[string]string{
 		"OPENAI_BASE_URL":                    base + OpenAIPrefix,
 		"ANTHROPIC_BASE_URL":                 base + AnthropicPrefix,
 		"OTEL_EXPORTER_OTLP_TRACES_ENDPOINT": base + TracesPath,
 	}
+}
+
+// WorldSnapshot is the hosted world's current state, nil without a world.
+func (s *Session) WorldSnapshot() *world.Snapshot {
+	if s.world == nil {
+		return nil
+	}
+	return s.world.Snapshot()
 }
 
 // Close stops accepting connections and waits up to shutdownTimeout for
@@ -120,6 +180,9 @@ func (s *Session) Close() error {
 }
 
 func (s *Session) close() error {
+	if s.world != nil {
+		s.world.Release()
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 	defer cancel()
 	err := s.server.Shutdown(ctx)
@@ -136,6 +199,9 @@ func (s *Session) close() error {
 // and the count of exchanges the client never finished reading. A session
 // over its recording limit is an error.
 func (s *Session) Recorded() ([]trace.Span, []rawExchange, int, error) {
+	if s.proxy == nil {
+		return nil, nil, 0, errors.New("session hosts only a world; nothing was recorded")
+	}
 	ex, incomplete, err := s.proxy.Exchanges()
 	if err != nil {
 		return nil, nil, 0, err
@@ -155,6 +221,9 @@ type BuildInput struct {
 	ExpectFail bool
 	AgentID    string
 	Redactor   *redact.Redactor
+	// World is the hosted world's final state; nil stores a null world
+	// section.
+	World *world.Snapshot
 }
 
 // BuildFixture converts the spans to a trace, redacts and templates the trace
@@ -192,7 +261,8 @@ func BuildFixture(in BuildInput) (*Fixture, error) {
 	if err != nil {
 		return nil, err
 	}
-	doc = Template(doc)
+	tpl := newTemplater()
+	doc = tpl.template(doc)
 	m := doc.(map[string]any)
 
 	f := &Fixture{
@@ -230,7 +300,35 @@ func BuildFixture(in BuildInput) (*Fixture, error) {
 	if f.Verification, err = Verify(f.Trace, f.Contracts, in.ExpectFail, check); err != nil {
 		return nil, err
 	}
+	if in.World != nil {
+		if f.World, err = worldSection(in.World, in.Redactor, tpl); err != nil {
+			return nil, err
+		}
+	}
 	return f, nil
+}
+
+// worldSection redacts the snapshot like the rest of the fixture and templates
+// email addresses with the trace's templater, so one address is one
+// {{email_N}} across the fixture. Ids and timestamps stay as the world held
+// them: the state is evidence that effect contracts read literally.
+func worldSection(snap *world.Snapshot, r *redact.Redactor, tpl *templater) (json.RawMessage, error) {
+	doc, err := toGeneric(snap)
+	if err != nil {
+		return nil, err
+	}
+	doc, err = redactTree(doc, r)
+	if err != nil {
+		return nil, err
+	}
+	if doc, err = tpl.emails(doc); err != nil {
+		return nil, err
+	}
+	raw, err := canonical(doc)
+	if err != nil {
+		return nil, err
+	}
+	return json.RawMessage(raw), nil
 }
 
 func toGeneric(v any) (any, error) {

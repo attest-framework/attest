@@ -96,7 +96,7 @@ func ClassifyFailure(r *AssertionResult) string {
 	}
 
 	switch r.Type {
-	case TypeSchema, TypeConstraint, TypeTrace, TypeTraceTree, TypeContent, TypePlugin:
+	case TypeSchema, TypeConstraint, TypeTrace, TypeTraceTree, TypeEffect, TypeContent, TypePlugin:
 		if r.Status == StatusHardFail {
 			return FailureClassBrokenCode
 		}

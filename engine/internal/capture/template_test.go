@@ -3,6 +3,7 @@ package capture
 import (
 	"encoding/json"
 	"fmt"
+	"reflect"
 	"strconv"
 	"strings"
 	"testing"
@@ -201,5 +202,33 @@ func TestTemplate_NumbersKeepPrecision(t *testing.T) {
 	}
 	if string(m["amount"]) != "12345678901234567890" || string(m["price"]) != "0.1" {
 		t.Fatalf("got %s", got)
+	}
+}
+
+func TestTemplaterEmails_SharesNumberingWithTheDocumentAndKeepsOtherValues(t *testing.T) {
+	tpl := newTemplater()
+	tpl.template(map[string]any{"note": "mail lee@example.com then pat@example.com"})
+
+	got, err := tpl.emails(map[string]any{
+		"pat@example.com": "id-9007",
+		"rows":            []any{map[string]any{"to": "pat@example.com", "cc": "new@example.com", "at": "2024-01-02T03:04:05Z"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	want := map[string]any{
+		"{{email_2}}": "id-9007",
+		"rows":        []any{map[string]any{"to": "{{email_2}}", "cc": "{{email_3}}", "at": "2024-01-02T03:04:05Z"}},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+}
+
+func TestTemplaterEmails_KeysThatCollideAfterTemplatingAreAnError(t *testing.T) {
+	_, err := newTemplater().emails(map[string]any{"a@example.com": 1, "{{email_1}}": 2})
+	if err == nil {
+		t.Fatal("collision accepted")
 	}
 }

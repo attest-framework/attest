@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://attest-framework.github.io/schemas/attest/v1/fixture-v1.schema.json",
   "title": "Attest capture fixture v1",
-  "description": "A captured run, written by `attest capture` to `tests/attest/fixtures/<name>.attest.json`: the run's trace-v2 trace, every model exchange recorded by the capture proxy with its replay key, the contracts drafted from the run and their verification on it. Secrets are redacted to `[redacted]`; volatile values (trace and span ids, provider response ids, timestamps, durations, emails) are templated to stable placeholders, consistently across the trace, the exchanges and the keys. `world` is reserved for simulated-world state (world-v1) and is null until then.",
+  "description": "A captured run, written by `attest capture` to `tests/attest/fixtures/<name>.attest.json`: the run's trace-v2 trace, every model exchange recorded by the capture proxy with its replay key, the contracts drafted from the run and their verification on it. Secrets are redacted to `[redacted]`; volatile values (trace and span ids, provider response ids, timestamps, durations, emails) are templated to stable placeholders, consistently across the trace, the exchanges and the keys. `world` is the final state of the simulated world the run acted on, a world-v1 snapshot (`$defs/snapshot` in world-v1.schema.json), and is null when the capture hosted no world.",
   "type": "object",
   "required": ["fixture_version", "name", "source", "trace", "exchanges", "contracts", "verification", "world"],
   "additionalProperties": false,
@@ -30,7 +30,7 @@
     "contracts": { "type": "array", "items": { "$ref": "#/$defs/contract" } },
     "verification": { "$ref": "#/$defs/verification" },
     "world": {
-      "description": "Reserved for simulated-world state. Null in fixture v1 captures; a world section carries its own world_version.",
+      "description": "A world-v1 snapshot written by `attest capture --world`, or null. It carries its own world_version; `world-v1.schema.json#/$defs/snapshot` validates it in full.",
       "oneOf": [
         { "type": "null" },
         {

@@ -2,10 +2,15 @@ package server
 
 import (
 	"bufio"
+	"bytes"
 	"context"
+	"errors"
+	"fmt"
 	"github.com/segmentio/encoding/json"
 	"io"
 	"log/slog"
+	"regexp"
+	"strconv"
 	"sync"
 
 	"github.com/attest-ai/attest/engine/pkg/types"
@@ -19,7 +24,7 @@ const defaultMaxConcurrent = 1
 
 // Server reads NDJSON requests from an io.Reader and writes NDJSON responses to an io.Writer.
 type Server struct {
-	reader        *bufio.Scanner
+	reader        *bufio.Reader
 	writer        *bufio.Writer
 	mu            sync.Mutex // protects writer
 	session       *Session
@@ -44,13 +49,8 @@ func NewWithConcurrency(in io.Reader, out io.Writer, logger *slog.Logger, maxCon
 	if maxConcurrent < 1 {
 		maxConcurrent = 1
 	}
-	scanner := bufio.NewScanner(in)
-	// 10 MB buffer for large traces.
-	const maxScanBuf = 10 * 1024 * 1024
-	scanner.Buffer(make([]byte, maxScanBuf), maxScanBuf)
-
 	return &Server{
-		reader:        scanner,
+		reader:        bufio.NewReader(in),
 		writer:        bufio.NewWriter(out),
 		session:       NewSession(),
 		handlers:      make(map[string]Handler),
@@ -68,25 +68,32 @@ func (s *Server) RegisterHandler(method string, h Handler) {
 // Run reads NDJSON lines from the reader, dispatches to handlers, and writes responses until
 // stdin is closed or the context is canceled.
 func (s *Server) Run(ctx context.Context) error {
-	lines := make(chan []byte)
+	lines := make(chan inputLine)
 	scanErr := make(chan error, 1)
 
 	go func() {
-		for s.reader.Scan() {
-			line := make([]byte, len(s.reader.Bytes()))
-			copy(line, s.reader.Bytes())
-			lines <- line
+		for {
+			l, err := readLine(s.reader)
+			if err != nil {
+				if !errors.Is(err, io.EOF) {
+					scanErr <- err
+				}
+				close(lines)
+				return
+			}
+			lines <- l
 		}
-		if err := s.reader.Err(); err != nil {
-			scanErr <- err
-		}
-		close(lines)
 	}()
 
 	// dispatchOne acquires a semaphore slot, dispatches the request, writes the
 	// response, then releases the slot. When maxConcurrent == 1 it is called
 	// synchronously so behavior is identical to the previous sequential loop.
-	dispatchOne := func(line []byte) {
+	dispatchOne := func(in inputLine) {
+		if in.oversize {
+			s.writeNotification(oversizeResponse(in.prefix))
+			return
+		}
+		line := in.data
 		s.semaphore <- struct{}{}
 		handle := func() {
 			defer func() { <-s.semaphore }()
@@ -115,6 +122,73 @@ func (s *Server) Run(ctx context.Context) error {
 				return nil
 			}
 		}
+	}
+}
+
+// MaxLineBytes bounds one request line. A longer line is answered with an
+// error and discarded; the engine keeps serving.
+const MaxLineBytes = 10 * 1024 * 1024
+
+// prefixBytes is how much of an over-long line is kept to find its id.
+const prefixBytes = 4096
+
+type inputLine struct {
+	data     []byte
+	prefix   []byte
+	oversize bool
+}
+
+var idPrefix = regexp.MustCompile(`"id"\s*:\s*(-?[0-9]{1,18})\b`)
+
+// readLine reads one newline-terminated line. A line over MaxLineBytes is
+// consumed to its end and reported as oversize with its first bytes.
+func readLine(r *bufio.Reader) (inputLine, error) {
+	var buf []byte
+	oversize := false
+	for {
+		chunk, err := r.ReadSlice('\n')
+		if !oversize {
+			buf = append(buf, chunk...)
+			if len(buf) > MaxLineBytes {
+				oversize = true
+				buf = buf[:prefixBytes]
+			}
+		}
+		if errors.Is(err, bufio.ErrBufferFull) {
+			continue
+		}
+		if err != nil && !(errors.Is(err, io.EOF) && (len(buf) > 0 || oversize)) {
+			return inputLine{}, err
+		}
+		if oversize {
+			return inputLine{oversize: true, prefix: buf}, nil
+		}
+		return inputLine{data: bytes.TrimRight(buf, "\r\n")}, nil
+	}
+}
+
+// oversizeResponse is the JSON-RPC error for an over-long line. It carries the
+// request's id when it appears in the first bytes, otherwise null (JSON-RPC
+// 2.0, id unknown).
+func oversizeResponse(prefix []byte) map[string]any {
+	var id any
+	if m := idPrefix.FindSubmatch(prefix); m != nil {
+		if n, err := strconv.ParseInt(string(m[1]), 10, 64); err == nil {
+			id = n
+		}
+	}
+	return map[string]any{
+		"jsonrpc": "2.0",
+		"id":      id,
+		"error": map[string]any{
+			"code":    -32600,
+			"message": "request too large",
+			"data": map[string]any{
+				"error_type": "REQUEST_TOO_LARGE",
+				"retryable":  false,
+				"detail":     fmt.Sprintf("a request line is limited to %d bytes; send fewer or smaller assertions per batch", MaxLineBytes),
+			},
+		},
 	}
 }
 

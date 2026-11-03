@@ -40,12 +40,16 @@ options:
                          reports it
   --no-live              never forward a miss live, whatever keys are set
                          (a miss is reported); used with the egress guard
+  --world <world.yaml>   also host the world the agent acts on, starting from
+                         its initial state; its base URL variable is set for
+                         the command (or listed in the --serve env)
   --serve                for an SDK helper: print {"env":{...}} as one JSON
                          line, serve until stdin sends "stop" or closes, then
                          print {"summary":{...}} and exit`
 
 type replayOptions struct {
 	name, fixturesDir, fixture, mode string
+	world                            string
 	serve, noLive                    bool
 	command                          []string
 }
@@ -62,6 +66,7 @@ func parseReplayArgs(args []string, stderr io.Writer) (*replayOptions, bool) {
 	fs.StringVar(&o.fixturesDir, "fixtures-dir", filepath.Join("tests", "attest", "fixtures"), "")
 	fs.StringVar(&o.fixture, "fixture", "", "")
 	fs.StringVar(&o.mode, "mode", capture.ReplayStrict, "")
+	fs.StringVar(&o.world, "world", "", "")
 	fs.BoolVar(&o.serve, "serve", false, "")
 	fs.BoolVar(&o.noLive, "no-live", false, "")
 	if err := fs.Parse(args); err != nil {
@@ -101,9 +106,18 @@ func runReplay(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return 1
 	}
 	environ := os.Environ()
+	var opts []capture.Option
+	if o.world != "" {
+		w, werr := loadWorld(o.world)
+		if werr != nil {
+			printWorldError(stderr, "replay", o.world, werr)
+			return 2
+		}
+		opts = append(opts, capture.WithWorld(w))
+	}
 	s, err := capture.StartReplay(capture.ReplayOptions{
 		Mode: o.mode, Fixture: f, Environ: environ, Upstreams: capture.UpstreamsFromEnv(environ), NoLive: o.noLive,
-	})
+	}, opts...)
 	if err != nil {
 		fmt.Fprintf(stderr, "replay: %s\n", terminalSafe(err.Error()))
 		return 1
@@ -172,6 +186,9 @@ func replayCommand(s *capture.Session, argv, environ []string, stderr io.Writer)
 	}
 	sum := s.ReplaySummary()
 	writeReplaySummary(stderr, sum)
+	if snap := s.WorldSnapshot(); snap != nil {
+		writeWorldSummary(stderr, snap)
+	}
 	var exitErr *exec.ExitError
 	switch {
 	case errors.As(runErr, &exitErr):

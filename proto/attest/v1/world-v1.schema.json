@@ -1,0 +1,155 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://attest-framework.github.io/schemas/v1/world-v1.schema.json",
+  "title": "Attest world definition (world-v1)",
+  "description": "The root validates a `world.yaml` converted to JSON: the external HTTP system an agent acts on, served by `attest-engine world` as a local stateful fake. `$defs/snapshot` validates the world state `attest capture --world` stores in fixture-v1's `world` section and that the effect assertion family embeds.",
+  "type": "object",
+  "required": ["world_version", "base_url_env", "resources"],
+  "additionalProperties": false,
+  "properties": {
+    "world_version": { "const": 1 },
+    "base_url_env": {
+      "description": "Environment variable that carries the world's base URL to the agent, for example PAYMENTS_BASE_URL.",
+      "type": "string",
+      "pattern": "^[A-Z][A-Z0-9_]{0,63}$"
+    },
+    "seed": {
+      "description": "Seed for probabilistic faults. The same seed and request sequence give the same outcomes.",
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991,
+      "default": 0
+    },
+    "resources": {
+      "type": "object",
+      "minProperties": 1,
+      "maxProperties": 32,
+      "propertyNames": { "pattern": "^[a-z][a-z0-9_]{0,31}$" },
+      "additionalProperties": { "$ref": "#/$defs/resource" }
+    },
+    "faults": {
+      "type": "array",
+      "maxItems": 64,
+      "items": { "$ref": "#/$defs/fault" }
+    }
+  },
+  "$defs": {
+    "route": { "enum": ["create", "list", "get"] },
+    "resource": {
+      "type": "object",
+      "required": ["path", "routes"],
+      "additionalProperties": false,
+      "properties": {
+        "path": {
+          "description": "Collection path. create is POST path, list is GET path, get is GET path/{id}.",
+          "type": "string",
+          "pattern": "^/[a-z][a-z0-9_-]{0,63}$"
+        },
+        "id_field": { "type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,63}$", "default": "id" },
+        "id_format": {
+          "description": "printf-style format for generated ids (letters, digits, dot, underscore, hyphen around one %d verb); the verb is the 1-based creation counter of the resource.",
+          "type": "string",
+          "pattern": "^[A-Za-z0-9._-]{0,32}%0?[0-9]{0,2}d[A-Za-z0-9._-]{0,32}$",
+          "default": "%d"
+        },
+        "routes": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 3,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/route" }
+        },
+        "filters": {
+          "description": "Fields list accepts as exact-match query parameters.",
+          "type": "array",
+          "maxItems": 16,
+          "uniqueItems": true,
+          "items": { "type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,63}$" }
+        },
+        "idempotency": {
+          "description": "Create honors this request header: a repeated key replays the first response and commits nothing. The key is stored in the record under field.",
+          "type": "object",
+          "required": ["header", "field"],
+          "additionalProperties": false,
+          "properties": {
+            "header": { "type": "string", "pattern": "^[A-Za-z][A-Za-z0-9-]{0,63}$" },
+            "field": { "type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,63}$" }
+          }
+        },
+        "seed": {
+          "description": "Initial records. Each carries the id_field as a string.",
+          "type": "array",
+          "maxItems": 1000,
+          "items": { "type": "object" }
+        }
+      }
+    },
+    "fault": {
+      "type": "object",
+      "required": ["resource", "route", "fault"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$" },
+        "resource": { "type": "string", "pattern": "^[a-z][a-z0-9_]{0,31}$" },
+        "route": { "$ref": "#/$defs/route" },
+        "fault": {
+          "description": "timeout_after_commit commits the create, then holds the response until the client disconnects (at most 30 seconds). 429 and 500 answer with that status and commit nothing.",
+          "enum": ["timeout_after_commit", 429, 500]
+        },
+        "on_requests": {
+          "description": "1-based ordinals of requests to this resource and route. A request that reaches the route counts even if it is rejected; timeout_after_commit fires only when the create commits, so an ordinal that lands on a rejected or replayed create fires nothing.",
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 1000,
+          "uniqueItems": true,
+          "items": { "type": "integer", "minimum": 1, "maximum": 2147483647 }
+        },
+        "probability": {
+          "description": "Chance per request, drawn from the seeded generator.",
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 1
+        }
+      },
+      "oneOf": [{ "required": ["on_requests"] }, { "required": ["probability"] }],
+      "if": { "properties": { "fault": { "const": "timeout_after_commit" } }, "required": ["fault"] },
+      "then": { "properties": { "route": { "const": "create" } } }
+    },
+    "snapshot": {
+      "description": "World state at one moment: what capture stores in a fixture and what the effect assertions check.",
+      "type": "object",
+      "required": ["world_version", "definition_sha256", "state", "faults_fired", "faults_fired_count"],
+      "additionalProperties": false,
+      "properties": {
+        "world_version": { "const": 1 },
+        "definition_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "state": {
+          "type": "object",
+          "propertyNames": { "pattern": "^[a-z][a-z0-9_]{0,31}$" },
+          "additionalProperties": { "type": "array", "items": { "type": "object" } }
+        },
+        "faults_fired_count": {
+          "description": "Every fault that fired. faults_fired lists the first 1000.",
+          "type": "integer",
+          "minimum": 0
+        },
+        "faults_fired": {
+          "type": "array",
+          "maxItems": 1000,
+          "items": {
+            "type": "object",
+            "required": ["resource", "route", "fault", "request"],
+            "additionalProperties": false,
+            "properties": {
+              "id": { "type": "string" },
+              "resource": { "type": "string" },
+              "route": { "$ref": "#/$defs/route" },
+              "fault": { "enum": ["timeout_after_commit", 429, 500] },
+              "request": { "type": "integer", "minimum": 1 }
+            }
+          }
+        }
+      }
+    }
+  }
+}

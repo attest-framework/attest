@@ -1,0 +1,18 @@
+{
+  "world_version": 1,
+  "base_url_env": "PAYMENTS_BASE_URL",
+  "seed": 7,
+  "resources": {
+    "refunds": {
+      "path": "/refunds",
+      "id_field": "refund_id",
+      "id_format": "R-%04d",
+      "routes": ["create", "list"],
+      "filters": ["order_id"]
+    }
+  },
+  "faults": [
+    { "resource": "refunds", "route": "create", "fault": 429, "probability": 0.3 },
+    { "resource": "refunds", "route": "list", "fault": 500, "on_requests": [2, 3] }
+  ]
+}
