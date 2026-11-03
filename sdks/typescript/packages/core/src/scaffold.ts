@@ -69,8 +69,8 @@ not_evaluated: warn
 
 export const GITHUB_WORKFLOW_TEMPLATE = `# Written by \`attest init --ci github\`.
 # The test step records its outcome and continues so the report is always uploaded,
-# the policy evaluated and the pull request annotated; the last step fails the job
-# when the tests failed. A policy warning (exit 2) does not fail the job.
+# the JUnit file written, the policy evaluated and the pull request summarised; the last
+# step fails the job when the tests failed. A policy warning (exit 2) does not fail the job.
 name: attest
 
 on:
@@ -80,11 +80,13 @@ on:
 
 permissions:
   contents: read
-  pull-requests: write
 
 jobs:
   attest:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
     steps:
       - uses: actions/checkout@v6
         with:
@@ -98,12 +100,17 @@ jobs:
         id: tests
         continue-on-error: true
         run: npx vitest run ${REPORT_ARGS}
+      - name: Write the JUnit report
+        if: always()
+        run: npx attest report junit --report attest-report.json --out attest-junit.xml
       - name: Upload the Attest report
         if: always()
         uses: actions/upload-artifact@v7
         with:
           name: attest-report
-          path: attest-report.json
+          path: |
+            attest-report.json
+            attest-junit.xml
           if-no-files-found: error
       - name: Evaluate the merge policy
         if: always()
@@ -117,8 +124,9 @@ jobs:
           fi
           exit "$code"
       - name: Annotate the pull request
-        # Fork pull requests get a read-only token that cannot post reviews; the last step
-        # still fails the job when tests failed.
+        # Posts one summary comment (updated on every run) and annotates failures at their
+        # file and line. Fork pull requests get a read-only token that cannot comment; the
+        # last step still fails the job when tests failed.
         if: >-
           always() && github.event_name == 'pull_request' &&
           github.event.pull_request.head.repo.full_name == github.repository

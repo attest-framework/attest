@@ -142,7 +142,15 @@ describe("attest init", () => {
         "npx vitest run --reporter=default --reporter=@attest-ai/vitest/reporter " +
           "--outputFile.attest=attest-report.json",
       );
+      expect(byName.get("Write the JUnit report")).toContain("if: always()");
+      expect(byName.get("Write the JUnit report")).toContain(
+        "npx attest report junit --report attest-report.json --out attest-junit.xml",
+      );
       expect(byName.get("Upload the Attest report")).toContain("if: always()");
+      expect(byName.get("Upload the Attest report")).toContain("attest-junit.xml");
+      const text = fs.readFileSync(workflow(), "utf-8");
+      expect(text).toContain("\npermissions:\n  contents: read\n\njobs:");
+      expect(text).toContain("    permissions:\n      contents: read\n      pull-requests: write\n");
       expect(byName.get("Evaluate the merge policy")).toContain("if: always()");
       expect(byName.get("Evaluate the merge policy")).toContain('"$code" -eq 2');
       expect(byName.get("Annotate the pull request")).toContain(`pr-annotate@v${VERSION}`);

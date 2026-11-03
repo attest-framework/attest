@@ -1,0 +1,77 @@
+{
+ "report_version": 2,
+ "timestamp": "2026-11-03T10:00:00Z",
+ "summary": {
+  "total": 3,
+  "passed": 0,
+  "soft_fail": 0,
+  "hard_fail": 2,
+  "not_evaluated": 1
+ },
+ "results": [
+  {
+   "assertion_id": "a",
+   "status": "hard_fail",
+   "type": "effect",
+   "explanation": "@octocat @org/team org/repo#1 <img src=x onerror=alert(1)> <!-- [x](https://evil) <!-- attest:pr-annotate --> `tick` ``double`` | pipe ‮bidi​zw",
+   "failure_class": "behavior",
+   "test_id": "tests/@octocat.py::test_`x`|y",
+   "file": "@org/team/org/repo#1.py",
+   "line": 3
+  },
+  {
+   "assertion_id": "c",
+   "status": "hard_fail",
+   "type": "effect",
+   "explanation": "a\\|b",
+   "failure_class": "behavior",
+   "test_id": "tests/t.py::test_pipe",
+   "file": "tests/t.py",
+   "line": 5
+  },
+  {
+   "assertion_id": "b",
+   "status": "not_evaluated",
+   "reason": "@octocat<img src=x>",
+   "type": "llm_judge",
+   "test_id": "tests/t.py::test_b",
+   "file": "tests/t.py",
+   "line": 9
+  }
+ ],
+ "tests": [
+  {
+   "test_id": "tests/@octocat.py::test_`x`|y",
+   "name": "x",
+   "file": "@org/team/org/repo#1.py",
+   "line": 3,
+   "outcome": "failed",
+   "assertion_ids": [
+    "a"
+   ]
+  },
+  {
+   "test_id": "tests/t.py::test_pipe",
+   "name": "p",
+   "file": "tests/t.py",
+   "line": 5,
+   "outcome": "failed",
+   "assertion_ids": [
+    "c"
+   ]
+  },
+  {
+   "test_id": "tests/t.py::test_b",
+   "name": "b",
+   "file": "tests/t.py",
+   "line": 9,
+   "outcome": "skipped",
+   "not_evaluated_reasons": [
+    "@octocat<img src=x>"
+   ],
+   "assertion_ids": [
+    "b"
+   ]
+  }
+ ]
+}

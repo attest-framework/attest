@@ -10,9 +10,9 @@
 
 | Location | Test | Assertion | Explanation |
 | --- | --- | --- | --- |
-| tests/test_refund.py:40 | tests/test_refund.py::test_live_agent | effect | effect violated: 2 refunds for O-1042 (expected 1) |
-| tests/test_replay.py:12 | tests/test_replay.py::test_auto | replay (replay_miss) | replay miss: system prompt changed (hash a1b2c3d→e4f5a6b) \| re-record |
-| tests/test_replay.py:30 | tests/test_replay.py::test_strict | replay (replay_miss) | replay miss: tools changed (hash 1111111→2222222) |
+| `tests/test_refund.py:40` | `tests/test_refund.py::test_live_agent` | `effect` | `effect violated: 2 refunds for O-1042 (expected 1)` |
+| `tests/test_replay.py:12` | `tests/test_replay.py::test_auto` | `replay (replay_miss)` | `replay miss: system prompt changed (hash a1b2c3d→e4f5a6b) \| re-record` |
+| `tests/test_replay.py:30` | `tests/test_replay.py::test_strict` | `replay (replay_miss)` | `replay miss: tools changed (hash 1111111→2222222)` |
 
 **Policy:** fail (exit 1)
-- block `hard_fail`: 1 hard failure
+- `block` `hard_fail`: `1 hard failure`

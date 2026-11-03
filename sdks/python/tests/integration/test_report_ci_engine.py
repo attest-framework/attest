@@ -110,8 +110,8 @@ def test_report_summary_has_replay_line_and_miss_rows(report_path: Path) -> None
     lines = result.stdout.splitlines()
     assert lines[0] == "### attest: 1 passed · 1 failed · 1 not evaluated"
     assert "2 replayed · 0 live model calls · $0.00 · 2 replay misses" in lines
-    assert any(line.startswith("| tests/t.py:20 |") and "replay_miss" in line for line in lines)
-    assert any(line.startswith("| tests/t.py:30 |") for line in lines)
+    assert any(line.startswith("| `tests/t.py:20` |") and "replay_miss" in line for line in lines)
+    assert any(line.startswith("| `tests/t.py:30` |") for line in lines)
 
 
 @pytest.mark.integration
