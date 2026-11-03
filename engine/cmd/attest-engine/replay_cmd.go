@@ -34,8 +34,9 @@ options:
   --fixtures-dir <dir>   fixture directory (default tests/attest/fixtures)
   --fixture <file>       fixture file
   --mode strict|auto     strict (default) fails a miss; auto forwards a miss
-                         live when OPENAI_API_KEY, ANTHROPIC_API_KEY or
-                         ATTEST_JUDGE_API_KEY is set, and otherwise reports it
+                         live, with the agent's own credentials, when
+                         OPENAI_API_KEY or ANTHROPIC_API_KEY (for that
+                         provider) is set, and otherwise reports it
   --serve                for an SDK helper: print {"env":{...}} as one JSON
                          line, serve until stdin sends "stop" or closes, then
                          print {"summary":{...}} and exit`

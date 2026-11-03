@@ -168,11 +168,11 @@ func NewReplayer(o ReplayOptions) (*Replayer, error) {
 		}
 		// Stored requests are already redacted; the redactor here only guards
 		// against a fixture that carries a secret of the current environment.
-		norm, err := normalizeRequest(doc, r.redactor)
+		norm, raw, err := normalizeRequest(doc, r.redactor)
 		if err != nil {
 			return nil, fmt.Errorf("fixture: exchanges[%d].request: %w", i, err)
 		}
-		id, err := identityOf(ex.Provider, ex.API, ex.Method, ex.Path, norm)
+		id, err := identityOf(ex.Provider, ex.API, ex.Method, normalizePath(ex.Path, r.redactor), norm, raw)
 		if err != nil {
 			return nil, fmt.Errorf("fixture: exchanges[%d]: %w", i, err)
 		}
@@ -183,8 +183,9 @@ func NewReplayer(o ReplayOptions) (*Replayer, error) {
 	return r, nil
 }
 
-// liveKeys reports, per provider, whether the environment holds a key that
-// lets a missed request go live.
+// liveKeys reports, per provider, whether the environment holds that
+// provider's standard key. A missed request goes live only with one: the
+// proxy forwards the agent's own credentials and adds none.
 func liveKeys(environ []string) map[string]bool {
 	set := map[string]bool{}
 	for _, kv := range environ {
@@ -197,8 +198,6 @@ func liveKeys(environ []string) map[string]bool {
 			set["openai"] = true
 		case "ANTHROPIC_API_KEY":
 			set["anthropic"] = true
-		case "ATTEST_JUDGE_API_KEY":
-			set["openai"], set["anthropic"] = true, true
 		}
 	}
 	return set
@@ -208,6 +207,7 @@ func liveKeys(environ []string) map[string]bool {
 type decision struct {
 	hit  *replayEntry
 	live bool
+	rec  ReplayRecord // the record of a live request
 	miss string
 }
 
@@ -220,37 +220,53 @@ func (r *Replayer) decide(provider, method, path string, body []byte) decision {
 			doc = v
 		}
 	}
-	norm, err := normalizeRequest(doc, r.redactor)
 	var id requestIdentity
+	norm, raw, err := normalizeRequest(doc, r.redactor)
 	if err == nil {
-		id, err = identityOf(provider, api, method, path, norm)
+		var livePath string
+		if livePath, err = redactPath(path); err == nil {
+			id, err = identityOf(provider, api, method, normalizePath(livePath, r.redactor), norm, raw)
+		}
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	seq := len(r.records)
-	rec := ReplayRecord{Seq: seq, Provider: provider, API: api}
+	rec := ReplayRecord{Provider: provider, API: api}
 	if err != nil {
 		rec.Outcome, rec.Message = OutcomeMiss, r.missMessage(fmt.Sprintf("the request could not be normalized (%s)", err))
-		r.records = append(r.records, rec)
+		r.add(rec)
 		return decision{miss: rec.Message}
 	}
 	for _, idx := range r.queues[id.String()] {
 		if e := r.entries[idx]; !e.consumed {
 			e.consumed = true
 			rec.Outcome, rec.Exchange = OutcomeReplayed, &idx
-			r.records = append(r.records, rec)
+			r.add(rec)
 			return decision{hit: e}
 		}
 	}
 	rec.Message = r.diagnose(id)
 	if r.mode == ReplayAuto && r.liveKeys[provider] {
+		// Recorded by the caller once the proxy has accepted the request.
 		rec.Outcome = OutcomeLive
-		r.records = append(r.records, rec)
-		return decision{live: true}
+		return decision{live: true, rec: rec}
 	}
 	rec.Outcome = OutcomeMiss
-	r.records = append(r.records, rec)
+	r.add(rec)
 	return decision{miss: rec.Message}
+}
+
+// add appends a record, numbering it. Callers hold r.mu unless they come
+// through record.
+func (r *Replayer) add(rec ReplayRecord) {
+	rec.Seq = len(r.records)
+	r.records = append(r.records, rec)
+}
+
+// record appends the record of a request a decision let through.
+func (r *Replayer) record(rec ReplayRecord) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.add(rec)
 }
 
 func (r *Replayer) missMessage(what string) string {

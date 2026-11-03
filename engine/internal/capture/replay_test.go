@@ -503,3 +503,79 @@ func TestReplay_ClientSeesNoRealUpstream_HeadersAndHostGuardsStillApply(t *testi
 		t.Fatalf("non-loopback host: status %d", resp.StatusCode)
 	}
 }
+
+func get(t *testing.T, url string) (int, string) {
+	t.Helper()
+	resp, err := http.Get(url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	b, _ := io.ReadAll(resp.Body)
+	return resp.StatusCode, string(b)
+}
+
+func TestReplay_UnchangedSystemPrompt_NotBlamedForVolatileValuesInMessages(t *testing.T) {
+	// Volatile values are renumbered across the whole request, so a timestamp
+	// in a message must not shift the numbers inside an unchanged system prompt.
+	rec := `{"model":"gpt-test","messages":[{"role":"system","content":"Now is {{timestamp_1}}"},{"role":"user","content":"hi"}]}`
+	live := `{"model":"gpt-test","messages":[{"role":"system","content":"Now is 2026-01-01T00:00:00Z"},{"role":"user","content":"hi at 2026-01-02T00:00:00Z"}]}`
+	s := startReplay(t, handFixture(t, "vol", [2]string{rec, `{}`}), ReplayStrict, nil, deadUpstreams())
+
+	_, _, body := post(t, chatURL(s), live)
+
+	if msg := missOf(t, body); !strings.HasPrefix(msg, "replay miss: messages changed") {
+		t.Fatalf("miss message = %q", msg)
+	}
+}
+
+func TestReplay_OtherAPIWithIDInPathAndSecretQuery_Matches(t *testing.T) {
+	f := handFixture(t, "other", [2]string{`""`, `{"status":"completed"}`})
+	ex := &f.Exchanges[0]
+	ex.API, ex.Method, ex.Path = "other", http.MethodGet, "/responses/resp_{{id_2}}?key="+redact.Marker
+	for name, livePath := range map[string]string{
+		"raw id":              "/responses/resp_abc123xyz789?key=sk-live-secret-0123456789",
+		"escaped placeholder": "/responses/resp_%7B%7Bid_1%7D%7D?key=sk-live-secret-0123456789",
+	} {
+		t.Run(name, func(t *testing.T) {
+			s := startReplay(t, f, ReplayStrict, nil, deadUpstreams())
+
+			status, body := get(t, s.Env()["OPENAI_BASE_URL"]+livePath)
+
+			if status != 200 || body != `{"status":"completed"}` {
+				t.Fatalf("%d %s", status, body)
+			}
+		})
+	}
+}
+
+func TestReplay_AutoMode_JudgeKeyAloneDoesNotGoLive(t *testing.T) {
+	up := newFakeUpstream(t)
+	f := handFixture(t, "auto", [2]string{chatReq("a", "u", ""), `{}`})
+	s := startReplay(t, f, ReplayAuto, []string{"ATTEST_JUDGE_API_KEY=judge-key-0123456789"}, Upstreams{OpenAI: up.OpenAIBase(), Anthropic: up.AnthropicBase()})
+
+	status, _, _ := post(t, chatURL(s), chatReq("b", "u", ""))
+
+	if status != 422 || up.seq.Load() != 0 {
+		t.Fatalf("status %d, upstream calls %d", status, up.seq.Load())
+	}
+}
+
+func TestReplay_LiveRequestRefused_RecordedAsMissNotLive(t *testing.T) {
+	up := newFakeUpstream(t)
+	f := handFixture(t, "auto", [2]string{chatReq("a", "u", ""), `{}`})
+	s := startReplay(t, f, ReplayAuto, []string{"OPENAI_API_KEY=sk-live-test-key-0123456789"}, Upstreams{OpenAI: up.OpenAIBase(), Anthropic: up.AnthropicBase()})
+	s.proxy.budget.charge(MaxSessionBytes + 1)
+
+	status, _, _ := post(t, chatURL(s), chatReq("b", "u", ""))
+
+	if status != http.StatusInsufficientStorage {
+		t.Fatalf("status = %d", status)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if sum := s.ReplaySummary(); sum.Live != 0 || sum.Misses != 1 || !strings.Contains(sum.Records[0].Message, "live request refused") {
+		t.Fatalf("summary = %+v", sum)
+	}
+}

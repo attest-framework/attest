@@ -193,9 +193,10 @@ func TestCaptureRefresh_UnrefreshableFixtures_Refused(t *testing.T) {
 		edit func(src map[string]any)
 		want string
 	}{
-		"redacted argv": {func(src map[string]any) { src["command"] = []any{"agent", "--token=[redacted]"} }, "redacted arguments"},
-		"in process":    {func(src map[string]any) { src["kind"], src["command"] = "in_process", nil }, "not from a command"},
-		"trace only":    {func(src map[string]any) { src["kind"], src["command"] = "otlp_file", nil }, "not from a command"},
+		"redacted argv":  {func(src map[string]any) { src["command"] = []any{"agent", "--token=[redacted]"} }, "redacted arguments"},
+		"in process":     {func(src map[string]any) { src["kind"], src["command"] = "in_process", nil }, "not from a command"},
+		"trace only":     {func(src map[string]any) { src["kind"], src["command"] = "otlp_file", nil }, "not from a command"},
+		"templated argv": {func(src map[string]any) { src["command"] = []any{"agent", "--customer", "{{email_1}}"} }, "templated arguments"},
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {

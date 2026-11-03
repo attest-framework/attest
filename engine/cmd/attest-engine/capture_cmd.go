@@ -41,13 +41,15 @@ options:
   --out-dir <dir>        fixture directory (default tests/attest/fixtures)
   --expect-fail          save an incident reproduction: verified when drafted
                          contracts fail, recorded as expected failures
-  --agent-id <id>        trace agent_id (default: the first turn's agent name)
+  --agent-id <id>        trace agent_id (default: the first turn's agent name;
+                         with --refresh, the fixture's)
   --result-file <path>   also write {"fixture", "verified"} JSON to <path>
   --from <otlp.json>     build from an OTLP/JSON export (trace only; no replay)
   --refresh <name>       re-run the fixture's recorded command with its
                          original flags (--expect-fail included) and overwrite
-                         it; refuses when the command was redacted or the
-                         fixture has no command (--from, in-process)
+                         it; refuses when the command's arguments were
+                         redacted or templated, or the fixture has no
+                         command (--from, in-process)
   --serve                in-process capture: print the environment as one JSON
                          line, then finalize when stdin sends "finalize" or
                          {"finalize":true,"environ":[...]} (secrets in that
@@ -513,11 +515,17 @@ func resolveRefresh(o *captureOptions) error {
 		return fmt.Errorf("--refresh %s: the fixture was captured from %s, not from a command; re-run the capture that produced it", o.refresh, f.Source.Kind)
 	}
 	for _, a := range f.Source.Command {
-		if strings.Contains(a, redact.Marker) {
+		switch {
+		case strings.Contains(a, redact.Marker):
 			return fmt.Errorf("--refresh %s: the recorded command has redacted arguments; re-run `attest capture --name %s%s -- <command>` yourself", o.refresh, o.refresh, expectFailFlag(f.Verification.ExpectFail))
+		case capture.HasPlaceholder(a):
+			return fmt.Errorf("--refresh %s: the recorded command has templated arguments (an id, timestamp or email replaced by a placeholder); re-run `attest capture --name %s%s -- <command>` yourself", o.refresh, o.refresh, expectFailFlag(f.Verification.ExpectFail))
 		}
 	}
 	o.name, o.command, o.expectFail = o.refresh, f.Source.Command, f.Verification.ExpectFail
+	if o.agentID == "" {
+		o.agentID = f.Trace.AgentID
+	}
 	return nil
 }
 

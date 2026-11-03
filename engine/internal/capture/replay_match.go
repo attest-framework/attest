@@ -22,6 +22,9 @@ import (
 // storedPlaceholder matches a {{kind_N}} placeholder written by Template.
 var storedPlaceholder = regexp.MustCompile(`\{\{(id|email|timestamp)_(\d+)\}\}`)
 
+// HasPlaceholder reports whether s contains a templated {{kind_N}} value.
+func HasPlaceholder(s string) bool { return storedPlaceholder.MatchString(s) }
+
 // unplaceholder rewrites every stored placeholder to a synthetic raw value of
 // the same kind, distinct per number, so Template renumbers placeholders and
 // raw values with the same rules.
@@ -54,14 +57,44 @@ func unplaceholder(v any) any {
 	}
 }
 
-// normalizeRequest returns the request body decoded and normalized. doc is
+// normalizeRequest redacts doc and returns it twice: normalized as a whole,
+// which is the match key's input, and with placeholders made raw but not yet
+// renumbered, which is what a miss diagnosis compares part by part. doc is
 // consumed.
-func normalizeRequest(doc any, r *redact.Redactor) (any, error) {
-	doc, err := redactTree(doc, r)
+func normalizeRequest(doc any, r *redact.Redactor) (normalized, raw any, err error) {
+	doc, err = redactTree(doc, r)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return Template(unplaceholder(doc)), nil
+	raw = unplaceholder(doc)
+	return Template(cloneJSON(raw)), raw, nil
+}
+
+// normalizePath redacts and renumbers the volatile values of a request path,
+// the same way on the stored and the live side. Only requests to an API with
+// no known prompt split are keyed on it.
+func normalizePath(path string, r *redact.Redactor) string {
+	return Template(unplaceholder(r.String(path))).(string)
+}
+
+// cloneJSON deep-copies a decoded JSON value.
+func cloneJSON(v any) any {
+	switch x := v.(type) {
+	case map[string]any:
+		out := make(map[string]any, len(x))
+		for k, e := range x {
+			out[k] = cloneJSON(e)
+		}
+		return out
+	case []any:
+		out := make([]any, len(x))
+		for i, e := range x {
+			out[i] = cloneJSON(e)
+		}
+		return out
+	default:
+		return v
+	}
 }
 
 // requestIdentity is a normalized request reduced to what replay matches on.
@@ -84,13 +117,14 @@ type components struct {
 	model    string
 }
 
-// identityOf computes the matching identity of a normalized request.
-func identityOf(provider, api, method, path string, req any) (requestIdentity, error) {
-	key, err := keyOf(api, req)
+// identityOf computes the matching identity of a request: the key from its
+// normalized form, the diagnosis parts from its raw (unnumbered) form.
+func identityOf(provider, api, method, path string, normalized, raw any) (requestIdentity, error) {
+	key, err := keyOf(api, normalized)
 	if err != nil {
 		return requestIdentity{}, err
 	}
-	id := requestIdentity{provider: provider, api: api, method: method, key: key, comps: componentsOf(api, req)}
+	id := requestIdentity{provider: provider, api: api, method: method, key: key, comps: componentsOf(api, raw)}
 	if api == "other" {
 		id.path = path
 	}
@@ -196,6 +230,15 @@ func hash7(v any) string {
 	return hex.EncodeToString(sum[:])[:7]
 }
 
+// hashPart is the hash7 of a part renumbered on its own, so a volatile value
+// elsewhere in the request cannot change another part's hash.
+func hashPart(v any) string {
+	if v == nil {
+		return "none"
+	}
+	return hash7(Template(cloneJSON(v)))
+}
+
 // firstDifference names the first part, in the order system prompt, messages,
 // tools, params, model, that differs between a recording and a live request.
 // It returns "" when every part is equal.
@@ -210,7 +253,7 @@ func firstDifference(recorded, live components) string {
 		{"tools", recorded.tools, live.tools},
 		{"params", recorded.params, live.params},
 	} {
-		if ha, hb := hash7(p.a), hash7(p.b); ha != hb {
+		if ha, hb := hashPart(p.a), hashPart(p.b); ha != hb {
 			return fmt.Sprintf("%s changed (hash %s→%s)", p.name, ha, hb)
 		}
 	}
