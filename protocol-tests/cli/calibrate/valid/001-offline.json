@@ -1,0 +1,13 @@
+{
+  "agreement": 1,
+  "cohen_kappa": 1,
+  "judge_model": "",
+  "judge_provider": "",
+  "label_count": 2,
+  "missing_judge": 0,
+  "persisted": false,
+  "roc_auc": 1,
+  "rubric_name": "default",
+  "rubric_version": "v2",
+  "threshold": 0.5
+}

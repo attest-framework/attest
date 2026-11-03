@@ -1,0 +1,53 @@
+{
+  "commands": [
+    {
+      "name": "baseline",
+      "summary": "pin, list, show or delete report baselines (pin|list|show|delete)",
+      "subcommands": [
+        {
+          "name": "pin",
+          "schema": "cli/baseline-pin.schema.json"
+        },
+        {
+          "name": "list",
+          "schema": "cli/baseline-list.schema.json"
+        }
+      ],
+      "exit_codes": [
+        {
+          "code": 0,
+          "meaning": "success"
+        },
+        {
+          "code": 2,
+          "meaning": "usage error"
+        }
+      ]
+    },
+    {
+      "name": "doctor",
+      "summary": "report engine version, capabilities and provider configuration (--json)",
+      "schema": "doctor.schema.json",
+      "exit_codes": [
+        {
+          "code": 0,
+          "meaning": "success"
+        },
+        {
+          "code": 1,
+          "meaning": "configuration error"
+        },
+        {
+          "code": 2,
+          "meaning": "usage error"
+        }
+      ],
+      "subcommands": [
+        {
+          "name": "x",
+          "schema": "cli/x.schema.json"
+        }
+      ]
+    }
+  ]
+}

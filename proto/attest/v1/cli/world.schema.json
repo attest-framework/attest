@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://attest-framework.github.io/schemas/v1/cli/world.schema.json",
+  "title": "attest-engine world --json -- <command>",
+  "description": "The command's exit code and the world's final state. --json is refused with --serve.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "exit_code",
+    "world"
+  ],
+  "properties": {
+    "exit_code": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "minimum": 0,
+      "description": "The command's own exit code; null when it did not exit with one (killed by a signal). Not the process exit code of attest-engine."
+    },
+    "world": {
+      "type": "object",
+      "description": "The world's final state, a world-v1 snapshot (see world-v1.schema.json).",
+      "required": [
+        "world_version",
+        "definition_sha256",
+        "state",
+        "faults_fired",
+        "faults_fired_count"
+      ],
+      "properties": {
+        "world_version": {
+          "type": "integer",
+          "const": 1
+        },
+        "definition_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "state": {
+          "type": "object"
+        },
+        "faults_fired": {
+          "type": "array"
+        },
+        "faults_fired_count": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    }
+  }
+}

@@ -16,11 +16,24 @@ import (
 )
 
 func init() {
-	register(command{name: "trace", summary: "check or convert an OTLP/JSON trace export (check|convert)", run: handleTraceCommand})
+	register(command{
+		name:    "trace",
+		summary: "check or convert an OTLP/JSON trace export (check|convert)",
+		run:     handleTraceCommand,
+		subs: []subcommand{
+			{name: "check", schema: "cli/trace-check.schema.json"},
+			{name: "convert", schema: "cli/trace-convert.schema.json"},
+		},
+		exits: []exitCode{
+			{exitOK, "success: the trace converted, or check found no structural errors"},
+			{exitFailure, "check found structural errors, or the input could not be read, parsed or converted"},
+			{exitUsage, "usage error"},
+		},
+	})
 }
 
 const traceUsage = `usage: attest-engine trace check [--json] <otlp.json|fixture.attest.json|->
-       attest-engine trace convert [--agent-id <id>] <otlp.json|->`
+       attest-engine trace convert [--json] [--agent-id <id>] <otlp.json|->`
 
 func handleTraceCommand(args []string) {
 	if len(args) == 0 {
@@ -78,6 +91,7 @@ func runTraceConvert(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("trace convert", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	agentID := fs.String("agent-id", "", "agent_id for the trace (default: the first turn's gen_ai.agent.name)")
+	asJSON := fs.Bool("json", false, `print {"source","trace_id","agent_id","steps","trace"} instead of the bare trace`)
 	path, ok := singleInput(fs, args, stderr)
 	if !ok {
 		return 2
@@ -92,7 +106,15 @@ func runTraceConvert(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "trace convert: %s\n", terminalSafe(err.Error()))
 		return 1
 	}
-	if err := writeJSON(stdout, t); err != nil {
+	var doc any = t
+	if *asJSON {
+		steps := map[string]int{}
+		for _, st := range t.Steps {
+			steps[st.Type]++
+		}
+		doc = map[string]any{"source": path, "trace_id": t.TraceID, "agent_id": t.AgentID, "steps": steps, "trace": t}
+	}
+	if err := writeJSON(stdout, doc); err != nil {
 		fmt.Fprintf(stderr, "trace convert: %s\n", terminalSafe(err.Error()))
 		return 1
 	}

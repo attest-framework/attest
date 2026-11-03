@@ -1,0 +1,68 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://attest-framework.github.io/schemas/v1/cli/calibrate.schema.json",
+  "title": "attest-engine calibrate --json",
+  "description": "Judge agreement against human labels. judge_provider and judge_model are empty unless given.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "judge_provider",
+    "judge_model",
+    "rubric_name",
+    "rubric_version",
+    "threshold",
+    "label_count",
+    "agreement",
+    "cohen_kappa",
+    "roc_auc",
+    "persisted",
+    "missing_judge"
+  ],
+  "properties": {
+    "judge_provider": {
+      "type": "string"
+    },
+    "judge_model": {
+      "type": "string"
+    },
+    "rubric_name": {
+      "type": "string",
+      "minLength": 1
+    },
+    "rubric_version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "threshold": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "exclusiveMaximum": 1
+    },
+    "label_count": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "agreement": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "cohen_kappa": {
+      "type": "number",
+      "minimum": -1,
+      "maximum": 1
+    },
+    "roc_auc": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "persisted": {
+      "type": "boolean"
+    },
+    "missing_judge": {
+      "type": "integer",
+      "minimum": 0
+    }
+  }
+}

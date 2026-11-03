@@ -1,0 +1,34 @@
+{
+  "trace_id": "29478f3e0a07ff5725faf3112a8e3663",
+  "schema_version": 2,
+  "spans": 10,
+  "steps": {
+    "llm_call": 5,
+    "tool_call": 4
+  },
+  "turns": 1,
+  "handoffs": 0,
+  "retries": 1,
+  "ok": true,
+  "issues": [
+    {
+      "severity": "fatal",
+      "code": "orphan_span",
+      "message": "x"
+    }
+  ],
+  "coverage": [
+    {
+      "field": "cost",
+      "attributes": [
+        "gen_ai.usage.cost"
+      ],
+      "span_kind": "llm_call",
+      "missing": 5,
+      "total": 5,
+      "span_ids": [
+        "856ab063ac83c9a9"
+      ]
+    }
+  ]
+}

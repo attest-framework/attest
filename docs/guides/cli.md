@@ -1,0 +1,107 @@
+# Agent-facing CLI
+
+`attest` is built for coding agents as well as people. Every command is discoverable offline, prints one JSON document on request, and returns a documented exit code. `attest` in each SDK implements `init` itself and forwards every other command to `attest-engine`; the contract below applies to both spellings.
+
+## Discover
+
+```bash
+attest help --json      # every command, its schema, its exit codes
+attest guide            # list the shipped guides
+attest guide <topic>    # print one guide as Markdown, offline
+```
+
+`attest help --json` prints `{"commands": [{"name", "summary", "schema", "subcommands", "exit_codes"}]}`. `schema` and each subcommand's `schema` are paths relative to `proto/attest/v1/` in the attest repository. The text form (`attest help`) is unchanged.
+
+## JSON output
+
+Every command and subcommand accepts `--json`. With `--json` the command writes exactly one JSON document to stdout and sends diagnostics to stderr. Without it, output stays human-readable.
+
+Commands that run a child process (`capture`, `replay`, `world` with `-- <command>`) send the child's stdout to stderr under `--json` and print one result object at exit; `exit_code` in that object is the child's exit code (`null` when a signal killed it). `--serve` already writes JSON lines, so `--serve --json` is a usage error (exit 2).
+
+`attest init --json` prints `{"created": [...], "updated": [...], "skipped": [...]}` with paths relative to the project root; see `attest guide agents`.
+
+| Command | Schema |
+|---|---|
+| `baseline pin` | `cli/baseline-pin.schema.json` |
+| `baseline list` | `cli/baseline-list.schema.json` |
+| `baseline show` | `cli/baseline-show.schema.json` |
+| `baseline delete` | `cli/baseline-delete.schema.json` |
+| `cache stats` | `cli/cache-stats.schema.json` |
+| `cache clear` | `cli/cache-clear.schema.json` |
+| `calibrate` | `cli/calibrate.schema.json` |
+| `capture` | `cli/capture.schema.json` |
+| `doctor` | `doctor.schema.json` |
+| `guide` | `cli/guide.schema.json` |
+| `policy evaluate` | `cli/policy-evaluate.schema.json` |
+| `replay` | `cli/replay.schema.json` |
+| `report junit` | `cli/report-junit.schema.json` |
+| `report summary` | `cli/report-summary.schema.json` |
+| `report rows` | `cli/report-rows.schema.json` |
+| `select` | `cli/select.schema.json` |
+| `skills list` | `cli/skills-list.schema.json` |
+| `skills install` | `cli/skills-install.schema.json` |
+| `trace check` | `cli/trace-check.schema.json` |
+| `trace convert` | `cli/trace-convert.schema.json` |
+| `version` | `cli/version.schema.json` |
+| `world` | `cli/world.schema.json` |
+| `help` | `cli/help.schema.json` |
+
+`doctor` keeps its schema at `proto/attest/v1/doctor.schema.json`; `init` is `cli/init.schema.json`.
+
+## Exit codes
+
+Convention: 0 success, 1 the command ran and the result is a failure (check failed, block, child failed), 2 usage or invalid input. `policy evaluate` is the exception: its exit code is the verdict, so usage and load errors use 3 and cannot be mistaken for a warning or a block.
+
+The table is checked against the engine's command registry by a test; a change to either side fails `go test ./...`.
+
+| Command | Code | Meaning |
+|---|---|---|
+| `baseline` | 0 | success |
+| `baseline` | 1 | the report could not be loaded or has no assertion results, the tag is not pinned (show), or the baseline store failed |
+| `baseline` | 2 | usage error |
+| `cache` | 0 | success |
+| `cache` | 1 | the cache directory could not be read, or the home directory could not be determined |
+| `cache` | 2 | usage error |
+| `calibrate` | 0 | success |
+| `calibrate` | 1 | the labels file could not be read, has no judge_score rows or no usable agreement, or persisting failed |
+| `calibrate` | 2 | usage error |
+| `capture` | 0 | the fixture is verified, or --check-redaction found no secrets; the command's own exit code is recorded, not propagated |
+| `capture` | 1 | the fixture is not verified or was not written, the capture failed, or --check-redaction found secrets |
+| `capture` | 2 | usage error, an invalid --world file, or a --refresh that was not confirmed |
+| `doctor` | 0 | success |
+| `doctor` | 1 | configuration error the JSON-RPC server would refuse to start with |
+| `doctor` | 2 | usage error |
+| `guide` | 0 | guide list or guide printed |
+| `guide` | 1 | an embedded guide is unreadable or has no title |
+| `guide` | 2 | unknown topic or usage error |
+| `policy` | 0 | pass: every rule satisfied |
+| `policy` | 1 | block: a block-severity rule was violated |
+| `policy` | 2 | warn: only warn-severity rules were violated |
+| `policy` | 3 | usage error, or the policy, report or baseline failed to load |
+| `replay` | 0 | every request was served and the command exited 0 |
+| `replay` | 1 | the command exited non-zero (its code is not propagated; --json reports it as exit_code), a request missed, or the fixture could not be loaded or served |
+| `replay` | 2 | usage error or an invalid --world file |
+| `report` | 0 | success |
+| `report` | 2 | usage error, or unreadable or invalid input, or the output could not be written |
+| `select` | 0 | success, including an empty selection |
+| `select` | 2 | usage error, or git or the base ref failed |
+| `skills` | 0 | skills listed or installed |
+| `skills` | 1 | an embedded skill is invalid or a file could not be written |
+| `skills` | 2 | usage error |
+| `trace` | 0 | success: the trace converted, or check found no structural errors |
+| `trace` | 1 | check found structural errors, or the input could not be read, parsed or converted |
+| `trace` | 2 | usage error |
+| `version` | 0 | success |
+| `version` | 1 | writing the output failed |
+| `version` | 2 | usage error |
+| `world` | 0 | the command exited 0, or --serve stopped cleanly |
+| `world` | 1 | the command exited non-zero (its code is not propagated; --json reports it as exit_code), or the world could not be served or its state written |
+| `world` | 2 | usage error or an invalid world.yaml |
+
+## Non-interactive use
+
+Nothing prompts under CI, `--json` or a non-TTY stdin. The only confirmation prompt (`attest capture` before it re-runs a command for `--refresh`) refuses with exit 2 and a `--yes` hint when `CI` is set, `--json` is given or stdin is not a terminal. Pass `--yes` to proceed.
+
+## Offline
+
+`attest guide` and `attest skills` read assets embedded in the engine binary and make no network calls.

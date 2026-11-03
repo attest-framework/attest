@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://attest-framework.github.io/schemas/v1/cli/baseline-delete.schema.json",
+  "title": "attest-engine baseline delete --json",
+  "description": "The tag deleted and how many assertion rows it held (0 when it was not pinned).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "tag",
+    "deleted"
+  ],
+  "properties": {
+    "tag": {
+      "type": "string",
+      "minLength": 1
+    },
+    "deleted": {
+      "type": "integer",
+      "minimum": 0
+    }
+  }
+}

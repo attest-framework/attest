@@ -19,7 +19,17 @@ import (
 )
 
 func init() {
-	register(command{name: "calibrate", summary: "measure judge agreement against human labels", run: handleCalibrateCommand})
+	register(command{
+		name:    "calibrate",
+		summary: "measure judge agreement against human labels",
+		run:     handleCalibrateCommand,
+		schema:  "cli/calibrate.schema.json",
+		exits: []exitCode{
+			{exitOK, "success"},
+			{exitFailure, "the labels file could not be read, has no judge_score rows or no usable agreement, or persisting failed"},
+			{exitUsage, "usage error"},
+		},
+	})
 }
 
 // handleCalibrateCommand runs `attest-engine calibrate --labels <path>
@@ -38,6 +48,7 @@ func handleCalibrateCommand(args []string) {
 	persist := fs.Bool("persist", false, "store the loaded labels in the calibration history at $ATTEST_CACHE_DIR/attest.db")
 	judgeProvider := fs.String("judge-provider", "", "provider that produced judge_score (openai, anthropic, gemini, ...); required with --persist")
 	judgeModel := fs.String("judge-model", "", "model that produced judge_score; required with --persist")
+	fs.Bool("json", false, "print the result as JSON (always on)")
 	if err := fs.Parse(args); err != nil {
 		os.Exit(2)
 	}

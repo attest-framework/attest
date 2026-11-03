@@ -1,0 +1,11 @@
+{
+  "exchanges": 3,
+  "exit_code": 0,
+  "expect_fail": true,
+  "fixture": "tests/attest/fixtures/inc-1042.attest.json",
+  "name": "inc-1042",
+  "replay_capable": true,
+  "source": "command",
+  "steps": 9,
+  "verified": true
+}

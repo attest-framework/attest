@@ -1,0 +1,11 @@
+{
+  "exchanges": 0,
+  "exit_code": null,
+  "expect_fail": false,
+  "fixture": "fx/inc.attest.json",
+  "name": "inc",
+  "replay_capable": false,
+  "source": "otlp_file",
+  "steps": 9,
+  "verified": true
+}

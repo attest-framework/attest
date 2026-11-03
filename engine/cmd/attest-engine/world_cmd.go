@@ -21,6 +21,12 @@ func init() {
 		name:    "world",
 		summary: "Serve a world.yaml as a local stateful HTTP fake",
 		run:     handleWorldCommand,
+		schema:  "cli/world.schema.json",
+		exits: []exitCode{
+			{exitOK, "the command exited 0, or --serve stopped cleanly"},
+			{exitFailure, "the command exited non-zero (its code is not propagated; --json reports it as exit_code), or the world could not be served or its state written"},
+			{exitUsage, "usage error or an invalid world.yaml"},
+		},
 	})
 }
 
@@ -39,11 +45,14 @@ options:
   --state-out <path>     write the final world-v1 snapshot as JSON to <path>
   --serve                for an SDK helper: print {"env":{...}} as one JSON
                          line, serve until stdin sends "stop" or closes, then
-                         print {"world":{...}} (the final snapshot) and exit`
+                         print {"world":{...}} (the final snapshot) and exit
+  --json                 with -- <command>: print one JSON result object
+                         {"exit_code","world"} to stdout; the command's
+                         stdout goes to stderr`
 
 type worldOptions struct {
 	file, stateOut string
-	serve          bool
+	serve, json    bool
 	command        []string
 }
 
@@ -58,6 +67,7 @@ func parseWorldArgs(args []string, stderr io.Writer) (*worldOptions, bool) {
 	fs.StringVar(&o.file, "file", "", "")
 	fs.StringVar(&o.stateOut, "state-out", "", "")
 	fs.BoolVar(&o.serve, "serve", false, "")
+	fs.BoolVar(&o.json, "json", false, "")
 	if err := fs.Parse(args); err != nil {
 		fmt.Fprintf(stderr, "world: %s\n%s\n", terminalSafe(err.Error()), worldUsage)
 		return nil, false
@@ -72,6 +82,8 @@ func parseWorldArgs(args []string, stderr io.Writer) (*worldOptions, bool) {
 		return usage("--file is required")
 	case o.serve == (len(o.command) > 0):
 		return usage("give exactly one of --serve or -- <command>")
+	case o.json && o.serve:
+		return usage(jsonServeConflict)
 	}
 	return o, true
 }
@@ -103,7 +115,7 @@ func runWorld(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if o.serve {
 		return worldServe(s, o, stdin, stdout, stderr)
 	}
-	return worldCommand(s, o, stderr)
+	return worldCommand(s, o, stdout, stderr)
 }
 
 func worldServe(s *capture.Session, o *worldOptions, stdin io.Reader, stdout, stderr io.Writer) int {
@@ -133,11 +145,14 @@ func worldServe(s *capture.Session, o *worldOptions, stdin io.Reader, stdout, st
 	return 0
 }
 
-func worldCommand(s *capture.Session, o *worldOptions, stderr io.Writer) int {
+func worldCommand(s *capture.Session, o *worldOptions, stdout, stderr io.Writer) int {
 	argv := o.command
 	cmd := exec.Command(argv[0], argv[1:]...)
 	cmd.Env = withEnv(os.Environ(), s.Env())
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
+	if o.json {
+		cmd.Stdout = os.Stderr
+	}
 	if err := cmd.Start(); err != nil {
 		_ = s.Close()
 		fmt.Fprintf(stderr, "world: running %s: %s\n", terminalSafe(argv[0]), terminalSafe(err.Error()))
@@ -167,6 +182,12 @@ func worldCommand(s *capture.Session, o *worldOptions, stderr io.Writer) int {
 	writeWorldSummary(stderr, snap)
 	if code := writeStateOut(o.stateOut, snap, stderr); code != 0 {
 		return code
+	}
+	if o.json {
+		if err := writeJSON(stdout, map[string]any{"exit_code": childExitCode(runErr), "world": snap}); err != nil {
+			fmt.Fprintf(stderr, "world: %s\n", terminalSafe(err.Error()))
+			return 1
+		}
 	}
 	var exitErr *exec.ExitError
 	switch {

@@ -1,0 +1,13 @@
+{
+  "schema_version": 2,
+  "trace_id": "otel_29478f3e0a07ff57",
+  "agent_id": "refund-desk",
+  "input": {},
+  "steps": [
+    {
+      "type": "llm_call",
+      "name": "chat"
+    }
+  ],
+  "output": {}
+}

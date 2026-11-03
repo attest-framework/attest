@@ -1,0 +1,37 @@
+{
+  "exit_code": 3,
+  "summary": {
+    "fixture": "inc-1042",
+    "mode": "strict",
+    "replayed": 3,
+    "live": 0,
+    "misses": 0,
+    "unused": 0,
+    "live_cost_usd": 0,
+    "unpriced_live_calls": 0,
+    "records": [
+      {
+        "seq": 1,
+        "provider": "openai",
+        "api": "chat.completions",
+        "outcome": "replayed",
+        "exchange": 0
+      }
+    ]
+  },
+  "world": {
+    "world_version": 1,
+    "definition_sha256": "2c40eea584a67786d685130abda2c17c7273ac950da76e4c0ff1d68aecbcc386",
+    "state": {
+      "orders": [
+        {
+          "id": "O-1042",
+          "status": "delivered"
+        }
+      ],
+      "refunds": []
+    },
+    "faults_fired": [],
+    "faults_fired_count": 0
+  }
+}

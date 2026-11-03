@@ -1,0 +1,15 @@
+{
+  "tag": "v1.2.0",
+  "entries": [
+    {
+      "assertion_id": "effect_refunds",
+      "type": "effect",
+      "score": 0,
+      "cost": 0,
+      "duration_ms": 0,
+      "passes": 0,
+      "evaluated": 1,
+      "not_evaluated": 0
+    }
+  ]
+}

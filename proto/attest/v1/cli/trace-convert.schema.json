@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://attest-framework.github.io/schemas/v1/cli/trace-convert.schema.json",
+  "title": "attest-engine trace convert --json",
+  "description": "What was converted: the input, the step counts and the converted trace (see trace-v2.schema.json). Without --json, stdout is the bare trace.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "source",
+    "trace_id",
+    "agent_id",
+    "steps",
+    "trace"
+  ],
+  "properties": {
+    "source": {
+      "type": "string",
+      "minLength": 1
+    },
+    "trace_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "agent_id": {
+      "type": "string"
+    },
+    "steps": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "integer",
+        "minimum": 0
+      }
+    },
+    "trace": {
+      "type": "object",
+      "required": [
+        "schema_version",
+        "trace_id",
+        "agent_id",
+        "steps"
+      ],
+      "properties": {
+        "schema_version": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "trace_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "agent_id": {
+          "type": "string"
+        },
+        "steps": {
+          "type": "array"
+        }
+      }
+    }
+  }
+}

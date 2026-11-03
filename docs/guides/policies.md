@@ -12,7 +12,7 @@ uv run attest policy evaluate --policy attest.policy.yaml --report attest-report
 | 1 | A rule with severity `block` was violated |
 | 2 | Only rules with severity `warn` were violated |
 
-A policy or report that cannot be read or is invalid exits 1 with the error on stderr; leaving out `--policy` or `--report` exits 2.
+A policy or report that cannot be read or is invalid exits 3 with the error on stderr; leaving out `--policy` or `--report` also exits 3. Exit 3 is neither a warning (2) nor a block (1), and CI steps that treat only 0, 1 and 2 as verdicts fail on it.
 
 ## Write a policy
 

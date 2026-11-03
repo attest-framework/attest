@@ -12,7 +12,17 @@ import (
 )
 
 func init() {
-	register(command{name: "doctor", summary: "report engine version, capabilities and provider configuration (--json)", run: runDoctor})
+	register(command{
+		name:    "doctor",
+		summary: "report engine version, capabilities and provider configuration (--json)",
+		run:     runDoctor,
+		schema:  "doctor.schema.json",
+		exits: []exitCode{
+			{exitOK, "success"},
+			{exitFailure, "configuration error the JSON-RPC server would refuse to start with"},
+			{exitUsage, "usage error"},
+		},
+	})
 }
 
 // runDoctor reports the configuration the JSON-RPC server would start with

@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://attest-framework.github.io/schemas/v1/cli/baseline-pin.schema.json",
+  "title": "attest-engine baseline pin --json",
+  "description": "The baseline just pinned.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "tag",
+    "assertion_count",
+    "pinned_at"
+  ],
+  "properties": {
+    "tag": {
+      "type": "string",
+      "minLength": 1
+    },
+    "assertion_count": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "pinned_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  }
+}
