@@ -411,7 +411,7 @@ Every model call reserves one call and its worst-case cost (price × prompt byte
 |-------|------|-------------|
 | `assertion_id` | string | Matches the assertion from the request |
 | `status` | string | `pass`, `soft_fail`, `hard_fail`, or `not_evaluated` (see [Assertion Status and Aggregation](#assertion-status-and-aggregation)) |
-| `reason` | string | Present only when `status` is `not_evaluated`: `provider_unavailable`, `provider_not_configured`, `simulation`, `missing_evidence`, `short_circuited`, `budget_exhausted` or `judge_abstained` |
+| `reason` | string | Present only when `status` is `not_evaluated`: `provider_unavailable`, `provider_not_configured`, `simulation`, `missing_evidence`, `short_circuited`, `budget_exhausted`, `judge_abstained` or `replay_miss` |
 | `score` | float | 0.0 to 1.0. For boolean checks: 0.0 or 1.0. For scored checks: continuous value. `0.0` when `not_evaluated`. |
 | `explanation` | string | Human-readable explanation of the result, including relevant values |
 | `cost` | float | USD cost for this assertion (non-zero for LLM-backed assertions) |
@@ -439,6 +439,7 @@ Every requested assertion appears exactly once in `results`, including assertion
 | `short_circuited` | An L5/L6 assertion was not run because an L1–L4 assertion in the same batch returned `hard_fail`. |
 | `budget_exhausted` | An L5/L6 model call could not reserve its call count or cost against the session or batch budget, so it was not sent. |
 | `judge_abstained` | The judge answered `{"abstain": true, "reason": "..."}`: the output lacks the evidence the rubric needs. |
+| `replay_miss` | Set by the SDK, never by the engine: a fixture-bound test ran in replay mode and a model request matched no recording while the mode allowed no live call (`auto` mode without a provider key). |
 
 SDKs aggregate a test's results after its whole batch:
 

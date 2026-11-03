@@ -37,6 +37,11 @@ const (
 	// ReasonJudgeAbstained: the judge answered {"abstain": true} because
 	// the evidence was insufficient to score the rubric.
 	ReasonJudgeAbstained = "judge_abstained"
+	// ReasonReplayMiss: a fixture-bound test ran in replay mode, a model
+	// request matched no recording, and the mode allowed no live call. The
+	// SDK sets it on the test's assertions; the engine's own batches never
+	// return it.
+	ReasonReplayMiss = "replay_miss"
 
 	TypeSchema     = "schema"
 	TypeConstraint = "constraint"

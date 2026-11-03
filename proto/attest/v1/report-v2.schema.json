@@ -19,7 +19,8 @@
         "soft_fail": { "type": "integer", "minimum": 0 },
         "hard_fail": { "type": "integer", "minimum": 0 },
         "not_evaluated": { "type": "integer", "minimum": 0 },
-        "usage": { "$ref": "#/$defs/usage" }
+        "usage": { "$ref": "#/$defs/usage" },
+        "replay": { "$ref": "#/$defs/replay_summary" }
       },
       "additionalProperties": false
     },
@@ -51,7 +52,7 @@
   "$defs": {
     "status": { "enum": ["pass", "soft_fail", "hard_fail", "not_evaluated"] },
     "reason": {
-      "enum": ["provider_unavailable", "provider_not_configured", "simulation", "missing_evidence", "short_circuited", "budget_exhausted", "judge_abstained"]
+      "enum": ["provider_unavailable", "provider_not_configured", "simulation", "missing_evidence", "short_circuited", "budget_exhausted", "judge_abstained", "replay_miss"]
     },
     "usage": {
       "type": "object",
@@ -67,6 +68,33 @@
         "retry_cost_usd": { "type": "number", "minimum": 0 },
         "unpriced_calls": { "type": "integer", "minimum": 0 },
         "budget_refused": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": false
+    },
+    "replay_summary": {
+      "type": "object",
+      "description": "Model calls the run's fixture-bound tests served from fixtures (replayed) and sent to a provider (live). Absent when no test ran in replay mode. Unlike usage, which counts only attest-initiated calls, these are the agent's own calls through the replay proxy. live_cost_usd prices live calls whose model has a built-in price; unpriced_live_calls counts the rest.",
+      "required": ["replayed", "live", "misses", "live_cost_usd", "unpriced_live_calls"],
+      "properties": {
+        "replayed": { "type": "integer", "minimum": 0 },
+        "live": { "type": "integer", "minimum": 0 },
+        "misses": { "type": "integer", "minimum": 0 },
+        "live_cost_usd": { "type": "number", "minimum": 0 },
+        "unpriced_live_calls": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": false
+    },
+    "replay_test": {
+      "type": "object",
+      "description": "How one fixture-bound test was served. misses counts requests that matched no recording; miss is the first miss message.",
+      "required": ["fixtures", "mode", "replayed", "live", "misses"],
+      "properties": {
+        "fixtures": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "string", "minLength": 1 } },
+        "mode": { "enum": ["strict", "auto"] },
+        "replayed": { "type": "integer", "minimum": 0 },
+        "live": { "type": "integer", "minimum": 0 },
+        "misses": { "type": "integer", "minimum": 0 },
+        "miss": { "type": "string", "minLength": 1 }
       },
       "additionalProperties": false
     },
@@ -139,7 +167,8 @@
         },
         "assertion_ids": { "type": "array", "items": { "type": "string" } },
         "duration_ms": { "type": "integer", "minimum": 0 },
-        "trials": { "description": "Number of fixed-N trials the test ran; absent for a single run.", "type": "integer", "minimum": 1 }
+        "trials": { "description": "Number of fixed-N trials the test ran; absent for a single run.", "type": "integer", "minimum": 1 },
+        "replay": { "$ref": "#/$defs/replay_test" }
       },
       "additionalProperties": false
     }

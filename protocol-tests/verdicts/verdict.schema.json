@@ -45,7 +45,8 @@
               "missing_evidence",
               "short_circuited",
               "budget_exhausted",
-              "judge_abstained"
+              "judge_abstained",
+              "replay_miss"
             ]
           },
           "failure_class": {

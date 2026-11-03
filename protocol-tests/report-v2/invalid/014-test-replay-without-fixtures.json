@@ -1,0 +1,105 @@
+{
+  "report_version": 2,
+  "timestamp": "2026-11-03T10:00:00Z",
+  "simulated": false,
+  "summary": {
+    "total": 3,
+    "passed": 2,
+    "soft_fail": 0,
+    "hard_fail": 0,
+    "not_evaluated": 1,
+    "replay": {
+      "replayed": 4,
+      "live": 0,
+      "misses": 1,
+      "live_cost_usd": 0.0,
+      "unpriced_live_calls": 0
+    }
+  },
+  "results": [
+    {
+      "assertion_id": "inc_once_0",
+      "status": "pass",
+      "explanation": "inc_once_0 pass",
+      "cost": 0.0,
+      "duration_ms": 1,
+      "layer": 3,
+      "type": "trace",
+      "test_id": "tests/test_refund.py::test_inc_1042_replay",
+      "file": "tests/test_refund.py",
+      "line": 10
+    },
+    {
+      "assertion_id": "tools_0",
+      "status": "pass",
+      "explanation": "tools_0 pass",
+      "cost": 0.0,
+      "duration_ms": 1,
+      "layer": 3,
+      "type": "trace",
+      "test_id": "tests/test_refund.py::test_inc_1042_replay",
+      "file": "tests/test_refund.py",
+      "line": 10
+    },
+    {
+      "assertion_id": "judge_0",
+      "status": "not_evaluated",
+      "explanation": "judge_0 not_evaluated",
+      "cost": 0.0,
+      "duration_ms": 1,
+      "layer": 6,
+      "type": "llm_judge",
+      "test_id": "tests/test_refund.py::test_tone_replay",
+      "file": "tests/test_refund.py",
+      "line": 30,
+      "reason": "replay_miss"
+    }
+  ],
+  "tests": [
+    {
+      "test_id": "tests/test_refund.py::test_inc_1042_replay",
+      "name": "test_inc_1042_replay",
+      "file": "tests/test_refund.py",
+      "line": 10,
+      "outcome": "passed",
+      "assertion_ids": [
+        "inc_once_0",
+        "tools_0"
+      ],
+      "duration_ms": 120,
+      "replay": {
+        "fixtures": [],
+        "mode": "strict",
+        "replayed": 4,
+        "live": 0,
+        "misses": 0
+      }
+    },
+    {
+      "test_id": "tests/test_refund.py::test_tone_replay",
+      "name": "test_tone_replay",
+      "file": "tests/test_refund.py",
+      "line": 30,
+      "outcome": "skipped",
+      "assertion_ids": [
+        "judge_0"
+      ],
+      "duration_ms": 15,
+      "not_evaluated_reasons": [
+        "replay_miss"
+      ],
+      "replay": {
+        "fixtures": [
+          "tone"
+        ],
+        "mode": "auto",
+        "replayed": 0,
+        "live": 0,
+        "misses": 1,
+        "miss": "replay miss: system prompt changed (hash a1b2c3d→e4f5a6b); re-record with `attest capture --refresh tone`"
+      }
+    }
+  ],
+  "total_cost": 0.0,
+  "total_duration_ms": 135
+}
