@@ -29,8 +29,11 @@ const SDK_USAGE =
   "usage: attest <command> [args]\n" +
   "\n" +
   "SDK commands:\n" +
-  "  init [--ci github]  scaffold a sample test and merge policy here\n" +
-  "                      (--ci github also writes .github/workflows/attest.yml)\n" +
+  "  init [--ci github] [--skills] [--json]\n" +
+  "                      scaffold a sample test and merge policy here\n" +
+  "                      (--ci github also writes .github/workflows/attest.yml;\n" +
+  "                      --skills installs the agent skills with attest-engine;\n" +
+  "                      --json prints {created, updated, skipped} paths as JSON)\n" +
   "\n" +
   "`attest capture` (engine) also drafts tests/attest/<name>.test.ts from a verified\n" +
   "fixture, unless that file exists.\n" +
@@ -38,23 +41,6 @@ const SDK_USAGE =
   "options:\n" +
   "  --version  print the SDK version and the engine version it requires\n" +
   "  --help     print this help\n";
-
-const INIT_USAGE = "usage: attest init [--ci github]  (scaffolds into the current directory)";
-
-/** Run `attest init [--ci github]` in the current directory. */
-function cmdInit(args: string[]): number {
-  if (args.some((a) => HELP_FLAGS.has(a))) {
-    process.stdout.write(`${INIT_USAGE}\n`);
-    return 0;
-  }
-  const joined = args.join(" ");
-  if (args.length > 0 && joined !== "--ci github" && joined !== "--ci=github") {
-    process.stderr.write(`${INIT_USAGE}\n`);
-    return 2;
-  }
-  scaffoldProject(process.cwd(), args.length > 0 ? { ci: "github" } : {});
-  return 0;
-}
 
 const HELP_PROBE_TIMEOUT_MS = 10_000;
 
@@ -126,15 +112,18 @@ export function exitStatus(status: number | null, signal: NodeJS.Signals | null)
   return 1;
 }
 
-async function forward(args: string[]): Promise<number> {
+/**
+ * Resolve a version-checked engine whose `help` lists `command`; print the reason to
+ * stderr and resolve to null when there is none.
+ */
+async function engineProviding(command: string): Promise<string | null> {
   let engine: string;
   try {
     engine = await resolveEngine();
   } catch (err) {
     process.stderr.write(`attest: ${errorMessage(err)}\n`);
-    return 1;
+    return null;
   }
-  const command = args[0] ?? "";
   const commands = engineCommands(engine);
   if (commands === null || (command !== "help" && !commands.has(command))) {
     process.stderr.write(
@@ -143,8 +132,15 @@ async function forward(args: string[]): Promise<number> {
         "to an engine built from this release (make engine), or install a release whose " +
         "engine provides it.\n",
     );
-    return 1;
+    return null;
   }
+  return engine;
+}
+
+async function forward(args: string[]): Promise<number> {
+  const command = args[0] ?? "";
+  const engine = await engineProviding(command);
+  if (engine === null) return 1;
   if (command === "capture" && captureWritesFixture(args.slice(1))) {
     return captureAndEmit(engine, args.slice(1));
   }
@@ -214,6 +210,157 @@ function captureAndEmit(engine: string, args: string[]): number {
       : `  test: drafted ${written}\n`,
   );
   return code;
+}
+
+const INIT_USAGE =
+  "usage: attest init [--ci github] [--skills] [--json]  (scaffolds into the current directory)";
+
+const INIT_KINDS = ["created", "updated", "skipped"] as const;
+type InitKind = (typeof INIT_KINDS)[number];
+type InitResult = Record<InitKind, string[]>;
+
+// `attest-engine skills install --json` key -> `attest init --json` key.
+const SKILLS_KINDS = [
+  ["created", "created"],
+  ["updated", "updated"],
+  ["unchanged", "skipped"],
+] as const;
+
+interface InitArgs {
+  ci: boolean;
+  skills: boolean;
+  json: boolean;
+}
+
+/** Parse `attest init` args; null on a usage error. */
+function parseInitArgs(args: string[]): InitArgs | null {
+  const parsed: InitArgs = { ci: false, skills: false, json: false };
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    if (arg === "--ci" && args[i + 1] === "github" && !parsed.ci) {
+      parsed.ci = true;
+      i++;
+    } else if (arg === "--ci=github" && !parsed.ci) {
+      parsed.ci = true;
+    } else if (arg === "--skills" && !parsed.skills) {
+      parsed.skills = true;
+    } else if (arg === "--json" && !parsed.json) {
+      parsed.json = true;
+    } else {
+      return null;
+    }
+  }
+  return parsed;
+}
+
+function emptyInitResult(): InitResult {
+  return { created: [], updated: [], skipped: [] };
+}
+
+/**
+ * Run `<engine> skills install --dir <root> --json` and map its paths to init kinds.
+ * Throws when the engine fails or prints an unexpected document.
+ */
+function installSkills(engine: string, root: string): InitResult {
+  const argv = ["skills", "install", "--dir", root, "--json"];
+  const shown = [engine, ...argv].join(" ");
+  const proc = spawnSync(engine, argv, {
+    stdio: ["ignore", "pipe", "pipe"],
+    encoding: "utf-8",
+  });
+  if (proc.error) throw proc.error;
+  process.stderr.write(proc.stderr);
+  if (proc.status !== 0) {
+    throw new Error(
+      `\`${shown}\` exited ${String(exitStatus(proc.status, proc.signal))}; no skills installed`,
+    );
+  }
+  let doc: unknown;
+  try {
+    doc = JSON.parse(proc.stdout);
+  } catch (err) {
+    throw new Error(`\`${shown}\` printed invalid JSON: ${errorMessage(err)}`);
+  }
+  if (typeof doc !== "object" || doc === null || Array.isArray(doc)) {
+    throw new Error(`\`${shown}\` printed ${JSON.stringify(doc)}, not an object`);
+  }
+  const record = doc as Record<string, unknown>;
+  const result = emptyInitResult();
+  for (const [engineKind, initKind] of SKILLS_KINDS) {
+    const paths = record[engineKind];
+    if (!Array.isArray(paths) || !paths.every((p): p is string => typeof p === "string")) {
+      throw new Error(`\`${shown}\` printed no \`${engineKind}\` list of paths: ${proc.stdout}`);
+    }
+    result[initKind].push(...paths);
+  }
+  return result;
+}
+
+function printSkills(root: string, skills: InitResult): void {
+  const abs = (rel: string) => path.join(root, ...rel.split("/"));
+  for (const rel of skills.created) process.stdout.write(`Created: ${abs(rel)}\n`);
+  for (const rel of skills.updated) process.stdout.write(`Updated: ${abs(rel)}\n`);
+  for (const rel of skills.skipped) process.stderr.write(`Skipped (unchanged): ${abs(rel)}\n`);
+}
+
+async function runInit(parsed: InitArgs, root: string): Promise<InitResult | null> {
+  const result = emptyInitResult();
+  if (parsed.skills) {
+    const engine = await engineProviding("skills");
+    if (engine === null) return null;
+    let installed: InitResult;
+    try {
+      installed = installSkills(engine, root);
+    } catch (err) {
+      process.stderr.write(`attest: ${errorMessage(err)}\n`);
+      return null;
+    }
+    if (!parsed.json) printSkills(root, installed);
+    for (const kind of INIT_KINDS) result[kind].push(...installed[kind]);
+  }
+  const scaffolded = scaffoldProject(root, {
+    ...(parsed.ci ? { ci: "github" as const } : {}),
+    quiet: parsed.json,
+  });
+  result.created.push(...scaffolded.created);
+  result.skipped.push(...scaffolded.skipped);
+  return result;
+}
+
+/**
+ * Run `attest init [--ci github] [--skills] [--json]` in the current directory.
+ *
+ * `--skills` installs the agent skills with `attest-engine skills install` before
+ * scaffolding; a missing or failing engine exits 1 with nothing scaffolded. `--json`
+ * prints one `{created, updated, skipped}` document (paths relative to the current
+ * directory, sorted) as the only stdout; everything else goes to stderr.
+ */
+async function cmdInit(args: string[]): Promise<number> {
+  if (args.some((a) => HELP_FLAGS.has(a))) {
+    process.stdout.write(`${INIT_USAGE}\n`);
+    return 0;
+  }
+  const parsed = parseInitArgs(args);
+  if (parsed === null) {
+    process.stderr.write(`${INIT_USAGE}\n`);
+    return 2;
+  }
+  const root = process.cwd();
+  if (!parsed.json) return (await runInit(parsed, root)) === null ? 1 : 0;
+  // Under --json, stdout carries the document only: anything else written goes to stderr.
+  const stdoutWrite = process.stdout.write;
+  process.stdout.write = process.stderr.write.bind(process.stderr) as typeof process.stdout.write;
+  let result: InitResult | null;
+  try {
+    result = await runInit(parsed, root);
+  } finally {
+    process.stdout.write = stdoutWrite;
+  }
+  if (result === null) return 1;
+  const done = result;
+  const sorted = Object.fromEntries(INIT_KINDS.map((k) => [k, [...done[k]].sort()]));
+  process.stdout.write(`${JSON.stringify(sorted)}\n`);
+  return 0;
 }
 
 /** Dispatch `attest` arguments and resolve to the process exit code. */
