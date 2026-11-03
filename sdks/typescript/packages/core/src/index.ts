@@ -50,6 +50,29 @@ export type {
   RecordOptions,
   RecordResult,
 } from "./capture.js";
+export {
+  ReplayError,
+  ReplayMissError,
+  firstMiss,
+  liveCallsLine,
+  resolveReplayMode,
+  startReplay,
+} from "./replay.js";
+export type {
+  ReplayMode,
+  ReplayModeSetting,
+  ReplayOptions,
+  ReplayRecord,
+  ReplaySession,
+  ReplaySummary,
+} from "./replay.js";
+export {
+  EgressBlockedError,
+  egressBlockRequested,
+  installEgressGuard,
+  isProviderHost,
+  uninstallEgressGuard,
+} from "./egress.js";
 export { Agent, agent } from "./agent.js";
 export { delegate } from "./delegate.js";
 export { activeBuilder } from "./context.js";

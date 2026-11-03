@@ -10,3 +10,5 @@ export type { AttestReporterOptions } from "./reporter.js";
 export { buildReport, REPORT_VERSION, sessionUsage, summaryLines } from "./report.js";
 export type { AttestTaskMeta, RecordedResult, TestOutcome, TestRecord, TrialsMeta } from "./report.js";
 export { filterByTier } from "./tier-filter.js";
+export { useReplay } from "./replay.js";
+export type { ReplayHandle, ReplayMeta, UseReplayOptions } from "./replay.js";
