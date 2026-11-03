@@ -31,12 +31,13 @@ Exit codes:
 from __future__ import annotations
 
 import argparse
-import glob
 import json
 import os
+import http.client
 import re
 import shutil
 import subprocess
+import tempfile
 import sys
 import urllib.error
 import urllib.request
@@ -60,11 +61,12 @@ ENGINE_TIMEOUT_S = 120
 _TOKEN_VARS = ("GITHUB_TOKEN", "INPUT_GITHUB-TOKEN")
 _REPO = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 
-# Control characters other than tab and newline, line/paragraph separators,
-# bidi marks/overrides/isolates, zero-width characters, word joiner and BOM.
+# Control characters other than tab and newline (C0, DEL and C1), line/paragraph
+# separators, bidi marks/overrides/isolates, zero-width characters, word joiner
+# and BOM. Written as escapes so the source holds no invisible characters.
 _CONTROL = re.compile(
-    r"[\x00-\x08\x0b-\x1f\x7f؜​-‏  ‪-‮"
-    r"⁠⁦-⁩﻿]"
+    r"[\x00-\x08\x0b-\x1f\x7f-\x9f\u061c\u200b-\u200f\u2028\u2029\u202a-\u202e"
+    r"\u2060\u2066-\u2069\ufeff]"
 )
 
 
@@ -78,13 +80,18 @@ def _truncate(value: str, limit: int) -> str:
     return value[: limit - 3] + "..."
 
 
+def _neutralize(text: str) -> str:
+    """Break up ``##[``: the runner parses that legacy command prefix anywhere in a line."""
+    return text.replace("##[", "# #[")
+
+
 def _clean(value: object) -> str:
     """Untrusted value as text with CRLF folded to LF and control characters removed."""
     try:
         raw = str(value)
     except ValueError:  # an integer too long to print
         raw = "(out of range)"
-    return _CONTROL.sub("", raw.replace("\r\n", "\n").replace("\r", "\n"))
+    return _neutralize(_CONTROL.sub("", raw.replace("\r\n", "\n").replace("\r", "\n")))
 
 
 def _one_line(value: object, limit: int) -> str:
@@ -104,21 +111,35 @@ def _escape_property(value: str) -> str:
 # --- engine ---------------------------------------------------------------
 
 
-def resolve_engine(binary: str, env: dict[str, str]) -> str | None:
+def action_version() -> str:
+    """The release version of this action: the repository ``VERSION`` file two levels above it."""
+    version_file = Path(__file__).resolve().parents[3] / "VERSION"
+    try:
+        return version_file.read_text(encoding="utf-8").strip()
+    except OSError as exc:
+        raise ActionError(
+            f"cannot read the action's VERSION ({version_file}); set the engine-version input"
+        ) from exc
+
+
+def resolve_engine(binary: str, version: str, env: dict[str, str]) -> str | None:
     """The engine executable, or None when it cannot be found.
 
-    A custom ``engine-binary`` is used as given. The default name is looked up
-    the way the SDKs do: PATH, then ``ATTEST_ENGINE_PATH``, then the
-    auto-download cache ``~/.attest/bin/<version>/attest-engine``.
+    A custom ``engine-binary`` is used as given. The default name is resolved
+    in the SDKs' order: ``ATTEST_ENGINE_PATH``, then PATH, then the
+    auto-download cache of exactly this version,
+    ``~/.attest/bin/<version>/attest-engine``.
     """
-    found = shutil.which(binary)
-    if found or binary != DEFAULT_ENGINE:
-        return found
+    if binary != DEFAULT_ENGINE:
+        return shutil.which(binary, path=env.get("PATH"))
     override = env.get("ATTEST_ENGINE_PATH")
     if override and os.access(override, os.X_OK):
         return override
-    cached = sorted(glob.glob(os.path.expanduser("~/.attest/bin/*/attest-engine")))
-    return cached[-1] if cached else None
+    found = shutil.which(binary, path=env.get("PATH"))
+    if found:
+        return found
+    cached = Path.home() / ".attest" / "bin" / version / "attest-engine"
+    return str(cached) if os.access(cached, os.X_OK) else None
 
 
 def _run_engine(
@@ -148,18 +169,25 @@ def _exit_rank(code: int) -> int:
     return {0: 0, 2: 1, 1: 2}[code]
 
 
+def _relay_stderr(label: str, raw: bytes) -> None:
+    """Engine stderr line by line, sanitised and prefixed so no line can start a command."""
+    for line in raw.decode("utf-8", "replace").splitlines():
+        if line.strip():
+            print(f"{label}: {_one_line(line, 500)}", file=sys.stderr)
+
+
 def evaluate_policies(
     engine: str | None,
     reports: list[str],
     policy: str,
     baseline: str,
-    out_file: Path,
     env: dict[str, str],
 ) -> tuple[int, Path | None]:
     """Run `policy evaluate` on each report; return (worst exit, result file of that report).
 
-    No policy gives (0, None). ``out_file`` receives the worst report's result
-    (the first one on a tie), the same file a single-report run always wrote.
+    No policy gives (0, None). The worst report's result (the first one on a
+    tie) is written to a file under RUNNER_TEMP, never the workspace; it feeds
+    the summary and is not echoed to the log.
     """
     if not policy:
         return 0, None
@@ -168,23 +196,28 @@ def evaluate_policies(
     for report in reports:
         if engine is None:
             code, out = 127, b""
-            print(f"::error::attest-engine not found; cannot evaluate the policy on {_escape_data(report)}")
+            print(
+                "::error::attest-engine not found; cannot evaluate the policy on "
+                f"{_escape_data(_one_line(report, 200))}"
+            )
         else:
             args = ["policy", "evaluate", "--policy", policy, "--report", report]
             if baseline:
                 args += ["--baseline", baseline]
             proc = _run_engine(engine, args, env)
             code, out = proc.returncode, proc.stdout
-            if proc.stderr:
-                sys.stderr.write(_clean(proc.stderr.decode("utf-8", "replace")))
+            _relay_stderr("policy evaluate", proc.stderr)
         if len(reports) > 1:
             print(f"policy evaluate {_one_line(report, 200)}: exit {code}")
-        sys.stdout.write(out.decode("utf-8", "replace"))
         if worst_code is None or _exit_rank(code) > _exit_rank(worst_code):
             worst_code, worst_out = code, out
     assert worst_code is not None
-    out_file.write_bytes(worst_out)
-    return worst_code, out_file if worst_out.strip() else None
+    if not worst_out.strip():
+        return worst_code, None
+    out_dir = tempfile.mkdtemp(prefix="attest-policy-", dir=env.get("RUNNER_TEMP") or None)
+    result = Path(out_dir) / "policy-result.json"
+    result.write_bytes(worst_out)
+    return worst_code, result
 
 
 # --- annotations ----------------------------------------------------------
@@ -314,6 +347,27 @@ def collect_rows(
 # --- summary comment ------------------------------------------------------
 
 
+def cut_summary(text: str, limit: int) -> str:
+    """``text`` cut at a line boundary, outside any fenced block, to at most ``limit`` characters.
+
+    A cut that lands inside a fence is moved back to before the fence opens, so
+    the comment never ends with an unclosed block. The cut is marked.
+    """
+    if len(text) <= limit:
+        return text
+    note = "\n\n_Summary truncated; see the job summary and the attest-report artifact._"
+    lines = text[: limit - len(note)].split("\n")[:-1]  # the last line may be partial
+    kept: list[str] = []
+    fence_start: int | None = None
+    for line in lines:
+        if re.match(r"^ {0,3}(`{3,}|~{3,})", line):
+            fence_start = len(kept) if fence_start is None else None
+        kept.append(line)
+    if fence_start is not None:
+        kept = kept[:fence_start]
+    return "\n".join(kept).rstrip() + note
+
+
 def render_summary(
     engine: str,
     reports: list[str],
@@ -335,7 +389,7 @@ def render_summary(
         )
     summary = proc.stdout.decode("utf-8", "replace").replace("\x00", "").rstrip()
     suffix = f"\n\n[Workflow run]({run_url})" if run_url else ""
-    return _truncate(summary, MAX_COMMENT_CHARS) + suffix
+    return cut_summary(summary, MAX_COMMENT_CHARS - len(suffix)) + suffix
 
 
 def _api(method: str, url: str, token: str, payload: dict[str, Any] | None = None) -> Any:
@@ -363,14 +417,21 @@ BOT_LOGIN = "github-actions[bot]"
 def _identity(api: str, token: str) -> str:
     """The login this token comments as: the user for a personal token, else the Actions bot.
 
-    An installation token (the workflow token) cannot call GET /user (403).
+    The workflow (installation) token cannot call GET /user: GitHub answers 403
+    "Resource not accessible by integration", and only that answer means "the
+    bot". Any other failure propagates, so the comment is skipped with a warning.
     """
     try:
         user = _api("GET", f"{api}/user", token)
-    except urllib.error.HTTPError:
-        return BOT_LOGIN
+    except urllib.error.HTTPError as exc:
+        body = exc.read().decode("utf-8", "replace") if exc.fp else ""
+        if exc.code == 403 and "Resource not accessible by integration" in body:
+            return BOT_LOGIN
+        raise
     login = user.get("login") if isinstance(user, dict) else None
-    return login if isinstance(login, str) and login else BOT_LOGIN
+    if not isinstance(login, str) or not login:
+        raise ValueError("GET /user returned no login")
+    return login
 
 
 def _marker_comments(api: str, repo: str, pr: int, token: str) -> list[int]:
@@ -393,6 +454,7 @@ def _marker_comments(api: str, repo: str, pr: int, token: str) -> list[int]:
             and MARKER in str(c.get("body", ""))
             and isinstance(c.get("user"), dict)
             and c["user"].get("login") == me
+            and (me != BOT_LOGIN or c["user"].get("type") == "Bot")
         ]
         if len(batch) < 100:
             break
@@ -443,7 +505,7 @@ def write_step_summary(summary: str, env: dict[str, str]) -> None:
         with open(step_summary, "a", encoding="utf-8") as fh:
             fh.write(summary + "\n")
     else:
-        print(summary)
+        print(_neutralize(summary))
 
 
 def publish_comment(summary: str, env: dict[str, str]) -> None:
@@ -467,7 +529,7 @@ def publish_comment(summary: str, env: dict[str, str]) -> None:
             f"::warning::Attest summary comment not posted (GitHub API returned {exc.code}); "
             "it is in the job summary. The token needs pull-requests: write."
         )
-    except (urllib.error.URLError, OSError, ValueError, KeyError) as exc:
+    except (urllib.error.URLError, http.client.HTTPException, OSError, ValueError, KeyError) as exc:
         print(f"::warning::Attest summary comment not posted: {_escape_data(_one_line(exc, 200))}")
     else:
         print(f"post_annotations: summary comment {action}")
@@ -485,9 +547,9 @@ def run(args: argparse.Namespace, env: dict[str, str]) -> int:
 
     # The engine never needs the token: it is used only by publish_comment.
     engine_env = {k: v for k, v in env.items() if k not in _TOKEN_VARS}
-    engine = resolve_engine(args.engine, engine_env)
+    engine = resolve_engine(args.engine, args.engine_version or action_version(), engine_env)
     code, result = evaluate_policies(
-        engine, reports, args.policy, args.baseline_tag, Path("policy-result.json"), engine_env
+        engine, reports, args.policy, args.baseline_tag, engine_env
     )
     output = env.get("GITHUB_OUTPUT")
     if output:
@@ -519,6 +581,9 @@ def main(argv: list[str] | None = None, env: dict[str, str] | None = None) -> in
     parser.add_argument("--policy", default="", help="attest.policy.yaml; empty skips evaluation")
     parser.add_argument("--baseline-tag", default="", help="baseline tag for regression rules")
     parser.add_argument("--engine", default=DEFAULT_ENGINE, help="attest-engine binary")
+    parser.add_argument(
+        "--engine-version", default="", help="cached engine version; default: the action's VERSION"
+    )
     args = parser.parse_args(argv)
     try:
         return run(args, dict(os.environ) if env is None else env)

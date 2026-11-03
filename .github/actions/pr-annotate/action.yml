@@ -28,9 +28,13 @@ inputs:
     required: false
     default: ''
   engine-binary:
-    description: 'Path to attest-engine binary; defaults to attest-engine on PATH.'
+    description: 'Path to attest-engine binary. The default name is resolved as ATTEST_ENGINE_PATH, then PATH, then ~/.attest/bin/<engine-version>/attest-engine.'
     required: false
     default: 'attest-engine'
+  engine-version:
+    description: 'Engine version whose download cache (~/.attest/bin/<version>/) is searched. Defaults to the version of this action (the repository VERSION file at the action path).'
+    required: false
+    default: ''
   github-token:
     description: 'GitHub token with pull-requests:write, used only for the summary comment. Defaults to the workflow token.'
     required: false
@@ -56,6 +60,7 @@ runs:
         ATTEST_POLICY: ${{ inputs.policy }}
         ATTEST_BASELINE_TAG: ${{ inputs.baseline-tag }}
         ATTEST_ENGINE_BIN: ${{ inputs.engine-binary }}
+        ATTEST_ENGINE_VERSION: ${{ inputs.engine-version }}
         GITHUB_TOKEN: ${{ inputs.github-token }}
         ACTION_PATH: ${{ github.action_path }}
       run: |
@@ -63,7 +68,8 @@ runs:
           --report "$ATTEST_REPORT" \
           --policy "$ATTEST_POLICY" \
           --baseline-tag "$ATTEST_BASELINE_TAG" \
-          --engine "$ATTEST_ENGINE_BIN"
+          --engine "$ATTEST_ENGINE_BIN" \
+          --engine-version "$ATTEST_ENGINE_VERSION"
 
     - name: Fail on blocking policy violation
       if: inputs.fail-on-violation == 'true' && steps.evaluate.outputs.exit_code == '1'

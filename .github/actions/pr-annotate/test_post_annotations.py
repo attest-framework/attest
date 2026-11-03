@@ -13,9 +13,12 @@ import importlib.util
 import io
 import json
 import os
+import shutil
+import subprocess
 import tempfile
 import threading
 import unittest
+import unittest.mock
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
@@ -46,6 +49,7 @@ class _FakeGitHub:
         self.user_login: str | None = None  # GET /user: None is 403 (installation token)
         self.tokens: set[str] = set()
         self.paged = False
+        self.user_status = 403  # GET /user failure status while user_login is None
         owner = self
 
         class Handler(BaseHTTPRequestHandler):
@@ -69,7 +73,9 @@ class _FakeGitHub:
                     return self._reply(owner.force_status, {"message": "forced"})
                 if self.command == "GET" and self.path == "/user":
                     if owner.user_login is None:
-                        return self._reply(403, {"message": "Resource not accessible"})
+                        return self._reply(
+                            owner.user_status, {"message": "Resource not accessible by integration"}
+                        )
                     return self._reply(200, {"login": owner.user_login})
                 if self.command == "GET":
                     page = int(self.path.rsplit("&page=", 1)[1]) if "&page=" in self.path else 1
@@ -81,7 +87,10 @@ class _FakeGitHub:
                     comment = {
                         "id": 100 + len(owner.comments),
                         "body": payload["body"],
-                        "user": {"login": owner.user_login or _pa.BOT_LOGIN},
+                        "user": {
+                            "login": owner.user_login or _pa.BOT_LOGIN,
+                            "type": "User" if owner.user_login else "Bot",
+                        },
                     }
                     owner.comments.append(comment)
                     return self._reply(201, comment)
@@ -130,8 +139,10 @@ class ActionCase(unittest.TestCase):
             "GITHUB_API_URL": self.github.url,
             "GITHUB_TOKEN": _TOKEN,
             "STUB_LOG": str(self.log),
+            "RUNNER_TEMP": str(self.root / "runner-temp"),
             "PATH": os.environ["PATH"],
         }
+        (self.root / "runner-temp").mkdir()
         self.use_pull_request()
 
     def use_pull_request(self, head_repo: str = "acme/agent", number: int = 7) -> None:
@@ -286,8 +297,13 @@ class TestWorstExit(ActionCase):
         a = self.report("a/attest-report.json", policy_exit="0")
         b = self.report("b/attest-report.json", policy_exit="1")
         self.run_action(a, b, policy="p.yaml")
-        self.assertIn('"report": "' + b + '"', (self.root / "policy-result.json").read_text())
-        self.assertIn(b, (self.root / "step-summary.md").read_text())
+        self.assertIn(f"policy: {{\"report\": \"{b}\"}}", (self.root / "step-summary.md").read_text())
+
+    def test_policy_result_goes_to_runner_temp_not_the_workspace(self) -> None:
+        _, out = self.run_action(self.report(), policy="p.yaml")
+        self.assertFalse((self.root / "policy-result.json").exists())
+        self.assertEqual(len(list((self.root / "runner-temp").glob("attest-policy-*/policy-result.json"))), 1)
+        self.assertNotIn('{"report"', out)  # the policy JSON is not echoed to the log
 
 
 class TestSummaryComment(ActionCase):
@@ -351,7 +367,7 @@ class TestSummaryComment(ActionCase):
         self.assertEqual(self.github.comments[0]["user"]["login"], "octocat")
 
     def test_comment_list_is_read_past_the_first_page(self) -> None:
-        mine = {"id": 900, "body": f"{_pa.MARKER}\nold", "user": {"login": _pa.BOT_LOGIN}}
+        mine = {"id": 900, "body": f"{_pa.MARKER}\nold", "user": {"login": _pa.BOT_LOGIN, "type": "Bot"}}
         self.github.comments.extend(
             {"id": i, "body": "x", "user": {"login": "a"}} for i in range(100)
         )
@@ -407,12 +423,122 @@ class TestSummaryComment(ActionCase):
         self.assertNotIn(_TOKEN, out)
         self.assertEqual(self.github.tokens, {f"Bearer {_TOKEN}"})
 
-    def test_oversized_summary_is_truncated_below_the_api_limit(self) -> None:
+    def test_oversized_summary_is_cut_at_a_line_and_the_run_link_follows(self) -> None:
         big = self.root / "big-engine.py"
-        big.write_text("#!/usr/bin/env python3\nprint('x' * 200000)\n")
+        big.write_text("#!/usr/bin/env python3\nfor i in range(20000):\n    print(f'line {i} ' + 'x' * 20)\n")
         big.chmod(0o755)
-        body = _pa.render_summary(str(big), [self.report()], None, "", self.env)
+        body = _pa.render_summary(
+            str(big), [self.report()], None, "https://github.com/a/b/actions/runs/1", self.env
+        )
         self.assertLessEqual(len(body), _pa.MAX_COMMENT_CHARS)
+        self.assertTrue(body.endswith("[Workflow run](https://github.com/a/b/actions/runs/1)"))
+        cut = body.split("\n\n_Summary truncated")[0]
+        self.assertRegex(cut.splitlines()[-1], r"^line \d+ x{20}$")
+
+
+class TestCutSummary(unittest.TestCase):
+    def test_short_text_is_unchanged(self) -> None:
+        self.assertEqual(_pa.cut_summary("a\nb", 100), "a\nb")
+
+    def test_cut_never_ends_inside_a_fence(self) -> None:
+        text = "head\n\n```\n" + "code\n" * 50 + "```\ntail\n"
+        out = _pa.cut_summary(text, 120)
+        self.assertLessEqual(len(out), 120)
+        self.assertEqual(out.count("```"), 0)
+        self.assertTrue(out.startswith("head"))
+
+    def test_closed_fence_before_the_cut_is_kept(self) -> None:
+        text = "```\nx\n```\n" + "line\n" * 100
+        out = _pa.cut_summary(text, 150)
+        self.assertEqual(out.count("```"), 2)
+
+
+class TestNeutralizing(ActionCase):
+    def test_runner_command_prefix_is_broken_up_in_every_text_path(self) -> None:
+        rows = [{"status": "hard_fail", "assertion_id": "##[stop-commands]tok", "explanation": "x ##[error]y"}]
+        report = self.report(rows_json=rows, policy_exit="1")
+        stderr_stub = self.root / "stderr-engine.py"
+        stderr_stub.write_text(
+            "#!/usr/bin/env python3\nimport sys\nsys.stderr.write('detail ##[stop-commands]z\\n')\nsys.exit(1)\n"
+        )
+        stderr_stub.chmod(0o755)
+        _, out = self.run_action(report, policy="p.yaml")
+        self.assertNotIn("##[", out)
+        out2 = io.StringIO()
+        with contextlib.redirect_stdout(out2), contextlib.redirect_stderr(out2):
+            _pa.main(["--report", report, "--policy", "p.yaml", "--engine", str(stderr_stub)], self.env)
+        self.assertNotIn("##[", out2.getvalue())
+        self.assertIn("policy evaluate: detail # #[stop-commands]z", out2.getvalue())
+
+    def test_control_pattern_is_ascii_source_and_covers_c1(self) -> None:
+        self.assertTrue(_pa._CONTROL.pattern.isascii())
+        for char in ("\x85", "\x9f", "\u202e", "\u200b", "\ufeff", "\x1b"):
+            self.assertIsNotNone(_pa._CONTROL.search(char), repr(char))
+
+
+class TestIdentity(ActionCase):
+    def test_non_permission_user_error_skips_the_comment_with_a_warning(self) -> None:
+        self.github.user_status = 500
+
+        code, out = self.run_action(self.report())
+
+        self.assertEqual(code, 0, out)
+        self.assertIn("::warning::Attest summary comment not posted (GitHub API returned 500)", out)
+        self.assertFalse(any(m == "POST" for m, _ in self.github.calls))
+        self.assertIn("### attest:", (self.root / "step-summary.md").read_text())
+
+    def test_bot_login_comment_of_type_user_is_not_ours(self) -> None:
+        planted = {"id": 1, "body": f"{_pa.MARKER} x", "user": {"login": _pa.BOT_LOGIN, "type": "User"}}
+        self.github.comments.append(planted)
+
+        self.run_action(self.report())
+
+        self.assertEqual(planted["body"], f"{_pa.MARKER} x")
+        self.assertEqual(len(self.github.comments), 2)
+
+    def test_dropped_connection_is_a_warning_not_a_failure(self) -> None:
+        import http.client
+        import unittest.mock
+
+        with unittest.mock.patch.object(
+            _pa, "_api", side_effect=http.client.RemoteDisconnected("closed")
+        ):
+            code, out = self.run_action(self.report())
+
+        self.assertEqual(code, 0, out)
+        self.assertIn("::warning::Attest summary comment not posted", out)
+
+
+class TestResolveEngine(ActionCase):
+    def make(self, path: Path) -> str:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("#!/bin/sh\n")
+        path.chmod(0o755)
+        return str(path)
+
+    def test_custom_binary_is_used_as_given(self) -> None:
+        exe = self.make(self.root / "mine" / "engine")
+        self.assertEqual(_pa.resolve_engine(exe, "1.0.0-rc.3", {"PATH": ""}), exe)
+
+    def test_order_is_env_override_then_path_then_pinned_cache(self) -> None:
+        override = self.make(self.root / "override" / "attest-engine")
+        on_path = self.make(self.root / "bin" / "attest-engine")
+        home = self.root / "home"
+        cached = self.make(home / ".attest" / "bin" / "1.0.0-rc.3" / "attest-engine")
+        self.make(home / ".attest" / "bin" / "1.0.0-rc.9" / "attest-engine")
+        with unittest.mock.patch.dict(os.environ, {"HOME": str(home)}):
+            both = {"PATH": str(self.root / "bin"), "ATTEST_ENGINE_PATH": override}
+            self.assertEqual(_pa.resolve_engine("attest-engine", "1.0.0-rc.3", both), override)
+            self.assertEqual(
+                _pa.resolve_engine("attest-engine", "1.0.0-rc.3", {"PATH": str(self.root / "bin")}),
+                on_path,
+            )
+            self.assertEqual(_pa.resolve_engine("attest-engine", "1.0.0-rc.3", {"PATH": ""}), cached)
+            self.assertIsNone(_pa.resolve_engine("attest-engine", "1.0.0-rc.4", {"PATH": ""}))
+
+    def test_action_version_reads_the_repository_version_file(self) -> None:
+        expected = (Path(__file__).resolve().parents[3] / "VERSION").read_text().strip()
+        self.assertEqual(_pa.action_version(), expected)
 
 
 class TestAnnotationsEndToEnd(ActionCase):
@@ -505,6 +631,63 @@ class TestFailures(ActionCase):
 
     def test_multiple_report_paths_split_on_newlines_and_spaces(self) -> None:
         self.assertEqual(_pa.split_reports("a.json\n b.json  c.json\n"), ["a.json", "b.json", "c.json"])
+
+
+_REPO_ROOT = Path(__file__).resolve().parents[3]
+_POLICY = "layers:\n  0:\n    max_hard_fails: 0\nnot_evaluated: warn\n"
+
+
+@unittest.skipUnless(shutil.which("go"), "go toolchain not on PATH; CI (ci-github-config.yml) has it")
+class TestRealEngine(ActionCase):
+    """The action script against the real attest-engine built from this checkout."""
+
+    engine_dir: tempfile.TemporaryDirectory[str]
+    engine: str
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.engine_dir = tempfile.TemporaryDirectory()
+        cls.engine = str(Path(cls.engine_dir.name) / "attest-engine")
+        subprocess.run(
+            ["go", "build", "-o", cls.engine, "./cmd/attest-engine"],
+            cwd=_REPO_ROOT / "engine",
+            check=True,
+            capture_output=True,
+        )
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        cls.engine_dir.cleanup()
+
+    def test_summary_annotations_and_policy_come_from_the_real_commands(self) -> None:
+        fixture = _REPO_ROOT / "engine" / "internal" / "report" / "testdata" / "ci"
+        report = self.root / "py" / "attest-report.json"
+        report.parent.mkdir()
+        report.write_text((fixture / "mixed.json").read_text())
+        (self.root / "attest.policy.yaml").write_text(_POLICY)
+        out = io.StringIO()
+
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(out):
+            code = _pa.main(
+                ["--report", str(report), "--policy", "attest.policy.yaml", "--engine", self.engine],
+                self.env,
+            )
+
+        log = out.getvalue()
+        self.assertEqual(code, 0, log)
+        self.assertEqual(self.exit_code_output(), "1")
+        self.assertIn(
+            "::error file=py/tests/test_refund.py,line=40,title=Attest failure%3A effect_refunds (effect)"
+            "::effect violated: 2 refunds for O-1042 (expected 1)",
+            log,
+        )
+        self.assertIn("title=Attest replay miss", log)
+        (comment,) = self.github.comments
+        self.assertTrue(comment["body"].startswith(f"{_pa.MARKER}\n### attest: 1 passed · 2 failed"))
+        self.assertIn("**Policy:** fail (exit 1)", comment["body"])
+        self.assertIn("`effect violated: 2 refunds for O-1042 (expected 1)`", comment["body"])
+        self.assertIn("[Workflow run]", comment["body"])
+        self.assertNotIn(_TOKEN, log)
 
 
 if __name__ == "__main__":
