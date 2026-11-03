@@ -18,7 +18,7 @@ Mutants are enumerated in this fixed order, so the same fixtures give the same m
 | `duplicate_tool_call` | Repeats one tool call right after itself | `tool_cardinality` on that tool per its business key (the first argument, in alphabetical order, called `id` or ending in `_id`) |
 | `reorder_tool_calls` | Swaps two neighbouring tool calls | `tool_order` |
 | `perturb_argument` | Changes one scalar argument: a string gets a suffix, a number doubles, a bool flips | `arg_predicate` pinning the argument to the captured values |
-| `inject_tool_error` | Marks a tool call failed with an error message (trace-v2 fixtures) | `failure_streak` with `max: 0` |
+| `inject_tool_error` | Marks a tool call failed with an error message (trace-v2 fixtures) | `failure_streak` with `max` set to the fixture's longest existing failure streak (0 when it has none) |
 | `alter_world_effect` | In the fixture's world snapshot: duplicates a record, drops a record, or changes one field | an effect `idempotent` or `count` check |
 | `truncate_output` | Cuts a string in the final output to its first half | a `content` `contains` check on the cut text |
 
