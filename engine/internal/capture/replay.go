@@ -2,6 +2,7 @@ package capture
 
 import (
 	"bytes"
+	"crypto/subtle"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -38,9 +39,11 @@ var fixtureLimit int64 = MaxFixtureBytes
 
 // ReplayOptions configures a replay session.
 type ReplayOptions struct {
-	Mode      string
-	Fixture   *Fixture
-	Environ   []string // the process environment: redaction secrets and live provider keys
+	Mode    string
+	Fixture *Fixture
+	Environ []string // the process environment: redaction secrets and live provider keys
+	// NoLive refuses every live forward: a miss in auto mode is reported, never sent.
+	NoLive    bool
 	Upstreams Upstreams
 }
 
@@ -82,7 +85,7 @@ type Replayer struct {
 	mode     string
 	name     string
 	redactor *redact.Redactor
-	liveKeys map[string]bool
+	liveKeys map[string]string
 
 	mu      sync.Mutex
 	entries []*replayEntry
@@ -158,7 +161,7 @@ func NewReplayer(o ReplayOptions) (*Replayer, error) {
 		mode:     o.Mode,
 		name:     o.Fixture.Name,
 		redactor: redact.FromEnviron(o.Environ),
-		liveKeys: liveKeys(o.Environ),
+		liveKeys: liveKeys(o.Environ, o.NoLive),
 		queues:   map[string][]int{},
 	}
 	for i, ex := range o.Fixture.Exchanges {
@@ -183,11 +186,16 @@ func NewReplayer(o ReplayOptions) (*Replayer, error) {
 	return r, nil
 }
 
-// liveKeys reports, per provider, whether the environment holds that
-// provider's standard key. A missed request goes live only with one: the
-// proxy forwards the agent's own credentials and adds none.
-func liveKeys(environ []string) map[string]bool {
-	set := map[string]bool{}
+// liveKeys returns, per provider, the standard key the environment holds. A
+// missed request goes live only when the client presents exactly that key:
+// the proxy forwards the client's credentials and adds none, and a request
+// carrying some other credential must not reach a provider on the strength of
+// an unrelated key in the environment. NoLive removes every key.
+func liveKeys(environ []string, noLive bool) map[string]string {
+	set := map[string]string{}
+	if noLive {
+		return set
+	}
 	for _, kv := range environ {
 		name, value, ok := strings.Cut(kv, "=")
 		if !ok || value == "" {
@@ -195,12 +203,31 @@ func liveKeys(environ []string) map[string]bool {
 		}
 		switch name {
 		case "OPENAI_API_KEY":
-			set["openai"] = true
+			set["openai"] = value
 		case "ANTHROPIC_API_KEY":
-			set["anthropic"] = true
+			set["anthropic"] = value
 		}
 	}
 	return set
+}
+
+// mayGoLive reports whether a missed request carrying credential may be
+// forwarded.
+func (r *Replayer) mayGoLive(provider, credential string) bool {
+	key := r.liveKeys[provider]
+	return key != "" && subtle.ConstantTimeCompare([]byte(key), []byte(credential)) == 1
+}
+
+// requestCredential is the provider credential a client sent: a bearer token,
+// or the x-api-key / api-key header.
+func requestCredential(h http.Header) string {
+	if v, ok := strings.CutPrefix(h.Get("Authorization"), "Bearer "); ok {
+		return v
+	}
+	if v := h.Get("X-Api-Key"); v != "" {
+		return v
+	}
+	return h.Get("Api-Key")
 }
 
 // decision is how the proxy answers one request.
@@ -212,7 +239,7 @@ type decision struct {
 }
 
 // decide matches a request against the recordings and records the outcome.
-func (r *Replayer) decide(provider, method, path string, body []byte) decision {
+func (r *Replayer) decide(provider, method, path, credential string, body []byte) decision {
 	api := apiOf(provider, path)
 	var doc any = string(body)
 	if len(body) > 0 {
@@ -245,7 +272,7 @@ func (r *Replayer) decide(provider, method, path string, body []byte) decision {
 		}
 	}
 	rec.Message = r.diagnose(id)
-	if r.mode == ReplayAuto && r.liveKeys[provider] {
+	if r.mode == ReplayAuto && r.mayGoLive(provider, credential) {
 		// Recorded by the caller once the proxy has accepted the request.
 		rec.Outcome = OutcomeLive
 		return decision{live: true, rec: rec}

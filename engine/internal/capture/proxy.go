@@ -186,7 +186,7 @@ func (p *Proxy) forward(r route, prefix string) http.Handler {
 		}
 		var liveRec *ReplayRecord
 		if p.replay != nil {
-			d := p.replay.decide(r.provider, req.Method, path, body)
+			d := p.replay.decide(r.provider, req.Method, path, requestCredential(req.Header), body)
 			switch {
 			case d.hit != nil:
 				writeReplayed(w, d.hit.ex)

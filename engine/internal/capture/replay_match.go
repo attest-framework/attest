@@ -25,6 +25,12 @@ var storedPlaceholder = regexp.MustCompile(`\{\{(id|email|timestamp)_(\d+)\}\}`)
 // HasPlaceholder reports whether s contains a templated {{kind_N}} value.
 func HasPlaceholder(s string) bool { return storedPlaceholder.MatchString(s) }
 
+// normalizedEmail stands for every email address, raw or templated. Capture
+// numbers emails by value, but a replayed response echoes its placeholder back
+// next to the raw address the agent still holds, so for matching a placeholder
+// and the address it stands for are the same token.
+const normalizedEmail = "attest-email@attest.invalid"
+
 // unplaceholder rewrites every stored placeholder to a synthetic raw value of
 // the same kind, distinct per number, so Template renumbers placeholders and
 // raw values with the same rules.
@@ -41,13 +47,14 @@ func unplaceholder(v any) any {
 		}
 		return x
 	case string:
+		x = emailPattern.ReplaceAllString(x, normalizedEmail)
 		return storedPlaceholder.ReplaceAllStringFunc(x, func(m string) string {
 			sub := storedPlaceholder.FindStringSubmatch(m)
 			switch sub[1] {
 			case "id":
 				return "attestph" + sub[2] + "00000000"
 			case "email":
-				return "attestph" + sub[2] + "@attest.invalid"
+				return normalizedEmail
 			default:
 				return "2000-01-01T00:00:00Z"
 			}
@@ -258,7 +265,7 @@ func firstDifference(recorded, live components) string {
 		}
 	}
 	if recorded.model != live.model {
-		return fmt.Sprintf("model changed (%s→%s)", recorded.model, live.model)
+		return fmt.Sprintf("model changed (%q→%q)", recorded.model, live.model)
 	}
 	return ""
 }

@@ -34,16 +34,19 @@ options:
   --fixtures-dir <dir>   fixture directory (default tests/attest/fixtures)
   --fixture <file>       fixture file
   --mode strict|auto     strict (default) fails a miss; auto forwards a miss
-                         live, with the agent's own credentials, when
-                         OPENAI_API_KEY or ANTHROPIC_API_KEY (for that
-                         provider) is set, and otherwise reports it
+                         live when the request carries exactly the
+                         OPENAI_API_KEY / ANTHROPIC_API_KEY of this
+                         environment for that provider, and otherwise
+                         reports it
+  --no-live              never forward a miss live, whatever keys are set
+                         (a miss is reported); used with the egress guard
   --serve                for an SDK helper: print {"env":{...}} as one JSON
                          line, serve until stdin sends "stop" or closes, then
                          print {"summary":{...}} and exit`
 
 type replayOptions struct {
 	name, fixturesDir, fixture, mode string
-	serve                            bool
+	serve, noLive                    bool
 	command                          []string
 }
 
@@ -60,6 +63,7 @@ func parseReplayArgs(args []string, stderr io.Writer) (*replayOptions, bool) {
 	fs.StringVar(&o.fixture, "fixture", "", "")
 	fs.StringVar(&o.mode, "mode", capture.ReplayStrict, "")
 	fs.BoolVar(&o.serve, "serve", false, "")
+	fs.BoolVar(&o.noLive, "no-live", false, "")
 	if err := fs.Parse(args); err != nil {
 		fmt.Fprintf(stderr, "replay: %s\n%s\n", terminalSafe(err.Error()), replayUsage)
 		return nil, false
@@ -98,7 +102,7 @@ func runReplay(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	}
 	environ := os.Environ()
 	s, err := capture.StartReplay(capture.ReplayOptions{
-		Mode: o.mode, Fixture: f, Environ: environ, Upstreams: capture.UpstreamsFromEnv(environ),
+		Mode: o.mode, Fixture: f, Environ: environ, Upstreams: capture.UpstreamsFromEnv(environ), NoLive: o.noLive,
 	})
 	if err != nil {
 		fmt.Fprintf(stderr, "replay: %s\n", terminalSafe(err.Error()))

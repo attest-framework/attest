@@ -18,6 +18,8 @@ import (
 
 // deadUpstreams point at a closed port: any request the replay proxy forwards
 // fails, so a passing test made no live call.
+const liveKey = "sk-live-test-key-0123456789"
+
 func deadUpstreams() Upstreams {
 	return Upstreams{OpenAI: "http://127.0.0.1:1/v1", Anthropic: "http://127.0.0.1:1"}
 }
@@ -34,11 +36,20 @@ func startReplay(t *testing.T, f *Fixture, mode string, environ []string, up Ups
 
 func post(t *testing.T, url, body string) (int, http.Header, string) {
 	t.Helper()
+	return postAs(t, url, body, "")
+}
+
+// postAs is post with a bearer credential.
+func postAs(t *testing.T, url, body, credential string) (int, http.Header, string) {
+	t.Helper()
 	req, err := http.NewRequest(http.MethodPost, url, strings.NewReader(body))
 	if err != nil {
 		t.Fatal(err)
 	}
 	req.Header.Set("Content-Type", "application/json")
+	if credential != "" {
+		req.Header.Set("Authorization", "Bearer "+credential)
+	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("POST %s: %v", url, err)
@@ -226,7 +237,7 @@ func TestReplay_ToolsParamsModelMessagesChanged_EachNamed(t *testing.T) {
 		{"tools removed", chatReq("sys", "user", `,"temperature":0`), "tools changed"},
 		{"params", chatReq("sys", "user", `,"temperature":1`+tools), "params changed"},
 		{"messages", chatReq("sys", "other user", `,"temperature":0`+tools), "messages changed"},
-		{"model", strings.Replace(base, "gpt-test", "gpt-other", 1), "model changed (gpt-test→gpt-other)"},
+		{"model", strings.Replace(base, "gpt-test", "gpt-other", 1), `model changed ("gpt-test"→"gpt-other")`},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -332,9 +343,9 @@ func TestReplay_AutoMode_NoKey_MissIsNotForwarded(t *testing.T) {
 func TestReplay_AutoMode_WithKey_MissGoesLiveAndIsCounted(t *testing.T) {
 	up := newFakeUpstream(t)
 	f := handFixture(t, "auto", [2]string{chatReq("a", "u", ""), `{"ok":1}`})
-	s := startReplay(t, f, ReplayAuto, []string{"OPENAI_API_KEY=sk-live-test-key-0123456789"}, Upstreams{OpenAI: up.OpenAIBase(), Anthropic: up.AnthropicBase()})
+	s := startReplay(t, f, ReplayAuto, []string{"OPENAI_API_KEY=" + liveKey}, Upstreams{OpenAI: up.OpenAIBase(), Anthropic: up.AnthropicBase()})
 
-	status, _, body := post(t, chatURL(s), chatReq("b", "u", ""))
+	status, _, body := postAs(t, chatURL(s), chatReq("b", "u", ""), liveKey)
 	hitStatus, _, hit := post(t, chatURL(s), chatReq("a", "u", ""))
 
 	if status != 200 || !strings.Contains(body, "hello from chat") {
@@ -484,7 +495,7 @@ func FuzzReplayLoad(f *testing.F) {
 		if err != nil {
 			return
 		}
-		rp.decide("openai", http.MethodPost, "/chat/completions", []byte(`{"model":"m","messages":[]}`))
+		rp.decide("openai", http.MethodPost, "/chat/completions", "", []byte(`{"model":"m","messages":[]}`))
 	})
 }
 
@@ -564,10 +575,10 @@ func TestReplay_AutoMode_JudgeKeyAloneDoesNotGoLive(t *testing.T) {
 func TestReplay_LiveRequestRefused_RecordedAsMissNotLive(t *testing.T) {
 	up := newFakeUpstream(t)
 	f := handFixture(t, "auto", [2]string{chatReq("a", "u", ""), `{}`})
-	s := startReplay(t, f, ReplayAuto, []string{"OPENAI_API_KEY=sk-live-test-key-0123456789"}, Upstreams{OpenAI: up.OpenAIBase(), Anthropic: up.AnthropicBase()})
+	s := startReplay(t, f, ReplayAuto, []string{"OPENAI_API_KEY=" + liveKey}, Upstreams{OpenAI: up.OpenAIBase(), Anthropic: up.AnthropicBase()})
 	s.proxy.budget.charge(MaxSessionBytes + 1)
 
-	status, _, _ := post(t, chatURL(s), chatReq("b", "u", ""))
+	status, _, _ := postAs(t, chatURL(s), chatReq("b", "u", ""), liveKey)
 
 	if status != http.StatusInsufficientStorage {
 		t.Fatalf("status = %d", status)
@@ -577,5 +588,68 @@ func TestReplay_LiveRequestRefused_RecordedAsMissNotLive(t *testing.T) {
 	}
 	if sum := s.ReplaySummary(); sum.Live != 0 || sum.Misses != 1 || !strings.Contains(sum.Records[0].Message, "live request refused") {
 		t.Fatalf("summary = %+v", sum)
+	}
+}
+
+func TestReplay_AutoMode_CredentialNotTheEnvironmentKey_IsNotForwarded(t *testing.T) {
+	up := newFakeUpstream(t)
+	f := handFixture(t, "auto", [2]string{chatReq("a", "u", ""), `{}`})
+	s := startReplay(t, f, ReplayAuto, []string{"OPENAI_API_KEY=" + liveKey}, Upstreams{OpenAI: up.OpenAIBase(), Anthropic: up.AnthropicBase()})
+
+	for name, cred := range map[string]string{"none": "", "other": "sk-attacker-chosen-0123456789"} {
+		if status, _, _ := postAs(t, chatURL(s), chatReq("b", "u", ""), cred); status != 422 {
+			t.Fatalf("%s: status %d", name, status)
+		}
+	}
+	if up.seq.Load() != 0 {
+		t.Fatalf("upstream calls = %d", up.seq.Load())
+	}
+}
+
+func TestReplay_NoLive_AutoMissWithMatchingKeyIsNotForwarded(t *testing.T) {
+	up := newFakeUpstream(t)
+	f := handFixture(t, "auto", [2]string{chatReq("a", "u", ""), `{}`})
+	s, err := StartReplay(ReplayOptions{Mode: ReplayAuto, Fixture: f, NoLive: true, Environ: []string{"OPENAI_API_KEY=" + liveKey}, Upstreams: Upstreams{OpenAI: up.OpenAIBase(), Anthropic: up.AnthropicBase()}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = s.Close() })
+
+	status, _, _ := postAs(t, chatURL(s), chatReq("b", "u", ""), liveKey)
+
+	if status != 422 || up.seq.Load() != 0 {
+		t.Fatalf("status %d, upstream calls %d", status, up.seq.Load())
+	}
+	_ = s.Close()
+	if sum := s.ReplaySummary(); sum.Live != 0 || sum.Misses != 1 {
+		t.Fatalf("summary = %+v", sum)
+	}
+}
+
+func TestReplay_RawEmailBesideEchoedPlaceholder_MatchesRecording(t *testing.T) {
+	// Capture numbers an email by value, so the recording holds {{email_1}}
+	// twice; live, the agent still holds the raw address next to the
+	// placeholder the replayed reply echoed.
+	rec := `{"model":"gpt-test","messages":[{"role":"user","content":"refund for {{email_1}}"},{"role":"assistant","content":"ok {{email_1}}"}]}`
+	live := `{"model":"gpt-test","messages":[{"role":"user","content":"refund for bob@example.org"},{"role":"assistant","content":"ok {{email_1}}"}]}`
+	s := startReplay(t, handFixture(t, "mail", [2]string{rec, `{"ok":1}`}), ReplayStrict, nil, deadUpstreams())
+
+	status, _, body := post(t, chatURL(s), live)
+
+	if status != 200 {
+		t.Fatalf("%d %s", status, body)
+	}
+}
+
+func TestReplay_ModelChangedWithControlCharacters_QuotedInMissMessage(t *testing.T) {
+	f := handFixture(t, "fx", [2]string{chatReq("a", "u", ""), `{}`})
+	s := startReplay(t, f, ReplayStrict, nil, deadUpstreams())
+	live := strings.Replace(chatReq("a", "u", ""), "gpt-test", `x\u001b[31m\n::error::boom`, 1)
+
+	_, _, body := post(t, chatURL(s), live)
+
+	msg := missOf(t, body)
+	if strings.ContainsAny(msg, "\x1b\n") || !strings.Contains(msg, `\u001b`) && !strings.Contains(msg, `\x1b`) {
+		t.Fatalf("miss message = %q", msg)
 	}
 }
