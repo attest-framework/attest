@@ -75,7 +75,9 @@ def test_resolve_mode_explicit_beats_env_and_ci(monkeypatch: pytest.MonkeyPatch)
     assert resolve_mode() == "off"
 
 
-@pytest.mark.parametrize(("ci", "want"), [("true", "strict"), ("", "auto")])
+@pytest.mark.parametrize(
+    ("ci", "want"), [("true", "strict"), ("", "auto"), ("false", "auto"), ("0", "auto")]
+)
 def test_resolve_mode_default_is_strict_in_ci_and_auto_locally(
     monkeypatch: pytest.MonkeyPatch, ci: str, want: str
 ) -> None:

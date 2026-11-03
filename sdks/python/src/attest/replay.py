@@ -134,7 +134,8 @@ def resolve_mode(explicit: str | None = None) -> str:
     set and ``auto`` locally."""
     mode = explicit or os.environ.get("ATTEST_REPLAY", "").strip().lower() or None
     if mode is None:
-        mode = MODE_STRICT if os.environ.get("CI") else MODE_AUTO
+        ci = os.environ.get("CI", "").strip().lower()
+        mode = MODE_STRICT if ci not in ("", "false", "0") else MODE_AUTO
     if mode not in REPLAY_MODES:
         raise ReplayError(f"replay mode {mode!r}: want one of {', '.join(REPLAY_MODES)}")
     return mode

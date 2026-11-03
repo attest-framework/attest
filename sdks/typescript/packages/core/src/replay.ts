@@ -86,10 +86,10 @@ export function resolveReplayMode(
   env: NodeJS.ProcessEnv = process.env,
 ): ReplayModeSetting {
   if (explicit !== undefined) return checkMode(explicit, "mode");
-  const fromEnv = env.ATTEST_REPLAY;
-  if (fromEnv !== undefined && fromEnv !== "") return checkMode(fromEnv, "ATTEST_REPLAY");
-  const ci = env.CI;
-  return ci !== undefined && ci !== "" && ci !== "false" && ci !== "0" ? "strict" : "auto";
+  const fromEnv = (env.ATTEST_REPLAY ?? "").trim().toLowerCase();
+  if (fromEnv !== "") return checkMode(fromEnv, "ATTEST_REPLAY");
+  const ci = (env.CI ?? "").trim().toLowerCase();
+  return ci !== "" && ci !== "false" && ci !== "0" ? "strict" : "auto";
 }
 
 function checkMode(value: string, where: string): ReplayModeSetting {
