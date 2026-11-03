@@ -33,6 +33,7 @@ All notable changes to Attest are documented in this file. The format follows [K
 ### Fixed
 
 - `@attest-ai/vitest` declares `vitest >=3.0.0 <5`. Vitest 5 removed `vitest/suite`, which the plugin imports, so the old `>=3.0.0` range accepted a Vitest it cannot load. The install commands in the README, `docs/guides/behavior-contracts.md` and `docs/guides/merge-gate.md` now pin `vitest@^4`, since a bare `vitest` installs Vitest 5. Vitest 5 support is planned.
+- TypeScript `OTelAdapter.fromOtlp` / `fromSpans` no longer hang for 60 s and throw `trace convert timed out` under parallel load. They ran the engine with `spawnSync` and the export on stdin, which on macOS occasionally never returned: about 1 call in 100 with 8 concurrent callers. The engine now runs as an asynchronous child process, which also stops the conversion from blocking the event loop.
 
 ## [1.0.0-rc.2] — 2026-11-02
 

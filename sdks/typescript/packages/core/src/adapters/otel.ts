@@ -6,7 +6,7 @@
  * every SDK. This module only encodes spans as OTLP/JSON, calls the engine and returns the
  * trace v2 it prints; it holds no mapping of its own. See `docs/guides/trace-check.md`.
  */
-import { spawnSync } from "node:child_process";
+import { spawn } from "node:child_process";
 import { resolveEngine } from "../engine-manager.js";
 import { OTLPConversionError } from "../proto/errors.js";
 import type { Trace } from "../proto/types.js";
@@ -62,7 +62,7 @@ export class OTelAdapter {
    * @throws RangeError when a parsed export holds a non-finite number.
    * @throws OTLPConversionError when the engine times out, overflows the output buffer or
    *   prints no trace.
-   * @throws Error from `spawnSync` when the engine cannot start.
+   * @throws Error when the engine cannot start.
    */
   static async fromOtlp(otlp: OTLPInput, agentId?: string): Promise<Trace> {
     const payload =
@@ -77,39 +77,86 @@ export class OTelAdapter {
     const args = ["trace", "convert"];
     if (agentId !== undefined) args.push("--agent-id", agentId);
     args.push("-");
-    const proc = spawnSync(await resolveEngine(), args, {
-      input: payload,
-      timeout: CONVERT_TIMEOUT_MS,
-      maxBuffer: MAX_TRACE_OUTPUT_BYTES,
-    });
-    if (proc.error) {
-      const code = (proc.error as NodeJS.ErrnoException).code;
-      if (code === "ETIMEDOUT") {
-        throw new OTLPConversionError(
-          `attest-engine trace convert timed out after ${CONVERT_TIMEOUT_MS / 1000}s`,
-        );
-      }
-      if (code === "ENOBUFS") {
-        throw new OTLPConversionError(
-          `attest-engine trace convert printed more than ${MAX_TRACE_OUTPUT_BYTES} bytes`,
-        );
-      }
-      throw proc.error;
-    }
-    if (proc.status !== 0) {
-      const message = proc.stderr.toString("utf8").trim();
-      throw new OTLPConversionError(
-        message || `attest-engine trace convert exited ${String(proc.status ?? proc.signal)}`,
-      );
-    }
+    const stdout = await runConvert(await resolveEngine(), args, payload);
     try {
-      return JSON.parse(proc.stdout.toString("utf8")) as Trace;
+      return JSON.parse(stdout) as Trace;
     } catch (err) {
       throw new OTLPConversionError(
         `attest-engine trace convert printed output that is not JSON: ${String(err)}`,
       );
     }
   }
+}
+
+/**
+ * Run `attest-engine trace convert` with `payload` on stdin and return its stdout.
+ *
+ * Asynchronous on purpose: `spawnSync` with `input` occasionally never returns under
+ * parallel load (observed on macOS: about 1 call in 100 with 8 concurrent callers, each
+ * hanging until the timeout), and it blocks the event loop while the engine runs.
+ */
+function runConvert(engine: string, args: string[], payload: string | Uint8Array): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(engine, args, { stdio: ["pipe", "pipe", "pipe"] });
+    let timer: NodeJS.Timeout | undefined;
+    // Registered first: a spawn that fails (ENOENT, or EMFILE/ENFILE under load) emits
+    // "error" on the next tick, and with EMFILE/ENFILE its stdio streams are null.
+    child.on("error", (e) => {
+      clearTimeout(timer);
+      reject(e);
+    });
+    const { stdin, stdout, stderr } = child;
+    if (stdin === null || stdout === null || stderr === null) return;
+    const out: Buffer[] = [];
+    const err: Buffer[] = [];
+    let outBytes = 0;
+    let failure: Error | null = null;
+    const fail = (e: Error): void => {
+      failure ??= e;
+      child.kill("SIGKILL");
+    };
+    timer = setTimeout(() => {
+      fail(
+        new OTLPConversionError(
+          `attest-engine trace convert timed out after ${CONVERT_TIMEOUT_MS / 1000}s`,
+        ),
+      );
+    }, CONVERT_TIMEOUT_MS);
+    stdout.on("data", (chunk: Buffer) => {
+      outBytes += chunk.length;
+      if (outBytes > MAX_TRACE_OUTPUT_BYTES) {
+        fail(
+          new OTLPConversionError(
+            `attest-engine trace convert printed more than ${MAX_TRACE_OUTPUT_BYTES} bytes`,
+          ),
+        );
+        return;
+      }
+      out.push(chunk);
+    });
+    stderr.on("data", (chunk: Buffer) => err.push(chunk));
+    // An engine that exits before reading all of stdin (for example on a usage error)
+    // makes the write fail with EPIPE; its exit status and stderr report the real error.
+    stdin.on("error", () => undefined);
+    child.on("close", (code, signal) => {
+      clearTimeout(timer);
+      if (failure !== null) {
+        reject(failure);
+        return;
+      }
+      if (code !== 0) {
+        const message = Buffer.concat(err).toString("utf8").trim();
+        reject(
+          new OTLPConversionError(
+            message || `attest-engine trace convert exited ${String(code ?? signal)}`,
+          ),
+        );
+        return;
+      }
+      resolve(Buffer.concat(out).toString("utf8"));
+    });
+    stdin.end(payload);
+  });
 }
 
 function hrTimeToNanos(time: readonly [number, number], spanName: string): string {
