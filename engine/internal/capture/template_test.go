@@ -2,6 +2,7 @@ package capture
 
 import (
 	"encoding/json"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -46,14 +47,17 @@ func TestTemplate_ProviderIDsAndEmails_SamePlaceholderEverywhere(t *testing.T) {
 	}
 }
 
-func TestTemplate_TimestampsBecomeSequenceNumbers_DurationsZero(t *testing.T) {
+func TestTemplate_TimestampsNumberedByOriginalOrder_DurationsZero(t *testing.T) {
 	got := templated(t, `{"a":{"created":1700000300,"latency_ms":812},
 		"b":[{"started_at_ms":1700000000500,"ended_at_ms":1700000000900},{"started_at_ms":1700000000900}],
-		"c":"data: {\"created\": 1700000300, \"n\":1}\n\n","d":"2026-11-03T10:00:00Z"}`)
+		"c":"data: {\"created\": 1700000300, \"n\":1}\n\n","d":"2023-11-14T22:18:20.950Z"}`)
 
+	// Instants: b[0] start 1700000000.5s; b[1] start and b[0] end at .9s
+	// (start before end at one instant); a.created and c's created at
+	// 1700000300s (walk order between equals); d at 1700000300.95s.
 	for _, want := range []string{
-		`"created":1`, `"latency_ms":0`, `"ended_at_ms":2`, `"started_at_ms":3`, `{"started_at_ms":4}`,
-		`data: {\"created\":5, \"n\":1}`, `"d":"{{timestamp_1}}"`,
+		`{"ended_at_ms":3,"started_at_ms":1}`, `{"started_at_ms":2}`, `"created":4`,
+		`data: {\"created\":5, \"n\":1}`, `"d":"{{timestamp_6}}"`, `"latency_ms":0`,
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("missing %s in %s", want, got)
@@ -61,17 +65,60 @@ func TestTemplate_TimestampsBecomeSequenceNumbers_DurationsZero(t *testing.T) {
 	}
 }
 
-// Two runs of one scenario can put two responses in the same second, or a
-// span end and the next start in the same millisecond, in one run and not in
-// the next. The output must not depend on which.
-func TestTemplate_CoincidentTimestamps_SameOutputAsDistinct(t *testing.T) {
-	same := templated(t, `{"x":{"created":1700000000},"y":{"created":1700000000},
-		"z":[{"started_at_ms":1700000000100,"ended_at_ms":1700000000200},{"started_at_ms":1700000000200}]}`)
-	distinct := templated(t, `{"x":{"created":1700000000},"y":{"created":1700000001},
-		"z":[{"started_at_ms":1700000000100,"ended_at_ms":1700000000200},{"started_at_ms":1700000000201}]}`)
+// (a) Templated steps and spans keep start before end, a zero-length step
+// and span included.
+func TestTemplate_StartBeforeEnd_StepsAndSpans_ZeroDuration(t *testing.T) {
+	doc := `{"steps":[{"started_at_ms":1700000000100,"ended_at_ms":1700000000300},
+		{"started_at_ms":1700000000200,"ended_at_ms":1700000000200},
+		{"started_at_ms":1700000000300,"ended_at_ms":1700000000400}],
+		"spans":[{"startTimeUnixNano":"1700000000100000000","endTimeUnixNano":"1700000000100000000"},
+		{"startTimeUnixNano":"1700000000050000000","endTimeUnixNano":"1700000000500000000"}]}`
+	var parsed struct {
+		Steps []map[string]json.Number `json:"steps"`
+		Spans []map[string]string      `json:"spans"`
+	}
+	if err := json.Unmarshal([]byte(templated(t, doc)), &parsed); err != nil {
+		t.Fatal(err)
+	}
+	for i, s := range parsed.Steps {
+		start, _ := s["started_at_ms"].Int64()
+		end, _ := s["ended_at_ms"].Int64()
+		if start >= end {
+			t.Errorf("step %d: started %d, ended %d", i, start, end)
+		}
+	}
+	for i, s := range parsed.Spans {
+		start, _ := strconv.Atoi(s["startTimeUnixNano"])
+		end, _ := strconv.Atoi(s["endTimeUnixNano"])
+		if start >= end {
+			t.Errorf("span %d: start %d, end %d", i, start, end)
+		}
+	}
+}
 
-	if same != distinct {
-		t.Fatalf("same     %s\ndistinct %s", same, distinct)
+// (b) Different absolute times with the same ordering, and same-role events
+// that coincide in one run and are 1 ms (or 1 s) apart in the other, give
+// the same output.
+func TestTemplate_SameOrderingDifferentTimes_SameOutput(t *testing.T) {
+	runA := templated(t, `{"x":{"created":1700000000},"y":{"created":1700000000},
+		"z":[{"started_at_ms":1700000000100,"ended_at_ms":1700000000200},{"started_at_ms":1700000000250,"ended_at_ms":1700000000300}],
+		"e":[{"timestamp_ms":1700000000400},{"timestamp_ms":1700000000400}]}`)
+	runB := templated(t, `{"x":{"created":1800000000},"y":{"created":1800000001},
+		"z":[{"started_at_ms":1800000001100,"ended_at_ms":1800000001250},{"started_at_ms":1800000001300,"ended_at_ms":1800000001900}],
+		"e":[{"timestamp_ms":1800000001950},{"timestamp_ms":1800000001951}]}`)
+
+	if runA != runB {
+		t.Fatalf("A %s\nB %s", runA, runB)
+	}
+}
+
+// (c) ISO timestamps to the second that coincide still get distinct numbers.
+func TestTemplate_CoincidentISOSeconds_DistinctPlaceholders(t *testing.T) {
+	got := templated(t, `{"a":"at 2026-11-03T10:00:00Z","b":"at 2026-11-03T10:00:00Z","c":"2026-11-03 09:59:59"}`)
+
+	want := `{"a":"at {{timestamp_2}}","b":"at {{timestamp_3}}","c":"{{timestamp_1}}"}`
+	if got != want {
+		t.Fatalf("got  %s\nwant %s", got, want)
 	}
 }
 
