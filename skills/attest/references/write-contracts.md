@@ -21,7 +21,7 @@ Write down the repo's own facts, before any code. The final column is one fictio
 | Fixture with recorded model calls | `tests/attest/fixtures/<name>.attest.json` | `checkout-timeout` |
 | World for the external system | `*.world.yaml` (`base_url_env`, `faults`) | `world/billing-timeout.world.yaml` with `timeout_after_commit`, collection `charges` |
 | Incident input and frozen trace | `incidents/<ID>/` | `incidents/INC-7/request.json`, `incidents/INC-7/trace.otlp.json` |
-| How tests already run, with which env | `Makefile`, `package.json` scripts, CI workflow | `make check-replay` |
+| How tests already run, with which env | `Makefile`, `package.json` scripts, CI workflow | `make test` |
 
 No fixture yet: follow `capture-incident.md` first, then return here. No trace at all (the agent emits no OpenTelemetry spans and uses no adapter): read `attest guide framework-adapters`.
 
@@ -122,7 +122,7 @@ Adapt names, paths and the entry point to the repo. Rules for the chain:
 
 ## 4. Run it with zero model calls
 
-Use the repo's own target when one exists (`make check-replay`, `npm test`). Otherwise give the agent's settings placeholder values, never real keys:
+Use the repo's own target when one exists (`make test`, `npm test`). Otherwise give the agent's settings placeholder values, never real keys:
 
 ```bash
 # Python

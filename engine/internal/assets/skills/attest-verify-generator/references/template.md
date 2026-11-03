@@ -31,7 +31,7 @@ General attest procedures: the `attest` skill, `attest help --json` and `attest 
 ## Run (zero model calls)
 
 ```bash
-<exact command 1, e.g. make check-replay>
+<exact command 1, e.g. make test>
 <exact command 2>
 ```
 
