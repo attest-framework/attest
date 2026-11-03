@@ -22,6 +22,8 @@ coverage: missing evidence
 
 `--json` prints the same report as JSON (`ok`, `issues`, `coverage`, step counts). Pass `-` to read the export from stdin.
 
+`attest trace check` also accepts a capture fixture (`tests/attest/fixtures/<name>.attest.json`): it checks that the fixture decodes, that its trace passes the engine's trace validation and that the captured spans passed trace check at capture time. See [capture.md](capture.md).
+
 | Exit | Meaning |
 | --- | --- |
 | 0 | No integrity errors. Warnings and coverage gaps do not fail the check. |
