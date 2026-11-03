@@ -432,3 +432,31 @@ func TestSnapshotIsACopy(t *testing.T) {
 		t.Fatal("snapshot aliases live state")
 	}
 }
+
+func TestParseRejectsUnaddressableIDsAndUnrepresentableNumbers(t *testing.T) {
+	base := "world_version: 1\nbase_url_env: X_URL\n"
+	for name, src := range map[string]string{
+		"id_format slash": base + "resources:\n  a: {path: /a, id_format: \"x/%d\", routes: [create]}\n",
+		"seed id slash":   base + "resources:\n  a: {path: /a, routes: [get], seed: [{id: \"a/b\"}]}\n",
+		"inf":             base + "resources:\n  a: {path: /a, routes: [get], seed: [{id: x, n: .inf}]}\n",
+		"huge integer":    base + "resources:\n  a: {path: /a, routes: [get], seed: [{id: x, n: 123456789012345678901234567890}]}\n",
+		"huge ordinal":    base + "resources:\n  a: {path: /a, routes: [create]}\nfaults:\n  - {resource: a, route: create, fault: 500, on_requests: [100000000000000000000]}\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			err := func() error { _, err := Parse([]byte(src)); return err }()
+			if err == nil || !strings.Contains(err.Error(), "/") {
+				t.Fatalf("want an error naming a path, got %v", err)
+			}
+		})
+	}
+}
+
+func TestTimeoutFaultOnRejectedCreateFiresNothing(t *testing.T) {
+	w, ts := start(t, loadPayments(t))
+	if r, _ := post(t, ts.Client(), ts.URL+"/refunds", "", "nope"); r.StatusCode != 400 {
+		t.Fatalf("bad body: %d", r.StatusCode)
+	}
+	if n := len(w.Snapshot().FaultsFired); n != 0 {
+		t.Fatalf("%d faults fired on a rejected create", n)
+	}
+}

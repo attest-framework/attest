@@ -135,20 +135,23 @@ func checkUnique(spec *effectSpec, records []map[string]any) (*effectViolation, 
 		return nil, "", fmt.Errorf("unique needs fields")
 	}
 	groups := map[string]int{}
-	var order []string
 	labels := map[string]string{}
+	var order []string
 	for _, r := range records {
 		if !matches(r, spec.Where) {
 			continue
 		}
-		parts := make([]string, len(spec.Fields))
+		keyParts := make([]string, len(spec.Fields))
+		labelParts := make([]string, len(spec.Fields))
 		for i, f := range spec.Fields {
-			parts[i] = f + "=" + display(r[f])
+			v, present := r[f]
+			keyParts[i] = fmt.Sprintf("%t:%s", present, canonicalJSON(v))
+			labelParts[i] = f + "=" + display(v)
 		}
-		key := strings.Join(parts, ", ")
+		key := strings.Join(keyParts, "\x00")
 		if groups[key] == 0 {
 			order = append(order, key)
-			labels[key] = key
+			labels[key] = strings.Join(labelParts, ", ")
 		}
 		groups[key]++
 	}
@@ -163,11 +166,11 @@ func checkUnique(spec *effectSpec, records []map[string]any) (*effectViolation, 
 		return nil, fmt.Sprintf("effect holds: %s unique by %s", spec.Resource, by), nil
 	}
 	first := dups[0]
-	msg := fmt.Sprintf("effect violated: %d %s share %s (expected unique by %s)", groups[first], spec.Resource, first, by)
+	msg := fmt.Sprintf("effect violated: %d %s share %s (expected unique by %s)", groups[first], spec.Resource, labels[first], by)
 	if len(dups) > 1 {
 		msg += fmt.Sprintf("; %d more duplicate groups", len(dups)-1)
 	}
-	return &effectViolation{message: msg, expected: "1 per " + by, actual: fmt.Sprintf("%d for %s", groups[first], first)}, "", nil
+	return &effectViolation{message: msg, expected: "1 per " + by, actual: fmt.Sprintf("%d for %s", groups[first], labels[first])}, "", nil
 }
 
 func checkIdempotent(spec *effectSpec, records []map[string]any) (*effectViolation, string, error) {

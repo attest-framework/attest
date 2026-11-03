@@ -133,3 +133,11 @@ func TestEffectIsLayerThreeAndRegistered(t *testing.T) {
 		t.Fatal("effect not ordered with layer 3")
 	}
 }
+
+func TestEffectUniqueDistinguishesTypesAndMissingFields(t *testing.T) {
+	recs := `[{"id":"a","order_id":"1"},{"id":"b","order_id":1},{"id":"c"},{"id":"d","order_id":null}]`
+	r := evalEffect(`{"check":"unique","world":` + snapshotJSON(recs) + `,"resource":"refunds","fields":["order_id"]}`)
+	if r.Status != types.StatusPass {
+		t.Fatalf("false duplicate: %s", r.Explanation)
+	}
+}

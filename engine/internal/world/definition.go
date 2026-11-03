@@ -13,7 +13,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"os"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -27,6 +29,9 @@ import (
 
 // Version is the world-v1 schema version.
 const Version = 1
+
+// idPattern bounds ids so every record stays addressable as one path segment.
+var idPattern = regexp.MustCompile(`^[A-Za-z0-9._~-]{1,128}$`)
 
 // MaxDefinitionBytes bounds a world.yaml.
 const MaxDefinitionBytes = 256 << 10
@@ -255,8 +260,8 @@ func (d *Definition) check() DefinitionErrors {
 		for i, rec := range r.Seed {
 			id, ok := rec[r.IDField].(string)
 			switch {
-			case !ok || id == "":
-				bad(fmt.Sprintf("%s/seed/%d", at, i), "record needs a non-empty string %q", r.IDField)
+			case !ok || !idPattern.MatchString(id):
+				bad(fmt.Sprintf("%s/seed/%d", at, i), "record needs a string %q of letters, digits, '.', '_', '~' or '-'", r.IDField)
 			case seen[id]:
 				bad(fmt.Sprintf("%s/seed/%d/%s", at, i, r.IDField), "duplicate id %q", id)
 			}
@@ -318,6 +323,14 @@ func toJSONValue(v any, path string) (any, error) {
 			out[i] = c
 		}
 		return out, nil
+	case float64:
+		if math.IsNaN(t) || math.IsInf(t, 0) {
+			return nil, &DefinitionError{Path: path, Msg: "not a finite number"}
+		}
+		if t == math.Trunc(t) && math.Abs(t) >= 1<<53 {
+			return nil, &DefinitionError{Path: path, Msg: "integer too large to keep exactly; quote it to make it a string"}
+		}
+		return t, nil
 	case time.Time:
 		return nil, &DefinitionError{Path: path, Msg: "unquoted timestamp; quote it to make it a string"}
 	case []byte:

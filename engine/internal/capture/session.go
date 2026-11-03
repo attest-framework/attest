@@ -87,6 +87,9 @@ func StartReplay(o ReplayOptions, opts ...Option) (*Session, error) {
 // ReplaySummary reports what a replay session served. It is valid after
 // Close, once every in-flight request has finished.
 func (s *Session) ReplaySummary() ReplaySummary {
+	if s.proxy == nil {
+		return ReplaySummary{}
+	}
 	sum := s.proxy.replay.Summary()
 	sum.LiveCostUSD, sum.UnpricedLiveCalls = s.proxy.liveCost()
 	return sum
@@ -196,6 +199,9 @@ func (s *Session) close() error {
 // and the count of exchanges the client never finished reading. A session
 // over its recording limit is an error.
 func (s *Session) Recorded() ([]trace.Span, []rawExchange, int, error) {
+	if s.proxy == nil {
+		return nil, nil, 0, errors.New("session hosts only a world; nothing was recorded")
+	}
 	ex, incomplete, err := s.proxy.Exchanges()
 	if err != nil {
 		return nil, nil, 0, err
