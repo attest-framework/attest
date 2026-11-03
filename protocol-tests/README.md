@@ -79,7 +79,7 @@ The engine tests in `engine/internal/trace/` (`trace_v2_schema_test.go`, `otlp_t
 - `valid/`: fixtures written by `attest-engine capture` (a command capture of a scripted run through the recording proxy saved with `--expect-fail`, and a trace-only `--from` capture of `trace-v2/otlp/inc-1042-refund.otlp.json`), one with a reserved `world` section, and a verified fixture whose trace has structured output and a cost, so every drafted contract kind appears. The engine test checks that each valid fixture's contracts are exactly what the drafter writes for its trace.
 - `invalid/`: each breaks one rule (missing `world`, a replay-capable trace-only fixture, a non-sha256 prompt hash, expected failures without `expect_fail`, recorded request headers, a non-hex span id in the trace, and others).
 
-The engine checks them in `engine/internal/capture/fixture_v1_schema_test.go`, which also validates a fresh capture against the schema.
+The engine checks them in `engine/internal/capture/fixture_v1_schema_test.go`, which also validates a fresh capture against the schema; Python checks the schema fixtures and that `load_fixture` reads each valid fixture with its trace unchanged (`tests/test_fixture_v1.py`); TypeScript checks the schema fixtures and `loadFixture` (`tests/conformance/fixture-v1-conformance.test.ts`).
 
 ## Contract fixtures
 

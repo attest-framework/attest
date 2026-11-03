@@ -8,15 +8,20 @@
  * that the engine's `help` lists the command, and forwards the arguments, stdio and exit
  * code unchanged. A missing, mismatched or too-old engine exits 1 before anything runs, so
  * a gate such as `attest policy evaluate` never exits 0 without evaluating.
+ *
+ * `attest capture` is forwarded the same way; when the engine writes a fixture, the CLI
+ * then drafts its Vitest file (`emitVitest`).
  */
 
 import { spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
+import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { ENGINE_VERSION, VERSION } from "./version.js";
 import { resolveEngine } from "./engine-manager.js";
 import { scaffoldProject } from "./scaffold.js";
+import { emitVitest, testPathFor } from "./capture.js";
 
 const HELP_FLAGS = new Set(["-h", "--help"]);
 
@@ -26,6 +31,9 @@ const SDK_USAGE =
   "SDK commands:\n" +
   "  init [--ci github]  scaffold a sample test and merge policy here\n" +
   "                      (--ci github also writes .github/workflows/attest.yml)\n" +
+  "\n" +
+  "`attest capture` (engine) also drafts tests/attest/<name>.test.ts from a verified\n" +
+  "fixture, unless that file exists.\n" +
   "\n" +
   "options:\n" +
   "  --version  print the SDK version and the engine version it requires\n" +
@@ -137,9 +145,75 @@ async function forward(args: string[]): Promise<number> {
     );
     return 1;
   }
+  if (command === "capture" && captureWritesFixture(args.slice(1))) {
+    return captureAndEmit(engine, args.slice(1));
+  }
   const proc = spawnSync(engine, args, { stdio: "inherit" });
   if (proc.error) throw proc.error;
   return exitStatus(proc.status, proc.signal);
+}
+
+// Engine capture modes the CLI drafts no test for: help, --check-redaction (writes no
+// fixture) and --serve (used by record(), which drafts its own). Go flags accept one or
+// two dashes.
+const CAPTURE_NO_TEST = new Set(["check-redaction", "serve", "h", "help"]);
+
+function flagName(arg: string): string | null {
+  if (!arg.startsWith("-") || arg === "-" || arg === "--") return null;
+  return arg.replace(/^-+/, "").split("=", 1)[0] ?? null;
+}
+
+/** True when `attest capture` args select a mode whose fixture the CLI drafts a test for. */
+export function captureWritesFixture(args: string[]): boolean {
+  for (const a of args) {
+    if (a === "--") break;
+    const name = flagName(a);
+    if (name !== null && CAPTURE_NO_TEST.has(name)) return false;
+  }
+  return true;
+}
+
+function userResultFile(args: string[]): boolean {
+  for (const a of args) {
+    if (a === "--") break;
+    if (flagName(a) === "result-file") return true;
+  }
+  return false;
+}
+
+/** Run `attest-engine capture` and draft the Vitest file for the fixture it wrote. */
+function captureAndEmit(engine: string, args: string[]): number {
+  if (userResultFile(args)) {
+    process.stderr.write(
+      "attest: capture --result-file is set by the attest CLI; run attest-engine capture directly to choose it\n",
+    );
+    return 2;
+  }
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "attest-capture-"));
+  const resultFile = path.join(tmp, "result.json");
+  let result: { fixture: string; verified: boolean };
+  let code: number;
+  try {
+    const proc = spawnSync(engine, ["capture", "--result-file", resultFile, ...args], { stdio: "inherit" });
+    if (proc.error) throw proc.error;
+    code = exitStatus(proc.status, proc.signal);
+    if (!fs.existsSync(resultFile)) return code;
+    result = JSON.parse(fs.readFileSync(resultFile, "utf8")) as { fixture: string; verified: boolean };
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+  const fixture = result.fixture;
+  if (!result.verified) {
+    process.stderr.write(`  test: none drafted for unverified ${fixture}\n`);
+    return code;
+  }
+  const written = emitVitest(fixture);
+  process.stderr.write(
+    written === null
+      ? `  test: ${testPathFor(fixture)} exists; left unchanged\n`
+      : `  test: drafted ${written}\n`,
+  );
+  return code;
 }
 
 /** Dispatch `attest` arguments and resolve to the process exit code. */
