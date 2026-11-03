@@ -23,7 +23,9 @@ const (
 	// MaxRecords bounds the records across all resources, seed included.
 	MaxRecords = 10000
 	// MaxStateBytes bounds the serialized size of all records.
-	MaxStateBytes = 8 << 20
+	MaxStateBytes = 1 << 20
+	// MaxFaultsFired bounds the faults a snapshot lists; the count is exact.
+	MaxFaultsFired = 1000
 	// MaxHold caps how long timeout_after_commit holds a response.
 	MaxHold = 30 * time.Second
 	// maxKeyLen bounds an idempotency key.
@@ -48,6 +50,8 @@ type Snapshot struct {
 	DefinitionSHA256 string                      `json:"definition_sha256"`
 	State            map[string][]map[string]any `json:"state"`
 	FaultsFired      []Fired                     `json:"faults_fired"`
+	// FaultsFiredCount is every fault that fired; FaultsFired keeps the first MaxFaultsFired.
+	FaultsFiredCount int `json:"faults_fired_count"`
 }
 
 type store struct {
@@ -79,8 +83,10 @@ type World struct {
 	ordinals map[routeKey]int
 	rngs     map[int]*rand.Rand
 	fired    []Fired
-	records  int
-	bytes    int
+	// firedCount is every fault that fired; fired keeps the first MaxFaultsFired.
+	firedCount int
+	records    int
+	bytes      int
 
 	// holdCap is MaxHold; tests shorten it.
 	holdCap     time.Duration
@@ -142,6 +148,7 @@ func (w *World) Snapshot() *Snapshot {
 		DefinitionSHA256: w.def.Hash,
 		State:            make(map[string][]map[string]any, len(w.stores)),
 		FaultsFired:      append([]Fired{}, w.fired...),
+		FaultsFiredCount: w.firedCount,
 	}
 	for name, st := range w.stores {
 		recs := make([]map[string]any, len(st.records))
@@ -265,16 +272,16 @@ func (w *World) handle(name string, res *Resource, route Route, segs []string, r
 	ordinal := w.ordinals[key]
 
 	if f, fired := w.faultFor(name, route, ordinal); fired {
-		w.fired = append(w.fired, Fired{ID: f.ID, Resource: name, Route: route, Fault: f.Kind, Request: ordinal})
+		rec := Fired{ID: f.ID, Resource: name, Route: route, Fault: f.Kind, Request: ordinal}
 		if st := f.Kind.Status(); st != 0 {
+			w.recordFired(rec)
 			return errOutcome(st, "injected_fault")
 		}
 		// timeout_after_commit: commit below, then hold.
 		o := w.create(name, res, req, body)
 		if o.status == http.StatusCreated {
 			o.hold = true
-		} else {
-			w.fired = w.fired[:len(w.fired)-1]
+			w.recordFired(rec)
 		}
 		return o
 	}
@@ -291,6 +298,19 @@ func (w *World) handle(name string, res *Resource, route Route, segs []string, r
 		}
 		return outcome{status: http.StatusOK, body: st.records[i]}
 	}
+}
+
+// recordFired counts a fired fault and keeps the first MaxFaultsFired of them,
+// charged against the state size so a long run cannot grow the snapshot
+// without bound.
+func (w *World) recordFired(f Fired) {
+	w.firedCount++
+	n, err := sizeOf(f)
+	if len(w.fired) >= MaxFaultsFired || err != nil || w.bytes+n > MaxStateBytes {
+		return
+	}
+	w.bytes += n
+	w.fired = append(w.fired, f)
 }
 
 // faultFor returns the first fault that fires for this request. Every
@@ -378,6 +398,9 @@ func (w *World) create(name string, res *Resource, req *http.Request, body []byt
 	}
 	if _, more := dec.Token(); !errors.Is(more, io.EOF) {
 		return errOutcome(http.StatusBadRequest, "body_must_be_a_json_object")
+	}
+	if err := CheckNumbers(rec); err != nil {
+		return errOutcome(http.StatusBadRequest, "number_out_of_range")
 	}
 	if _, set := rec[res.IDField]; set {
 		return errOutcome(http.StatusBadRequest, res.IDField+"_is_assigned_by_the_server")

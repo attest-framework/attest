@@ -1,12 +1,1 @@
-{
-  "world_version": 1,
-  "definition_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
-  "state": {
-    "orders": [{ "id": "O-1042", "total_cents": 4999 }],
-    "refunds": [
-      { "refund_id": "R-0001", "order_id": "O-1042", "amount_cents": 4999 },
-      { "refund_id": "R-0002", "order_id": "O-1042", "amount_cents": 4999 }
-    ]
-  },
-  "faults_fired": [{ "id": "inc-1042", "resource": "refunds", "route": "create", "fault": "timeout_after_commit", "request": 1 }]
-}
+{"world_version": 1, "definition_sha256": "0000000000000000000000000000000000000000000000000000000000000000", "state": {"orders": [{"id": "O-1042", "total_cents": 4999}], "refunds": [{"refund_id": "R-0001", "order_id": "O-1042", "amount_cents": 4999}, {"refund_id": "R-0002", "order_id": "O-1042", "amount_cents": 4999}]}, "faults_fired": [{"id": "inc-1042", "resource": "refunds", "route": "create", "fault": "timeout_after_commit", "request": 1}], "faults_fired_count": 1}

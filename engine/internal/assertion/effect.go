@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/attest-ai/attest/engine/internal/llm"
 	"github.com/attest-ai/attest/engine/internal/world"
 	"github.com/attest-ai/attest/engine/pkg/types"
 )
@@ -88,11 +89,11 @@ func (e *EffectEvaluator) Evaluate(_ *types.Trace, assertion *types.Assertion) *
 	case err != nil:
 		return failResult(assertion, start, fmt.Sprintf("invalid effect spec: %v", err))
 	case v != nil:
-		return failResultWithDiag(assertion, start, types.StatusHardFail, 0.0, v.message, diagFields{
-			target: "world." + spec.Resource, expected: v.expected, actual: v.actual,
+		return failResultWithDiag(assertion, start, types.StatusHardFail, 0.0, shown(v.message), diagFields{
+			target: "world." + shown(spec.Resource), expected: shown(v.expected), actual: shown(v.actual),
 		})
 	}
-	return passResult(assertion, start, pass)
+	return passResult(assertion, start, shown(pass))
 }
 
 type effectViolation struct{ message, expected, actual string }
@@ -251,17 +252,32 @@ func whereText(where map[string]any) string {
 	return " for " + strings.Join(parts, ", ")
 }
 
+// maxShownValue bounds one record value in an explanation.
+const maxShownValue = 64
+
+// shown makes text from records, specs or the agent safe to print: control
+// and format characters (ESC, bidi overrides such as U+202E) are removed and
+// the length is cut.
+func shown(s string) string { return truncate(llm.StripControl(s)) }
+
 func display(v any) string {
+	var out string
 	switch t := v.(type) {
 	case string:
-		return t
+		out = t
 	case nil:
-		return "null"
+		out = "null"
 	case json.Number:
-		return t.String()
+		out = t.String()
+	default:
+		b, _ := json.Marshal(v)
+		out = string(b)
 	}
-	b, _ := json.Marshal(v)
-	return string(b)
+	out = llm.StripControl(out)
+	if r := []rune(out); len(r) > maxShownValue {
+		out = string(r[:maxShownValue]) + "..."
+	}
+	return out
 }
 
 func matches(record map[string]any, where map[string]any) bool {

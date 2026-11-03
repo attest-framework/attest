@@ -11,7 +11,7 @@ import (
 const zeroHash = "0000000000000000000000000000000000000000000000000000000000000000"
 
 func snapshotJSON(refunds string) string {
-	return `{"world_version":1,"definition_sha256":"` + zeroHash + `","state":{"refunds":` + refunds + `,"orders":[{"id":"O-1042"}]},"faults_fired":[]}`
+	return `{"world_version":1,"definition_sha256":"` + zeroHash + `","state":{"refunds":` + refunds + `,"orders":[{"id":"O-1042"}]},"faults_fired":[],"faults_fired_count":0}`
 }
 
 func evalEffect(spec string) *types.AssertionResult {
@@ -139,5 +139,19 @@ func TestEffectUniqueDistinguishesTypesAndMissingFields(t *testing.T) {
 	r := evalEffect(`{"check":"unique","world":` + snapshotJSON(recs) + `,"resource":"refunds","fields":["order_id"]}`)
 	if r.Status != types.StatusPass {
 		t.Fatalf("false duplicate: %s", r.Explanation)
+	}
+}
+
+func TestEffectExplanationStripsControlCharactersAndCapsLength(t *testing.T) {
+	evil := "O-1\u001b[31m‮evil" + strings.Repeat("a", 500)
+	recs, _ := json.Marshal([]map[string]any{{"order_id": evil}, {"order_id": evil}})
+	r := evalEffect(`{"check":"unique","world":` + snapshotJSON(string(recs)) + `,"resource":"refunds","fields":["order_id"]}`)
+	if r.Status != types.StatusHardFail {
+		t.Fatalf("status %s", r.Status)
+	}
+	for _, s := range []string{r.Explanation, r.Actual} {
+		if strings.ContainsAny(s, "\u001b‮") || len(s) > 400 {
+			t.Fatalf("unsafe or unbounded text (%d bytes): %q", len(s), s)
+		}
 	}
 }

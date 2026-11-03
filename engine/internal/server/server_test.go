@@ -230,3 +230,49 @@ func TestServer_IncompatibleProtocolVersion(t *testing.T) {
 		t.Errorf("Error.Code = %d, want %d", resp.Error.Code, types.ErrSessionError)
 	}
 }
+
+func TestServer_OversizeLine_ErrorsWithItsIDAndKeepsServing(t *testing.T) {
+	stdin, stdout, _ := newTestServer(t)
+	rd := bufio.NewReader(stdout)
+	go func() {
+		pad := make([]byte, MaxLineBytes+1024)
+		for i := range pad {
+			pad[i] = 'x'
+		}
+		_, _ = stdin.Write([]byte(`{"jsonrpc":"2.0","id":7,"method":"evaluate_batch","params":"`))
+		_, _ = stdin.Write(pad)
+		_, _ = stdin.Write([]byte("\"}\n"))
+		sendRequest(t, stdin, 8, "initialize", initializeParams())
+	}()
+
+	line, err := rd.ReadBytes('\n')
+	if err != nil {
+		t.Fatal(err)
+	}
+	var over struct {
+		ID    *int64
+		Error *types.RPCError
+	}
+	if err := json.Unmarshal(line, &over); err != nil {
+		t.Fatalf("oversize response %q: %v", line[:min(len(line), 200)], err)
+	}
+	if over.ID == nil || *over.ID != 7 || over.Error == nil || over.Error.Code != -32600 {
+		t.Fatalf("oversize response: %s", line)
+	}
+
+	line, err = rd.ReadBytes('\n')
+	if err != nil {
+		t.Fatal(err)
+	}
+	var resp types.Response
+	if err := json.Unmarshal(line, &resp); err != nil || resp.ID != 8 || resp.Error != nil {
+		t.Fatalf("request after the oversize line: %s (%v)", line, err)
+	}
+}
+
+func TestOversizeResponse_NoIDInPrefix_IsNull(t *testing.T) {
+	resp := oversizeResponse([]byte(`{"jsonrpc":"2.0","method":"x"`))
+	if resp["id"] != nil {
+		t.Fatalf("id = %v, want null", resp["id"])
+	}
+}

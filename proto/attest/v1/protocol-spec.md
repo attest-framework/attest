@@ -1027,6 +1027,8 @@ Effect assertions check what an agent did to the external system it acts on, not
 A violation is a `hard_fail` whose explanation starts `effect violated:`. A `count` of two refunds where one is expected reads exactly `effect violated: 2 refunds for O-1042 (expected 1)`; a filter on several fields renders as `for amount_cents=4999, order_id=O-1042`, and a count of one drops the plural (`1 refund`). `target` is `world.<resource>`; `expected` and `actual` carry the counts.
 
 - `idempotent` and `unique` look at every matching record, seed records included; add `where` to scope them to what the agent created. `unique` compares values as JSON (`"1"` and `1` differ; a missing field differs from `null`).
+- Text taken from records is printed with control and format characters removed and long values cut.
+- A request line is limited to 10 MiB. A longer line gets a `-32600` error (`REQUEST_TOO_LARGE`) with the request's `id` when it is in the first bytes, otherwise `null`; the engine keeps serving.
 - A spec with `"world": null` is `not_evaluated` with reason `missing_evidence`: the test ran without a world helper.
 - A spec with no `world`, a snapshot that fails world-v1 validation, an unknown `resource`, an unknown `check`, or missing check fields is a `hard_fail` naming the problem.
 - `world.yaml` is not part of the JSON-RPC protocol; `attest-engine world` serves it. See `docs/guides/world-fixtures.md`.

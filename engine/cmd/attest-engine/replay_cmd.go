@@ -110,7 +110,7 @@ func runReplay(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if o.world != "" {
 		w, werr := loadWorld(o.world)
 		if werr != nil {
-			fmt.Fprintf(stderr, "replay: %s\n", terminalSafe(werr.Error()))
+			printWorldError(stderr, "replay", o.world, werr)
 			return 2
 		}
 		opts = append(opts, capture.WithWorld(w))

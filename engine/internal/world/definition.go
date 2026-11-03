@@ -33,6 +33,60 @@ const Version = 1
 // idPattern bounds ids so every record stays addressable as one path segment.
 var idPattern = regexp.MustCompile(`^[A-Za-z0-9._~-]{1,128}$`)
 
+// MaxExactInt is 2^53-1, the largest integer every JSON consumer reads back
+// exactly.
+const MaxExactInt = 1<<53 - 1
+
+func checkInt(n int64, path string, v any) (any, error) {
+	if n > MaxExactInt || n < -MaxExactInt {
+		return nil, &DefinitionError{Path: path, Msg: "integer too large to keep exactly (beyond 2^53-1); quote it to make it a string"}
+	}
+	return v, nil
+}
+
+// CheckNumbers rejects numbers in a decoded JSON value (decoded with
+// UseNumber) that are not finite or are integers beyond 2^53-1.
+func CheckNumbers(v any) error {
+	switch t := v.(type) {
+	case json.Number:
+		f, err := t.Float64()
+		if err != nil || math.IsInf(f, 0) || math.IsNaN(f) {
+			return fmt.Errorf("number %s is out of range", t)
+		}
+		if !strings.ContainsAny(string(t), ".eE") {
+			if n, err := t.Int64(); err != nil || n > MaxExactInt || n < -MaxExactInt {
+				return fmt.Errorf("integer %s is beyond 2^53-1", t)
+			}
+		}
+	case map[string]any:
+		for _, x := range t {
+			if err := CheckNumbers(x); err != nil {
+				return err
+			}
+		}
+	case []any:
+		for _, x := range t {
+			if err := CheckNumbers(x); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// Errors returns each problem of a rejected definition as its own message.
+func Errors(err error) []string {
+	var es DefinitionErrors
+	if errors.As(err, &es) {
+		out := make([]string, len(es))
+		for i, e := range es {
+			out[i] = e.Error()
+		}
+		return out
+	}
+	return []string{err.Error()}
+}
+
 // MaxDefinitionBytes bounds a world.yaml.
 const MaxDefinitionBytes = 256 << 10
 
@@ -323,6 +377,15 @@ func toJSONValue(v any, path string) (any, error) {
 			out[i] = c
 		}
 		return out, nil
+	case int:
+		return checkInt(int64(t), path, t)
+	case int64:
+		return checkInt(t, path, t)
+	case uint64:
+		if t > MaxExactInt {
+			return nil, &DefinitionError{Path: path, Msg: "integer too large to keep exactly (beyond 2^53-1); quote it to make it a string"}
+		}
+		return t, nil
 	case float64:
 		if math.IsNaN(t) || math.IsInf(t, 0) {
 			return nil, &DefinitionError{Path: path, Msg: "not a finite number"}

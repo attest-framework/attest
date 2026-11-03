@@ -460,3 +460,54 @@ func TestTimeoutFaultOnRejectedCreateFiresNothing(t *testing.T) {
 		t.Fatalf("%d faults fired on a rejected create", n)
 	}
 }
+
+func TestNumbersBeyondExactRangeAreRejected(t *testing.T) {
+	base := "world_version: 1\nbase_url_env: X_URL\nresources:\n  a: {path: /a, routes: [get], seed: [{id: x, n: %s}]}\n"
+	for _, n := range []string{"9007199254740993", "-9007199254740993", "18446744073709551615"} {
+		if _, err := Parse([]byte(strings.Replace(base, "%s", n, 1))); err == nil || !strings.Contains(err.Error(), "/resources/a/seed/0/n") {
+			t.Errorf("seed %s: want an error naming /resources/a/seed/0/n, got %v", n, err)
+		}
+	}
+	if _, err := Parse([]byte(strings.Replace(base, "%s", "9007199254740991", 1))); err != nil {
+		t.Errorf("2^53-1 rejected: %v", err)
+	}
+
+	d := loadPayments(t)
+	d.Faults = nil
+	w, ts := start(t, d)
+	for _, body := range []string{`{"amount_cents":9007199254740993}`, `{"x":[{"y":1e400}]}`, `{"x":-9007199254740993}`} {
+		if r, _ := post(t, ts.Client(), ts.URL+"/refunds", "", body); r.StatusCode != 400 {
+			t.Errorf("%s: status %d, want 400", body, r.StatusCode)
+		}
+	}
+	if r, _ := post(t, ts.Client(), ts.URL+"/refunds", "", `{"amount_cents":9007199254740991,"ratio":1.5e3}`); r.StatusCode != 201 {
+		t.Errorf("in-range numbers: status %d", r.StatusCode)
+	}
+	if n := len(w.Snapshot().State["refunds"]); n != 1 {
+		t.Errorf("%d refunds, want only the in-range one", n)
+	}
+}
+
+func TestFaultsFiredIsCappedWithAnExactCount(t *testing.T) {
+	d, err := Parse([]byte(`{"world_version":1,"base_url_env":"X_URL","resources":{"t":{"path":"/t","routes":["list"]}},
+	  "faults":[{"resource":"t","route":"list","fault":500,"probability":1}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	w, ts := start(t, d)
+	for i := 0; i < MaxFaultsFired+50; i++ {
+		resp, err := ts.Client().Get(ts.URL + "/t")
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+	}
+	s := w.Snapshot()
+	if len(s.FaultsFired) != MaxFaultsFired || s.FaultsFiredCount != MaxFaultsFired+50 {
+		t.Fatalf("listed %d, counted %d", len(s.FaultsFired), s.FaultsFiredCount)
+	}
+	raw, _ := json.Marshal(s)
+	if err := ValidateSnapshot(raw); err != nil {
+		t.Fatalf("capped snapshot rejected: %v", err)
+	}
+}

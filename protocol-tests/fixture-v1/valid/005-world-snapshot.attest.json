@@ -399,6 +399,7 @@
         "fault": "timeout_after_commit",
         "request": 1
       }
-    ]
+    ],
+    "faults_fired_count": 1
   }
 }

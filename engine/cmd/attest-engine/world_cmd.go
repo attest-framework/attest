@@ -80,7 +80,7 @@ func parseWorldArgs(args []string, stderr io.Writer) (*worldOptions, bool) {
 func loadWorld(path string) (*world.World, error) {
 	def, err := world.LoadFile(path)
 	if err != nil {
-		return nil, fmt.Errorf("%s: %w", path, err)
+		return nil, err
 	}
 	return world.New(def)
 }
@@ -92,7 +92,7 @@ func runWorld(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	}
 	w, err := loadWorld(o.file)
 	if err != nil {
-		fmt.Fprintf(stderr, "world: %s\n", terminalSafe(err.Error()))
+		printWorldError(stderr, "world", o.file, err)
 		return 2
 	}
 	s, err := capture.StartWorld(w)
@@ -183,7 +183,7 @@ func worldCommand(s *capture.Session, o *worldOptions, stderr io.Writer) int {
 // writeWorldSummary prints the one-line world summary: record counts and the
 // faults that fired.
 func writeWorldSummary(w io.Writer, snap *world.Snapshot) {
-	fired := len(snap.FaultsFired)
+	fired := snap.FaultsFiredCount
 	fmt.Fprintf(w, "world: %s · %d %s fired\n", strings.Join(snap.Counts(), " · "), fired, plural(fired, "fault", "faults"))
 }
 
@@ -196,4 +196,12 @@ func writeStateOut(path string, snap *world.Snapshot, stderr io.Writer) int {
 		return 1
 	}
 	return 0
+}
+
+// printWorldError prints a world definition failure, one terminal-safe line
+// per problem.
+func printWorldError(w io.Writer, cmd, path string, err error) {
+	for _, line := range world.Errors(err) {
+		fmt.Fprintf(w, "%s: %s: %s\n", cmd, terminalSafe(path), terminalSafe(line))
+	}
 }

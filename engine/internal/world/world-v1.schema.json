@@ -118,7 +118,7 @@
     "snapshot": {
       "description": "World state at one moment: what capture stores in a fixture and what the effect assertions check.",
       "type": "object",
-      "required": ["world_version", "definition_sha256", "state", "faults_fired"],
+      "required": ["world_version", "definition_sha256", "state", "faults_fired", "faults_fired_count"],
       "additionalProperties": false,
       "properties": {
         "world_version": { "const": 1 },
@@ -128,8 +128,14 @@
           "propertyNames": { "pattern": "^[a-z][a-z0-9_]{0,31}$" },
           "additionalProperties": { "type": "array", "items": { "type": "object" } }
         },
+        "faults_fired_count": {
+          "description": "Every fault that fired. faults_fired lists the first 1000.",
+          "type": "integer",
+          "minimum": 0
+        },
         "faults_fired": {
           "type": "array",
+          "maxItems": 1000,
           "items": {
             "type": "object",
             "required": ["resource", "route", "fault", "request"],
