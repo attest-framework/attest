@@ -337,3 +337,32 @@ func mustCanonical(t *testing.T, v any) string {
 	}
 	return string(b)
 }
+
+// A failed stream request gets an error page, not a stream: it is kept as
+// text and redacted per string, never refused.
+func TestExchangeDoc_StreamRequestedErrorPages_KeptAndRedacted(t *testing.T) {
+	for _, c := range []struct {
+		status      int
+		contentType string
+		body        string
+	}{
+		{502, "text/html", "<html><body>bad gateway for key " + plantedKey + "</body></html>"},
+		{429, "text/plain", "rate limited: key " + plantedKey},
+	} {
+		ex := streamExchange(c.contentType, c.body)
+		ex.status = c.status
+
+		d, err := exchangeDoc(ex, redactorFor(plantedKey))
+		if err != nil {
+			t.Fatalf("%d %s: %v", c.status, c.contentType, err)
+		}
+		doc, err := redactTree(d, redactorFor(plantedKey))
+		if err != nil {
+			t.Fatal(err)
+		}
+		body := doc.(map[string]any)["response"].(map[string]any)["body"].(string)
+		if strings.Contains(body, plantedKey) || !strings.Contains(body, redact.Marker) {
+			t.Errorf("%d %s: body %q", c.status, c.contentType, body)
+		}
+	}
+}

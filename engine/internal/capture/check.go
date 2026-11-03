@@ -75,8 +75,12 @@ func checkStreams(doc any, r *redact.Redactor) ([]RedactionHit, error) {
 		resp := asMap(ex["response"])
 		ct, _ := resp["content_type"].(string)
 		requested, _ := ex["stream"].(bool)
+		code, _ := resp["status"].(json.Number)
+		status, _ := code.Int64()
 		body, ok := resp["body"].(string)
-		if !ok || !isEventStream(ct, requested) {
+		// The writer's rule: a stream body is an event-stream media type, or
+		// a successful answer to a stream request.
+		if !ok || !(isEventStream(ct, false) || (requested && status >= 200 && status <= 299)) {
 			continue
 		}
 		texts, err := streamTexts(body)

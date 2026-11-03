@@ -97,10 +97,12 @@ var keyPatterns = []*regexp.Regexp{
 }
 
 // userinfoPattern matches scheme://user:password@ anywhere in text; only the
-// password (group 2) is redacted. User and password exclude quotes, commas,
-// braces, backslashes, angle brackets and whitespace, so a match never
-// crosses a JSON string boundary.
-var userinfoPattern = regexp.MustCompile(`\b[A-Za-z][A-Za-z0-9+.-]*://([^\s/:@"',{}\\<>]*):([^\s/@"',{}\\<>]+)@`)
+// password (group 2) is redacted. Neither part may hold whitespace, a double
+// quote, a backslash, angle brackets or braces, so a match never crosses a
+// JSON string boundary; the user also stops at ':' and the password at '/'
+// and '@'. Commas and apostrophes are allowed, as RFC 3986 permits them in
+// userinfo.
+var userinfoPattern = regexp.MustCompile(`\b[A-Za-z][A-Za-z0-9+.-]*://([^\s"\\<>{}/:@]*):([^\s"\\<>{}/@]+)@`)
 
 // Range is a half-open byte range [Start, End) of a secret in a string.
 type Range struct {

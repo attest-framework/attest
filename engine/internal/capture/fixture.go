@@ -153,10 +153,11 @@ func exchangeDoc(ex rawExchange, r *redact.Redactor) (map[string]any, error) {
 		requested, _ = m["stream"].(bool)
 	}
 	stream := isEventStream(ex.contentType, requested)
-	// A failed streaming request answers with a JSON error, not a stream.
-	_, jsonError := resp.(map[string]any)
-	jsonError = jsonError && (ex.status < 200 || ex.status > 299)
-	if stream && !jsonError && len(ex.response) > 0 {
+	// A failed streaming request answers with an error (JSON, an HTML 502, a
+	// text 429), not a stream: it is a stream body only when its media type
+	// says so. The fixture-wide per-string redaction covers the error body.
+	succeeded := ex.status >= 200 && ex.status <= 299
+	if (isEventStream(ex.contentType, false) || (stream && succeeded)) && len(ex.response) > 0 {
 		text, err := redactSSE(string(ex.response), r)
 		if err != nil {
 			return nil, fmt.Errorf("exchange %d (%s %s): unparseable event stream, no fixture written: %w", ex.seq, ex.method, ex.path, err)

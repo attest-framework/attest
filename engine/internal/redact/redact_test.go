@@ -185,3 +185,15 @@ func TestFromEnviron_PWD_PathsIntact(t *testing.T) {
 		t.Fatalf("got %q", got)
 	}
 }
+
+func TestUserinfo_CommaAndApostropheInPassword_Redacted(t *testing.T) {
+	r := New()
+	for in, want := range map[string]string{
+		"postgres://admin:pa,ssword@db:5432/app": "postgres://admin:[redacted]@db:5432/app",
+		"mysql://root:pa'ss@db/app":              "mysql://root:[redacted]@db/app",
+	} {
+		if got := r.String(in); got != want {
+			t.Errorf("%s → %s, want %s", in, got, want)
+		}
+	}
+}
