@@ -15,6 +15,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/attest-ai/attest/engine/internal/llm"
+	"github.com/attest-ai/attest/engine/internal/redact"
 )
 
 // maxResponseBytes caps how much of a provider response body is read.
@@ -111,21 +112,10 @@ func postJSON(ctx context.Context, client *http.Client, r postRequest) ([]byte, 
 		if msg == "" {
 			msg = string(raw)
 		}
-		msg = truncate(redact(stripControl(msg), r.apiKey), maxErrorDetail)
+		msg = truncate(redact.Secret(stripControl(msg), r.apiKey), maxErrorDetail)
 		return nil, &StatusError{Provider: provider, StatusCode: resp.StatusCode, Message: msg}
 	}
 	return raw, nil
-}
-
-// redactedKey replaces an API key found in provider-supplied text.
-const redactedKey = "[redacted]"
-
-// redact replaces every occurrence of key in s. An empty key leaves s as is.
-func redact(s, key string) string {
-	if key == "" {
-		return s
-	}
-	return strings.ReplaceAll(s, key, redactedKey)
 }
 
 // stripControl is llm.StripControl.

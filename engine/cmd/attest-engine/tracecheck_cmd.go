@@ -11,6 +11,7 @@ import (
 	"text/tabwriter"
 	"unicode"
 
+	"github.com/attest-ai/attest/engine/internal/capture"
 	"github.com/attest-ai/attest/engine/internal/trace"
 )
 
@@ -18,7 +19,7 @@ func init() {
 	register(command{name: "trace", summary: "check or convert an OTLP/JSON trace export (check|convert)", run: handleTraceCommand})
 }
 
-const traceUsage = `usage: attest-engine trace check [--json] <otlp.json|->
+const traceUsage = `usage: attest-engine trace check [--json] <otlp.json|fixture.attest.json|->
        attest-engine trace convert [--agent-id <id>] <otlp.json|->`
 
 func handleTraceCommand(args []string) {
@@ -111,12 +112,18 @@ func runTraceCheck(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "trace check: %s\n", terminalSafe(err.Error()))
 		return 1
 	}
-	spans, err := trace.ParseOTLP(data)
-	if err != nil {
-		fmt.Fprintf(stderr, "trace check: %s\n", terminalSafe(err.Error()))
-		return 1
+	var report *trace.CheckReport
+	fixture := capture.IsFixture(data)
+	if fixture {
+		report = capture.CheckFixture(data)
+	} else {
+		spans, err := trace.ParseOTLP(data)
+		if err != nil {
+			fmt.Fprintf(stderr, "trace check: %s\n", terminalSafe(err.Error()))
+			return 1
+		}
+		report = trace.Check(spans)
 	}
-	report := trace.Check(spans)
 	exit := 0
 	if !report.OK {
 		exit = 1
@@ -128,14 +135,18 @@ func runTraceCheck(args []string, stdout, stderr io.Writer) int {
 		}
 		return exit
 	}
-	writeCheckText(stdout, path, report)
+	writeCheckText(stdout, path, report, fixture)
 	return exit
 }
 
-func writeCheckText(w io.Writer, path string, r *trace.CheckReport) {
+func writeCheckText(w io.Writer, path string, r *trace.CheckReport, fixture bool) {
 	fmt.Fprintf(w, "trace check %s\n", terminalSafe(path))
-	fmt.Fprintf(w, "trace %s: %d spans, attest trace schema v%d\n", r.TraceID, r.Spans, r.SchemaVersion)
-	fmt.Fprintf(w, "steps: %s; %s, %s, %s\n", stepSummary(r.Steps),
+	if fixture {
+		fmt.Fprintf(w, "trace %s: capture fixture, attest trace schema v%d\n", terminalSafe(r.TraceID), r.SchemaVersion)
+	} else {
+		fmt.Fprintf(w, "trace %s: %d spans, attest trace schema v%d\n", terminalSafe(r.TraceID), r.Spans, r.SchemaVersion)
+	}
+	fmt.Fprintf(w, "steps: %s; %s, %s, %s\n", terminalSafe(stepSummary(r.Steps)),
 		count(r.Turns, "turn", "turns"), count(r.Handoffs, "handoff", "handoffs"), count(r.Retries, "retry", "retries"))
 
 	errs := r.Errors()
@@ -150,7 +161,7 @@ func writeCheckText(w io.Writer, path string, r *trace.CheckReport) {
 		if span == "" {
 			span = "-"
 		}
-		fmt.Fprintf(tw, "  %s\t%s\tspan %s\t%s\n", is.Severity, is.Code, span, terminalSafe(is.Message))
+		fmt.Fprintf(tw, "  %s\t%s\tspan %s\t%s\n", is.Severity, is.Code, terminalSafe(span), terminalSafe(is.Message))
 	}
 	tw.Flush()
 
@@ -161,7 +172,7 @@ func writeCheckText(w io.Writer, path string, r *trace.CheckReport) {
 	fmt.Fprintln(w, "coverage: missing evidence")
 	tw = tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
 	for _, g := range r.Coverage {
-		fmt.Fprintf(tw, "  %s\t%d of %d %s spans lack %s\n", g.Field, g.Missing, g.Total, g.SpanKind, strings.Join(g.Attributes, " / "))
+		fmt.Fprintf(tw, "  %s\t%d of %d %s spans lack %s\n", terminalSafe(g.Field), g.Missing, g.Total, terminalSafe(g.SpanKind), terminalSafe(strings.Join(g.Attributes, " / ")))
 	}
 	tw.Flush()
 }

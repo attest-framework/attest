@@ -22,7 +22,7 @@ const (
 	// across the whole document.
 	MaxOTLPValues    = 1_000_000
 	MaxAnyValueDepth = 32
-	maxAttrsPerSpan  = 1024
+	MaxAttrsPerSpan  = 1024
 	// maxSkipDepth bounds the nesting of fields the parser ignores.
 	maxSkipDepth      = 64
 	otlpStatusError   = 2
@@ -263,8 +263,8 @@ func (p *otlpParser) span() (Span, error) {
 			// by listing "attributes" again.
 			_, err = p.array("attributes", func(int) error {
 				r.nAttrs++
-				if r.nAttrs > maxAttrsPerSpan {
-					return fmt.Errorf("attributes: more than %d entries", maxAttrsPerSpan)
+				if r.nAttrs > MaxAttrsPerSpan {
+					return fmt.Errorf("attributes: more than %d entries", MaxAttrsPerSpan)
 				}
 				if err := p.keyValue(r.attrs, 0); err != nil {
 					return fmt.Errorf("attributes: %w", err)

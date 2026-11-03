@@ -72,6 +72,15 @@ Go checks the wire format and `policyExit` (`engine/internal/policy/verdict_conf
 
 The engine tests in `engine/internal/trace/` (`trace_v2_schema_test.go`, `otlp_test.go`, `fuzz_test.go`) check them. Python checks the schema fixtures and that every golden trace survives `Trace.from_dict(...).to_dict()` unchanged (`tests/test_trace_v2.py`), and that `OTelAdapter.from_otlp` returns each golden trace and rejects each malformed input (`tests/integration/test_otel_engine.py`, with the engine built by `make engine`). TypeScript checks the schema fixtures and runs `OTelAdapter.fromOtlp` against the same golden and malformed files (`tests/conformance/trace-v2-conformance.test.ts`), so both SDKs produce identical trace v2 JSON for the same export.
 
+## Capture fixtures
+
+`fixture-v1/` covers the capture fixture schema (`proto/attest/v1/fixture-v1.schema.json`), which embeds `trace-v2.schema.json` by reference:
+
+- `valid/`: fixtures written by `attest-engine capture` (a command capture of a scripted run through the recording proxy saved with `--expect-fail`, and a trace-only `--from` capture of `trace-v2/otlp/inc-1042-refund.otlp.json`), one with a reserved `world` section, and a verified fixture whose trace has structured output and a cost, so every drafted contract kind appears. The engine test checks that each valid fixture's contracts are exactly what the drafter writes for its trace.
+- `invalid/`: each breaks one rule (missing `world`, a replay-capable trace-only fixture, a non-sha256 prompt hash, expected failures without `expect_fail`, recorded request headers, a non-hex span id in the trace, and others).
+
+The engine checks them in `engine/internal/capture/fixture_v1_schema_test.go`, which also validates a fresh capture against the schema.
+
 ## Contract fixtures
 
 `contracts/traces/` holds traces for the behavior-contract trace checks (`proto/attest/v1/protocol-spec.md`, Layer 3):
