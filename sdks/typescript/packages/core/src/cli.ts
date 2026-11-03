@@ -167,7 +167,9 @@ export function helpJson(engine: string): number {
     process.stderr.write(`attest: \`${engine} help --json\` printed an unexpected document: ${errorMessage(err)}\n`);
     return 1;
   }
-  doc.commands = [...doc.commands, INIT_HELP_ENTRY].sort((a, b) => a.name.localeCompare(b.name));
+  doc.commands = [...doc.commands, INIT_HELP_ENTRY].sort((a, b) =>
+    a.name < b.name ? -1 : a.name > b.name ? 1 : 0,
+  );
   process.stdout.write(`${JSON.stringify(doc, null, 2)}\n`);
   return 0;
 }

@@ -54,7 +54,15 @@ func TestDrift_FixtureTree_ReportsEveryMismatchKind(t *testing.T) {
 }
 
 func TestDrift_DSStoreSource_IsNotStagedOrReported(t *testing.T) {
-	msgs, err := assetsync.Drift(fixtureRoot)
+	// .DS_Store is gitignored, so the fixture file is created here, not committed.
+	root := t.TempDir()
+	if err := os.CopyFS(root, os.DirFS(fixtureRoot)); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "skills", "demo", ".DS_Store"), []byte("finder"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	msgs, err := assetsync.Drift(root)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -62,10 +70,6 @@ func TestDrift_DSStoreSource_IsNotStagedOrReported(t *testing.T) {
 		if strings.Contains(m, ".DS_Store") {
 			t.Errorf(".DS_Store reported as drift: %s", m)
 		}
-	}
-	root := t.TempDir()
-	if err := os.CopyFS(root, os.DirFS(fixtureRoot)); err != nil {
-		t.Fatal(err)
 	}
 	if err := assetsync.Generate(root); err != nil {
 		t.Fatal(err)

@@ -240,6 +240,9 @@ func resolveSkillDestination(realRoot, rel string) (string, error) {
 				return "", fmt.Errorf("%s is a symlink; refusing to overwrite it", next)
 			}
 			resolved, err := filepath.EvalSymlinks(next)
+			if errors.Is(err, fs.ErrNotExist) {
+				return "", fmt.Errorf("%s is a symlink whose target does not exist yet; create the target directory or remove the link, then re-run", next)
+			}
 			if err != nil {
 				return "", fmt.Errorf("%s: %w", next, err)
 			}
