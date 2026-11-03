@@ -34,6 +34,8 @@ it("replays inc-1042", async () => {
 
 `attest_replay("<name>")` and `useReplay("<name>")` start `attest-engine replay --serve` for the fixture `tests/attest/fixtures/<name>.attest.json` and point `OPENAI_BASE_URL`, `ANTHROPIC_BASE_URL` and `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` at it until the test ends (in Python, until the end of the `with` block when you use one). The official OpenAI and Anthropic SDKs read these variables when the client is constructed, so construct the client after the call. A client built with a hard-coded `base_url` bypasses the proxy: that is a live call, and the [egress guard](#block-direct-provider-connections) fails it.
 
+To also host the external system the agent acts on, use a [world](world-fixtures.md#compose-with-replay) in the same test.
+
 Both helpers take `mode`, `fixtures_dir` / `fixturesDir` and `engine_path` / `enginePath`. Only one replay runs at a time in a process, because it sets process-wide environment variables.
 
 ## Modes

@@ -29,7 +29,7 @@ def encode_request(request_id: int, method: str, params: dict[str, Any]) -> byte
         "method": method,
         "params": params,
     }
-    return json.dumps(msg, separators=(",", ":")).encode("utf-8") + b"\n"
+    return json.dumps(msg, ensure_ascii=False, separators=(",", ":")).encode("utf-8") + b"\n"
 
 
 def decode_response(line: bytes) -> dict[str, Any]:

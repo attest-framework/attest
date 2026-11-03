@@ -50,6 +50,20 @@ export interface TraceSpec {
   readonly soft: boolean;
 }
 
+export interface EffectSpec {
+  readonly type: "effect";
+  readonly check: "count" | "unique" | "idempotent";
+  /** A world-v1 snapshot, or `null` when the test ran without a world helper. */
+  readonly world: Record<string, unknown> | null;
+  readonly resource: string;
+  readonly where?: Record<string, unknown>;
+  readonly equals?: number;
+  readonly at_most?: number;
+  readonly at_least?: number;
+  readonly fields?: string[];
+  readonly field?: string;
+}
+
 export interface ContentSpec {
   readonly type: "content";
   readonly target: string;
@@ -96,6 +110,7 @@ export type AssertionSpec =
   | SchemaSpec
   | ConstraintSpec
   | TraceSpec
+  | EffectSpec
   | ContentSpec
   | EmbeddingSpec
   | LlmJudgeSpec
@@ -283,6 +298,7 @@ export function layerForType(assertionType: string | undefined): number {
       return 2;
     case "trace":
     case "trace_tree":
+    case "effect":
       return 3;
     case "content":
       return 4;

@@ -58,6 +58,7 @@ from attest.result import AgentResult
 from attest.tier import TIER_1, TIER_2, TIER_3, tier
 from attest.trace import TraceBuilder
 from attest.trace_tree import TraceTree
+from attest.world import WorldError, WorldSession, start_world
 
 __version__: str = "1.0.0-rc.2"
 ENGINE_VERSION: str = "1.0.0-rc.2"
@@ -91,6 +92,9 @@ __all__ = [
     "ReplaySession",
     "ReplaySummary",
     "start_replay",
+    "WorldError",
+    "WorldSession",
+    "start_world",
     "first_miss",
     "live_line",
     "resolve_mode",

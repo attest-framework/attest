@@ -138,6 +138,30 @@ describe.skipIf(!existsSync(engine))("record() (real engine)", () => {
     expect(fixture.exchanges.map((e) => e["api"])).toEqual(["chat_completions"]);
   }, 30_000);
 
+  it("saves the world's final state in the fixture when record() hosts a world", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "attest-record-world-"));
+    const result = await record(
+      "inc-world",
+      async (capture) => {
+        const base = capture.env["PAYMENTS_BASE_URL"];
+        expect(base).toBeDefined();
+        expect(process.env["PAYMENTS_BASE_URL"]).toBe(base);
+        await scriptedAgent(2);
+        const refund = { method: "POST", headers: { "Content-Type": "application/json" }, body: '{"order_id":"O-1042"}' };
+        // The first refund commits, then the world holds its response past this timeout.
+        await expect(fetch(`${base}/refunds`, { ...refund, signal: AbortSignal.timeout(300) })).rejects.toThrow();
+        const second = await fetch(`${base}/refunds`, refund);
+        expect(second.status).toBe(201);
+      },
+      { outDir: join(dir, "tests", "attest", "fixtures"), expectFail: true, world: join(here, "data", "payments.world.yaml") },
+    );
+    expect(process.env["PAYMENTS_BASE_URL"]).toBeUndefined();
+    const fixture = loadFixture(result.fixture);
+    const world = fixture.world as { state: { refunds: unknown[] }; faults_fired_count: number };
+    expect(world.state.refunds).toHaveLength(2);
+    expect(world.faults_fired_count).toBe(1);
+  }, 30_000);
+
   it("drafts the observed per-id maximum and verifies a double refund without expectFail", async () => {
     const dir = mkdtempSync(join(tmpdir(), "attest-record-"));
 
