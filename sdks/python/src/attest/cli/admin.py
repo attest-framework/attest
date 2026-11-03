@@ -136,11 +136,54 @@ def _engine_providing(command: str) -> str | None:
     return engine
 
 
+_INIT_HELP_ENTRY: dict[str, object] = {
+    "name": "init",
+    "summary": "scaffold a sample test and policy; --ci github, --skills, --json",
+    "schema": "cli/init.schema.json",
+    "exit_codes": [
+        {"code": 0, "meaning": "success"},
+        {
+            "code": 1,
+            "meaning": "--skills could not install: the engine is missing, too old or failed",
+        },
+        {"code": 2, "meaning": "usage error"},
+    ],
+}
+
+
+def _help_json(engine: str) -> int:
+    """Print the engine's ``help --json`` document with the SDK's ``init`` command added."""
+    proc = subprocess.run(
+        [engine, "help", "--json"],
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if proc.returncode != 0:
+        sys.stderr.write(proc.stderr)
+        return exit_status(proc.returncode)
+    try:
+        doc = json.loads(proc.stdout)
+        commands = doc["commands"]
+    except (json.JSONDecodeError, KeyError, TypeError) as exc:
+        print(
+            f"attest: `{engine} help --json` printed an unexpected document: {exc}",
+            file=sys.stderr,
+        )
+        return 1
+    doc["commands"] = sorted([*commands, _INIT_HELP_ENTRY], key=lambda c: str(c["name"]))
+    print(json.dumps(doc, indent=2))
+    return 0
+
+
 def forward(argv: Sequence[str]) -> int:
     """Run ``<engine> <argv>`` on a version-checked engine that provides the command."""
     engine = _engine_providing(argv[0])
     if engine is None:
         return 1
+    if list(argv) == ["help", "--json"]:
+        return _help_json(engine)
     if argv[0] == "capture" and _capture_writes_fixture(argv[1:]):
         return _capture_and_emit(engine, argv[1:])
     return exit_status(subprocess.run([engine, *argv], check=False).returncode)
@@ -251,11 +294,13 @@ def _install_skills(engine: str, root: Path) -> dict[str, list[str]]:
     proc = subprocess.run(
         argv, stdin=subprocess.DEVNULL, capture_output=True, text=True, check=False
     )
-    sys.stderr.write(proc.stderr)
     if proc.returncode != 0:
+        detail = proc.stderr.strip()
         raise AttestError(
-            f"`{' '.join(argv)}` exited {exit_status(proc.returncode)}; no skills installed"
+            f"skills install failed (`{' '.join(argv)}` exited {exit_status(proc.returncode)})"
+            + (f": {detail}" if detail else "")
         )
+    sys.stderr.write(proc.stderr)
     try:
         doc = json.loads(proc.stdout)
     except json.JSONDecodeError as exc:

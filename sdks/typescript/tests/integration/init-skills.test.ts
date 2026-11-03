@@ -18,6 +18,11 @@ const validate = new Ajv2020({ strict: false }).compile(
 );
 // ATTEST_ENGINE_PATH selects a branch-built engine; otherwise the `make engine` binary.
 const enginePath = process.env["ATTEST_ENGINE_PATH"] || join(root, "bin", "attest-engine");
+const validateHelp = new Ajv2020({ strict: false }).compile(
+  JSON.parse(
+    fs.readFileSync(join(root, "proto", "attest", "v1", "cli", "help.schema.json"), "utf8"),
+  ) as Record<string, unknown>,
+);
 const SCAFFOLD = [".github/workflows/attest.yml", "attest.policy.yaml", "tests/my-agent.test.ts"];
 
 describe("attest init --skills --json with the built engine", () => {
@@ -84,5 +89,21 @@ describe("attest init --skills --json with the built engine", () => {
     const second = await initJson("--skills");
 
     expect(second).toEqual({ created: [], updated: [], skipped: first["created"] });
+  });
+
+  it("lists init in help --json and validates against the help schema", async (ctx) => {
+    if (!fs.existsSync(enginePath)) {
+      ctx.skip();
+      return;
+    }
+    stdout.length = 0;
+
+    await expect(main(["help", "--json"])).resolves.toBe(0);
+
+    const doc = JSON.parse(stdout.join("")) as { commands: { name: string; schema?: string }[] };
+    expect(validateHelp(doc), JSON.stringify(validateHelp.errors)).toBe(true);
+    const init = doc.commands.find((c) => c.name === "init");
+    expect(init?.schema).toBe("cli/init.schema.json");
+    expect(doc.commands.map((c) => c.name)).toContain("skills");
   });
 });

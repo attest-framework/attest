@@ -86,3 +86,35 @@ def test_attest_init_skills_json_rerun_skips_everything(
     second = _init_json(cli_env, project, "--skills")
 
     assert second == {"created": [], "updated": [], "skipped": first["created"]}
+
+
+@pytest.mark.integration
+def test_attest_help_json_lists_init_and_validates_against_help_schema(
+    cli_env: dict[str, str], tmp_path: Path
+) -> None:
+    schema = json.loads(
+        (
+            Path(__file__).resolve().parents[4]
+            / "proto"
+            / "attest"
+            / "v1"
+            / "cli"
+            / "help.schema.json"
+        ).read_text(encoding="utf-8")
+    )
+    proc = subprocess.run(
+        [sys.executable, "-m", "attest", "help", "--json"],
+        cwd=tmp_path,
+        env=cli_env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert proc.returncode == 0, proc.stderr
+    doc = json.loads(proc.stdout)
+    jsonschema.Draft202012Validator(schema).validate(doc)
+    names = [c["name"] for c in doc["commands"]]
+    assert "init" in names and "skills" in names
+    init = next(c for c in doc["commands"] if c["name"] == "init")
+    assert init["schema"] == "cli/init.schema.json"

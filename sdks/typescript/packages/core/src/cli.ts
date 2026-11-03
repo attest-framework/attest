@@ -137,10 +137,46 @@ async function engineProviding(command: string): Promise<string | null> {
   return engine;
 }
 
+const INIT_HELP_ENTRY = {
+  name: "init",
+  summary: "scaffold a sample test and policy; --ci github, --skills, --json",
+  schema: "cli/init.schema.json",
+  exit_codes: [
+    { code: 0, meaning: "success" },
+    { code: 1, meaning: "--skills could not install: the engine is missing, too old or failed" },
+    { code: 2, meaning: "usage error" },
+  ],
+};
+
+/** Print the engine's `help --json` document with the SDK's `init` command added. */
+export function helpJson(engine: string): number {
+  const proc = spawnSync(engine, ["help", "--json"], {
+    stdio: ["ignore", "pipe", "pipe"],
+    encoding: "utf-8",
+  });
+  if (proc.error) throw proc.error;
+  if (proc.status !== 0) {
+    process.stderr.write(proc.stderr);
+    return exitStatus(proc.status, proc.signal);
+  }
+  let doc: { commands: { name: string }[] };
+  try {
+    doc = JSON.parse(proc.stdout) as { commands: { name: string }[] };
+    if (!Array.isArray(doc.commands)) throw new Error("no commands array");
+  } catch (err) {
+    process.stderr.write(`attest: \`${engine} help --json\` printed an unexpected document: ${errorMessage(err)}\n`);
+    return 1;
+  }
+  doc.commands = [...doc.commands, INIT_HELP_ENTRY].sort((a, b) => a.name.localeCompare(b.name));
+  process.stdout.write(`${JSON.stringify(doc, null, 2)}\n`);
+  return 0;
+}
+
 async function forward(args: string[]): Promise<number> {
   const command = args[0] ?? "";
   const engine = await engineProviding(command);
   if (engine === null) return 1;
+  if (args.length === 2 && command === "help" && args[1] === "--json") return helpJson(engine);
   if (command === "capture" && captureWritesFixture(args.slice(1))) {
     return captureAndEmit(engine, args.slice(1));
   }
@@ -269,12 +305,14 @@ function installSkills(engine: string, root: string): InitResult {
     encoding: "utf-8",
   });
   if (proc.error) throw proc.error;
-  process.stderr.write(proc.stderr);
   if (proc.status !== 0) {
+    const detail = proc.stderr.trim();
     throw new Error(
-      `\`${shown}\` exited ${String(exitStatus(proc.status, proc.signal))}; no skills installed`,
+      `skills install failed (\`${shown}\` exited ${String(exitStatus(proc.status, proc.signal))})` +
+        (detail === "" ? "" : `: ${detail}`),
     );
   }
+  process.stderr.write(proc.stderr);
   let doc: unknown;
   try {
     doc = JSON.parse(proc.stdout);
