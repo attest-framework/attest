@@ -52,7 +52,8 @@ type JUnitSkipped struct {
 // GenerateJUnitXML renders the tests of r as JUnit XML: one testsuite per
 // source file in sorted order, one testcase per test in report order. A failed
 // test carries a <failure> listing its failing assertions and replay misses; a
-// skipped test (not_evaluated) carries a <skipped> naming the reasons.
+// skipped test carries a <skipped>; its message names the not_evaluated
+// reasons when it has any.
 func GenerateJUnitXML(r *CIReport) ([]byte, error) {
 	rowsByTest := map[string][]FindingRow{}
 	for _, row := range FindingRows(r) {
@@ -129,7 +130,7 @@ func failureFor(rows []FindingRow) *JUnitFailure {
 
 func skippedMessage(reasons []string) string {
 	if len(reasons) == 0 {
-		return "not evaluated"
+		return "skipped"
 	}
 	return "not evaluated: " + strings.Join(reasons, ", ")
 }

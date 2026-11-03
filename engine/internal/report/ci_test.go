@@ -178,3 +178,53 @@ func TestFindingRows_FailedTestWithAutoMissRow_IsNotDuplicated(t *testing.T) {
 		t.Errorf("rows = %+v, want one", rows)
 	}
 }
+
+func TestRenderSummary_XfailPlainSkipAndNotEvaluatedSkip_CountsEachOnce(t *testing.T) {
+	got := report.RenderSummary(loadFixture(t, "skips.json"), nil)
+	golden(t, "summary_skips.md", got)
+	if first := strings.SplitN(got, "\n", 2)[0]; first != "### attest: 1 passed · 0 failed · 1 not evaluated · 2 skipped" {
+		t.Errorf("header = %q", first)
+	}
+}
+
+func TestRenderSummary_NoSkippedTests_HeaderHasNoSkippedCount(t *testing.T) {
+	got := report.RenderSummary(loadFixture(t, "clean.json"), nil)
+	if first := strings.SplitN(got, "\n", 2)[0]; first != "### attest: 1 passed · 0 failed · 0 not evaluated" {
+		t.Errorf("header = %q", first)
+	}
+}
+
+func TestFindingRows_ExpectedFailureInSkippedTest_HasNoRow(t *testing.T) {
+	if rows := report.FindingRows(loadFixture(t, "skips.json")); len(rows) != 0 {
+		t.Errorf("rows = %+v, want none: a skipped test's hard_fail is an expected failure", rows)
+	}
+}
+
+func TestFindingRows_SkippedTestWithOtherRowsAndAReplayMissRow_IsDropped(t *testing.T) {
+	r := &report.CIReport{ReportVersion: 2,
+		Results: []report.CIResult{
+			{AssertionID: "a", Status: "pass", TestID: "t::x", File: "t.py", Line: 1},
+			{AssertionID: "replay_f", Status: "not_evaluated", Reason: "replay_miss", TestID: "t::x", File: "t.py", Line: 1},
+		},
+		Tests: []report.CITest{{TestID: "t::x", File: "t.py", Line: 1, Outcome: "skipped"}},
+	}
+	if rows := report.FindingRows(r); len(rows) != 0 {
+		t.Errorf("rows = %+v, want none for a skipped test with mixed rows", rows)
+	}
+}
+
+func TestGenerateJUnitXML_Skips_MatchesGolden(t *testing.T) {
+	out, err := report.GenerateJUnitXML(loadFixture(t, "skips.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	golden(t, "junit_skips.xml", string(out)+"\n")
+	for _, want := range []string{`<skipped message="skipped">`, `<skipped message="not evaluated: provider_not_configured">`} {
+		if !strings.Contains(string(out), want) {
+			t.Errorf("junit lacks %s", want)
+		}
+	}
+	if strings.Contains(string(out), "<failure") {
+		t.Error("an expected failure must not become a <failure>")
+	}
+}

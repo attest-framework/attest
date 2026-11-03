@@ -50,12 +50,16 @@ func LoadPolicyOutcome(path string) (*PolicyOutcome, error) {
 
 // RenderSummary renders the PR summary comment for r as GitHub-flavored
 // Markdown. The first line is the pass / fail / not-evaluated header, counted
-// over tests. Output is a pure function of its inputs.
+// over tests, with a trailing skipped count when any test was skipped. Output is a pure function of its inputs.
 func RenderSummary(r *CIReport, policy *PolicyOutcome) string {
 	var b strings.Builder
 
-	passed, failed, notEvaluated := countTests(r.Tests)
-	fmt.Fprintf(&b, "### attest: %d passed · %d failed · %d not evaluated\n\n", passed, failed, notEvaluated)
+	passed, failed, notEvaluated, skipped := countTests(r)
+	fmt.Fprintf(&b, "### attest: %d passed · %d failed · %d not evaluated", passed, failed, notEvaluated)
+	if skipped > 0 {
+		fmt.Fprintf(&b, " · %d skipped", skipped)
+	}
+	b.WriteString("\n\n")
 
 	b.WriteString(replayLine(r.Summary.Replay) + "\n\n")
 	if r.Summary.Usage != nil {
@@ -74,18 +78,26 @@ func RenderSummary(r *CIReport, policy *PolicyOutcome) string {
 	return b.String()
 }
 
-func countTests(tests []CITest) (passed, failed, notEvaluated int) {
-	for _, t := range tests {
+// countTests counts tests by outcome. A skipped test is not evaluated only
+// when all its assertion rows are not_evaluated (contract C1); other skipped
+// tests, such as plain skips and expected failures, count as skipped.
+func countTests(r *CIReport) (passed, failed, notEvaluated, skipped int) {
+	skips := notEvaluatedSkips(r)
+	for _, t := range r.Tests {
 		switch t.Outcome {
 		case OutcomePassed:
 			passed++
 		case OutcomeFailed:
 			failed++
 		case OutcomeSkipped:
-			notEvaluated++
+			if skips[testKey{t.src, t.TestID}] {
+				notEvaluated++
+			} else {
+				skipped++
+			}
 		}
 	}
-	return passed, failed, notEvaluated
+	return passed, failed, notEvaluated, skipped
 }
 
 // replayLine is "<N> replayed · <N> live model calls · $<X.XX>". A report with

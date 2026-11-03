@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites>
+  <testsuite name="tests/test_inc.py" tests="1" failures="0" errors="0" skipped="1" time="0.040">
+    <testcase name="test_current_agent" classname="tests/test_inc.py" file="tests/test_inc.py" line="12" time="0.040">
+      <skipped message="skipped"></skipped>
+    </testcase>
+  </testsuite>
+  <testsuite name="tests/test_judge.py" tests="1" failures="0" errors="0" skipped="1" time="0.005">
+    <testcase name="test_tone" classname="tests/test_judge.py" file="tests/test_judge.py" line="7" time="0.005">
+      <skipped message="not evaluated: provider_not_configured"></skipped>
+    </testcase>
+  </testsuite>
+  <testsuite name="tests/test_ok.py" tests="1" failures="0" errors="0" skipped="0" time="0.010">
+    <testcase name="test_ok" classname="tests/test_ok.py" file="tests/test_ok.py" line="3" time="0.010"></testcase>
+  </testsuite>
+  <testsuite name="tests/test_plain.py" tests="1" failures="0" errors="0" skipped="1" time="0.001">
+    <testcase name="test_wip" classname="tests/test_plain.py" file="tests/test_plain.py" line="5" time="0.001">
+      <skipped message="skipped"></skipped>
+    </testcase>
+  </testsuite>
+</testsuites>

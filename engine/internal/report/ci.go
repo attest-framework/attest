@@ -179,20 +179,53 @@ const (
 	assertionRowType = "assertion"
 )
 
+// testKey identifies a test within a merged report: test ids can repeat across
+// the reports that were merged.
+type testKey struct {
+	src int
+	id  string
+}
+
+// notEvaluatedSkips returns the skipped tests that count as not evaluated
+// under contract C1: the test has at least one assertion row and every row is
+// not_evaluated. Any other skipped test (a plain skip with no rows, or an
+// expected failure whose rows carry another status) is merely skipped.
+func notEvaluatedSkips(r *CIReport) map[testKey]bool {
+	statuses := map[testKey][]string{}
+	for _, res := range r.Results {
+		k := testKey{res.src, res.TestID}
+		statuses[k] = append(statuses[k], res.Status)
+	}
+	out := map[testKey]bool{}
+	for _, t := range r.Tests {
+		if t.Outcome != OutcomeSkipped {
+			continue
+		}
+		k := testKey{t.src, t.TestID}
+		rows := statuses[k]
+		all := len(rows) > 0
+		for _, st := range rows {
+			if st != types.StatusNotEvaluated {
+				all = false
+			}
+		}
+		out[k] = all
+	}
+	return out
+}
+
 // FindingRows returns the failures and replay misses of r, sorted by file,
 // line, test id and assertion id. A row is a hard failure or a not_evaluated
-// result whose reason is replay_miss. A hard_fail row of a test whose outcome
-// is not failed is dropped: a test can pass with failing trials when a minimum
-// pass rate is set. A strict-mode replay miss fails its test and the SDKs
+// result whose reason is replay_miss. Rows of a skipped test that is not an
+// all-not_evaluated skip are dropped (an expected failure is not a finding), as
+// is a hard_fail row of a passed test: a test can pass with failing trials
+// when a minimum pass rate is set. A strict-mode replay miss fails its test and the SDKs
 // write no assertion row for it, so a failed test whose replay block holds a
 // miss message and has no replay_miss row yet contributes a hard_fail row with
 // reason replay_miss. A row from a result without test context has an empty
 // file and line 0.
 func FindingRows(r *CIReport) []FindingRow {
-	type testKey struct {
-		src int
-		id  string
-	}
+	skips := notEvaluatedSkips(r)
 	outcomes := map[testKey]string{}
 	for _, t := range r.Tests {
 		outcomes[testKey{t.src, t.TestID}] = t.Outcome
@@ -205,7 +238,11 @@ func FindingRows(r *CIReport) []FindingRow {
 		if !isFail && !isMiss {
 			continue
 		}
-		if outcome, known := outcomes[testKey{res.src, res.TestID}]; isFail && known && outcome != OutcomeFailed {
+		k := testKey{res.src, res.TestID}
+		if allNE, skipped := skips[k]; skipped && !allNE {
+			continue
+		}
+		if outcome, known := outcomes[k]; isFail && known && outcome != OutcomeFailed {
 			continue
 		}
 		kind := res.Type

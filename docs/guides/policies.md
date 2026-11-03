@@ -74,7 +74,7 @@ uv run attest report summary --report attest-report.json --policy-result policy-
 uv run attest report rows --report attest-report.json --json
 ```
 
-The summary opens with `### attest: <N> passed · <N> failed · <N> not evaluated`, counted over tests. It follows with:
+The summary opens with `### attest: <N> passed · <N> failed · <N> not evaluated`, counted over tests. A test is not evaluated when it was skipped and every one of its assertion rows is `not_evaluated`; any other skipped test (a plain skip, or an expected failure such as pytest `xfail` or Vitest `it.fails`) is counted in a trailing ` · N skipped`, shown only when N is above zero. Expected failures are never listed as failures. It follows with:
 
 ```text
 3 replayed · 0 live model calls · $0.00
