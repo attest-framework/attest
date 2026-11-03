@@ -7,7 +7,7 @@ require (
 	github.com/segmentio/encoding v0.5.4
 	github.com/yalue/onnxruntime_go v1.31.0
 	go.opentelemetry.io/proto/otlp v1.10.0
-	golang.org/x/time v0.15.0
+	golang.org/x/time v0.16.0
 	google.golang.org/protobuf v1.36.11
 	gopkg.in/yaml.v3 v3.0.1
 	modernc.org/sqlite v1.54.0
