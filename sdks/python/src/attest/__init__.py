@@ -29,6 +29,7 @@ from attest.adapters.ollama import OllamaAdapter
 from attest.adapters.openai import OpenAIAdapter
 from attest.adapters.otel import OTelAdapter
 from attest.agent import Agent, agent
+from attest.capture import CaptureError, Fixture, load_fixture, record
 from attest.config import config
 from attest.continuous import AlertDispatcher, ContinuousEvalRunner, Sampler
 from attest.delegate import delegate
@@ -63,6 +64,11 @@ __all__ = [
     # Expect DSL
     "ExpectChain",
     "expect",
+    # Capture
+    "CaptureError",
+    "Fixture",
+    "load_fixture",
+    "record",
     # Trace building
     "TraceBuilder",
     # Multi-agent
