@@ -159,8 +159,21 @@ func runMCPInstall(args []string) int {
 		fmt.Printf("wrote attest MCP configs into %s: %d created, %d updated, %d unchanged, %d conflict\n",
 			res.Dir, len(res.Created), len(res.Updated), len(res.Unchanged), len(res.Conflict))
 	}
-	if len(res.Conflict) > 0 {
-		fmt.Fprintf(os.Stderr, "mcp install: left a different attest entry in %v; re-run with --force to replace it\n", res.Conflict)
+	manual := map[string]bool{}
+	for _, p := range res.Manual {
+		manual[p] = true
+	}
+	var forceable []string
+	for _, p := range res.Conflict {
+		if !manual[p] {
+			forceable = append(forceable, p)
+		}
+	}
+	if len(forceable) > 0 {
+		fmt.Fprintf(os.Stderr, "mcp install: left a different attest entry in %v; re-run with --force to replace it\n", forceable)
+	}
+	if len(res.Manual) > 0 {
+		fmt.Fprintf(os.Stderr, "mcp install: %v holds an attest entry that is not a [mcp_servers.attest] table (an inline table or dotted keys); edit the file by hand, because --force replaces only the table form\n", res.Manual)
 	}
 	return 0
 }

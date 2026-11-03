@@ -31,6 +31,9 @@ type InstallResult struct {
 	Updated   []string `json:"updated"`
 	Unchanged []string `json:"unchanged"`
 	Conflict  []string `json:"conflict"`
+	// Manual lists the conflicts --force cannot resolve: an attest entry that is
+	// not a [mcp_servers.attest] table. It is not part of the JSON output.
+	Manual []string `json:"-"`
 }
 
 const (
@@ -71,6 +74,8 @@ const (
 	stateUpdated   = "updated"
 	stateUnchanged = "unchanged"
 	stateConflict  = "conflict"
+	// stateManual is a conflict --force does not replace.
+	stateManual = "conflict-manual"
 )
 
 var configTargets = []configTarget{
@@ -137,6 +142,9 @@ func Install(dir string, argv []string, force bool) (InstallResult, error) {
 			res.Updated = append(res.Updated, p.rel)
 		case stateUnchanged:
 			res.Unchanged = append(res.Unchanged, p.rel)
+		case stateManual:
+			res.Conflict = append(res.Conflict, p.rel)
+			res.Manual = append(res.Manual, p.rel)
 		default:
 			res.Conflict = append(res.Conflict, p.rel)
 		}
@@ -443,7 +451,10 @@ func mergeCodexConfig(existing []byte, argv []string, force bool) ([]byte, strin
 		}
 		lines := strings.SplitAfter(text, "\n")
 		start, end, found := attestSpan(lines)
-		if !force || !found {
+		if !found {
+			return existing, stateManual, nil
+		}
+		if !force {
 			return existing, stateConflict, nil
 		}
 		text = strings.Join(lines[:start], "") + strings.Join(lines[end:], "")
@@ -455,7 +466,7 @@ func mergeCodexConfig(existing []byte, argv []string, force bool) ([]byte, strin
 	out := []byte(text + codexEntry(argv))
 	if err := checkCodexOutput(out, doc, argv); err != nil {
 		if has {
-			return existing, stateConflict, nil
+			return existing, stateManual, nil
 		}
 		return nil, "", err
 	}
