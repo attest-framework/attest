@@ -543,10 +543,13 @@ def pytest_pyfunc_call(pyfuncitem: pytest.Function) -> bool | None:
         try:
             return testfunction(**testargs)
         finally:
-            _stop_worlds(nodeid)
-            exc = _settle_replays(pyfuncitem)
-            if exc is not None:
-                raise exc  # noqa: B012 (a miss outranks whatever the trial raised)
+            try:
+                _stop_worlds(nodeid)
+            finally:
+                # Settled even when a world fails to stop, so the replay lock and env are released.
+                exc = _settle_replays(pyfuncitem)
+                if exc is not None:
+                    raise exc  # noqa: B012 (a miss outranks whatever the trial raised)
 
     result = run_trials(run, one_trial, n, _replace_test_results, trials_run)
     _session_trial_lines[pyfuncitem.nodeid] = result.summary_lines(pyfuncitem.nodeid)

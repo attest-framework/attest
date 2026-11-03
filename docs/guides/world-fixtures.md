@@ -37,7 +37,7 @@ faults:
 | --- | --- |
 | `world_version` | Always `1`. |
 | `base_url_env` | The environment variable that carries the world's base URL to the agent. Point the agent's HTTP client at it. |
-| `resources.<name>` | A JSON collection. `path` is the collection path; `routes` picks from `create` (`POST path`), `list` (`GET path`, with `filters` as exact-match query parameters) and `get` (`GET path/{id}`). The server assigns `id_field` (default `id`) from `id_format`, a printf-style format whose one verb is the 1-based creation counter. `seed` lists the initial records. |
+| `resources.<name>` | A JSON collection. `path` is the collection path; `routes` picks from `create` (`POST path`), `list` (`GET path`, with `filters` as exact-match query parameters) and `get` (`GET path/{id}`). The server assigns `id_field` (default `id`) from `id_format`, a printf-style format whose one verb is the 1-based creation counter. `seed` lists the initial records; they appear in `state()` like any record, so scope `unique` and `idempotent` with a filter when seed records lack the idempotency key. |
 | `resources.<name>.idempotency` | `create` honors this request header; the key is stored in the record under `field`. |
 | `faults` | The fault script, below. |
 | `seed` | Seed for probabilistic faults. |

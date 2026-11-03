@@ -28,6 +28,7 @@ from attest.replay import sanitize
 # The path under the world's base URL that serves the current snapshot (world.StatePath).
 STATE_PATH = "/_attest/state"
 _STATE_TIMEOUT_S = 10
+_DIRECT = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
 
 class WorldError(AttestError):
@@ -82,7 +83,8 @@ class WorldSession:
             raise WorldError(f"world {self.path} is stopped; use the snapshot stop() returned")
         url = self.base_url + STATE_PATH
         try:
-            with urllib.request.urlopen(url, timeout=_STATE_TIMEOUT_S) as resp:
+            # The world is on loopback: never route it through an environment proxy.
+            with _DIRECT.open(url, timeout=_STATE_TIMEOUT_S) as resp:
                 status, body = resp.status, resp.read()
         except urllib.error.HTTPError as e:
             raise WorldError(f"GET {url}: HTTP {e.code}") from None
