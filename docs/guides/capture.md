@@ -38,7 +38,7 @@ The engine opens one listener on `127.0.0.1` (an ephemeral port) and runs the co
 
 The proxy forwards each model call to the upstream named by the same variable in the environment you ran `attest capture` from (default `https://api.openai.com/v1` and `https://api.anthropic.com`), so a capture against a local or scripted model server works by setting `OPENAI_BASE_URL` before the command. Streaming and non-streaming calls are both recorded; streamed events reach your agent as the upstream sends them. Your API key passes through to the upstream and is never written down.
 
-The listener closes when the command exits. A command that exits non-zero still produces a fixture; its exit code is recorded. `SIGINT` and `SIGTERM` sent to `attest capture` are passed to the command. A model call the agent cancels or does not read to the end fails the capture with no fixture written, since the fixture could not replay it.
+The listener closes when the command exits. A command that exits non-zero still produces a fixture; its exit code is recorded. `SIGINT` and `SIGTERM` sent to `attest capture` are passed to the command. A model call the agent cancels or does not read to the end, and a trace export still in flight when the command exits or rejected by the receiver, fail the capture with no fixture written, since the fixture could not replay the run.
 
 ### What the agent must do
 
@@ -151,10 +151,10 @@ Each exchange's `key` identifies the request: the `model`, the request parameter
 
 Request headers, which carry the API key, are never recorded. Everywhere else in the fixture, including object keys, capture replaces with `[redacted]`:
 
-- the value of every environment variable whose name ends in `KEY`, `TOKEN`, `SECRET`, `PASSWORD`, `PASS`, `PWD`, `PASSWD`, `CREDENTIALS`, `CREDENTIAL`, `DSN` or `AUTH` (values of eight characters or more), and the password of any environment value that is a URL with userinfo. For `record()` this includes variables the block sets itself, such as keys loaded from a dotenv file;
+- the value of every environment variable whose name ends in `KEY`, `TOKEN`, `SECRET`, `PASSWORD`, `_PASS`, `_PWD`, `PASSWD`, `CREDENTIALS`, `CREDENTIAL`, `DSN` or `AUTH` (values of eight characters or more; `PWD`, `OLDPWD` and `*_ASKPASS` are paths, not secrets), and the password of any environment value that is a URL with userinfo. For `record()` this includes variables the block sets itself, such as keys loaded from a dotenv file;
 - strings shaped like known credentials: `sk-…` (OpenAI, Anthropic), `sk_live_` / `sk_test_` / `rk_live_` (Stripe), `gsk_` (Groq), `hf_` (Hugging Face), `xai-`, `AKIA…`, `AIza…`, `ghp_` / `gho_` / `ghs_` / `github_pat_`, `xox…-`, `Bearer …`, PEM private keys, and the password in any `scheme://user:password@`;
-- the value of command flags whose name contains `key`, `token`, `secret`, `password`, `pass`, `auth` or `credential` (`--api-key=…` or `--api-key …`), and of `key`, `api_key`, `apikey`, `token`, `access_token`, `sig` and `signature` query parameters in exchange paths, which are stored percent-decoded;
-- secrets a streamed response spells out across several deltas (Chat Completions content and tool-call arguments, Responses `*.delta` events, Anthropic text and `partial_json`): the delta text is rebuilt per stream, and the marker replaces the secret in the first delta it touches while the rest lose their part, so the events stay valid and replayable. A stream that does not parse fails the capture instead of being written.
+- the command line is recorded in the fixture. The values of flags whose name contains `key`, `token`, `secret`, `password`, `pass`, `auth` or `credential` (`--api-key=…`, `--api-key …`, `-token …`) and of `NAME=value` arguments whose name is a secret by the environment rule above (`env DB_PASSWORD=… make incident`) are redacted; one-letter flags (`-p …`) are recorded as they are, so pass secrets in the environment, not on the command line. The values of `key`, `api_key`, `apikey`, `token`, `access_token`, `sig` and `signature` query parameters in exchange paths are redacted too; paths are stored percent-decoded;
+- secrets a streamed response spells out across several deltas (Chat Completions content, refusal, reasoning content, audio transcript and function or tool-call arguments; every Responses `*.delta` event; Anthropic text, `partial_json`, thinking and citations): the delta text is rebuilt per stream, and the marker replaces the secret in the first delta it touches while the rest lose their part, so the events stay valid and replayable. A response is a stream when its media type is `text/event-stream` (with any parameters) or the request set `"stream": true`; a stream that does not parse fails the capture instead of being written.
 
 Check a fixture before committing it, for example in CI with the same secrets in the environment:
 
@@ -173,8 +173,7 @@ Values that differ between two runs of the same scenario become stable placehold
 | trace and span ids | `0000…01`, `0000…02`, … (same width; a prefix such as `otel_` is kept) |
 | provider response, item and tool-call ids (`chatcmpl-`, `resp_`, `msg_`, `call_`, `toolu_`, `fc_`, `rs_`, with a digit after the prefix) | the prefix plus `{{id_N}}` |
 | emails | `{{email_N}}` |
-| ISO-8601 timestamps in text | `{{timestamp_N}}` |
-| numeric timestamps (`started_at_ms`, `created`, `created_at`, …) | sequence numbers in document order, 1, 2, 3, … (two calls in the same second in one run and different seconds in the next give the same output) |
+| timestamps: numeric fields (`started_at_ms`, `ended_at_ms`, `created`, `created_at`, `startTimeUnixNano`, …) and ISO-8601 strings anywhere | one sequence number per occurrence, in order of the original instant (start-like keys before end-like ones at the same instant): the number itself for numeric fields, `{{timestamp_N}}` in text. Steps and spans still start before they end; equal instants are not merged, so two events in the same millisecond or second do not change the output |
 | durations (`latency_ms`, `duration_ms`, …) | `0` |
 
 Keys are sorted and indentation is fixed, so capturing the same scripted run twice writes byte-identical fixtures, and a re-capture diff shows only what the agent did differently.
