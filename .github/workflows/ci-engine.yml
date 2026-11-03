@@ -1,11 +1,37 @@
 name: Engine CI
 
+# Engine tests also guard sources outside engine/: the conformance fixtures
+# (protocol-tests/), the guides, skills and plugin manifests staged into the
+# engine by `go generate`, and the exit-code table in docs/guides/cli.md.
 on:
   push:
-    paths: ["engine/**", "proto/**", ".github/workflows/ci-engine.yml"]
+    paths:
+      - "engine/**"
+      - "proto/**"
+      - "protocol-tests/**"
+      - "docs/guides/**"
+      - "skills/**"
+      - ".claude-plugin/**"
+      - ".cursor-plugin/**"
+      - ".codex-plugin/**"
+      - "VERSION"
+      - ".github/workflows/ci-engine.yml"
     branches: [main]
   pull_request:
-    paths: ["engine/**", "proto/**", ".github/workflows/ci-engine.yml"]
+    paths:
+      - "engine/**"
+      - "proto/**"
+      - "protocol-tests/**"
+      - "docs/guides/**"
+      - "skills/**"
+      - ".claude-plugin/**"
+      - ".cursor-plugin/**"
+      - ".codex-plugin/**"
+      - "VERSION"
+      - ".github/workflows/ci-engine.yml"
+
+permissions:
+  contents: read
 
 jobs:
   test:
