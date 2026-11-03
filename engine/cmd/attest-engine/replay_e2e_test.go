@@ -165,7 +165,7 @@ func TestCaptureRefresh_RecapturesWithOriginalFlagsAndNewPrompt(t *testing.T) {
 	before, _ := os.ReadFile(path)
 
 	refresh := engineRun(t, bin, dir, append(replayEnv("You refund twice."), "OPENAI_BASE_URL="+fakeModel(t)),
-		"capture", "--refresh", "scripted", "--out-dir", filepath.Join(dir, "fixtures"))
+		"capture", "--refresh", "scripted", "--yes", "--out-dir", filepath.Join(dir, "fixtures"))
 
 	if refresh.code != 0 {
 		t.Fatalf("refresh: exit %d\n%s", refresh.code, refresh.stderr)
@@ -214,7 +214,7 @@ func TestCaptureRefresh_UnrefreshableFixtures_Refused(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			run := engineRun(t, bin, dir, replayEnv("s"), "capture", "--refresh", "scripted", "--out-dir", filepath.Join(dir, "fixtures"))
+			run := engineRun(t, bin, dir, replayEnv("s"), "capture", "--refresh", "scripted", "--yes", "--out-dir", filepath.Join(dir, "fixtures"))
 
 			if run.code != 1 || !strings.Contains(run.stderr, c.want) {
 				t.Fatalf("exit %d\n%s", run.code, run.stderr)
@@ -243,6 +243,52 @@ func TestReplay_MissingFixture_ExitOne(t *testing.T) {
 	bin := buildEngineBinary(t)
 	run := engineRun(t, bin, t.TempDir(), nil, "replay", "--name", "absent", "--serve")
 	if run.code != 1 || !strings.Contains(run.stderr, "absent.attest.json") {
+		t.Fatalf("exit %d\n%s", run.code, run.stderr)
+	}
+}
+
+func TestCaptureRefresh_WithoutYesAndNoTTY_RefusesShowsEscapedCommandAndRunsNothing(t *testing.T) {
+	bin := buildEngineBinary(t)
+	dir := t.TempDir()
+	captureWithSystem(t, bin, dir, "s")
+	path := filepath.Join(dir, "fixtures", "scripted.attest.json")
+	data, _ := os.ReadFile(path)
+	var doc map[string]any
+	if err := json.Unmarshal(data, &doc); err != nil {
+		t.Fatal(err)
+	}
+	marker := filepath.Join(dir, "ran")
+	doc["source"].(map[string]any)["command"] = []any{"sh", "-c", "touch " + marker + "; echo \"\x1b[31mred it's\""}
+	data, _ = json.Marshal(doc)
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	args := []string{"capture", "--refresh", "scripted", "--out-dir", filepath.Join(dir, "fixtures")}
+
+	run := engineRun(t, bin, dir, replayEnv("s"), args...)
+
+	if run.code != 2 {
+		t.Fatalf("exit %d\n%s", run.code, run.stderr)
+	}
+	if !strings.Contains(run.stderr, `'touch `+marker+`; echo "\u001b[31mred it'\''s"'`) || !strings.Contains(run.stderr, "--yes") {
+		t.Fatalf("stderr:\n%s", run.stderr)
+	}
+	if strings.Contains(run.stderr, "\x1b") {
+		t.Fatal("escape character reached the terminal")
+	}
+	if _, err := os.Stat(marker); err == nil {
+		t.Fatal("the command ran without confirmation")
+	}
+
+	yes := engineRun(t, bin, dir, replayEnv("s"), append(args, "--yes")...)
+	if _, err := os.Stat(marker); err != nil {
+		t.Fatalf("--yes did not run the command: exit %d\n%s", yes.code, yes.stderr)
+	}
+}
+
+func TestCapture_YesWithoutRefresh_ExitTwo(t *testing.T) {
+	bin := buildEngineBinary(t)
+	if run := engineRun(t, bin, t.TempDir(), nil, "capture", "--name", "x", "--yes", "--serve"); run.code != 2 {
 		t.Fatalf("exit %d\n%s", run.code, run.stderr)
 	}
 }
