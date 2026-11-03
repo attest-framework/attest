@@ -37,12 +37,15 @@ def is_provider_host(host: object) -> bool:
 
 _lock = threading.Lock()
 _original: Any = None
+_installs = 0
 
 
 def install() -> None:
-    """Block provider host names for this process. Idempotent."""
-    global _original
+    """Block provider host names for this process. Installs are counted: the guard comes
+    off when every :func:`install` has been matched by an :func:`uninstall`."""
+    global _original, _installs
     with _lock:
+        _installs += 1
         if _original is not None:
             return
         _original = socket.getaddrinfo
@@ -61,9 +64,10 @@ def install() -> None:
 
 
 def uninstall() -> None:
-    """Restore name resolution. Idempotent."""
-    global _original
+    """Release one :func:`install`; restore name resolution when none remain."""
+    global _original, _installs
     with _lock:
-        if _original is not None:
+        _installs = max(0, _installs - 1)
+        if _original is not None and _installs == 0:
             socket.getaddrinfo = _original
             _original = None

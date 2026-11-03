@@ -166,4 +166,32 @@ describe("egress guard", () => {
     });
     expect(err).not.toBeInstanceOf(EgressBlockedError);
   });
+
+  it("keeps the guard on until every install is released", async () => {
+    const outer = installEgressGuard();
+    const inner = installEgressGuard();
+    inner();
+    inner();
+    const err = await new Promise<Error>((resolve) => {
+      const req = http.request({ host: "api.openai.com", port: 1, path: "/" });
+      req.on("error", resolve);
+      req.end();
+    });
+    outer();
+    expect(err).toBeInstanceOf(EgressBlockedError);
+  });
 });
+
+describe("mode resolution", () => {
+  it("treats CI=false and CI=0 as not CI and ignores case and spaces", () => {
+    expect(resolveReplayMode(undefined, { CI: "false" })).toBe("auto");
+    expect(resolveReplayMode(undefined, { CI: "0" })).toBe("auto");
+    expect(resolveReplayMode(undefined, { CI: "true" })).toBe("strict");
+    expect(resolveReplayMode(undefined, { ATTEST_REPLAY: " STRICT " })).toBe("strict");
+  });
+
+  it("startReplay refuses off instead of starting an engine", async () => {
+    await expect(startReplay("x", { mode: "off" as never })).rejects.toBeInstanceOf(ReplayError);
+  });
+});
+

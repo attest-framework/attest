@@ -104,9 +104,11 @@ function settle(task: FinishedTask, name: string, mode: "strict" | "auto", s: Re
     ...(miss !== undefined ? { miss } : {}),
     liveCostUsd: s.live_cost_usd,
     unpricedLiveCalls: s.unpriced_live_calls,
-    notEvaluated: skip,
+    // An auto miss is a not_evaluated row in the report even when --strict fails the test.
+    notEvaluated: mode === "auto" && s.misses > 0,
   };
-  task.meta["attestReplay"] = meta;
+  const prior = task.meta["attestReplay"] as ReplayMeta | undefined;
+  task.meta["attestReplay"] = prior === undefined ? meta : mergeMeta(prior, meta);
   if (miss === undefined) return;
   if (skip) {
     // The agent's own error is a consequence of the miss; the test is not evaluated.
@@ -121,4 +123,20 @@ function settle(task: FinishedTask, name: string, mode: "strict" | "auto", s: Re
     return;
   }
   throw error;
+}
+
+/** Fold a later session of the same test into the earlier one, as the Python report does. */
+function mergeMeta(a: ReplayMeta, b: ReplayMeta): ReplayMeta {
+  const miss = a.miss ?? b.miss;
+  return {
+    fixtures: [...new Set([...a.fixtures, ...b.fixtures])],
+    mode: a.mode === b.mode ? a.mode : "auto",
+    replayed: a.replayed + b.replayed,
+    live: a.live + b.live,
+    misses: a.misses + b.misses,
+    ...(miss !== undefined ? { miss } : {}),
+    liveCostUsd: a.liveCostUsd + b.liveCostUsd,
+    unpricedLiveCalls: a.unpricedLiveCalls + b.unpricedLiveCalls,
+    notEvaluated: a.notEvaluated || b.notEvaluated,
+  };
 }

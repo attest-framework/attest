@@ -225,5 +225,19 @@ def test_egress_uninstall_restores_resolution() -> None:
     assert socket.getaddrinfo is not original
 
     egress.uninstall()
+    egress.uninstall()
+
+    assert socket.getaddrinfo is original
+
+
+def test_egress_installs_are_counted_so_an_inner_release_keeps_the_outer_guard() -> None:
+    original = socket.getaddrinfo
+    egress.install()
+    egress.install()
+
+    egress.uninstall()
+    with pytest.raises(egress.EgressBlockedError):
+        socket.getaddrinfo("api.openai.com", 443)
+    egress.uninstall()
 
     assert socket.getaddrinfo is original

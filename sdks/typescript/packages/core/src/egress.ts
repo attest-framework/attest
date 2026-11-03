@@ -33,11 +33,17 @@ export function isProviderHost(host: string): boolean {
 
 /** True when `ATTEST_EGRESS=block`. */
 export function egressBlockRequested(env: NodeJS.ProcessEnv = process.env): boolean {
-  return env.ATTEST_EGRESS === "block";
+  const v = (env.ATTEST_EGRESS ?? "").trim().toLowerCase();
+  if (v !== "" && v !== "block" && v !== "allow") {
+    throw new Error(`ATTEST_EGRESS must be block or allow, got ${JSON.stringify(env.ATTEST_EGRESS)}`);
+  }
+  return v === "block";
 }
 
 type Connect = (this: net.Socket, ...args: unknown[]) => net.Socket;
 let original: Connect | null = null;
+// Installs outstanding; the guard comes off when the last one is released.
+let installs = 0;
 
 function hostOf(args: unknown[]): string | null {
   // net.createConnection hands connect() its arguments already normalized: [options, cb].
@@ -53,8 +59,12 @@ function hostOf(args: unknown[]): string | null {
   return null;
 }
 
-/** Install the guard. Idempotent; returns the uninstall function. */
+/**
+ * Install the guard. Installs are counted: the returned function releases only this
+ * install (once), and the guard comes off when every install has been released.
+ */
 export function installEgressGuard(): () => void {
+  installs++;
   if (original === null) {
     const proto = net.Socket.prototype as unknown as { connect: Connect };
     const orig = proto.connect;
@@ -69,10 +79,18 @@ export function installEgressGuard(): () => void {
       return orig.apply(this, args);
     };
   }
-  return uninstallEgressGuard;
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    installs--;
+    if (installs === 0) uninstallEgressGuard();
+  };
 }
 
+/** Remove the guard now, whatever the install count. */
 export function uninstallEgressGuard(): void {
+  installs = 0;
   if (original === null) return;
   (net.Socket.prototype as unknown as { connect: Connect }).connect = original;
   original = null;

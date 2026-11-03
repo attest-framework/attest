@@ -23,6 +23,7 @@ from attest.engine_manager import EngineManager
 from attest.exceptions import EngineVersionMismatchError
 from attest.expect import ExpectChain
 from attest.replay import (
+    ReplayError,
     ReplayNotEvaluatedError,
     ReplaySession,
     ReplaySummary,
@@ -85,6 +86,8 @@ _ATTEST_FIXTURES = frozenset({"attest", "attest_engine"})
 # sessions each running test has started (attest_replay fixture).
 _session_replay: dict[str, list[ReplaySummary]] = {}
 _item_replays: dict[str, list[ReplaySession]] = {}
+# Per running session: did it install the egress guard (and so release it)?
+_egress_installed: list[bool] = []
 
 
 def _record_result(agent_result: AgentResult) -> None:
@@ -370,7 +373,11 @@ def _finish_replays(item: pytest.Item, outcome: Any) -> None:
     sessions = _item_replays.pop(item.nodeid, [])
     error: Exception | None = None
     for session in sessions:
-        summary = session.finish()
+        try:
+            summary = session.finish()
+        except ReplayError as exc:
+            error = error or exc
+            continue
         if summary is None:
             continue
         _session_replay.setdefault(item.nodeid, []).append(summary)
@@ -542,6 +549,8 @@ def _record_test_phase(item: pytest.Item, report: pytest.TestReport) -> TestReco
         record.duration_ms = 0
         record.agent_results.clear()
         record.trials = None
+        record.replay = []
+        _session_replay.pop(item.nodeid, None)
     if record is None:
         path, lineno, _ = item.location
         record = TestRecord(
@@ -600,8 +609,10 @@ def pytest_sessionstart(session: pytest.Session) -> None:
         )
     )
     _session_replay.clear()
-    if _egress_mode(session.config) == "block":
+    block = _egress_mode(session.config) == "block"
+    if block:
         egress.install()
+    _egress_installed.append(block)
     _session_tests.clear()
     _session_trials_run.clear()
     _session_trial_lines.clear()
@@ -615,7 +626,8 @@ def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> Generator[
     restore the enclosing session's state."""
     yield
     _write_session_report(session)
-    egress.uninstall()
+    if _egress_installed.pop():
+        egress.uninstall()
     global _session_usage
     saved = _saved_sessions.pop()
     _session_replay.clear()

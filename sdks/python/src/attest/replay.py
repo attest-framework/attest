@@ -194,13 +194,18 @@ class ReplaySession:
         assert proc is not None and proc.stdin is not None
         _restore(self._saved)
         try:
-            proc.stdin.write("stop\n")
-            proc.stdin.close()
-        except BrokenPipeError:
-            pass
-        proc.stdin = None
-        try:
-            out, err = proc.communicate()
+            try:
+                proc.stdin.write("stop\n")
+                proc.stdin.close()
+            except OSError:  # the engine already exited; its output says why
+                pass
+            proc.stdin = None
+            try:
+                out, err = proc.communicate()
+            except BaseException:
+                proc.kill()
+                proc.communicate()
+                raise
         finally:
             _REPLAYING.release()
         lines = [ln for ln in out.splitlines() if ln.strip()]
@@ -282,15 +287,19 @@ def start_replay(
         _REPLAYING.release()
         raise
     assert proc.stdin is not None and proc.stdout is not None and proc.stderr is not None
-    line = proc.stdout.readline()
     try:
-        env = _ready_env(line)
+        env = _ready_env(proc.stdout.readline())
     except CaptureError:
         proc.stdin.close()
         proc.stdin = None
         _, err = proc.communicate()
         _REPLAYING.release()
         raise ReplayError(f"attest-engine replay {name} did not start: {err.strip()}") from None
+    except BaseException:
+        proc.kill()
+        proc.communicate()
+        _REPLAYING.release()
+        raise
     saved = {k: os.environ.get(k) for k in env}
     os.environ.update(env)
     return ReplaySession(name, resolved, env, proc, saved)

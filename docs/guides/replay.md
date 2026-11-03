@@ -66,7 +66,7 @@ Streamed responses replay as the recorded server-sent events. Placeholders stay 
 
 ## Block direct provider connections
 
-`pytest --attest-egress=block`, `ATTEST_EGRESS=block`, or `useReplay(name, { egress: "block" })` makes connections from the test process to known provider hosts (`api.openai.com`, `api.anthropic.com`, `generativelanguage.googleapis.com`, `*.openai.azure.com`) fail with `attest egress guard: connection to … blocked`. Loopback and every other host are untouched. The guard covers the process that runs your tests, not the engine subprocess. Use it in the job that must prove zero live calls.
+`pytest --attest-egress=block`, `ATTEST_EGRESS=block`, or `useReplay(name, { egress: "block" })` makes connections from the test process to known provider hosts (`api.openai.com`, `api.anthropic.com`, `generativelanguage.googleapis.com`, `*.openai.azure.com`) fail with `attest egress guard: connection to … blocked`. Loopback and every other host are untouched. The guard covers the process that runs your tests, not the engine subprocess. It matches the host name a client connects to, so a client that reaches a provider through `HTTPS_PROXY` is not caught. Installs are counted: a guard turned on by the runner stays on until every user releases it. Use it in the job that must prove zero live calls.
 
 ## Reports
 

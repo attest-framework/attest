@@ -103,8 +103,9 @@ let active: string | null = null;
 /** Start a replay session for fixture `name`. Sessions cannot overlap. */
 export async function startReplay(name: string, opts: ReplayOptions = {}): Promise<ReplaySession> {
   if (!NAME_PATTERN.test(name)) throw new ReplayError(`invalid fixture name ${JSON.stringify(name)}`);
-  const mode = opts.mode ?? "strict";
-  checkMode(mode, "mode");
+  const resolved = resolveReplayMode(opts.mode);
+  if (resolved === "off") throw new ReplayError("replay mode is off: nothing to start");
+  const mode: ReplayMode = resolved;
   if (active !== null) throw new ReplayError(`replay of ${active} is already running; sessions cannot overlap`);
   active = name;
   try {
