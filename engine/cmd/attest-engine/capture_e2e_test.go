@@ -48,8 +48,13 @@ func runScriptedAgent(openaiBase, tracesEndpoint, apiKey string) error {
 
 // runScriptedAgentNote is runScriptedAgent with the first refund's note text.
 func runScriptedAgentNote(openaiBase, tracesEndpoint, apiKey, note string) error {
+	// ATTEST_CAPTURE_HELPER_SYSTEM adds a system prompt to the model call.
+	system := ""
+	if v := os.Getenv("ATTEST_CAPTURE_HELPER_SYSTEM"); v != "" {
+		system = fmt.Sprintf(`{"role":"system","content":%q},`, v)
+	}
 	req, _ := http.NewRequest(http.MethodPost, openaiBase+"/chat/completions",
-		strings.NewReader(`{"model":"gpt-test","messages":[{"role":"user","content":"refund O-7 for `+e2ePlantedEmail+`"}]}`))
+		strings.NewReader(`{"model":"gpt-test","messages":[`+system+`{"role":"user","content":"refund O-7 for `+e2ePlantedEmail+`"}]}`))
 	req.Header.Set("Authorization", "Bearer "+apiKey)
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := http.DefaultClient.Do(req)

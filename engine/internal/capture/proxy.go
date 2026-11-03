@@ -65,6 +65,9 @@ type Proxy struct {
 	mu     sync.Mutex
 	log    []*rawExchange
 	budget *byteBudget
+	// replay, when set, answers requests from a fixture; a request it lets
+	// through is forwarded and recorded like a capture.
+	replay *Replayer
 }
 
 // Upstreams holds the provider base URLs the proxy forwards to.
@@ -180,6 +183,17 @@ func (p *Proxy) forward(r route, prefix string) http.Handler {
 		path := strings.TrimPrefix(req.URL.EscapedPath(), prefix)
 		if req.URL.RawQuery != "" {
 			path += "?" + req.URL.RawQuery
+		}
+		if p.replay != nil {
+			d := p.replay.decide(r.provider, req.Method, path, body)
+			switch {
+			case d.hit != nil:
+				writeReplayed(w, d.hit.ex)
+				return
+			case !d.live:
+				writeMiss(w, r.provider, d.miss)
+				return
+			}
 		}
 		ex, ok := p.begin(r.provider, req.Method, path, body)
 		if !ok {
