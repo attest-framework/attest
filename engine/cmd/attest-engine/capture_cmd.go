@@ -53,6 +53,9 @@ options:
                          it; refuses when the command's arguments were
                          redacted or templated, or the fixture has no
                          command (--from, in-process)
+  --world <world.yaml>   also host the world the agent acts on (its base URL
+                         variable is set for the command) and store the
+                         world's final state in the fixture's world section
   --serve                in-process capture: print the environment as one JSON
                          line, then finalize when stdin sends "finalize" or
                          {"finalize":true,"environ":[...]} (secrets in that
@@ -72,6 +75,7 @@ type captureOptions struct {
 	serve          bool
 	checkRedaction string
 	refresh        string
+	world          string
 	yes            bool
 	command        []string
 }
@@ -89,6 +93,7 @@ func parseCaptureArgs(args []string, stderr io.Writer) (*captureOptions, bool) {
 	fs.BoolVar(&o.serve, "serve", false, "")
 	fs.StringVar(&o.checkRedaction, "check-redaction", "", "")
 	fs.StringVar(&o.refresh, "refresh", "", "")
+	fs.StringVar(&o.world, "world", "", "")
 	fs.BoolVar(&o.yes, "yes", false, "")
 	if err := fs.Parse(args); err != nil {
 		fmt.Fprintf(stderr, "capture: %s\n%s\n", terminalSafe(err.Error()), captureUsage)
@@ -100,7 +105,7 @@ func parseCaptureArgs(args []string, stderr io.Writer) (*captureOptions, bool) {
 		return nil, false
 	}
 	if o.checkRedaction != "" {
-		if o.name != "" || o.from != "" || o.serve || len(o.command) > 0 {
+		if o.name != "" || o.from != "" || o.serve || o.world != "" || len(o.command) > 0 {
 			return usage("--check-redaction takes only a fixture path")
 		}
 		return o, true
@@ -109,7 +114,7 @@ func parseCaptureArgs(args []string, stderr io.Writer) (*captureOptions, bool) {
 		return usage("--yes applies to --refresh only")
 	}
 	if o.refresh != "" {
-		if o.name != "" || o.from != "" || o.serve || o.expectFail || len(o.command) > 0 {
+		if o.name != "" || o.from != "" || o.serve || o.expectFail || o.world != "" || len(o.command) > 0 {
 			return usage("--refresh takes only a fixture name, --out-dir, --agent-id and --result-file")
 		}
 		if err := capture.ValidateName(o.refresh); err != nil {
@@ -128,6 +133,9 @@ func parseCaptureArgs(args []string, stderr io.Writer) (*captureOptions, bool) {
 	}
 	if modes != 1 {
 		return usage("give exactly one of -- <command>, --from <otlp.json> or --serve")
+	}
+	if o.world != "" && o.from != "" {
+		return usage("--world needs a run to host it for; --from builds from a finished export")
 	}
 	return o, true
 }
@@ -157,13 +165,22 @@ func runCapture(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		Redactor:   redact.FromEnviron(environ),
 	}
 	var err error
+	var opts []capture.Option
+	if o.world != "" {
+		w, werr := loadWorld(o.world)
+		if werr != nil {
+			fmt.Fprintf(stderr, "capture: %s\n", terminalSafe(werr.Error()))
+			return 2
+		}
+		opts = append(opts, capture.WithWorld(w))
+	}
 	switch {
 	case o.from != "":
 		err = captureFromFile(o.from, &in)
 	case o.serve:
-		err = captureServe(environ, &in, stdin, stdout)
+		err = captureServe(environ, &in, stdin, stdout, opts)
 	default:
-		err = captureCommand(o.command, environ, &in, stderr)
+		err = captureCommand(o.command, environ, &in, stderr, opts)
 	}
 	if err != nil {
 		fmt.Fprintf(stderr, "capture: %s\n", terminalSafe(in.Redactor.String(err.Error())))
@@ -188,8 +205,8 @@ func captureFromFile(path string, in *capture.BuildInput) error {
 
 // captureCommand runs the command under capture. The command's exit code is
 // recorded; a failing command still produces a fixture.
-func captureCommand(argv []string, environ []string, in *capture.BuildInput, stderr io.Writer) error {
-	s, err := capture.Start(capture.UpstreamsFromEnv(environ))
+func captureCommand(argv []string, environ []string, in *capture.BuildInput, stderr io.Writer, opts []capture.Option) error {
+	s, err := capture.Start(capture.UpstreamsFromEnv(environ), opts...)
 	if err != nil {
 		return err
 	}
@@ -240,6 +257,7 @@ func captureCommand(argv []string, environ []string, in *capture.BuildInput, std
 		return err
 	}
 	in.Spans, in.Exchanges = spans, exchanges
+	in.World = s.WorldSnapshot()
 	in.Source = capture.Source{Kind: capture.SourceCommand, ReplayCapable: true, Command: argv, ExitCode: &code}
 	return nil
 }
@@ -247,8 +265,8 @@ func captureCommand(argv []string, environ []string, in *capture.BuildInput, std
 // captureServe hosts the listeners for an in-process helper: it prints the
 // environment as one JSON line, then waits for "finalize" on stdin. End of
 // input without "finalize" aborts without writing a fixture.
-func captureServe(environ []string, in *capture.BuildInput, stdin io.Reader, stdout io.Writer) error {
-	s, err := capture.Start(capture.UpstreamsFromEnv(environ))
+func captureServe(environ []string, in *capture.BuildInput, stdin io.Reader, stdout io.Writer, opts []capture.Option) error {
+	s, err := capture.Start(capture.UpstreamsFromEnv(environ), opts...)
 	if err != nil {
 		return err
 	}
@@ -277,6 +295,7 @@ func captureServe(environ []string, in *capture.BuildInput, stdin io.Reader, std
 		return err
 	}
 	in.Spans, in.Exchanges = spans, exchanges
+	in.World = s.WorldSnapshot()
 	in.Source = capture.Source{Kind: capture.SourceInProcess, ReplayCapable: true}
 	return nil
 }
@@ -524,6 +543,9 @@ func resolveRefresh(o *captureOptions) error {
 	}
 	if f.Source.Kind != capture.SourceCommand || len(f.Source.Command) == 0 {
 		return fmt.Errorf("--refresh %s: the fixture was captured from %s, not from a command; re-run the capture that produced it", o.refresh, f.Source.Kind)
+	}
+	if len(f.World) > 0 && string(f.World) != "null" {
+		return fmt.Errorf("--refresh %s: the fixture carries a world section, which a refresh would drop; re-run `attest capture --name %s --world <world.yaml> -- <command>` yourself", o.refresh, o.refresh)
 	}
 	for _, a := range f.Source.Command {
 		switch {
