@@ -530,6 +530,10 @@ def pytest_runtest_makereport(
     """
     outcome = yield
     report: pytest.TestReport = outcome.get_result()
+    if call.when == "setup" and item.nodeid in _session_tests:
+        # A new attempt (a rerun plugin retrying the test) starts its replay summaries over;
+        # drop them before this setup settles any of its own.
+        _session_replay.pop(item.nodeid, None)
     if (
         call.when == "setup"
         and item.nodeid in _item_replays
@@ -597,7 +601,6 @@ def _record_test_phase(item: pytest.Item, report: pytest.TestReport) -> TestReco
         record.agent_results.clear()
         record.trials = None
         record.replay = []
-        _session_replay.pop(item.nodeid, None)
     if record is None:
         path, lineno, _ = item.location
         record = TestRecord(
@@ -615,6 +618,8 @@ def _record_test_phase(item: pytest.Item, report: pytest.TestReport) -> TestReco
             record.outcome = report.outcome
     if report.when == "call":
         record.trials = _session_trials_run.pop(item.nodeid, None)
+    if report.when == "call" or (report.when == "setup" and report.outcome != "passed"):
+        # A setup that failed or skipped ran no call phase: its replay is the test's.
         record.replay = list(_session_replay.get(item.nodeid, []))
     return record
 

@@ -403,19 +403,27 @@ def test_pytest_auto_with_matching_key_but_egress_blocked_is_not_evaluated_and_n
 
 
 @pytest.mark.integration
-@pytest.mark.parametrize("system, outcome", [(_V2, "errors"), (_V1, "xfailed")])
-def test_pytest_replay_in_fixture_setup_under_xfail_reports_a_miss_as_an_error(
-    captured: Path, tmp_path: Path, system: str, outcome: str
+@pytest.mark.parametrize(
+    "system, mode, outcome",
+    [(_V2, "strict", "errors"), (_V1, "strict", "xfailed"), (_V2, "auto", "skipped")],
+)
+def test_pytest_replay_in_fixture_setup_under_xfail_reports_a_miss(
+    captured: Path, tmp_path: Path, system: str, mode: str, outcome: str
 ) -> None:
-    run, _ = _run_pytest(
-        captured, tmp_path, system, "--attest-replay=strict", "-rxX", source=_SETUP_XFAIL_TEST
+    run, report = _run_pytest(
+        captured, tmp_path, system, f"--attest-replay={mode}", "-rsxX", source=_SETUP_XFAIL_TEST
     )
 
     # A setup failure is an error, not a failed test; a miss is never an expected failure.
     assert f"2 {outcome}" in run.stdout, run.stdout + run.stderr
-    if outcome == "errors":
+    if system == _V2:
         assert "xfailed" not in run.stdout
         assert _MISS.search(run.stdout) is not None, run.stdout
+        assert [t["replay"]["misses"] for t in report["tests"]] == [1, 1]
+        assert report["summary"]["replay"]["misses"] == 2
+    if mode == "auto":
+        assert "not evaluated: replay_miss" in run.stdout
+        assert [t["not_evaluated_reasons"] for t in report["tests"]] == [["replay_miss"]] * 2
 
 
 @pytest.mark.integration
