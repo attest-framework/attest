@@ -40,8 +40,8 @@ Both helpers take `mode`, `fixtures_dir` / `fixturesDir` and `engine_path` / `en
 
 | Mode | A request with no recording |
 | --- | --- |
-| `strict` | The proxy answers the agent with an error and the test fails with the miss message, whatever exception the agent raised. |
-| `auto` | With `OPENAI_API_KEY` (OpenAI requests) or `ANTHROPIC_API_KEY` (Anthropic requests) set, the proxy forwards the request live with the agent's own credentials and counts the call. Without a key the test is `not_evaluated: replay_miss`: skipped, or failed under `--attest-strict` / `ATTEST_STRICT=1`. |
+| `strict` | The proxy answers the agent with an error and the test fails with the miss message, whatever exception the agent raised and whatever marker the test carries: a miss is never an expected failure, so `pytest.mark.xfail(strict=True)` and Vitest `it.fails` do not turn it into XFAIL or a pass. |
+| `auto` | When the request carries exactly the `OPENAI_API_KEY` (OpenAI requests) or `ANTHROPIC_API_KEY` (Anthropic requests) of the engine's environment, the proxy forwards it live and counts the call; a request with any other credential, or with the key unset, is never forwarded. The guard below (`block`) also forbids it. Without a key the test is `not_evaluated: replay_miss`: skipped, or failed under `--attest-strict` / `ATTEST_STRICT=1`. |
 | `off` | Replay is disabled: the helper starts nothing and the agent calls the model as it normally would. |
 
 Choose the mode with `pytest --attest-replay=strict|auto|off`, the `mode` argument, or `ATTEST_REPLAY` (Vitest reads only the argument and `ATTEST_REPLAY`). The default is `strict` when `CI` is set and `auto` otherwise, so a pull request check never goes live by accident and a local run can.
@@ -54,9 +54,9 @@ The proxy compares the request that matched nothing with the next unused recordi
 replay miss: system prompt changed (hash a1b2c3d→e4f5a6b); re-record with `attest capture --refresh inc-1042`
 ```
 
-The hashes are the first seven characters of a hash of that component, so you can see that it changed without the text appearing in CI logs. Other misses read `messages changed`, `tools changed`, `params changed`, `model changed (gpt-4.1→gpt-5.4)`, `the agent made more model calls than the 3 recorded`, or `the agent made an extra identical call`.
+The hashes are the first seven characters of a hash of that component, so you can see that it changed without the text appearing in CI logs. Other misses read `messages changed`, `tools changed`, `params changed`, `model changed ("gpt-4.1"→"gpt-5.4")` (model names are quoted, and control characters in any miss text are escaped), `the agent made more model calls than the 3 recorded`, or `the agent made an extra identical call`.
 
-`attest capture --refresh inc-1042` re-runs the command recorded in the fixture with its original flags (`--expect-fail` included) and overwrites the fixture. Review the new fixture in the diff like any other change.
+`attest capture --refresh inc-1042` prints the command recorded in the fixture (`source.command`), asks you to confirm it (`y` at a terminal; without one, `--yes`), re-runs it with its original flags (`--expect-fail` included) and overwrites the fixture. **A fixture is a file in your repository: review the printed command before you confirm a refresh of a fixture you did not record**, since whoever can change the file can change what runs. Review the new fixture in the diff like any other change.
 
 ## How requests are matched
 
@@ -66,7 +66,7 @@ Streamed responses replay as the recorded server-sent events. Placeholders stay 
 
 ## Block direct provider connections
 
-`pytest --attest-egress=block`, `ATTEST_EGRESS=block`, or `useReplay(name, { egress: "block" })` makes connections from the test process to known provider hosts (`api.openai.com`, `api.anthropic.com`, `generativelanguage.googleapis.com`, `*.openai.azure.com`) fail with `attest egress guard: connection to … blocked`. Loopback and every other host are untouched. The guard covers the process that runs your tests, not the engine subprocess. It matches the host name a client connects to, so a client that reaches a provider through `HTTPS_PROXY` is not caught. Installs are counted: a guard turned on by the runner stays on until every user releases it. Use it in the job that must prove zero live calls.
+`pytest --attest-egress=block`, `ATTEST_EGRESS=block`, or `useReplay(name, { egress: "block" })` makes connections from the test process to known provider hosts (`api.openai.com`, `api.anthropic.com`, `generativelanguage.googleapis.com`, `*.openai.azure.com`) fail with `attest egress guard: connection to … blocked`. Loopback and every other host are untouched. With the guard on, the replay proxy is also started with `--no-live`, so an `auto` miss is `not_evaluated: replay_miss` even when a key is set, and a run that records a live call while blocking fails. The guard covers the process that runs your tests, not the engine subprocess. It matches the host name a client connects to. It does not catch a client that connects to a literal IP address, one that reaches a provider through `HTTPS_PROXY`, or (Python) one that resolves names without `socket.getaddrinfo`, such as `uvloop` or `aiodns`; (TypeScript) one that connects to an IP address or uses a resolver outside `net.Socket`. Use it as a tripwire, not a sandbox: for a hard guarantee, run the job without network access or provider keys. Installs are counted: a guard turned on by the runner stays on until every user releases it. Use it in the job that must prove zero live calls.
 
 ## Reports
 
@@ -80,7 +80,7 @@ attest replay: 4 replayed · 0 live model calls · $0.00
 
 ## Replaying the judge
 
-Attest's own L6 integration tests run the engine's judge from fixtures: with the engine started under `ATTEST_JUDGE_PROVIDER=openai`, `ATTEST_JUDGE_BASE_URL` set to the replay session's `OPENAI_BASE_URL` and any non-empty `ATTEST_JUDGE_API_KEY`, `passes_judge` sends its request to the proxy and reads its verdict from the fixture. See `sdks/python/tests/integration/test_judge_replay.py`. The fixtures there were recorded against a scripted judge; `make record-judge-fixtures` records them against a real provider (it needs `ATTEST_JUDGE_API_KEY` or `OPENAI_API_KEY` and `ATTEST_JUDGE_MODEL`, and refuses to run without them).
+Attest's own L6 integration tests run the engine's judge from fixtures: with the engine started under `ATTEST_JUDGE_PROVIDER=openai`, `ATTEST_JUDGE_BASE_URL` set to the replay session's `OPENAI_BASE_URL` and any non-empty `ATTEST_JUDGE_API_KEY`, `passes_judge` sends its request to the proxy and reads its verdict from the fixture. Run it in `strict` mode, so a changed rubric is a failure naming the change and nothing is sent to a provider. See `sdks/python/tests/integration/test_judge_replay.py`. The fixtures there were recorded against a scripted judge; `make record-judge-fixtures` records them against a real provider (it needs `ATTEST_JUDGE_API_KEY` or `OPENAI_API_KEY` and `ATTEST_JUDGE_MODEL`, and refuses to run without them).
 
 ## Command line
 
