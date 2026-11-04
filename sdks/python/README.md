@@ -5,17 +5,17 @@ Test framework for AI agents. Deterministic assertions (schema validation, cost 
 ## Install
 
 ```bash
-uv add "attest-ai>=1.0.0rc1"
+uv add "attest-ai>=1.0.0"
 ```
 
 With LLM provider support:
 
 ```bash
-uv add "attest-ai[openai]>=1.0.0rc1"      # OpenAI
-uv add "attest-ai[anthropic]>=1.0.0rc1"   # Anthropic
-uv add "attest-ai[gemini]>=1.0.0rc1"      # Google Gemini
-uv add "attest-ai[ollama]>=1.0.0rc1"      # Ollama (local)
-uv add "attest-ai[all]>=1.0.0rc1"         # All providers
+uv add "attest-ai[openai]>=1.0.0"      # OpenAI
+uv add "attest-ai[anthropic]>=1.0.0"   # Anthropic
+uv add "attest-ai[gemini]>=1.0.0"      # Google Gemini
+uv add "attest-ai[ollama]>=1.0.0"      # Ollama (local)
+uv add "attest-ai[all]>=1.0.0"         # All providers
 ```
 
 ## Quick start

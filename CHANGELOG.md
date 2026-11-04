@@ -4,6 +4,14 @@ All notable changes to Attest are documented in this file. The format follows [K
 
 ## [Unreleased]
 
+## [1.0.0] — 2026-11-04
+
+First stable release. A real run or incident becomes a verified fixture with `attest capture`; pull-request CI replays the agent's real code against it with zero model calls and returns pass, fail or not evaluated (with a reason) to a policy gate, in Python and TypeScript. The release candidates added each piece: honest verdicts and install integrity (rc.1), trace checks, behavior contracts and judge budgets (rc.2), capture, replay, world fixtures and pull-request annotations (rc.3), agent-facing CLI, MCP server and mutation testing (rc.4), TypeScript parity, framework capture through OpenTelemetry and the offline failure viewer (rc.5). The [refund-desk](https://github.com/attest-framework/refund-desk) demo walks the whole workflow with `make walkthrough`. Changes since rc.5:
+
+### Changed
+
+- Install instructions in the README, the Python SDK README (the PyPI page), the guides and the `attest` skill's migration reference use `attest-ai>=1.0.0` and `@attest-ai/core@>=1.0.0` / `@attest-ai/vitest@>=1.0.0` (with `vitest@^4`) instead of the release-candidate floors; with 1.0.0 published, a bare install resolves to it. The annotations guide's example pins `pr-annotate@v1.0.0`. `@attest-ai/vitest` declares the peer `@attest-ai/core >=1.0.0` (was `>=1.0.0-rc`), so it no longer installs next to a release-candidate core with a different engine version. The PyPI classifier is `Development Status :: 5 - Production/Stable`.
+
 ### Fixed
 
 - `attest capture` never reports a false green. A capture exits 1 (`not verified`, naming every cause that holds) when a drafted contract failed, the trace check failed, `--expect-fail` drafted nothing, or nothing was drafted while the command exited non-zero or a replay-capable capture recorded no model call. Before, a command that exited non-zero with no reachable model printed `verified: every drafted contract passes` with zero drafted contracts and exited 0. A non-zero exit whose drafted contracts all pass still verifies (exit 0, the code recorded). `attest trace check` warns on a not-verified fixture with the same causes.
@@ -295,7 +303,8 @@ Tagged, not published to registries. No GitHub release was created.
 
 Versions 0.1.0 through 0.6.0 are described in their [GitHub releases](https://github.com/attest-framework/attest/releases); 0.6.1 exists only as a tag. 0.1.0–0.6.0 were published to PyPI; 0.3.0–0.6.0 were also published to npm.
 
-[Unreleased]: https://github.com/attest-framework/attest/compare/v1.0.0-rc.5...HEAD
+[Unreleased]: https://github.com/attest-framework/attest/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/attest-framework/attest/releases/tag/v1.0.0
 [1.0.0-rc.5]: https://github.com/attest-framework/attest/releases/tag/v1.0.0-rc.5
 [1.0.0-rc.4]: https://github.com/attest-framework/attest/releases/tag/v1.0.0-rc.4
 [1.0.0-rc.3]: https://github.com/attest-framework/attest/releases/tag/v1.0.0-rc.3
