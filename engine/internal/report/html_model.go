@@ -19,7 +19,7 @@ import (
 // viewMaxString bytes and the page carries at most viewMaxTotalBytes of report
 // text. What was cut is named in View.Notices.
 const (
-	viewMaxFileBytes     = 256 << 20
+	viewMaxInputBytes    = 256 << 20
 	viewMaxString        = 4 << 10
 	viewMaxTotalBytes    = 8 << 20
 	viewMaxTests         = 1000
@@ -29,6 +29,7 @@ const (
 	viewMaxSteps         = 3000
 	viewMaxDepth         = 6
 	viewMaxSequence      = 200
+	viewMaxListed        = 200
 )
 
 // Test classes in View output; they pick a CSS class and nothing else.
@@ -226,31 +227,36 @@ func (b *viewBuilder) notef(format string, args ...any) {
 	b.notices = append(b.notices, fmt.Sprintf(format, args...))
 }
 
-// readLimited reads path, refusing files over viewMaxFileBytes.
-func readLimited(path string) ([]byte, error) {
+// inputBudget bounds the bytes read across every input file of one run.
+type inputBudget struct{ left int64 }
+
+// readLimited reads path, refusing a file that exceeds what is left of the
+// run's input budget.
+func (in *inputBudget) readLimited(path string) ([]byte, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, fmt.Errorf("read %s: %w", path, err)
 	}
 	defer func() { _ = f.Close() }()
-	data, err := io.ReadAll(io.LimitReader(f, viewMaxFileBytes+1))
+	data, err := io.ReadAll(io.LimitReader(f, in.left+1))
 	if err != nil {
 		return nil, fmt.Errorf("read %s: %w", path, err)
 	}
-	if len(data) > viewMaxFileBytes {
-		return nil, fmt.Errorf("%s is larger than %d MiB", path, viewMaxFileBytes>>20)
+	if int64(len(data)) > in.left {
+		return nil, fmt.Errorf("%s exceeds the %d MiB input limit for all files together", path, viewMaxInputBytes>>20)
 	}
+	in.left -= int64(len(data))
 	return data, nil
 }
 
 // loadViewReports reads and merges report-v2 files with the viewer's size limit.
-func loadViewReports(paths []string) (*CIReport, error) {
+func loadViewReports(in *inputBudget, paths []string) (*CIReport, error) {
 	if len(paths) == 0 {
 		return nil, fmt.Errorf("at least one report is required")
 	}
 	reports := make([]*CIReport, 0, len(paths))
 	for _, p := range paths {
-		data, err := readLimited(p)
+		data, err := in.readLimited(p)
 		if err != nil {
 			return nil, err
 		}
@@ -267,8 +273,8 @@ func loadViewReports(paths []string) (*CIReport, error) {
 }
 
 // loadMutation reads a `mutate --json` report.
-func loadMutation(path string) (*mutate.Report, error) {
-	data, err := readLimited(path)
+func loadMutation(in *inputBudget, path string) (*mutate.Report, error) {
+	data, err := in.readLimited(path)
 	if err != nil {
 		return nil, err
 	}
@@ -288,7 +294,8 @@ func loadMutation(path string) (*mutate.Report, error) {
 
 // BuildView loads the inputs and builds the page model.
 func BuildView(opts ViewOptions) (*View, error) {
-	head, err := loadViewReports(opts.Reports)
+	in := &inputBudget{left: viewMaxInputBytes}
+	head, err := loadViewReports(in, opts.Reports)
 	if err != nil {
 		return nil, err
 	}
@@ -298,14 +305,14 @@ func BuildView(opts ViewOptions) (*View, error) {
 	b.tests(v, head)
 	v.TracesMissing = len(head.Traces) == 0
 	if len(opts.Baselines) > 0 {
-		base, err := loadViewReports(opts.Baselines)
+		base, err := loadViewReports(in, opts.Baselines)
 		if err != nil {
 			return nil, err
 		}
 		v.Baseline = b.baseline(base, head)
 	}
 	if opts.Mutation != "" {
-		m, err := loadMutation(opts.Mutation)
+		m, err := loadMutation(in, opts.Mutation)
 		if err != nil {
 			return nil, err
 		}
@@ -347,6 +354,10 @@ func (b *viewBuilder) summary(r *CIReport) SummaryView {
 		s.NotEvaluatedBy = append(s.NotEvaluatedBy, b.text(reason))
 	}
 	sort.Strings(s.NotEvaluatedBy)
+	if len(s.NotEvaluatedBy) > viewMaxListed {
+		b.notef("%d more not-evaluated reason(s) not shown", len(s.NotEvaluatedBy)-viewMaxListed)
+		s.NotEvaluatedBy = s.NotEvaluatedBy[:viewMaxListed]
+	}
 	sum := r.Summary
 	s.Assertions = fmt.Sprintf("%d total: %d pass, %d soft fail, %d hard fail, %d not evaluated",
 		sum.Total, sum.Passed, sum.SoftFail, sum.HardFail, sum.NotEvaluated)
@@ -433,29 +444,37 @@ func (b *viewBuilder) tests(v *View, r *CIReport) {
 	}
 	traces := &traceDecoder{raw: r.Traces, decoded: map[string]*types.Trace{}}
 	findings := 0
-	for i, t := range r.Tests {
-		class, label := classify(t, skips)
-		if class == classFail {
-			v.Failures++
-		}
-		if i >= viewMaxTests {
-			b.notef("%d more test(s) not rendered (limit %d)", len(r.Tests)-viewMaxTests, viewMaxTests)
-			break
-		}
-		tv := TestView{
-			Anchor:     fmt.Sprintf("t%d", i),
-			Name:       b.text(t.Name),
-			Location:   b.text(fmt.Sprintf("%s:%d", t.File, t.Line)),
-			Class:      class,
-			Label:      b.text(label),
-			Duration:   fmt.Sprintf("%d ms", t.DurationMS),
-			Provenance: b.text(provenance(t)),
-			Open:       class != classPass,
-		}
-		b.fillTest(&tv, rows[testKey{t.src, t.TestID}], traces, &findings)
-		v.TraceCount += len(tv.Traces)
-		v.Tests = append(v.Tests, tv)
+	shown := min(len(r.Tests), viewMaxTests)
+	if len(r.Tests) > shown {
+		b.notef("%d more test(s) not rendered (limit %d)", len(r.Tests)-shown, viewMaxTests)
 	}
+	v.Failures = v.Summary.Failed
+	views := make([]TestView, shown)
+	// Tests that did not pass render first, so their content gets the page's
+	// text budget before passing tests can spend it.
+	for _, passing := range []bool{false, true} {
+		for i := 0; i < shown; i++ {
+			t := r.Tests[i]
+			class, label := classify(t, skips)
+			if (class == classPass) != passing {
+				continue
+			}
+			tv := TestView{
+				Anchor:     fmt.Sprintf("t%d", i),
+				Name:       b.text(t.Name),
+				Location:   b.text(fmt.Sprintf("%s:%d", t.File, t.Line)),
+				Class:      class,
+				Label:      b.text(label),
+				Duration:   fmt.Sprintf("%d ms", t.DurationMS),
+				Provenance: b.text(provenance(t)),
+				Open:       class != classPass,
+			}
+			b.fillTest(&tv, rows[testKey{t.src, t.TestID}], traces, &findings)
+			v.TraceCount += len(tv.Traces)
+			views[i] = tv
+		}
+	}
+	v.Tests = views
 	if len(orphan) > 0 {
 		b.notef("%d assertion row(s) carry no test context and are not listed", len(orphan))
 	}
@@ -465,16 +484,22 @@ func (b *viewBuilder) tests(v *View, r *CIReport) {
 // fillTest adds a test's findings, passed ids and traces, and highlights the
 // step each failing row points at.
 func (b *viewBuilder) fillTest(tv *TestView, rows []CIResult, traces *traceDecoder, findings *int) {
+	// Traces behind failing rows come first, so the cap never drops the failing one.
 	var traceIDs []string
 	seen := map[string]bool{}
-	for _, res := range rows {
-		if res.TraceID != "" && !seen[res.TraceID] {
-			seen[res.TraceID] = true
-			traceIDs = append(traceIDs, res.TraceID)
+	for _, failing := range []bool{true, false} {
+		for _, res := range rows {
+			if res.TraceID != "" && !seen[res.TraceID] && (!failing || isFailure(res.Status)) {
+				seen[res.TraceID] = true
+				traceIDs = append(traceIDs, res.TraceID)
+			}
 		}
 	}
 	must := map[string]map[int]bool{}
-	for _, res := range rows {
+	for n, res := range rows {
+		if n >= viewMaxFindingRows {
+			break
+		}
 		if idx, ok := stepIndex(res.TraceNodePath); ok && isFailure(res.Status) {
 			if must[res.TraceID] == nil {
 				must[res.TraceID] = map[int]bool{}
@@ -616,8 +641,8 @@ func (b *viewBuilder) traceView(anchor, id string, t *types.Trace, must map[int]
 		Anchor:  anchor,
 		ID:      b.text(t.TraceID),
 		AgentID: b.text(t.AgentID),
-		Input:   b.text(prettyJSON(t.Input)),
-		Output:  b.text(prettyJSON(t.Output)),
+		Input:   b.jsonText(t.Input),
+		Output:  b.jsonText(t.Output),
 	}
 	if tv.ID == "" {
 		tv.ID = b.text(id)
@@ -658,8 +683,8 @@ func (b *viewBuilder) stepView(prefix string, i int, s *types.Step, depth int, m
 		Index:  i,
 		Type:   b.text(s.Type),
 		Name:   b.text(s.Name),
-		Args:   b.text(prettyJSON(s.Args)),
-		Result: b.text(prettyJSON(s.Result)),
+		Args:   b.jsonText(s.Args),
+		Result: b.jsonText(s.Result),
 	}
 	if depth == 0 {
 		sv.Path = fmt.Sprintf("steps[%d]", i)
@@ -671,6 +696,16 @@ func (b *viewBuilder) stepView(prefix string, i int, s *types.Step, depth int, m
 		sv.Children = b.steps(sv.Anchor, s.SubTrace, depth+1, nil)
 	}
 	return sv
+}
+
+// jsonText renders a raw JSON value as bounded text. A value far over the
+// per-string cap is cut before indenting, so a huge blob never costs more than
+// the cap.
+func (b *viewBuilder) jsonText(raw json.RawMessage) string {
+	if len(raw) > 4*viewMaxString {
+		return b.text(string(raw))
+	}
+	return b.text(prettyJSON(raw))
 }
 
 // prettyJSON indents a JSON value for display; raw is already valid JSON
@@ -723,6 +758,10 @@ func (b *viewBuilder) mutation(m *mutate.Report) *MutationView {
 	for _, mr := range m.Mutants {
 		if mr.Status != mutate.StatusSurvived {
 			continue
+		}
+		if len(mv.Survivors) >= viewMaxListed {
+			b.notef("%d surviving mutant(s) in total; the first %d are shown", survived, viewMaxListed)
+			break
 		}
 		sv := SurvivorView{
 			ID:          b.text(mr.ID),

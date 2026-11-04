@@ -437,3 +437,106 @@ func TestBuildView_MultipleReports_KeepTraceIDsApart(t *testing.T) {
 		t.Error("each report's trace must render with its own content")
 	}
 }
+
+func TestRenderHTML_FailingTraceBeyondFiveTraces_IsStillRendered(t *testing.T) {
+	page := renderFixtures(t, func(head map[string]any) {
+		traces := head["traces"].(map[string]any)
+		rows := head["results"].([]any)
+		var extra []any
+		for i := 0; i < 7; i++ {
+			id := fmt.Sprintf("trial_%d", i)
+			traces[id] = map[string]any{"schema_version": 2, "trace_id": id, "agent_id": "a", "output": map[string]any{}, "steps": []any{}}
+			extra = append(extra, map[string]any{"assertion_id": "pad_" + id, "status": "pass", "test_id": "tests/test_refund.py::test_inc_1042", "file": "tests/test_refund.py", "line": 12, "trace_id": id})
+		}
+		// The padding rows come first; the failing row's trace is last.
+		head["results"] = append(extra, rows...)
+	}, false, false)
+
+	if !strings.Contains(page, `<li class="step hit" id="t0-tr0-s3">`) {
+		t.Fatal("the failing trace must be rendered first and its step highlighted")
+	}
+}
+
+func TestBuildView_FailureCountCoversTestsPastTheRenderLimit(t *testing.T) {
+	dir := t.TempDir()
+	path := writeEdited(t, dir, "many.json", func(head map[string]any) {
+		var tests []any
+		for i := 0; i < viewMaxTests+50; i++ {
+			outcome := "passed"
+			if i >= viewMaxTests {
+				outcome = "failed"
+			}
+			tests = append(tests, map[string]any{"test_id": fmt.Sprint("t", i), "name": fmt.Sprint("t", i), "file": "a.py", "line": 1, "outcome": outcome})
+		}
+		head["tests"] = tests
+		head["results"] = []any{}
+	})
+
+	v, err := BuildView(ViewOptions{Reports: []string{path}})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if v.Failures != 50 || len(v.Tests) != viewMaxTests {
+		t.Fatalf("failures=%d rendered=%d, want 50 and %d", v.Failures, len(v.Tests), viewMaxTests)
+	}
+}
+
+func TestRenderHTML_PassingTestsCannotSpendTheBudgetOfAFailingTest(t *testing.T) {
+	page := renderFixtures(t, func(head map[string]any) {
+		traces := head["traces"].(map[string]any)
+		blob := strings.Repeat("x", 3000)
+		var tests, rows []any
+		for i := 0; i < 40; i++ { // 40 passing tests of ~600 KiB of trace text
+			id := fmt.Sprint("pass_", i)
+			var steps []any
+			for s := 0; s < 50; s++ {
+				steps = append(steps, map[string]any{"type": "tool_call", "name": "n", "args": map[string]any{"a": blob}, "result": map[string]any{"r": blob}})
+			}
+			traces[id] = map[string]any{"schema_version": 2, "trace_id": id, "agent_id": "a", "output": map[string]any{}, "steps": steps}
+			tid := fmt.Sprint("p::", i)
+			tests = append(tests, map[string]any{"test_id": tid, "name": tid, "file": "a.py", "line": 1, "outcome": "passed"})
+			rows = append(rows, map[string]any{"assertion_id": "ok", "status": "pass", "test_id": tid, "file": "a.py", "line": 1, "trace_id": id})
+		}
+		fail := head["tests"].([]any)[0]
+		head["tests"] = append(tests, fail)
+		for _, r := range head["results"].([]any) {
+			if r.(map[string]any)["test_id"] == "tests/test_refund.py::test_inc_1042" {
+				rows = append(rows, r)
+			}
+		}
+		head["results"] = rows
+	}, false, false)
+
+	if !strings.Contains(page, "page size limit") { // 40*50*6 KB = 12 MiB exceeds the 8 MiB budget
+		t.Fatal("test setup must exhaust the text budget")
+	}
+	if !strings.Contains(page, "issue_refund called 2×") || !strings.Contains(page, `<li class="step hit"`) {
+		t.Fatal("the failing test must render in full")
+	}
+}
+
+func TestBuildView_BaselineLatency_IgnoresSkippedTests(t *testing.T) {
+	head := &CIReport{Tests: []CITest{{DurationMS: 100}, {DurationMS: 0}, {DurationMS: 0}}}
+
+	if got := percentile(sortedDurations(head), 50); got != 100 {
+		t.Fatalf("p50 = %d, want 100 (skipped tests have no duration)", got)
+	}
+}
+
+func TestBuildView_TwoBaselines_Merge(t *testing.T) {
+	base := filepath.Join(viewFixtures, "base.json")
+	v, err := BuildView(ViewOptions{Reports: []string{filepath.Join(viewFixtures, "head.json")}, Baselines: []string{base, base}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var rate string
+	for _, r := range v.Baseline.Rows {
+		if r.Metric == "assertions failed" {
+			rate = r.Base
+		}
+	}
+	if rate != "0" || v.Baseline == nil {
+		t.Fatalf("merged baseline rows = %+v", v.Baseline.Rows)
+	}
+}

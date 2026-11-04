@@ -79,7 +79,7 @@ uv run attest policy evaluate --report attest-report.json --policy attest.policy
 4. **Annotate the pull request** uses the `pr-annotate` action at the SDK's release tag. It posts one summary comment and emits a workflow annotation for each failure and replay miss; see [Annotations and the summary comment](annotations.md). It runs only for pull requests from branches of the same repository; on a fork's pull request the token is read-only, so the action posts no comment and the summary is in the job summary (annotations still appear).
 5. **Fail the job when tests failed** checks `steps.tests.outcome == 'failure'` and exits 1, so a red test is never hidden by `continue-on-error`.
 
-Steps 2 to 4, and the viewer step, run with `if: always()`.
+Steps 2 to 4 run with `if: always()`.
 
 Permissions are minimal. The workflow grants `contents: read`, and the job adds `pull-requests: write`, which the summary comment needs.
 

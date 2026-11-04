@@ -86,7 +86,9 @@ func msText(ms int64) string { return fmt.Sprintf("%d ms", ms) }
 func testDurations(r *CIReport) []int64 {
 	out := make([]int64, 0, len(r.Tests))
 	for _, t := range r.Tests {
-		out = append(out, t.DurationMS)
+		if t.DurationMS > 0 { // skipped tests carry no duration
+			out = append(out, t.DurationMS)
+		}
 	}
 	return out
 }
@@ -135,8 +137,8 @@ func snapshots(r *CIReport) (map[string]testSnapshot, []string) {
 		class, label := classify(t, skips)
 		snap := testSnapshot{name: t.Name, location: fmt.Sprintf("%s:%d", t.File, t.Line), class: class, label: label}
 		for _, id := range traceIDs[testKey{t.src, t.TestID}] {
-			if tr := dec.get(id); tr != nil {
-				snap.tools = append(snap.tools, toolSequence(tr, viewMaxSequence)...)
+			if tr := dec.get(id); tr != nil && len(snap.tools) < viewMaxSequence {
+				snap.tools = append(snap.tools, toolSequence(tr, viewMaxSequence-len(snap.tools))...)
 				snap.hasTools = true
 			}
 		}
@@ -173,6 +175,10 @@ func (b *viewBuilder) testDiffs(base, head *CIReport) []TestDiff {
 			continue
 		}
 		diffs = append(diffs, d)
+		if len(diffs) >= viewMaxTests {
+			b.notef("more changed tests than the %d shown", viewMaxTests)
+			return diffs
+		}
 	}
 	var removed []string
 	for id := range bs {
@@ -182,6 +188,10 @@ func (b *viewBuilder) testDiffs(base, head *CIReport) []TestDiff {
 	}
 	sort.Strings(removed)
 	for _, id := range removed {
+		if len(diffs) >= viewMaxTests {
+			b.notef("more changed tests than the %d shown", viewMaxTests)
+			break
+		}
 		t := bs[id]
 		diffs = append(diffs, TestDiff{Name: b.text(t.name), Location: b.text(t.location), Base: b.text(t.label), Head: "absent", Note: "test was removed"})
 	}
