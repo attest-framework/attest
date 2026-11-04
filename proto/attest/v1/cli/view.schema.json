@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://attest-framework.github.io/schemas/v1/cli/view.schema.json",
+  "title": "attest-engine view --json",
+  "description": "The HTML failure viewer that was written: its path, how many reports, tests, failed tests and embedded traces it shows, whether a baseline and a mutation report were included, and whether a browser was opened.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["out", "reports", "tests", "failures", "traces", "baseline", "mutation", "opened"],
+  "properties": {
+    "out": { "type": "string", "minLength": 1 },
+    "reports": { "type": "integer", "minimum": 1 },
+    "tests": { "type": "integer", "minimum": 0 },
+    "failures": { "type": "integer", "minimum": 0 },
+    "traces": { "type": "integer", "minimum": 0 },
+    "baseline": { "type": "boolean" },
+    "mutation": { "type": "boolean" },
+    "opened": { "type": "boolean" }
+  }
+}

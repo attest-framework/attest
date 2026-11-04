@@ -49,6 +49,15 @@ type CIResult struct {
 	File         string `json:"file,omitempty"`
 	Line         int    `json:"line,omitempty"`
 
+	// Fields read by the failure viewer.
+	Cost          float64 `json:"cost,omitempty"`
+	DurationMS    int64   `json:"duration_ms,omitempty"`
+	Layer         int     `json:"layer,omitempty"`
+	TraceNodePath string  `json:"trace_node_path,omitempty"`
+	Expected      string  `json:"expected,omitempty"`
+	Actual        string  `json:"actual,omitempty"`
+	TraceID       string  `json:"trace_id,omitempty"`
+
 	// src is the index of the report the row came from in MergeCI; it keeps
 	// rows of different reports apart when their test ids collide.
 	src int
@@ -87,6 +96,14 @@ type CIReport struct {
 	Summary       CISummary  `json:"summary"`
 	Results       []CIResult `json:"results"`
 	Tests         []CITest   `json:"tests"`
+
+	// Fields read by the failure viewer. Traces is present only when the run
+	// set ATTEST_REPORT_TRACES=1; after MergeCI its keys are unique across the
+	// merged reports and every row's TraceID names its entry.
+	Simulated       bool                       `json:"simulated,omitempty"`
+	TotalCost       float64                    `json:"total_cost,omitempty"`
+	TotalDurationMS int64                      `json:"total_duration_ms,omitempty"`
+	Traces          map[string]json.RawMessage `json:"traces,omitempty"`
 }
 
 // LoadCI reads one report-v2 file. A missing file, malformed JSON or another
@@ -110,13 +127,28 @@ func LoadCI(path string) (*CIReport, error) {
 func MergeCI(reports []*CIReport) *CIReport {
 	merged := &CIReport{ReportVersion: 2}
 	for i, r := range reports {
+		merged.TotalCost += r.TotalCost
+		merged.TotalDurationMS += r.TotalDurationMS
+		merged.Simulated = merged.Simulated || r.Simulated
 		for _, res := range r.Results {
 			res.src = i
+			if res.TraceID != "" && len(reports) > 1 {
+				res.TraceID = fmt.Sprintf("r%d:%s", i+1, res.TraceID)
+			}
 			merged.Results = append(merged.Results, res)
 		}
 		for _, t := range r.Tests {
 			t.src = i
 			merged.Tests = append(merged.Tests, t)
+		}
+		for id, raw := range r.Traces {
+			if merged.Traces == nil {
+				merged.Traces = map[string]json.RawMessage{}
+			}
+			if len(reports) > 1 {
+				id = fmt.Sprintf("r%d:%s", i+1, id)
+			}
+			merged.Traces[id] = raw
 		}
 		s := &merged.Summary
 		s.Total += r.Summary.Total

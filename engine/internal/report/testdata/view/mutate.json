@@ -1,0 +1,54 @@
+{
+  "score": 0.5,
+  "seed": 1,
+  "fixtures": [
+    "inc-1042"
+  ],
+  "mutants": [
+    {
+      "id": "inc-1042:drop_step:1",
+      "fixture": "inc-1042",
+      "operator": "drop_step",
+      "description": "drop step 1 (issue_refund)",
+      "status": "killed",
+      "killed_by": [
+        {
+          "assertion_id": "refund_once",
+          "type": "trace",
+          "spec": {
+            "check": "required_tools",
+            "tools": [
+              "issue_refund"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "inc-1042:duplicate_step:1",
+      "fixture": "inc-1042",
+      "operator": "duplicate_step",
+      "description": "duplicate step 1 (issue_refund)",
+      "status": "survived",
+      "killed_by": []
+    }
+  ],
+  "survivors_suggestions": [
+    {
+      "mutant_id": "inc-1042:duplicate_step:1",
+      "contract": {
+        "type": "trace",
+        "spec": {
+          "check": "tool_cardinality",
+          "tool": "issue_refund",
+          "per": "order_id",
+          "max": 1
+        },
+        "description": "issue_refund at most once per order_id"
+      },
+      "description": "add: issue_refund at most once per order_id"
+    }
+  ],
+  "skipped_specs": 0,
+  "applicable_specs": 2
+}
