@@ -468,6 +468,8 @@ func writeCaptureSummary(w io.Writer, path string, f *capture.Fixture) {
 	tw.Flush()
 	v := f.Verification
 	switch {
+	case !v.Verified && !capture.HasModelOrToolSteps(f.Trace):
+		fmt.Fprintf(w, "  not verified: %s\n", noStepsReason)
 	case v.Verified && v.ExpectFail:
 		fmt.Fprintf(w, "  verified: incident reproduction; expected %s: %s\n", plural(len(v.ExpectedFailures), "failure", "failures"), terminalSafe(strings.Join(v.ExpectedFailures, ", ")))
 	case v.Verified:
@@ -478,6 +480,13 @@ func writeCaptureSummary(w io.Writer, path string, f *capture.Fixture) {
 		fmt.Fprintf(w, "  not verified: %s\n", terminalSafe(unverifiedReason(f)))
 	}
 }
+
+// noStepsReason explains a fixture whose trace holds no model or tool step:
+// spans arrived, but none follow the conventions the converter maps.
+const noStepsReason = "the trace has no llm_call or tool_call step, so there is nothing to verify. " +
+	"Spans arrived, but none follow the GenAI semantic conventions attest maps " +
+	"(gen_ai.operation.name chat, execute_tool, ...). Switch the framework's OpenTelemetry " +
+	"instrumentation to one attest maps; see the Frameworks section of the capture guide (attest-engine guide capture)"
 
 func unverifiedReason(f *capture.Fixture) string {
 	if !f.Verification.TraceCheck.OK {
