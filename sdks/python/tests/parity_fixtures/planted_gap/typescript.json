@@ -1,0 +1,9 @@
+{
+  "adapters": [],
+  "exports": ["Agent"],
+  "expect_chain": [],
+  "init_flags": [],
+  "plugins": [],
+  "simulation": [],
+  "test_runner": []
+}

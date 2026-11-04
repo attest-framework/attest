@@ -1,0 +1,14 @@
+export { FRIENDLY_USER, ADVERSARIAL_USER, CONFUSED_USER, COOPERATIVE_USER } from "../personas.js";
+export type { SimulatePersona } from "../proto/types.js";
+export { config, isSimulationMode } from "../config.js";
+export { activeMockRegistry } from "./context.js";
+export type { MockToolFn } from "./context.js";
+export { MockToolRegistry, mockTool } from "./mock-tools.js";
+export type { MockTool } from "./mock-tools.js";
+export { faultInject } from "./fault-inject.js";
+export type { FaultInjectOptions } from "./fault-inject.js";
+export { RepeatResult, repeat } from "./repeat.js";
+export { ScenarioResult, scenario } from "./scenario.js";
+export type { ScenarioConfig, ScenarioContext, ScenarioOptions } from "./scenario.js";
+export type { Verdict } from "./verdict.js";
+export { renderVerdictDiagnostics } from "./verdict.js";

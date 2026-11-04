@@ -7,7 +7,8 @@ import {
   AttestClient,
   EngineManager,
   isSimulationMode,
-  renderDiagnostics,
+  renderVerdictDiagnostics,
+  type Verdict,
   requireSimulationCapability,
   OUTCOME_FAIL,
   OUTCOME_SKIP,
@@ -64,16 +65,16 @@ export interface EvaluateOptions extends InspectOptions {
  * soft failures pass. Inside a trial of trials() (N > 1) it does nothing and
  * returns `result`: trials() enforces the aggregate outcome after the last trial.
  */
-export function enforceOutcome(
-  result: AgentResult,
+export function enforceOutcome<V extends Verdict>(
+  result: V,
   strict: boolean,
   context?: TestContext,
-): AgentResult {
+): V {
   if (inTrial()) return result;
   const outcome = result.outcome({ strict });
   if (outcome === OUTCOME_FAIL) {
-    const header = result.hardFailures.length === 0 ? `strict: ${result.skipReason()}\n` : "";
-    throw new Error(header + renderDiagnostics(result).replace(/^\n/, ""));
+    const header = result.outcome({ strict: false }) === OUTCOME_FAIL ? "" : `strict: ${result.skipReason()}\n`;
+    throw new Error(header + renderVerdictDiagnostics(result).replace(/^\n/, ""));
   }
   if (outcome === OUTCOME_SKIP) {
     (context ?? trialScope.getStore()?.test.context ?? currentTestContext(result)).skip(
@@ -88,7 +89,7 @@ export function enforceOutcome(
  * TestRunner exists from Vitest 4.1, and under test.concurrent the
  * "current test" may be another test, so the caller must pass `context`.
  */
-function currentTestContext(result: AgentResult): TestContext {
+function currentTestContext(result: Verdict): TestContext {
   const runner = (vitest as Partial<typeof vitest>).TestRunner;
   const test = runner?.getCurrentTest();
   if (test === undefined || test.concurrent === true) {
@@ -242,6 +243,15 @@ export class AttestEngineFixture {
   async evaluate(chain: ExpectChain, options?: EvaluateOptions): Promise<AgentResult> {
     const result = await this.inspect(chain, options);
     return enforceOutcome(result, options?.strict ?? strictFromEnv(), options?.context);
+  }
+
+  /**
+   * Fail or skip the running test according to a verdict's outcome: an
+   * `AgentResult` from `inspect()` or the aggregate of `scenario()` /
+   * `repeat()`. See `enforceOutcome`.
+   */
+  enforce<V extends Verdict>(verdict: V, options?: { strict?: boolean; context?: TestContext }): V {
+    return enforceOutcome(verdict, options?.strict ?? strictFromEnv(), options?.context);
   }
 }
 
