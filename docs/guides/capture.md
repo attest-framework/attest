@@ -224,7 +224,7 @@ export OTEL_TRACES_EXPORTER=otlp OTEL_EXPORTER_OTLP_PROTOCOL=http/json OTEL_TRAC
 export OTEL_METRICS_EXPORTER=none OTEL_LOGS_EXPORTER=none OTEL_LOG_TOOL_DETAILS=1 OTEL_LOG_TOOL_CONTENT=1
 ```
 
-Without `CLAUDE_CODE_ENHANCED_TELEMETRY_BETA` Claude Code exports metrics and logs only. Capture maps `claude_code.llm_request` to a model call (model, `input_tokens`, `output_tokens` and cache tokens come from its native attributes), `claude_code.tool` to a tool call whose result is the `output` of its `tool.output` event, and `claude_code.interaction` to the turn. `claude_code.tool.execution` and `claude_code.tool.blocked_on_user` add no step. Claude Code records neither tool arguments nor message content, so the drafted contracts cover the tools called and their order but not per-id cardinality. Because the traces are a beta, attribute names can change between Claude Code releases.
+Without `CLAUDE_CODE_ENHANCED_TELEMETRY_BETA` Claude Code exports metrics and logs only. Capture maps `claude_code.llm_request` to a model call (model, `input_tokens`, `output_tokens` and cache tokens come from its native attributes), `claude_code.tool` to a tool call whose result is the `output` of its `tool.output` event, and `claude_code.interaction` to the turn. `claude_code.tool.execution` and `claude_code.tool.blocked_on_user` add no step. Claude Code records neither tool arguments nor message content, so the drafted contracts cover the tools called and their order but not per-id cardinality. `OTEL_LOG_TOOL_CONTENT=1` puts each tool's output (file contents, shell output) into the fixture as recorded, with only pattern-based secret redaction applied. Run `attest capture --check-redaction <fixture>` and read the fixture before committing it, or leave `OTEL_LOG_TOOL_CONTENT` unset to keep tool outputs out. Because the traces are a beta, attribute names can change between Claude Code releases.
 
 **LangGraph (Python).** Use LangSmith in OTel mode with a tracer provider you own, so spans go to the capture receiver and nowhere else:
 
@@ -246,7 +246,7 @@ OpenAI Agents SDK and LangGraph for TypeScript have no instrumentation that emit
 
 ### When capture reports no steps
 
-A capture whose trace has no `llm_call` and no `tool_call` step is not verified (exit 1): contracts over an empty trace pass vacuously. It means spans arrived but none carry `gen_ai.operation.name` values attest maps (`chat`, `execute_tool`, ...). Check the framework's instrumentation against the table above; `attest trace check <export>` reports `no_genai_spans` for the same export.
+A capture where no `llm_call` or `tool_call` step was mapped is not verified (exit 1): contracts over a trace without them pass vacuously. Either no span carries a `gen_ai.operation.name` that attest maps (`chat`, `execute_tool`, ...), or only agent and retrieval spans do. Check the framework's instrumentation against the table above. `attest trace check <export>` reports `no_genai_spans` when no span at all is mapped.
 
 ## The fixture
 

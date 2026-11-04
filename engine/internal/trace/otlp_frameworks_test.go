@@ -194,10 +194,28 @@ func TestConvert_ClaudeCodeSpans(t *testing.T) {
 		}
 		assertJSONObject(t, "result", tr.Steps[0].Result, map[string]any{})
 	})
-	t.Run("non-numeric native tokens are an error, not a panic", func(t *testing.T) {
+	t.Run("non-numeric native tokens are skipped and reported by trace check", func(t *testing.T) {
 		for _, key := range []string{"input_tokens", "output_tokens", "cache_read_tokens", "cache_creation_tokens"} {
-			if _, err := convertSpans(t, root, llm(map[string]any{key: "twelve"})); err == nil || !strings.Contains(err.Error(), key) {
-				t.Errorf("%s: err = %v, want an error naming the attribute", key, err)
+			data := otlpDoc(root, llm(map[string]any{key: "twelve"}))
+			tr, err := ConvertOTLP(data, ConvertOptions{})
+			if err != nil {
+				t.Errorf("%s: %v", key, err)
+				continue
+			}
+			var res map[string]any
+			_ = json.Unmarshal(tr.Steps[0].Result, &res)
+			if _, ok := res[key]; ok {
+				t.Errorf("%s: result kept the malformed value: %v", key, res)
+			}
+			spans, _ := ParseOTLP(data)
+			found := false
+			for _, is := range Check(spans).Issues {
+				if is.Code == IssueMalformedNative && strings.Contains(is.Message, key) && is.Severity == SeverityWarning {
+					found = true
+				}
+			}
+			if !found {
+				t.Errorf("%s: no malformed_native_attribute warning", key)
 			}
 		}
 	})
@@ -287,15 +305,15 @@ func TestConvert_LangSmithToolPayloads(t *testing.T) {
 			t.Errorf("args %v result %v", args, result)
 		}
 	})
-	t.Run("input wrapper is unwrapped only on LangSmith spans", func(t *testing.T) {
-		wrapped := `{"input":{"order_id":"O-1"}}`
-		args, _ := run(t, map[string]any{"langsmith.span.kind": "tool", "gen_ai.prompt": wrapped})
-		if !reflect.DeepEqual(args, map[string]any{"order_id": "O-1"}) {
-			t.Errorf("LangSmith args = %v", args)
-		}
-		args, _ = run(t, map[string]any{"gen_ai.prompt": wrapped})
-		if !reflect.DeepEqual(args, map[string]any{"input": map[string]any{"order_id": "O-1"}}) {
-			t.Errorf("non-LangSmith args = %v, want the object kept as recorded", args)
+	t.Run("arguments are never unwrapped, so a parameter named input survives", func(t *testing.T) {
+		for _, attrs := range []map[string]any{
+			{"langsmith.span.kind": "tool", "gen_ai.prompt": `{"input":"O-1"}`},
+			{"gen_ai.prompt": `{"input":"O-1"}`},
+		} {
+			args, _ := run(t, attrs)
+			if !reflect.DeepEqual(args, map[string]any{"input": "O-1"}) {
+				t.Errorf("%v: args = %v, want the recorded object", attrs, args)
+			}
 		}
 	})
 	t.Run("a tool message outside LangSmith is not unwrapped", func(t *testing.T) {
@@ -380,18 +398,41 @@ func TestParseOTLP_SpanEvents(t *testing.T) {
 			}
 		}
 	})
-	t.Run("malformed tool.output events and invalid JSON are errors", func(t *testing.T) {
-		for _, ev := range []string{`[{"name":"tool.output","attributes":{}}]`, `[{"name":"tool.output","attributes":[1]}]`, `[{"name":"tool.output","attributes":[{"key":"","value":{"stringValue":"x"}}]}]`, `[{"name":"tool.output","attributes":[{"key":"output","value":`, `{}`, `"x"`, `[1`} {
+	t.Run("invalid JSON in events is an error", func(t *testing.T) {
+		for _, ev := range []string{`{}`, `"x"`, `[1`, `[{"name":"tool.output","attributes":[{"key":"output","value":`} {
 			if _, err := ParseOTLP(span(ev)); err == nil {
 				t.Errorf("%s: parsed, want an error", ev)
 			}
 		}
 	})
-	t.Run("events other than tool.output are never read", func(t *testing.T) {
-		for _, ev := range []string{`[1]`, `["x"]`, `[{"name":1}]`, `[{"attributes":{}}]`, `[{"name":"gen_ai.user.message","attributes":[{"key":"","value":1}]}]`} {
+	t.Run("a malformed tool.output event is dropped and reported by trace check", func(t *testing.T) {
+		for _, ev := range []string{`[{"name":"tool.output","attributes":{}}]`, `[{"name":"tool.output","attributes":[1]}]`, `[{"name":"tool.output","attributes":[{"key":"","value":{"stringValue":"x"}}]}]`} {
 			spans, err := ParseOTLP(span(ev))
-			if err != nil || len(spans[0].Events) != 0 {
-				t.Errorf("%s: err %v, events %v", ev, err, spans[0].Events)
+			if err != nil || len(spans[0].Events) != 0 || spans[0].DroppedEvents != 1 {
+				t.Errorf("%s: err %v, events %v, dropped %d", ev, err, spans[0].Events, spans[0].DroppedEvents)
+				continue
+			}
+			warned := false
+			for _, is := range Check(spans).Issues {
+				warned = warned || (is.Code == IssueMalformedEvent && is.Severity == SeverityWarning)
+			}
+			if !warned {
+				t.Errorf("%s: no malformed_event warning", ev)
+			}
+		}
+	})
+	t.Run("events other than tool.output are never read", func(t *testing.T) {
+		for _, ev := range []string{
+			`[1]`, `["x"]`, `[{"name":1}]`, `[{"attributes":{}}]`,
+			`[{"name":"gen_ai.user.message","attributes":[{"key":"","value":1}]}]`,
+			// Text that merely mentions tool.output does not make an event one.
+			`[{"name":"exception","attributes":[{"key":"exception.message","value":{"stringValue":"tool.output failed"}},1]}]`,
+			`[{"name":"x","attributes":[{"key":"","value":{"stringValue":"tool.output"}}]}]`,
+			`[{"name":"exception","message":"tool.output","attributes":[null,{"key":"k"}]}]`,
+		} {
+			spans, err := ParseOTLP(span(ev))
+			if err != nil || len(spans[0].Events) != 0 || spans[0].DroppedEvents != 0 {
+				t.Errorf("%s: err %v, events %v, dropped %d", ev, err, spans[0].Events, spans[0].DroppedEvents)
 			}
 		}
 	})
@@ -419,6 +460,40 @@ func TestParseOTLP_SpanEvents(t *testing.T) {
 		}
 		if _, err := ParseOTLP(otlpDoc(spans...)); err == nil || !strings.Contains(err.Error(), "attribute values") {
 			t.Errorf("err = %v, want the document value limit", err)
+		}
+	})
+}
+
+// Coverage must not report evidence the converter fills in from native or
+// fallback attributes.
+func TestCheck_CoverageMatchesConversion(t *testing.T) {
+	for _, c := range []struct{ fixture, field string }{
+		{"claude-code-py", "tokens"}, {"claude-code-ts", "tokens"}, {"langsmith-py", "tool_content"},
+	} {
+		t.Run(c.fixture+"/"+c.field, func(t *testing.T) {
+			spans, err := ParseOTLP(readFixture(t, "otlp/"+c.fixture+".otlp.json"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, gap := range Check(spans).Coverage {
+				if gap.Field == c.field {
+					t.Errorf("coverage reports %+v although conversion fills the field", gap)
+				}
+			}
+		})
+	}
+	t.Run("tool result from a tool.output event counts, missing arguments still do not", func(t *testing.T) {
+		tool := fwSpan(t, "0000000000000002", "", "t", 1, 2, map[string]any{"gen_ai.operation.name": "execute_tool", "gen_ai.tool.name": "x"}, toolOutputEvent(t, "o"))
+		spans, err := ParseOTLP(otlpDoc(tool))
+		if err != nil {
+			t.Fatal(err)
+		}
+		found := false
+		for _, gap := range Check(spans).Coverage {
+			found = found || gap.Field == "tool_content"
+		}
+		if !found {
+			t.Error("tool span without arguments reported complete")
 		}
 	})
 }

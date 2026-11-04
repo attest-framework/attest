@@ -525,7 +525,13 @@ func tokenAttr(a map[string]any, key, nativeKey string, claude bool) (int, bool,
 	if err != nil || ok || !claude {
 		return n, ok, err
 	}
-	return intAttr(a, nativeKey)
+	// Claude Code's traces are a beta: a native value of the wrong type is
+	// skipped (trace check warns, malformed_native_attribute), not fatal.
+	n, ok, err = intAttr(a, nativeKey)
+	if err != nil {
+		return 0, false, nil
+	}
+	return n, ok, nil
 }
 
 // nativeModel is Claude Code's model attribute, read only on its llm_request
@@ -540,7 +546,7 @@ func nativeModel(a map[string]any, claude bool) (string, bool) {
 
 // claudeUsage records a Claude Code llm_request span's model (when the GenAI
 // request model is absent) and cache token counts.
-func claudeUsage(a, args, result map[string]any) error {
+func claudeUsage(a, args, result map[string]any) {
 	if _, ok := args["model"]; !ok {
 		if m, ok := nativeModel(a, true); ok {
 			args["model"] = m
@@ -548,29 +554,43 @@ func claudeUsage(a, args, result map[string]any) error {
 	}
 	for _, c := range [...]struct{ attr, key string }{{attrNativeCacheRead, "cache_read_tokens"}, {attrNativeCacheCreation, "cache_creation_tokens"}} {
 		attr, key := c.attr, c.key
-		n, ok, err := intAttr(a, attr)
-		if err != nil {
-			return err
-		}
-		if ok {
+		if n, ok, err := intAttr(a, attr); err == nil && ok {
 			result[key] = n
 		}
 	}
-	return nil
+}
+
+// toolHasArguments and toolHasResult report whether toolPayloads finds
+// arguments and a result on a tool span; trace check coverage uses them.
+func toolHasArguments(s *Span) bool {
+	return hasAny(s.Attributes, attrToolArguments, attrPrompt)
+}
+
+func toolHasResult(s *Span) bool {
+	if hasAny(s.Attributes, attrToolResult, attrCompletion) {
+		return true
+	}
+	for _, ev := range s.Events {
+		if _, ok := ev.Attributes[attrToolOutputEvent]; ok {
+			return true
+		}
+	}
+	return false
 }
 
 // toolPayloads returns a tool span's arguments and result. The GenAI
 // attributes win. A result falls back to the output attribute of a tool.output
 // span event (Claude Code), then to gen_ai.completion; arguments fall back to
-// gen_ai.prompt (LangSmith). LangSmith wraps run inputs and outputs, which
-// are unwrapped only on spans it exported.
+// gen_ai.prompt (LangSmith), decoded as recorded. LangSmith wraps run outputs
+// in {"output": ...} and tool messages ({"type": "tool", "content": ...});
+// both are unwrapped only on spans it exported.
 func toolPayloads(s *Span) (args, result map[string]any) {
 	a := s.Attributes
 	_, langSmith := a[attrLangSmithKind]
 	if _, ok := a[attrToolArguments]; ok {
 		args = objectOf(a, attrToolArguments, "arguments")
 	} else if v, ok := a[attrPrompt]; ok {
-		args = payloadObject(v, "input", "arguments", langSmith)
+		args = payloadObject(v, "arguments", false)
 	} else {
 		args = map[string]any{}
 	}
@@ -579,24 +599,24 @@ func toolPayloads(s *Span) (args, result map[string]any) {
 	}
 	for _, ev := range s.Events {
 		if out, ok := ev.Attributes[attrToolOutputEvent]; ok && ev.Name == EventToolOutput {
-			return args, payloadObject(out, "", "result", false)
+			return args, payloadObject(out, "result", false)
 		}
 	}
 	if v, ok := a[attrCompletion]; ok {
-		return args, payloadObject(v, "output", "result", langSmith)
+		return args, payloadObject(v, "result", langSmith)
 	}
 	return args, map[string]any{}
 }
 
 // payloadObject decodes a recorded payload into an object. A value that is not
-// a JSON object is kept under wrapKey. With unwrap, a sole wrapper key and a
-// LangChain tool message ({"type": "tool", "content": ...}) are removed
+// a JSON object is kept under wrapKey. With unwrapResult, a sole "output" key
+// and a LangChain tool message ({"type": "tool", "content": ...}) are removed
 // first; nothing else is.
-func payloadObject(v any, wrapper, wrapKey string, unwrap bool) map[string]any {
+func payloadObject(v any, wrapKey string, unwrapResult bool) map[string]any {
 	d := decodeJSONText(v)
-	if unwrap {
+	if unwrapResult {
 		if m, ok := d.(map[string]any); ok && len(m) == 1 {
-			if inner, ok := m[wrapper]; ok {
+			if inner, ok := m["output"]; ok {
 				d = decodeJSONText(inner)
 			}
 		}
@@ -618,6 +638,9 @@ func (c *converter) llmStep(i int, step *types.Step, a map[string]any) (args, re
 		args["operation"] = strings.ToLower(strings.TrimSpace(op))
 	}
 	result = pick(a, map[string]string{attrCompletion: "completion", attrResponseModel: "model", attrFinishReasons: "finish_reasons"})
+	if v, ok := result["finish_reasons"]; ok {
+		result["finish_reasons"] = finishReasonList(v)
+	}
 	claude := c.x.spans[i].Name == spanClaudeLLMRequest
 	in, inOK, err := tokenAttr(a, attrInputTokens, attrNativeInputTokens, claude)
 	if err != nil {
@@ -628,9 +651,7 @@ func (c *converter) llmStep(i int, step *types.Step, a map[string]any) (args, re
 		return nil, nil, err
 	}
 	if claude {
-		if err := claudeUsage(a, args, result); err != nil {
-			return nil, nil, err
-		}
+		claudeUsage(a, args, result)
 	}
 	if inOK {
 		result["input_tokens"] = in
@@ -681,6 +702,9 @@ func (c *converter) llmStep(i int, step *types.Step, a map[string]any) (args, re
 			req["system_instructions"] = decodeJSONText(sys)
 		}
 		resp := pick(a, map[string]string{attrResponseModel: "model", attrFinishReasons: "finish_reasons"})
+		if v, ok := resp["finish_reasons"]; ok {
+			resp["finish_reasons"] = finishReasonList(v)
+		}
 		resp["messages"] = decodeJSONText(outMsgs)
 		step.Exchange = &types.Exchange{Request: mustJSON(req), Response: mustJSON(resp)}
 	}
@@ -947,9 +971,12 @@ func contentBytes(spans []Span) int {
 	return n
 }
 
-// jsonSize is an upper bound on the encoded size of an attribute value:
+// jsonSize approximates the encoded size of an attribute value, erring high:
 // every character encoding/json escapes (quotes, backslashes, control
-// characters, <, >, &, U+2028, U+2029, invalid UTF-8) counts as six bytes.
+// characters, <, >, &, U+2028, U+2029, invalid UTF-8) counts as six bytes and
+// numbers as 24. Re-encoded numbers can still grow (an integer attribute
+// becomes a float64 in the output), so converted size is also charged while
+// building the trace (converter.charge).
 func jsonSize(v any) int {
 	switch x := v.(type) {
 	case string:

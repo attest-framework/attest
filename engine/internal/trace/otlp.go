@@ -33,13 +33,18 @@ const (
 	// EventToolOutput is the span event Claude Code records a tool's output
 	// on. It is the only span event the parser retains.
 	EventToolOutput = "tool.output"
-	// maxEventsPerSpan bounds the events parsed per span; maxKeptEvents bounds
-	// the retained ones. Events beyond the first are decoded but dropped.
+	// maxEventsPerSpan bounds the events inspected per span; maxKeptEvents
+	// bounds the retained ones (the first maxKeptEvents tool.output events).
+	// Every other event is decoded as JSON and dropped.
 	maxEventsPerSpan = 256
 	maxKeptEvents    = 4
 )
 
-var toolOutputName = []byte(EventToolOutput)
+// limitError is an input-limit violation. Limit errors always reject the
+// export; other errors in a tool.output event only drop that event.
+type limitError struct{ msg string }
+
+func (e *limitError) Error() string { return e.msg }
 
 // Event is a retained OTLP span event (only EventToolOutput events are kept).
 type Event struct {
@@ -51,14 +56,16 @@ type Event struct {
 // check read. IDs are lowercase hex. Attribute values are string, bool,
 // int64, float64, []any or map[string]any.
 type Span struct {
-	TraceID       string
-	SpanID        string
-	ParentSpanID  string
-	Name          string
-	StartNs       uint64
-	EndNs         uint64
-	Attributes    map[string]any
-	Events        []Event
+	TraceID      string
+	SpanID       string
+	ParentSpanID string
+	Name         string
+	StartNs      uint64
+	EndNs        uint64
+	Attributes   map[string]any
+	Events       []Event
+	// DroppedEvents counts tool.output events dropped as malformed.
+	DroppedEvents int
 	StatusError   bool
 	StatusMessage string
 	// Order is the span's position in the input document.
@@ -254,6 +261,7 @@ type rawSpan struct {
 	start, end                      *uint64
 	attrs                           map[string]any
 	events                          []Event
+	droppedEvents                   int
 	nEvents                         int
 	statusError                     bool
 	statusMessage                   string
@@ -294,21 +302,26 @@ func (p *otlpParser) span() (Span, error) {
 			// Counted across repeats of the key, like attributes.
 			_, err = p.array("events", func(int) error {
 				r.nEvents++
-				// Events other than tool.output are never read; past the cap
-				// they are not even inspected, so a producer with many events
-				// per span still converts.
+				// Only tool.output events are read. The rest, and everything
+				// past the cap, are decoded (stdlib nesting cap) and dropped,
+				// so a producer with many or odd events still converts.
 				var raw json.RawMessage
 				if err := p.dec.Decode(&raw); err != nil {
 					return fmt.Errorf("events: %w", err)
 				}
-				if r.nEvents > maxEventsPerSpan || len(r.events) >= maxKeptEvents || !bytes.Contains(raw, toolOutputName) {
+				if r.nEvents > maxEventsPerSpan || len(r.events) >= maxKeptEvents || eventName(raw) != EventToolOutput {
 					return nil
 				}
 				ev, err := p.subParser(raw).event()
-				if err != nil {
+				var limit *limitError
+				switch {
+				case errors.As(err, &limit):
 					return fmt.Errorf("events: %w", err)
-				}
-				if ev.Name == EventToolOutput {
+				case err != nil:
+					// A malformed tool.output event is dropped, not fatal;
+					// trace check warns (malformed_event).
+					r.droppedEvents++
+				default:
 					r.events = append(r.events, ev)
 				}
 				return nil
@@ -335,6 +348,18 @@ func (p *otlpParser) span() (Span, error) {
 		return Span{}, err
 	}
 	return r.validate()
+}
+
+// eventName is the name of a raw event, or "" when it is not an object with a
+// string name.
+func eventName(raw []byte) string {
+	var e struct {
+		Name string `json:"name"`
+	}
+	if json.Unmarshal(raw, &e) != nil {
+		return ""
+	}
+	return e.Name
 }
 
 // subParser reads one already-decoded value; it shares this parser's value
@@ -372,7 +397,7 @@ func (p *otlpParser) event() (Event, error) {
 			_, err := p.array("event.attributes", func(int) error {
 				n++
 				if n > MaxAttrsPerSpan {
-					return fmt.Errorf("event.attributes: more than %d entries", MaxAttrsPerSpan)
+					return &limitError{fmt.Sprintf("event.attributes: more than %d entries", MaxAttrsPerSpan)}
 				}
 				return p.keyValue(ev.Attributes, 0)
 			})
@@ -411,6 +436,7 @@ func (r *rawSpan) validate() (Span, error) {
 		EndNs:         *r.end,
 		Attributes:    r.attrs,
 		Events:        r.events,
+		DroppedEvents: r.droppedEvents,
 		StatusError:   r.statusError,
 		StatusMessage: r.statusMessage,
 	}, nil
@@ -498,7 +524,7 @@ func (p *otlpParser) statusCode() (bool, error) {
 func (p *otlpParser) countValue() error {
 	p.values++
 	if p.values > MaxOTLPValues {
-		return fmt.Errorf("OTLP input has more than %d attribute values", MaxOTLPValues)
+		return &limitError{fmt.Sprintf("OTLP input has more than %d attribute values", MaxOTLPValues)}
 	}
 	return nil
 }
@@ -541,7 +567,7 @@ func (p *otlpParser) keyValue(into map[string]any, depth int) error {
 // anyValue reads an OTLP AnyValue. An empty or null AnyValue is nil.
 func (p *otlpParser) anyValue(depth int) (any, error) {
 	if depth >= MaxAnyValueDepth {
-		return nil, fmt.Errorf("value nesting exceeds %d levels", MaxAnyValueDepth)
+		return nil, &limitError{fmt.Sprintf("value nesting exceeds %d levels", MaxAnyValueDepth)}
 	}
 	if err := p.countValue(); err != nil {
 		return nil, err

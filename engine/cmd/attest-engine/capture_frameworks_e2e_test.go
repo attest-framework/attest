@@ -73,7 +73,7 @@ func TestCaptureFrom_VacuousRoutes_NotVerified(t *testing.T) {
 				if err := json.Unmarshal([]byte(stdout), &res); err != nil || res.Verified {
 					t.Fatalf("result %q: verified %v err %v", stdout, res.Verified, err)
 				}
-				for _, want := range []string{"not verified: the trace has no llm_call or tool_call step", "none follow the GenAI semantic conventions attest maps", "attest-engine guide capture"} {
+				for _, want := range []string{"not verified: no llm_call or tool_call step was mapped", "no span follows the GenAI semantic conventions attest maps", "attest-engine guide capture"} {
 					if !strings.Contains(stderr, want) {
 						t.Errorf("stderr lacks %q:\n%s", want, stderr)
 					}

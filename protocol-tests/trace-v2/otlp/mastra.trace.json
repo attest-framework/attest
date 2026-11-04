@@ -13,7 +13,9 @@
         "provider": "openai.chat"
       },
       "result": {
-        "finish_reasons": "[\"tool-calls\"]",
+        "finish_reasons": [
+          "tool-calls"
+        ],
         "input_tokens": 12,
         "output_tokens": 7
       },
@@ -54,7 +56,9 @@
         "provider": "openai.chat"
       },
       "result": {
-        "finish_reasons": "[\"stop\"]",
+        "finish_reasons": [
+          "stop"
+        ],
         "input_tokens": 12,
         "output_tokens": 7
       },

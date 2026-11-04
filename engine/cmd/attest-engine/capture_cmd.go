@@ -482,10 +482,10 @@ func writeCaptureSummary(w io.Writer, path string, f *capture.Fixture) {
 }
 
 // noStepsReason explains a fixture whose trace holds no model or tool step:
-// spans arrived, but none follow the conventions the converter maps.
-const noStepsReason = "the trace has no llm_call or tool_call step, so there is nothing to verify. " +
-	"Spans arrived, but none follow the GenAI semantic conventions attest maps " +
-	"(gen_ai.operation.name chat, execute_tool, ...). Switch the framework's OpenTelemetry " +
+// spans arrived, but no llm_call or tool_call step was mapped from them.
+const noStepsReason = "no llm_call or tool_call step was mapped from the spans, so there is nothing to verify. " +
+	"Either no span follows the GenAI semantic conventions attest maps (gen_ai.operation.name chat, execute_tool, ...) " +
+	"or only agent and retrieval spans do. Switch the framework's OpenTelemetry " +
 	"instrumentation to one attest maps; see the Frameworks section of the capture guide (attest-engine guide capture)"
 
 func unverifiedReason(f *capture.Fixture) string {
