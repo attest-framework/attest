@@ -9,7 +9,7 @@ permissions:
   contents: read
   pull-requests: write
 steps:
-  - uses: attest-framework/attest/.github/actions/pr-annotate@v1.0.0-rc.3
+  - uses: attest-framework/attest/.github/actions/pr-annotate@v1.0.0
     if: always() && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
     with:
       report: attest-report.json

@@ -29,7 +29,7 @@ _PLATFORM_MAP: dict[str, str] = {
 def versioned_bin_dir() -> Path:
     """Return ``~/.attest/bin/<ENGINE_VERSION>/``, the cache directory for this SDK's engine.
 
-    The directory name is the canonical engine version (``1.0.0-rc.N``), never the
+    The directory name is the canonical engine version (for example ``1.0.0``), never the
     normalized Python package version. The legacy unversioned ``~/.attest/bin/attest-engine``
     is neither read nor modified.
     """

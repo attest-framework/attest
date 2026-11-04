@@ -46,7 +46,7 @@
     "attest"
   ],
   "peerDependencies": {
-    "@attest-ai/core": ">=1.0.0-rc",
+    "@attest-ai/core": ">=1.0.0",
     "vitest": ">=3.0.0 <5"
   },
   "devDependencies": {

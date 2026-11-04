@@ -13,7 +13,7 @@ const MAX_REDIRECTS = 5;
 /**
  * Cache directory for this SDK's engine: `~/.attest/bin/<ENGINE_VERSION>/`.
  *
- * The directory name is the canonical engine version (`1.0.0-rc.N`). The legacy
+ * The directory name is the canonical engine version (for example `1.0.0`). The legacy
  * unversioned `~/.attest/bin/attest-engine` is neither read nor modified.
  */
 export function versionedBinDir(): string {

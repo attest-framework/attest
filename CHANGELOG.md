@@ -10,7 +10,7 @@ First stable release. A real run or incident becomes a verified fixture with `at
 
 ### Changed
 
-- Install instructions in the README, the Python SDK README (the PyPI page), the guides and the `attest` skill's migration reference use `attest-ai>=1.0.0` and `@attest-ai/core@>=1.0.0` / `@attest-ai/vitest@>=1.0.0` instead of the release-candidate floors; with 1.0.0 published, a bare install resolves to it. The PyPI classifier is `Development Status :: 5 - Production/Stable`.
+- Install instructions in the README, the Python SDK README (the PyPI page), the guides and the `attest` skill's migration reference use `attest-ai>=1.0.0` and `@attest-ai/core@>=1.0.0` / `@attest-ai/vitest@>=1.0.0` (with `vitest@^4`) instead of the release-candidate floors; with 1.0.0 published, a bare install resolves to it. The annotations guide's example pins `pr-annotate@v1.0.0`. `@attest-ai/vitest` declares the peer `@attest-ai/core >=1.0.0` (was `>=1.0.0-rc`), so it no longer installs next to a release-candidate core with a different engine version. The PyPI classifier is `Development Status :: 5 - Production/Stable`.
 
 ### Fixed
 
