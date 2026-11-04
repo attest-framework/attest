@@ -3,8 +3,8 @@
 A behavior contract states what the agent did, not what it said: how often a tool ran per business key, which tools it must never call, the shape and order of its tool calls, whether it looped, how many tool failures it hit in a row, and what arguments it passed. Contracts are Layer 3 trace checks. They run in the engine, deterministically, with no model calls, so they cost nothing and give the same answer on every run.
 
 ```bash
-uv add "attest-ai>=1.0.0rc1"
-npm install -D "@attest-ai/core@>=1.0.0-rc.1" "@attest-ai/vitest@>=1.0.0-rc.1" "vitest@^4"
+uv add "attest-ai>=1.0.0"
+npm install -D "@attest-ai/core@>=1.0.0" "@attest-ai/vitest@>=1.0.0" "vitest@^4"
 ```
 
 ## Example: one refund per order

@@ -3,8 +3,8 @@
 A trace records what an agent said and which tools it called. It cannot tell whether the refund API ended up with one refund or two. A *world* is a local, stateful HTTP stand-in for that system. The agent's real HTTP client talks to it, the world keeps the records the agent created, and an `effect` assertion checks the final state.
 
 ```bash
-uv add "attest-ai>=1.0.0rc1"
-npm install -D "@attest-ai/core@>=1.0.0-rc.1" "@attest-ai/vitest@>=1.0.0-rc.1" "vitest@^4"
+uv add "attest-ai>=1.0.0"
+npm install -D "@attest-ai/core@>=1.0.0" "@attest-ai/vitest@>=1.0.0" "vitest@^4"
 ```
 
 ## world.yaml
