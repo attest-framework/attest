@@ -31,7 +31,7 @@ func init() {
 		schema:  "cli/capture.schema.json",
 		exits: []exitCode{
 			{exitOK, "the fixture is verified or captured with nothing to verify, or --check-redaction found no secrets; the command's own exit code is recorded, not propagated"},
-			{exitFailure, "the fixture is not verified (the command failed, no model call was recorded, the trace check failed, or --expect-fail drafted nothing) or was not written, the capture failed, or --check-redaction found secrets"},
+			{exitFailure, "the fixture is not verified (a drafted contract failed, the trace check failed, no step was mapped, --expect-fail drafted nothing, or nothing was drafted while the command exited non-zero or recorded no model call) or was not written, the capture failed, or --check-redaction found secrets"},
 			{exitUsage, "usage error, an invalid --world file, or a --refresh that was not confirmed"},
 		},
 	})
