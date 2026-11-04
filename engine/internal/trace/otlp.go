@@ -29,7 +29,21 @@ const (
 	traceIDHexLength  = 32
 	spanIDHexLength   = 16
 	statusErrorString = "STATUS_CODE_ERROR"
+
+	// EventToolOutput is the span event Claude Code records a tool's output
+	// on. It is the only span event the parser retains.
+	EventToolOutput = "tool.output"
+	// maxEventsPerSpan bounds the events parsed per span; maxKeptEvents bounds
+	// the retained ones. Events beyond the first are decoded but dropped.
+	maxEventsPerSpan = 256
+	maxKeptEvents    = 4
 )
+
+// Event is a retained OTLP span event (only EventToolOutput events are kept).
+type Event struct {
+	Name       string
+	Attributes map[string]any
+}
 
 // Span is one OTLP span reduced to the fields trace conversion and trace
 // check read. IDs are lowercase hex. Attribute values are string, bool,
@@ -42,6 +56,7 @@ type Span struct {
 	StartNs       uint64
 	EndNs         uint64
 	Attributes    map[string]any
+	Events        []Event
 	StatusError   bool
 	StatusMessage string
 	// Order is the span's position in the input document.
@@ -236,6 +251,8 @@ type rawSpan struct {
 	traceID, spanID, parentID, name string
 	start, end                      *uint64
 	attrs                           map[string]any
+	events                          []Event
+	nEvents                         int
 	statusError                     bool
 	statusMessage                   string
 	nAttrs                          int
@@ -271,6 +288,22 @@ func (p *otlpParser) span() (Span, error) {
 				}
 				return nil
 			})
+		case "events":
+			// Counted across repeats of the key, like attributes.
+			_, err = p.array("events", func(int) error {
+				r.nEvents++
+				if r.nEvents > maxEventsPerSpan {
+					return fmt.Errorf("events: more than %d entries", maxEventsPerSpan)
+				}
+				ev, err := p.event()
+				if err != nil {
+					return fmt.Errorf("events: %w", err)
+				}
+				if ev.Name == EventToolOutput && len(r.events) < maxKeptEvents {
+					r.events = append(r.events, ev)
+				}
+				return nil
+			})
 		case "status":
 			_, err = p.object("status", func(key string) error {
 				var err error
@@ -293,6 +326,32 @@ func (p *otlpParser) span() (Span, error) {
 		return Span{}, err
 	}
 	return r.validate()
+}
+
+// event reads one span event. Its attributes share the per-span attribute cap
+// and the document-wide value cap.
+func (p *otlpParser) event() (Event, error) {
+	ev := Event{Attributes: map[string]any{}}
+	n := 0
+	_, err := p.object("event", func(key string) error {
+		switch key {
+		case "name":
+			name, err := p.str("event.name")
+			ev.Name = name
+			return err
+		case "attributes":
+			_, err := p.array("event.attributes", func(int) error {
+				n++
+				if n > MaxAttrsPerSpan {
+					return fmt.Errorf("event.attributes: more than %d entries", MaxAttrsPerSpan)
+				}
+				return p.keyValue(ev.Attributes, 0)
+			})
+			return err
+		}
+		return p.skip()
+	})
+	return ev, err
 }
 
 func (r *rawSpan) validate() (Span, error) {
@@ -322,6 +381,7 @@ func (r *rawSpan) validate() (Span, error) {
 		StartNs:       *r.start,
 		EndNs:         *r.end,
 		Attributes:    r.attrs,
+		Events:        r.events,
 		StatusError:   r.statusError,
 		StatusMessage: r.statusMessage,
 	}, nil

@@ -1,0 +1,192 @@
+{
+  "schema_version": 2,
+  "trace_id": "otel_36939c4c424891ba",
+  "agent_id": "order_agent",
+  "input": {},
+  "steps": [
+    {
+      "type": "llm_call",
+      "name": "chat gpt-4o-mini",
+      "args": {
+        "model": "gpt-4o-mini",
+        "operation": "chat",
+        "provider": "openai",
+        "system": "openai"
+      },
+      "result": {
+        "finish_reasons": [
+          "tool_call"
+        ],
+        "input_tokens": 12,
+        "model": "gpt-4o-mini",
+        "output_tokens": 7
+      },
+      "metadata": {
+        "duration_ms": 38
+      },
+      "started_at_ms": 1793749271880,
+      "ended_at_ms": 1793749271918,
+      "agent_role": "order_agent",
+      "span_id": "9dacd9ed53023227",
+      "parent_span_id": "e84994450dd8c169",
+      "exchange": {
+        "request": {
+          "messages": [
+            {
+              "parts": [
+                {
+                  "content": "Where is order O-1?",
+                  "type": "text"
+                }
+              ],
+              "role": "user"
+            }
+          ],
+          "model": "gpt-4o-mini"
+        },
+        "response": {
+          "finish_reasons": [
+            "tool_call"
+          ],
+          "messages": [
+            {
+              "finish_reason": "tool_call",
+              "parts": [
+                {
+                  "arguments": "{\"order_id\": \"O-1\"}",
+                  "id": "call_1",
+                  "name": "lookup_order",
+                  "type": "tool_call"
+                }
+              ],
+              "role": "assistant"
+            }
+          ],
+          "model": "gpt-4o-mini"
+        }
+      }
+    },
+    {
+      "type": "tool_call",
+      "name": "lookup_order",
+      "args": {
+        "order_id": "O-1"
+      },
+      "result": {
+        "result": "shipped"
+      },
+      "metadata": {
+        "duration_ms": 0
+      },
+      "started_at_ms": 1793749271930,
+      "ended_at_ms": 1793749271930,
+      "agent_role": "order_agent",
+      "span_id": "27ba51cc597868e6",
+      "parent_span_id": "e84994450dd8c169",
+      "tool_call_id": "call_1"
+    },
+    {
+      "type": "llm_call",
+      "name": "chat gpt-4o-mini",
+      "args": {
+        "model": "gpt-4o-mini",
+        "operation": "chat",
+        "provider": "openai",
+        "system": "openai"
+      },
+      "result": {
+        "finish_reasons": [
+          "stop"
+        ],
+        "input_tokens": 12,
+        "model": "gpt-4o-mini",
+        "output_tokens": 7
+      },
+      "metadata": {
+        "duration_ms": 4
+      },
+      "started_at_ms": 1793749271935,
+      "ended_at_ms": 1793749271940,
+      "agent_role": "order_agent",
+      "span_id": "39ac6ac51cbd1fc1",
+      "parent_span_id": "e84994450dd8c169",
+      "exchange": {
+        "request": {
+          "messages": [
+            {
+              "parts": [
+                {
+                  "content": "Where is order O-1?",
+                  "type": "text"
+                }
+              ],
+              "role": "user"
+            },
+            {
+              "finish_reason": "tool_call",
+              "parts": [
+                {
+                  "arguments": "{\"order_id\": \"O-1\"}",
+                  "id": "call_1",
+                  "name": "lookup_order",
+                  "type": "tool_call"
+                }
+              ],
+              "role": "assistant"
+            },
+            {
+              "parts": [
+                {
+                  "id": "call_1",
+                  "name": "lookup_order",
+                  "result": "shipped",
+                  "type": "tool_call_response"
+                }
+              ],
+              "role": "user"
+            }
+          ],
+          "model": "gpt-4o-mini"
+        },
+        "response": {
+          "finish_reasons": [
+            "stop"
+          ],
+          "messages": [
+            {
+              "finish_reason": "stop",
+              "parts": [
+                {
+                  "content": "Order O-1 has shipped.",
+                  "type": "text"
+                }
+              ],
+              "role": "assistant"
+            }
+          ],
+          "model": "gpt-4o-mini"
+        }
+      }
+    }
+  ],
+  "output": {
+    "message": "Order O-1 has shipped."
+  },
+  "metadata": {
+    "total_tokens": 38,
+    "latency_ms": 72,
+    "model": "gpt-4o-mini"
+  },
+  "conversation_id": "00000000-0000-4000-8000-000000000002",
+  "turns": [
+    {
+      "index": 0,
+      "span_id": "e84994450dd8c169",
+      "step_indices": [
+        0,
+        1,
+        2
+      ]
+    }
+  ]
+}

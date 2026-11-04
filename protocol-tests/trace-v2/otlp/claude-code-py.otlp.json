@@ -1,0 +1,750 @@
+{
+  "resourceSpans": [
+    {
+      "resource": {
+        "attributes": [
+          {
+            "key": "service.name",
+            "value": {
+              "stringValue": "claude-code"
+            }
+          }
+        ]
+      },
+      "scopeSpans": [
+        {
+          "scope": {
+            "name": "com.anthropic.claude_code.tracing"
+          },
+          "spans": [
+            {
+              "traceId": "e1146fa81b8f81f951b163dc3a8a3659",
+              "spanId": "5059a6e62e0def2a",
+              "parentSpanId": "c881ae2ae77f7d7d",
+              "name": "claude_code.tool.blocked_on_user",
+              "kind": 1,
+              "startTimeUnixNano": "1793749337323000000",
+              "endTimeUnixNano": "1793749337324336250",
+              "attributes": [
+                {
+                  "key": "session.id",
+                  "value": {
+                    "stringValue": "00000000-0000-4000-8000-000000000004"
+                  }
+                },
+                {
+                  "key": "anthropic.provider",
+                  "value": {
+                    "stringValue": "firstParty"
+                  }
+                },
+                {
+                  "key": "anthropic.custom_base_url",
+                  "value": {
+                    "boolValue": true
+                  }
+                },
+                {
+                  "key": "gen_ai.provider.name",
+                  "value": {
+                    "stringValue": "anthropic"
+                  }
+                },
+                {
+                  "key": "span.type",
+                  "value": {
+                    "stringValue": "tool.blocked_on_user"
+                  }
+                },
+                {
+                  "key": "gen_ai.conversation.id",
+                  "value": {
+                    "stringValue": "00000000-0000-4000-8000-000000000004"
+                  }
+                },
+                {
+                  "key": "duration_ms",
+                  "value": {
+                    "intValue": 1
+                  }
+                },
+                {
+                  "key": "decision",
+                  "value": {
+                    "stringValue": "accept"
+                  }
+                },
+                {
+                  "key": "source",
+                  "value": {
+                    "stringValue": "config"
+                  }
+                }
+              ],
+              "droppedAttributesCount": 0,
+              "events": [],
+              "droppedEventsCount": 0,
+              "status": {
+                "code": 0
+              },
+              "links": [],
+              "droppedLinksCount": 0,
+              "flags": 257
+            },
+            {
+              "traceId": "e1146fa81b8f81f951b163dc3a8a3659",
+              "spanId": "d9f6afa8fe4561e8",
+              "parentSpanId": "802887bb069a667f",
+              "name": "claude_code.llm_request",
+              "kind": 1,
+              "startTimeUnixNano": "1793749337307000000",
+              "endTimeUnixNano": "1793749337330697708",
+              "attributes": [
+                {
+                  "key": "session.id",
+                  "value": {
+                    "stringValue": "00000000-0000-4000-8000-000000000004"
+                  }
+                },
+                {
+                  "key": "anthropic.provider",
+                  "value": {
+                    "stringValue": "firstParty"
+                  }
+                },
+                {
+                  "key": "anthropic.custom_base_url",
+                  "value": {
+                    "boolValue": true
+                  }
+                },
+                {
+                  "key": "gen_ai.provider.name",
+                  "value": {
+                    "stringValue": "anthropic"
+                  }
+                },
+                {
+                  "key": "span.type",
+                  "value": {
+                    "stringValue": "llm_request"
+                  }
+                },
+                {
+                  "key": "model",
+                  "value": {
+                    "stringValue": "claude-sonnet-4-5"
+                  }
+                },
+                {
+                  "key": "gen_ai.system",
+                  "value": {
+                    "stringValue": "anthropic"
+                  }
+                },
+                {
+                  "key": "gen_ai.request.model",
+                  "value": {
+                    "stringValue": "claude-sonnet-4-5"
+                  }
+                },
+                {
+                  "key": "llm_request.context",
+                  "value": {
+                    "stringValue": "interaction"
+                  }
+                },
+                {
+                  "key": "speed",
+                  "value": {
+                    "stringValue": "normal"
+                  }
+                },
+                {
+                  "key": "gen_ai.conversation.id",
+                  "value": {
+                    "stringValue": "00000000-0000-4000-8000-000000000004"
+                  }
+                },
+                {
+                  "key": "query_source_safe",
+                  "value": {
+                    "stringValue": "sdk"
+                  }
+                },
+                {
+                  "key": "duration_ms",
+                  "value": {
+                    "intValue": 24
+                  }
+                },
+                {
+                  "key": "input_tokens",
+                  "value": {
+                    "intValue": 12
+                  }
+                },
+                {
+                  "key": "output_tokens",
+                  "value": {
+                    "intValue": 7
+                  }
+                },
+                {
+                  "key": "cache_read_tokens",
+                  "value": {
+                    "intValue": 0
+                  }
+                },
+                {
+                  "key": "cache_creation_tokens",
+                  "value": {
+                    "intValue": 0
+                  }
+                },
+                {
+                  "key": "success",
+                  "value": {
+                    "boolValue": true
+                  }
+                },
+                {
+                  "key": "attempt",
+                  "value": {
+                    "intValue": 1
+                  }
+                },
+                {
+                  "key": "ttft_ms",
+                  "value": {
+                    "intValue": 9
+                  }
+                },
+                {
+                  "key": "first_content_ms",
+                  "value": {
+                    "intValue": 9
+                  }
+                },
+                {
+                  "key": "stop_reason",
+                  "value": {
+                    "stringValue": "tool_use"
+                  }
+                },
+                {
+                  "key": "gen_ai.response.finish_reasons",
+                  "value": {
+                    "arrayValue": {
+                      "values": [
+                        {
+                          "stringValue": "tool_use"
+                        }
+                      ]
+                    }
+                  }
+                }
+              ],
+              "droppedAttributesCount": 0,
+              "events": [
+                {
+                  "attributes": [
+                    {
+                      "key": "attempt",
+                      "value": {
+                        "intValue": 1
+                      }
+                    }
+                  ],
+                  "name": "gen_ai.request.attempt",
+                  "timeUnixNano": "1793749337310074291",
+                  "droppedAttributesCount": 0
+                }
+              ],
+              "droppedEventsCount": 0,
+              "status": {
+                "code": 0
+              },
+              "links": [],
+              "droppedLinksCount": 0,
+              "flags": 257
+            },
+            {
+              "traceId": "e1146fa81b8f81f951b163dc3a8a3659",
+              "spanId": "4ba1f467a451ea56",
+              "parentSpanId": "c881ae2ae77f7d7d",
+              "name": "claude_code.tool.execution",
+              "kind": 1,
+              "startTimeUnixNano": "1793749337325000000",
+              "endTimeUnixNano": "1793749337334429625",
+              "attributes": [
+                {
+                  "key": "session.id",
+                  "value": {
+                    "stringValue": "00000000-0000-4000-8000-000000000004"
+                  }
+                },
+                {
+                  "key": "anthropic.provider",
+                  "value": {
+                    "stringValue": "firstParty"
+                  }
+                },
+                {
+                  "key": "anthropic.custom_base_url",
+                  "value": {
+                    "boolValue": true
+                  }
+                },
+                {
+                  "key": "gen_ai.provider.name",
+                  "value": {
+                    "stringValue": "anthropic"
+                  }
+                },
+                {
+                  "key": "span.type",
+                  "value": {
+                    "stringValue": "tool.execution"
+                  }
+                },
+                {
+                  "key": "gen_ai.conversation.id",
+                  "value": {
+                    "stringValue": "00000000-0000-4000-8000-000000000004"
+                  }
+                },
+                {
+                  "key": "tool_use_id",
+                  "value": {
+                    "stringValue": "toolu_1"
+                  }
+                },
+                {
+                  "key": "gen_ai.tool.call.id",
+                  "value": {
+                    "stringValue": "toolu_1"
+                  }
+                },
+                {
+                  "key": "duration_ms",
+                  "value": {
+                    "intValue": 9
+                  }
+                },
+                {
+                  "key": "success",
+                  "value": {
+                    "boolValue": true
+                  }
+                }
+              ],
+              "droppedAttributesCount": 0,
+              "events": [],
+              "droppedEventsCount": 0,
+              "status": {
+                "code": 0
+              },
+              "links": [],
+              "droppedLinksCount": 0,
+              "flags": 257
+            },
+            {
+              "traceId": "e1146fa81b8f81f951b163dc3a8a3659",
+              "spanId": "c881ae2ae77f7d7d",
+              "parentSpanId": "802887bb069a667f",
+              "name": "claude_code.tool",
+              "kind": 1,
+              "startTimeUnixNano": "1793749337323000000",
+              "endTimeUnixNano": "1793749337334043500",
+              "attributes": [
+                {
+                  "key": "session.id",
+                  "value": {
+                    "stringValue": "00000000-0000-4000-8000-000000000004"
+                  }
+                },
+                {
+                  "key": "anthropic.provider",
+                  "value": {
+                    "stringValue": "firstParty"
+                  }
+                },
+                {
+                  "key": "anthropic.custom_base_url",
+                  "value": {
+                    "boolValue": true
+                  }
+                },
+                {
+                  "key": "gen_ai.provider.name",
+                  "value": {
+                    "stringValue": "anthropic"
+                  }
+                },
+                {
+                  "key": "span.type",
+                  "value": {
+                    "stringValue": "tool"
+                  }
+                },
+                {
+                  "key": "tool_name",
+                  "value": {
+                    "stringValue": "mcp__orders__lookup_order"
+                  }
+                },
+                {
+                  "key": "tool_name_safe",
+                  "value": {
+                    "stringValue": "mcp_other"
+                  }
+                },
+                {
+                  "key": "gen_ai.operation.name",
+                  "value": {
+                    "stringValue": "execute_tool"
+                  }
+                },
+                {
+                  "key": "gen_ai.tool.name",
+                  "value": {
+                    "stringValue": "lookup_order"
+                  }
+                },
+                {
+                  "key": "anthropic.mcp.server.name",
+                  "value": {
+                    "stringValue": "orders"
+                  }
+                },
+                {
+                  "key": "gen_ai.conversation.id",
+                  "value": {
+                    "stringValue": "00000000-0000-4000-8000-000000000004"
+                  }
+                },
+                {
+                  "key": "tool_use_id",
+                  "value": {
+                    "stringValue": "toolu_1"
+                  }
+                },
+                {
+                  "key": "gen_ai.tool.call.id",
+                  "value": {
+                    "stringValue": "toolu_1"
+                  }
+                },
+                {
+                  "key": "duration_ms",
+                  "value": {
+                    "intValue": 11
+                  }
+                }
+              ],
+              "droppedAttributesCount": 0,
+              "events": [
+                {
+                  "attributes": [
+                    {
+                      "key": "output",
+                      "value": {
+                        "stringValue": "shipped"
+                      }
+                    }
+                  ],
+                  "name": "tool.output",
+                  "timeUnixNano": "1793749337334025709",
+                  "droppedAttributesCount": 0
+                }
+              ],
+              "droppedEventsCount": 0,
+              "status": {
+                "code": 0
+              },
+              "links": [],
+              "droppedLinksCount": 0,
+              "flags": 257
+            },
+            {
+              "traceId": "e1146fa81b8f81f951b163dc3a8a3659",
+              "spanId": "ce9f536a65e0ced5",
+              "parentSpanId": "802887bb069a667f",
+              "name": "claude_code.llm_request",
+              "kind": 1,
+              "startTimeUnixNano": "1793749337340000000",
+              "endTimeUnixNano": "1793749337345617375",
+              "attributes": [
+                {
+                  "key": "session.id",
+                  "value": {
+                    "stringValue": "00000000-0000-4000-8000-000000000004"
+                  }
+                },
+                {
+                  "key": "anthropic.provider",
+                  "value": {
+                    "stringValue": "firstParty"
+                  }
+                },
+                {
+                  "key": "anthropic.custom_base_url",
+                  "value": {
+                    "boolValue": true
+                  }
+                },
+                {
+                  "key": "gen_ai.provider.name",
+                  "value": {
+                    "stringValue": "anthropic"
+                  }
+                },
+                {
+                  "key": "span.type",
+                  "value": {
+                    "stringValue": "llm_request"
+                  }
+                },
+                {
+                  "key": "model",
+                  "value": {
+                    "stringValue": "claude-sonnet-4-5"
+                  }
+                },
+                {
+                  "key": "gen_ai.system",
+                  "value": {
+                    "stringValue": "anthropic"
+                  }
+                },
+                {
+                  "key": "gen_ai.request.model",
+                  "value": {
+                    "stringValue": "claude-sonnet-4-5"
+                  }
+                },
+                {
+                  "key": "llm_request.context",
+                  "value": {
+                    "stringValue": "interaction"
+                  }
+                },
+                {
+                  "key": "speed",
+                  "value": {
+                    "stringValue": "normal"
+                  }
+                },
+                {
+                  "key": "gen_ai.conversation.id",
+                  "value": {
+                    "stringValue": "00000000-0000-4000-8000-000000000004"
+                  }
+                },
+                {
+                  "key": "query_source_safe",
+                  "value": {
+                    "stringValue": "sdk"
+                  }
+                },
+                {
+                  "key": "duration_ms",
+                  "value": {
+                    "intValue": 6
+                  }
+                },
+                {
+                  "key": "input_tokens",
+                  "value": {
+                    "intValue": 12
+                  }
+                },
+                {
+                  "key": "output_tokens",
+                  "value": {
+                    "intValue": 7
+                  }
+                },
+                {
+                  "key": "cache_read_tokens",
+                  "value": {
+                    "intValue": 0
+                  }
+                },
+                {
+                  "key": "cache_creation_tokens",
+                  "value": {
+                    "intValue": 0
+                  }
+                },
+                {
+                  "key": "success",
+                  "value": {
+                    "boolValue": true
+                  }
+                },
+                {
+                  "key": "attempt",
+                  "value": {
+                    "intValue": 1
+                  }
+                },
+                {
+                  "key": "ttft_ms",
+                  "value": {
+                    "intValue": 3
+                  }
+                },
+                {
+                  "key": "first_content_ms",
+                  "value": {
+                    "intValue": 3
+                  }
+                },
+                {
+                  "key": "stop_reason",
+                  "value": {
+                    "stringValue": "end_turn"
+                  }
+                },
+                {
+                  "key": "gen_ai.response.finish_reasons",
+                  "value": {
+                    "arrayValue": {
+                      "values": [
+                        {
+                          "stringValue": "end_turn"
+                        }
+                      ]
+                    }
+                  }
+                }
+              ],
+              "droppedAttributesCount": 0,
+              "events": [
+                {
+                  "attributes": [
+                    {
+                      "key": "attempt",
+                      "value": {
+                        "intValue": 1
+                      }
+                    }
+                  ],
+                  "name": "gen_ai.request.attempt",
+                  "timeUnixNano": "1793749337341443333",
+                  "droppedAttributesCount": 0
+                }
+              ],
+              "droppedEventsCount": 0,
+              "status": {
+                "code": 0
+              },
+              "links": [],
+              "droppedLinksCount": 0,
+              "flags": 257
+            },
+            {
+              "traceId": "e1146fa81b8f81f951b163dc3a8a3659",
+              "spanId": "802887bb069a667f",
+              "name": "claude_code.interaction",
+              "kind": 1,
+              "startTimeUnixNano": "1793749337282000000",
+              "endTimeUnixNano": "1793749337349113917",
+              "attributes": [
+                {
+                  "key": "session.id",
+                  "value": {
+                    "stringValue": "00000000-0000-4000-8000-000000000004"
+                  }
+                },
+                {
+                  "key": "anthropic.provider",
+                  "value": {
+                    "stringValue": "firstParty"
+                  }
+                },
+                {
+                  "key": "anthropic.custom_base_url",
+                  "value": {
+                    "boolValue": true
+                  }
+                },
+                {
+                  "key": "gen_ai.provider.name",
+                  "value": {
+                    "stringValue": "anthropic"
+                  }
+                },
+                {
+                  "key": "span.type",
+                  "value": {
+                    "stringValue": "interaction"
+                  }
+                },
+                {
+                  "key": "gen_ai.operation.name",
+                  "value": {
+                    "stringValue": "invoke_agent"
+                  }
+                },
+                {
+                  "key": "gen_ai.conversation.id",
+                  "value": {
+                    "stringValue": "00000000-0000-4000-8000-000000000004"
+                  }
+                },
+                {
+                  "key": "user_prompt",
+                  "value": {
+                    "stringValue": "Where is order O-1?"
+                  }
+                },
+                {
+                  "key": "user_prompt_length",
+                  "value": {
+                    "intValue": 19
+                  }
+                },
+                {
+                  "key": "interaction.sequence",
+                  "value": {
+                    "intValue": 1
+                  }
+                },
+                {
+                  "key": "parent.source",
+                  "value": {
+                    "stringValue": "none"
+                  }
+                },
+                {
+                  "key": "queued_sends",
+                  "value": {
+                    "intValue": 0
+                  }
+                },
+                {
+                  "key": "interaction.duration_ms",
+                  "value": {
+                    "intValue": 67
+                  }
+                }
+              ],
+              "droppedAttributesCount": 0,
+              "events": [],
+              "droppedEventsCount": 0,
+              "status": {
+                "code": 0
+              },
+              "links": [],
+              "droppedLinksCount": 0,
+              "flags": 257
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

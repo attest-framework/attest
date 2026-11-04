@@ -43,6 +43,17 @@ const (
 	attrRetrievalDocs  = "gen_ai.retrieval.documents"
 	attrErrorType      = "error.type"
 
+	// Claude Code native trace attributes (traces beta). They stand in for
+	// the GenAI keys on claude_code.llm_request spans when those are absent.
+	attrNativeModel         = "model"
+	attrNativeInputTokens   = "input_tokens"
+	attrNativeOutputTokens  = "output_tokens"
+	attrNativeCacheRead     = "cache_read_tokens"
+	attrNativeCacheCreation = "cache_creation_tokens"
+	attrToolOutputEvent     = "output"
+	// LangSmith (OTel mode) marks every span it exports with this attribute.
+	attrLangSmithKind = "langsmith.span.kind"
+
 	opInvokeAgent = "invoke_agent"
 )
 
@@ -59,6 +70,19 @@ var operationStep = map[string]string{
 	"create_agent":     types.StepTypeAgentCall,
 	"retrieval":        types.StepTypeRetrieval,
 	"retrieve":         types.StepTypeRetrieval,
+}
+
+// claudeCodeSpans classifies Claude Code's native spans, which carry no
+// gen_ai.operation.name, by span name. Its tool and interaction spans carry
+// the operation (execute_tool, invoke_agent); the tool.execution and
+// tool.blocked_on_user children are timing detail of the tool span and add no
+// step.
+const spanClaudeLLMRequest = "claude_code.llm_request"
+
+var claudeCodeSpans = map[string]string{
+	spanClaudeLLMRequest:               types.StepTypeLLMCall,
+	"claude_code.tool.execution":       "",
+	"claude_code.tool.blocked_on_user": "",
 }
 
 // ConvertOptions controls OTLP → Trace conversion.
@@ -102,13 +126,17 @@ func operation(s *Span) string {
 }
 
 // classify returns the step type of a span, or "" when it is not a GenAI
-// operation. gen_ai.operation.name is authoritative; attribute families and
-// the span name's first token are consulted only when it is absent.
+// operation. gen_ai.operation.name is authoritative: an operation the engine
+// does not know (chain, agent_step, ...) is not a step, and the attribute
+// families are not consulted. Claude Code's native span names, attribute
+// families and the span name's first token are consulted only when the
+// operation is absent.
 func classify(s *Span) string {
 	if op := operation(s); op != "" {
-		if t, ok := operationStep[op]; ok {
-			return t
-		}
+		return operationStep[op]
+	}
+	if t, ok := claudeCodeSpans[s.Name]; ok {
+		return t
 	}
 	a := s.Attributes
 	if _, ok := a[attrToolName]; ok {
@@ -473,8 +501,7 @@ func (c *converter) buildStep(i int, kind string) (types.Step, error) {
 			step.Name = name
 		}
 		step.ToolCallID, _ = a[attrToolCallID].(string)
-		args = objectOf(a, attrToolArguments, "arguments")
-		result = objectOf(a, attrToolResult, "result")
+		args, result = toolPayloads(s)
 	case types.StepTypeAgentCall:
 		step.Name = agentName(s, name)
 		args = pick(a, map[string]string{attrAgentID: "agent_id", attrAgentName: "agent_name", attrAgentDesc: "description", attrPrompt: "prompt"})
@@ -491,19 +518,118 @@ func (c *converter) buildStep(i int, kind string) (types.Step, error) {
 	return step, nil
 }
 
+// tokenAttr reads a token count from the GenAI key, or, on a Claude Code
+// llm_request span without it, from the native key.
+func tokenAttr(a map[string]any, key, nativeKey string, claude bool) (int, bool, error) {
+	n, ok, err := intAttr(a, key)
+	if err != nil || ok || !claude {
+		return n, ok, err
+	}
+	return intAttr(a, nativeKey)
+}
+
+// nativeModel is Claude Code's model attribute, read only on its llm_request
+// spans.
+func nativeModel(a map[string]any, claude bool) (string, bool) {
+	if !claude {
+		return "", false
+	}
+	m, ok := a[attrNativeModel].(string)
+	return m, ok && m != ""
+}
+
+// claudeUsage records a Claude Code llm_request span's model (when the GenAI
+// request model is absent) and cache token counts.
+func claudeUsage(a, args, result map[string]any) error {
+	if _, ok := args["model"]; !ok {
+		if m, ok := nativeModel(a, true); ok {
+			args["model"] = m
+		}
+	}
+	for attr, key := range map[string]string{attrNativeCacheRead: "cache_read_tokens", attrNativeCacheCreation: "cache_creation_tokens"} {
+		n, ok, err := intAttr(a, attr)
+		if err != nil {
+			return err
+		}
+		if ok {
+			result[key] = n
+		}
+	}
+	return nil
+}
+
+// toolPayloads returns a tool span's arguments and result. The GenAI
+// attributes win. A result falls back to the output attribute of a tool.output
+// span event (Claude Code), then to gen_ai.completion; arguments fall back to
+// gen_ai.prompt (LangSmith). LangSmith wraps run inputs and outputs, which
+// are unwrapped only on spans it exported.
+func toolPayloads(s *Span) (args, result map[string]any) {
+	a := s.Attributes
+	_, langSmith := a[attrLangSmithKind]
+	if _, ok := a[attrToolArguments]; ok {
+		args = objectOf(a, attrToolArguments, "arguments")
+	} else if v, ok := a[attrPrompt]; ok {
+		args = payloadObject(v, "input", "arguments", langSmith)
+	} else {
+		args = map[string]any{}
+	}
+	if _, ok := a[attrToolResult]; ok {
+		return args, objectOf(a, attrToolResult, "result")
+	}
+	for _, ev := range s.Events {
+		if out, ok := ev.Attributes[attrToolOutputEvent]; ok && ev.Name == EventToolOutput {
+			return args, payloadObject(out, "", "result", false)
+		}
+	}
+	if v, ok := a[attrCompletion]; ok {
+		return args, payloadObject(v, "output", "result", langSmith)
+	}
+	return args, map[string]any{}
+}
+
+// payloadObject decodes a recorded payload into an object. A value that is not
+// a JSON object is kept under wrapKey. With unwrap, a sole wrapper key and a
+// LangChain tool message ({"type": "tool", "content": ...}) are removed
+// first; nothing else is.
+func payloadObject(v any, wrapper, wrapKey string, unwrap bool) map[string]any {
+	d := decodeJSONText(v)
+	if unwrap {
+		if m, ok := d.(map[string]any); ok && len(m) == 1 {
+			if inner, ok := m[wrapper]; ok {
+				d = decodeJSONText(inner)
+			}
+		}
+		if m, ok := d.(map[string]any); ok && m["type"] == "tool" {
+			if content, ok := m["content"]; ok {
+				d = decodeJSONText(content)
+			}
+		}
+	}
+	if obj, ok := d.(map[string]any); ok {
+		return obj
+	}
+	return map[string]any{wrapKey: d}
+}
+
 func (c *converter) llmStep(i int, step *types.Step, a map[string]any) (args, result map[string]any, err error) {
 	args = pick(a, map[string]string{attrRequestModel: "model", attrSystem: "system", attrProvider: "provider", attrPrompt: "prompt"})
 	if op, _ := a[attrOperation].(string); op != "" {
 		args["operation"] = strings.ToLower(strings.TrimSpace(op))
 	}
 	result = pick(a, map[string]string{attrCompletion: "completion", attrResponseModel: "model", attrFinishReasons: "finish_reasons"})
-	in, inOK, err := intAttr(a, attrInputTokens)
+	claude := c.x.spans[i].Name == spanClaudeLLMRequest
+	in, inOK, err := tokenAttr(a, attrInputTokens, attrNativeInputTokens, claude)
 	if err != nil {
 		return nil, nil, err
 	}
-	out, outOK, err := intAttr(a, attrOutputTokens)
+	out, outOK, err := tokenAttr(a, attrOutputTokens, attrNativeOutputTokens, claude)
 	if err != nil {
 		return nil, nil, err
+	}
+	if claude {
+		if err := claudeUsage(a, args, result); err != nil {
+			return nil, nil, err
+		}
 	}
 	if inOK {
 		result["input_tokens"] = in
@@ -537,6 +663,8 @@ func (c *converter) llmStep(i int, step *types.Step, a map[string]any) (args, re
 		if m, ok := a[attrResponseModel].(string); ok && m != "" {
 			c.model = &m
 		} else if m, ok := a[attrRequestModel].(string); ok && m != "" {
+			c.model = &m
+		} else if m, ok := nativeModel(a, claude); ok {
 			c.model = &m
 		}
 	}
@@ -784,6 +912,8 @@ var copiedAttributes = []string{
 	attrFinishReasons, attrCost, attrInputTokens, attrOutputTokens, attrConversationID,
 	attrAgentName, attrAgentID, attrAgentDesc, attrToolName, attrToolCallID, attrErrorType,
 	attrRetrievalQuery, attrRetrievalSrc, attrRetrievalCount, attrRetrievalDocs,
+	attrNativeModel, attrNativeInputTokens, attrNativeOutputTokens, attrNativeCacheRead,
+	attrNativeCacheCreation,
 }
 
 // contentBytes estimates the JSON size of everything the converter copies
@@ -797,6 +927,9 @@ func contentBytes(spans []Span) int {
 	for i := range spans {
 		s := &spans[i]
 		n += jsonSize(s.Name) + jsonSize(s.StatusMessage)
+		for _, ev := range s.Events {
+			n += jsonSize(ev.Attributes[attrToolOutputEvent])
+		}
 		turnSpan := operation(s) == opInvokeAgent
 		for _, k := range copiedAttributes {
 			v, ok := s.Attributes[k]

@@ -1,6 +1,7 @@
 package trace
 
 import (
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -34,9 +35,11 @@ const (
 )
 
 // toolRequestReasons are finish reasons with which providers end a model
-// call that requests tools (OpenAI, Anthropic and Bedrock, legacy OpenAI).
+// call that requests tools (OpenAI, Anthropic and Bedrock, legacy OpenAI,
+// Vercel AI SDK and Mastra "tool-calls", Pydantic AI "tool_call").
 var toolRequestReasons = map[string]bool{
 	"tool_calls":    true,
+	"tool-calls":    true,
 	"tool_call":     true,
 	"tool_use":      true,
 	"function_call": true,
@@ -128,7 +131,7 @@ func Check(spans []Span) *CheckReport {
 		r.Turns = len(t.Turns)
 		r.Handoffs = len(t.Handoffs)
 		if len(t.Steps) == 0 && len(t.Turns) == 0 {
-			c.add(SeverityWarning, IssueNoGenAISpans, "", "no span carries GenAI semantic convention attributes (gen_ai.operation.name)")
+			c.add(SeverityWarning, IssueNoGenAISpans, "", "no span carries GenAI semantic convention attributes (gen_ai.operation.name) that attest maps; see the Frameworks section of the capture guide (attest-engine guide capture)")
 		}
 	}
 	r.OK = len(r.Errors()) == 0
@@ -311,10 +314,18 @@ func recordedToolCallIDs(s *Span) ([]string, bool) {
 	return ids, true
 }
 
+// maxFinishReasonsText bounds a finish-reasons string that is decoded as JSON.
+const maxFinishReasonsText = 4096
+
 func finishReasons(s *Span) []string {
 	var out []string
 	switch v := s.Attributes[attrFinishReasons].(type) {
 	case string:
+		// Mastra records the list as a JSON array in a string attribute.
+		var decoded []string
+		if t := strings.TrimSpace(v); len(t) <= maxFinishReasonsText && strings.HasPrefix(t, "[") && json.Unmarshal([]byte(t), &decoded) == nil {
+			return decoded
+		}
 		out = append(out, v)
 	case []any:
 		for _, r := range v {

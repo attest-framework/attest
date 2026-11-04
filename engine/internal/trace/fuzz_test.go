@@ -14,7 +14,7 @@ import (
 // testdata/fuzz/FuzzOTLP. Run longer locally with
 // `go test ./internal/trace -run '^$' -fuzz FuzzOTLP -fuzztime 60s`.
 func FuzzOTLP(f *testing.F) {
-	for _, pattern := range []string{"otlp/*.otlp.json", "otlp-invalid/*.json"} {
+	for _, pattern := range []string{"otlp/*.otlp.json", "otlp-vacuous/*.otlp.json", "otlp-invalid/*.json"} {
 		paths, err := filepath.Glob(filepath.Join(traceV2Fixtures, pattern))
 		if err != nil || len(paths) == 0 {
 			f.Fatalf("no fuzz seeds match %s (err=%v)", pattern, err)

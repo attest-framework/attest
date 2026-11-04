@@ -1,0 +1,78 @@
+{
+  "schema_version": 2,
+  "trace_id": "otel_2de6833fc3dbb437",
+  "agent_id": "",
+  "input": {},
+  "steps": [
+    {
+      "type": "llm_call",
+      "name": "ChatOpenAI",
+      "args": {
+        "model": "gpt-4o-mini",
+        "operation": "chat",
+        "prompt": "{\"messages\":[[{\"lc\":1,\"type\":\"constructor\",\"id\":[\"langchain\",\"schema\",\"messages\",\"HumanMessage\"],\"kwargs\":{\"content\":\"Where is order O-1?\",\"type\":\"human\",\"id\":\"00000000-0000-4000-8000-000000000006\"}}]]}",
+        "system": "openai"
+      },
+      "result": {
+        "completion": "{\"generations\":[[{\"text\":\"\",\"generation_info\":{\"finish_reason\":\"tool_calls\",\"logprobs\":null},\"type\":\"ChatGeneration\",\"message\":{\"lc\":1,\"type\":\"constructor\",\"id\":[\"langchain\",\"schema\",\"messages\",\"AIMessage\"],\"kwargs\":{\"content\":\"\",\"additional_kwargs\":{\"refusal\":null},\"response_metadata\":{\"token_usage\":{\"completion_tokens\":7,\"prompt_tokens\":12,\"total_tokens\":19,\"completion_tokens_details\":null,\"prompt_tokens_details\":null},\"model_provider\":\"openai\",\"model_name\":\"gpt-4o-mini\",\"system_fingerprint\":null,\"id\":\"chatcmpl-1\",\"finish_reason\":\"tool_calls\",\"logprobs\":null},\"type\":\"ai\",\"id\":\"lc_run--00000000-0000-4000-8000-000000000007-0\",\"tool_calls\":[{\"name\":\"lookup_order\",\"args\":{\"order_id\":\"O-1\"},\"id\":\"call_1\",\"type\":\"tool_call\"}],\"usage_metadata\":{\"input_tokens\":12,\"output_tokens\":7,\"total_tokens\":19,\"input_token_details\":{},\"output_token_details\":{}},\"invalid_tool_calls\":[]}}}]],\"llm_output\":{\"token_usage\":{\"completion_tokens\":7,\"prompt_tokens\":12,\"total_tokens\":19,\"completion_tokens_details\":null,\"prompt_tokens_details\":null},\"model_provider\":\"openai\",\"model_name\":\"gpt-4o-mini\",\"system_fingerprint\":null,\"id\":\"chatcmpl-1\"},\"run\":null,\"type\":\"LLMResult\"}",
+        "input_tokens": 12,
+        "output_tokens": 7
+      },
+      "metadata": {
+        "duration_ms": 9
+      },
+      "started_at_ms": 1793749256422,
+      "ended_at_ms": 1793749256432,
+      "span_id": "cc298745fc9e4ed2",
+      "parent_span_id": "ed99f00b9c8334ef"
+    },
+    {
+      "type": "tool_call",
+      "name": "lookup_order",
+      "args": {
+        "order_id": "O-1"
+      },
+      "result": {
+        "result": "shipped"
+      },
+      "metadata": {
+        "duration_ms": 0
+      },
+      "started_at_ms": 1793749256434,
+      "ended_at_ms": 1793749256434,
+      "span_id": "e617750d8dc34946",
+      "parent_span_id": "8fad0077b3d15c15",
+      "tool_call_id": "call_1"
+    },
+    {
+      "type": "llm_call",
+      "name": "ChatOpenAI",
+      "args": {
+        "model": "gpt-4o-mini",
+        "operation": "chat",
+        "prompt": "{\"messages\":[[{\"lc\":1,\"type\":\"constructor\",\"id\":[\"langchain\",\"schema\",\"messages\",\"HumanMessage\"],\"kwargs\":{\"content\":\"Where is order O-1?\",\"type\":\"human\",\"id\":\"00000000-0000-4000-8000-000000000006\"}},{\"lc\":1,\"type\":\"constructor\",\"id\":[\"langchain\",\"schema\",\"messages\",\"AIMessage\"],\"kwargs\":{\"content\":\"\",\"additional_kwargs\":{\"refusal\":null},\"response_metadata\":{\"token_usage\":{\"completion_tokens\":7,\"prompt_tokens\":12,\"total_tokens\":19,\"completion_tokens_details\":null,\"prompt_tokens_details\":null},\"model_provider\":\"openai\",\"model_name\":\"gpt-4o-mini\",\"system_fingerprint\":null,\"id\":\"chatcmpl-1\",\"finish_reason\":\"tool_calls\",\"logprobs\":null},\"type\":\"ai\",\"id\":\"lc_run--00000000-0000-4000-8000-000000000007-0\",\"tool_calls\":[{\"name\":\"lookup_order\",\"args\":{\"order_id\":\"O-1\"},\"id\":\"call_1\",\"type\":\"tool_call\"}],\"usage_metadata\":{\"input_tokens\":12,\"output_tokens\":7,\"total_tokens\":19,\"input_token_details\":{},\"output_token_details\":{}},\"invalid_tool_calls\":[]}},{\"lc\":1,\"type\":\"constructor\",\"id\":[\"langchain\",\"schema\",\"messages\",\"ToolMessage\"],\"kwargs\":{\"content\":\"shipped\",\"type\":\"tool\",\"name\":\"lookup_order\",\"id\":\"00000000-0000-4000-8000-000000000008\",\"tool_call_id\":\"call_1\",\"status\":\"success\"}}]]}",
+        "system": "openai"
+      },
+      "result": {
+        "completion": "{\"generations\":[[{\"text\":\"Order O-1 has shipped.\",\"generation_info\":{\"finish_reason\":\"stop\",\"logprobs\":null},\"type\":\"ChatGeneration\",\"message\":{\"lc\":1,\"type\":\"constructor\",\"id\":[\"langchain\",\"schema\",\"messages\",\"AIMessage\"],\"kwargs\":{\"content\":\"Order O-1 has shipped.\",\"additional_kwargs\":{\"refusal\":null},\"response_metadata\":{\"token_usage\":{\"completion_tokens\":7,\"prompt_tokens\":12,\"total_tokens\":19,\"completion_tokens_details\":null,\"prompt_tokens_details\":null},\"model_provider\":\"openai\",\"model_name\":\"gpt-4o-mini\",\"system_fingerprint\":null,\"id\":\"chatcmpl-1\",\"finish_reason\":\"stop\",\"logprobs\":null},\"type\":\"ai\",\"id\":\"lc_run--00000000-0000-4000-8000-000000000009-0\",\"usage_metadata\":{\"input_tokens\":12,\"output_tokens\":7,\"total_tokens\":19,\"input_token_details\":{},\"output_token_details\":{}},\"tool_calls\":[],\"invalid_tool_calls\":[]}}}]],\"llm_output\":{\"token_usage\":{\"completion_tokens\":7,\"prompt_tokens\":12,\"total_tokens\":19,\"completion_tokens_details\":null,\"prompt_tokens_details\":null},\"model_provider\":\"openai\",\"model_name\":\"gpt-4o-mini\",\"system_fingerprint\":null,\"id\":\"chatcmpl-1\"},\"run\":null,\"type\":\"LLMResult\"}",
+        "input_tokens": 12,
+        "output_tokens": 7
+      },
+      "metadata": {
+        "duration_ms": 3
+      },
+      "started_at_ms": 1793749256436,
+      "ended_at_ms": 1793749256440,
+      "span_id": "fb9913e9848ac753",
+      "parent_span_id": "d39e43f763afc78a"
+    }
+  ],
+  "output": {
+    "message": "{\"generations\":[[{\"text\":\"Order O-1 has shipped.\",\"generation_info\":{\"finish_reason\":\"stop\",\"logprobs\":null},\"type\":\"ChatGeneration\",\"message\":{\"lc\":1,\"type\":\"constructor\",\"id\":[\"langchain\",\"schema\",\"messages\",\"AIMessage\"],\"kwargs\":{\"content\":\"Order O-1 has shipped.\",\"additional_kwargs\":{\"refusal\":null},\"response_metadata\":{\"token_usage\":{\"completion_tokens\":7,\"prompt_tokens\":12,\"total_tokens\":19,\"completion_tokens_details\":null,\"prompt_tokens_details\":null},\"model_provider\":\"openai\",\"model_name\":\"gpt-4o-mini\",\"system_fingerprint\":null,\"id\":\"chatcmpl-1\",\"finish_reason\":\"stop\",\"logprobs\":null},\"type\":\"ai\",\"id\":\"lc_run--00000000-0000-4000-8000-000000000009-0\",\"usage_metadata\":{\"input_tokens\":12,\"output_tokens\":7,\"total_tokens\":19,\"input_token_details\":{},\"output_token_details\":{}},\"tool_calls\":[],\"invalid_tool_calls\":[]}}}]],\"llm_output\":{\"token_usage\":{\"completion_tokens\":7,\"prompt_tokens\":12,\"total_tokens\":19,\"completion_tokens_details\":null,\"prompt_tokens_details\":null},\"model_provider\":\"openai\",\"model_name\":\"gpt-4o-mini\",\"system_fingerprint\":null,\"id\":\"chatcmpl-1\"},\"run\":null,\"type\":\"LLMResult\"}"
+  },
+  "metadata": {
+    "total_tokens": 38,
+    "latency_ms": 57,
+    "model": "gpt-4o-mini"
+  }
+}

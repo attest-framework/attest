@@ -1,0 +1,426 @@
+{
+  "resourceSpans": [
+    {
+      "resource": {
+        "attributes": [
+          {
+            "key": "service.name",
+            "value": {
+              "stringValue": "vercel-ai-example"
+            }
+          }
+        ]
+      },
+      "scopeSpans": [
+        {
+          "scope": {
+            "name": "gen_ai"
+          },
+          "spans": [
+            {
+              "traceId": "91fb8478c21bff2140e62026b5d91a6e",
+              "spanId": "5d012df31f121d8c",
+              "parentSpanId": "20a86bab841dc422",
+              "name": "chat gpt-4o-mini",
+              "kind": 3,
+              "startTimeUnixNano": "1793749309740000000",
+              "endTimeUnixNano": "1793749309776648000",
+              "attributes": [
+                {
+                  "key": "gen_ai.operation.name",
+                  "value": {
+                    "stringValue": "chat"
+                  }
+                },
+                {
+                  "key": "gen_ai.provider.name",
+                  "value": {
+                    "stringValue": "openai"
+                  }
+                },
+                {
+                  "key": "gen_ai.request.model",
+                  "value": {
+                    "stringValue": "gpt-4o-mini"
+                  }
+                },
+                {
+                  "key": "gen_ai.input.messages",
+                  "value": {
+                    "stringValue": "[{\"role\":\"user\",\"parts\":[{\"type\":\"text\",\"content\":\"Where is order O-1?\"}]}]"
+                  }
+                },
+                {
+                  "key": "gen_ai.tool.definitions",
+                  "value": {
+                    "stringValue": "[{\"type\":\"function\",\"name\":\"lookup_order\",\"inputSchema\":{\"$schema\":\"http://json-schema.org/draft-07/schema#\",\"type\":\"object\",\"properties\":{\"order_id\":{\"type\":\"string\"}},\"required\":[\"order_id\"],\"additionalProperties\":false},\"description\":\"Look up order shipping status\"}]"
+                  }
+                },
+                {
+                  "key": "gen_ai.client.operation.duration",
+                  "value": {
+                    "doubleValue": 0.035728707999999984
+                  }
+                },
+                {
+                  "key": "gen_ai.response.finish_reasons",
+                  "value": {
+                    "arrayValue": {
+                      "values": [
+                        {
+                          "stringValue": "tool-calls"
+                        }
+                      ]
+                    }
+                  }
+                },
+                {
+                  "key": "gen_ai.response.id",
+                  "value": {
+                    "stringValue": "resp_1"
+                  }
+                },
+                {
+                  "key": "gen_ai.response.model",
+                  "value": {
+                    "stringValue": "gpt-4o-mini"
+                  }
+                },
+                {
+                  "key": "gen_ai.usage.input_tokens",
+                  "value": {
+                    "intValue": 12
+                  }
+                },
+                {
+                  "key": "gen_ai.usage.output_tokens",
+                  "value": {
+                    "intValue": 7
+                  }
+                },
+                {
+                  "key": "gen_ai.usage.cache_read.input_tokens",
+                  "value": {
+                    "intValue": 0
+                  }
+                },
+                {
+                  "key": "gen_ai.output.messages",
+                  "value": {
+                    "stringValue": "[{\"role\":\"assistant\",\"parts\":[{\"type\":\"tool_call\",\"id\":\"call_1\",\"name\":\"lookup_order\",\"arguments\":{\"order_id\":\"O-1\"}}],\"finish_reason\":\"tool_call\"}]"
+                  }
+                }
+              ],
+              "droppedAttributesCount": 0,
+              "events": [],
+              "droppedEventsCount": 0,
+              "status": {
+                "code": 0
+              },
+              "links": [],
+              "droppedLinksCount": 0,
+              "flags": 257
+            },
+            {
+              "traceId": "91fb8478c21bff2140e62026b5d91a6e",
+              "spanId": "67bf464b2442a2b9",
+              "parentSpanId": "20a86bab841dc422",
+              "name": "execute_tool lookup_order",
+              "kind": 1,
+              "startTimeUnixNano": "1793749309778000000",
+              "endTimeUnixNano": "1793749309778480416",
+              "attributes": [
+                {
+                  "key": "gen_ai.operation.name",
+                  "value": {
+                    "stringValue": "execute_tool"
+                  }
+                },
+                {
+                  "key": "gen_ai.tool.name",
+                  "value": {
+                    "stringValue": "lookup_order"
+                  }
+                },
+                {
+                  "key": "gen_ai.tool.call.id",
+                  "value": {
+                    "stringValue": "call_1"
+                  }
+                },
+                {
+                  "key": "gen_ai.tool.type",
+                  "value": {
+                    "stringValue": "function"
+                  }
+                },
+                {
+                  "key": "gen_ai.tool.call.arguments",
+                  "value": {
+                    "stringValue": "{\"order_id\":\"O-1\"}"
+                  }
+                },
+                {
+                  "key": "gen_ai.execute_tool.duration",
+                  "value": {
+                    "doubleValue": 0.00016791599999999108
+                  }
+                },
+                {
+                  "key": "gen_ai.tool.call.result",
+                  "value": {
+                    "stringValue": "\"shipped\""
+                  }
+                }
+              ],
+              "droppedAttributesCount": 0,
+              "events": [],
+              "droppedEventsCount": 0,
+              "status": {
+                "code": 0
+              },
+              "links": [],
+              "droppedLinksCount": 0,
+              "flags": 257
+            },
+            {
+              "traceId": "91fb8478c21bff2140e62026b5d91a6e",
+              "spanId": "20a86bab841dc422",
+              "parentSpanId": "6efdebb5c34ebaf2",
+              "name": "step 1",
+              "kind": 1,
+              "startTimeUnixNano": "1793749309740000000",
+              "endTimeUnixNano": "1793749309779939916",
+              "attributes": [
+                {
+                  "key": "gen_ai.operation.name",
+                  "value": {
+                    "stringValue": "agent_step"
+                  }
+                }
+              ],
+              "droppedAttributesCount": 0,
+              "events": [],
+              "droppedEventsCount": 0,
+              "status": {
+                "code": 0
+              },
+              "links": [],
+              "droppedLinksCount": 0,
+              "flags": 257
+            },
+            {
+              "traceId": "91fb8478c21bff2140e62026b5d91a6e",
+              "spanId": "8f060b6301f969e3",
+              "parentSpanId": "41a842047f608e35",
+              "name": "chat gpt-4o-mini",
+              "kind": 3,
+              "startTimeUnixNano": "1793749309781000000",
+              "endTimeUnixNano": "1793749309788324958",
+              "attributes": [
+                {
+                  "key": "gen_ai.operation.name",
+                  "value": {
+                    "stringValue": "chat"
+                  }
+                },
+                {
+                  "key": "gen_ai.provider.name",
+                  "value": {
+                    "stringValue": "openai"
+                  }
+                },
+                {
+                  "key": "gen_ai.request.model",
+                  "value": {
+                    "stringValue": "gpt-4o-mini"
+                  }
+                },
+                {
+                  "key": "gen_ai.input.messages",
+                  "value": {
+                    "stringValue": "[{\"role\":\"user\",\"parts\":[{\"type\":\"text\",\"content\":\"Where is order O-1?\"}]},{\"role\":\"assistant\",\"parts\":[{\"type\":\"tool_call\",\"id\":\"call_1\",\"name\":\"lookup_order\",\"arguments\":{\"order_id\":\"O-1\"}}]},{\"role\":\"tool\",\"parts\":[{\"type\":\"tool_call_response\",\"id\":\"call_1\",\"response\":\"shipped\"}]}]"
+                  }
+                },
+                {
+                  "key": "gen_ai.tool.definitions",
+                  "value": {
+                    "stringValue": "[{\"type\":\"function\",\"name\":\"lookup_order\",\"inputSchema\":{\"$schema\":\"http://json-schema.org/draft-07/schema#\",\"type\":\"object\",\"properties\":{\"order_id\":{\"type\":\"string\"}},\"required\":[\"order_id\"],\"additionalProperties\":false},\"description\":\"Look up order shipping status\"}]"
+                  }
+                },
+                {
+                  "key": "gen_ai.client.operation.duration",
+                  "value": {
+                    "doubleValue": 0.007418917000000021
+                  }
+                },
+                {
+                  "key": "gen_ai.response.finish_reasons",
+                  "value": {
+                    "arrayValue": {
+                      "values": [
+                        {
+                          "stringValue": "stop"
+                        }
+                      ]
+                    }
+                  }
+                },
+                {
+                  "key": "gen_ai.response.id",
+                  "value": {
+                    "stringValue": "resp_1"
+                  }
+                },
+                {
+                  "key": "gen_ai.response.model",
+                  "value": {
+                    "stringValue": "gpt-4o-mini"
+                  }
+                },
+                {
+                  "key": "gen_ai.usage.input_tokens",
+                  "value": {
+                    "intValue": 12
+                  }
+                },
+                {
+                  "key": "gen_ai.usage.output_tokens",
+                  "value": {
+                    "intValue": 7
+                  }
+                },
+                {
+                  "key": "gen_ai.usage.cache_read.input_tokens",
+                  "value": {
+                    "intValue": 0
+                  }
+                },
+                {
+                  "key": "gen_ai.output.messages",
+                  "value": {
+                    "stringValue": "[{\"role\":\"assistant\",\"parts\":[{\"type\":\"text\",\"content\":\"Order O-1 has shipped.\"}],\"finish_reason\":\"stop\"}]"
+                  }
+                }
+              ],
+              "droppedAttributesCount": 0,
+              "events": [],
+              "droppedEventsCount": 0,
+              "status": {
+                "code": 0
+              },
+              "links": [],
+              "droppedLinksCount": 0,
+              "flags": 257
+            },
+            {
+              "traceId": "91fb8478c21bff2140e62026b5d91a6e",
+              "spanId": "41a842047f608e35",
+              "parentSpanId": "6efdebb5c34ebaf2",
+              "name": "step 2",
+              "kind": 1,
+              "startTimeUnixNano": "1793749309781000000",
+              "endTimeUnixNano": "1793749309789013459",
+              "attributes": [
+                {
+                  "key": "gen_ai.operation.name",
+                  "value": {
+                    "stringValue": "agent_step"
+                  }
+                }
+              ],
+              "droppedAttributesCount": 0,
+              "events": [],
+              "droppedEventsCount": 0,
+              "status": {
+                "code": 0
+              },
+              "links": [],
+              "droppedLinksCount": 0,
+              "flags": 257
+            },
+            {
+              "traceId": "91fb8478c21bff2140e62026b5d91a6e",
+              "spanId": "6efdebb5c34ebaf2",
+              "name": "invoke_agent gpt-4o-mini",
+              "kind": 1,
+              "startTimeUnixNano": "1793749309737000000",
+              "endTimeUnixNano": "1793749309788896000",
+              "attributes": [
+                {
+                  "key": "gen_ai.operation.name",
+                  "value": {
+                    "stringValue": "invoke_agent"
+                  }
+                },
+                {
+                  "key": "gen_ai.provider.name",
+                  "value": {
+                    "stringValue": "openai"
+                  }
+                },
+                {
+                  "key": "gen_ai.request.model",
+                  "value": {
+                    "stringValue": "gpt-4o-mini"
+                  }
+                },
+                {
+                  "key": "gen_ai.input.messages",
+                  "value": {
+                    "stringValue": "[{\"role\":\"user\",\"parts\":[{\"type\":\"text\",\"content\":\"Where is order O-1?\"}]}]"
+                  }
+                },
+                {
+                  "key": "gen_ai.response.finish_reasons",
+                  "value": {
+                    "arrayValue": {
+                      "values": [
+                        {
+                          "stringValue": "stop"
+                        }
+                      ]
+                    }
+                  }
+                },
+                {
+                  "key": "gen_ai.usage.input_tokens",
+                  "value": {
+                    "intValue": 24
+                  }
+                },
+                {
+                  "key": "gen_ai.usage.output_tokens",
+                  "value": {
+                    "intValue": 14
+                  }
+                },
+                {
+                  "key": "gen_ai.usage.cache_read.input_tokens",
+                  "value": {
+                    "intValue": 0
+                  }
+                },
+                {
+                  "key": "gen_ai.output.messages",
+                  "value": {
+                    "stringValue": "[{\"role\":\"assistant\",\"parts\":[{\"type\":\"text\",\"content\":\"Order O-1 has shipped.\"},{\"type\":\"tool_call\",\"id\":\"call_1\",\"name\":\"lookup_order\",\"arguments\":{\"order_id\":\"O-1\"}},{\"type\":\"tool_call_response\",\"id\":\"call_1\",\"response\":\"shipped\"}],\"finish_reason\":\"stop\"}]"
+                  }
+                }
+              ],
+              "droppedAttributesCount": 0,
+              "events": [],
+              "droppedEventsCount": 0,
+              "status": {
+                "code": 0
+              },
+              "links": [],
+              "droppedLinksCount": 0,
+              "flags": 257
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
