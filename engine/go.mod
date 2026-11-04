@@ -12,7 +12,7 @@ require (
 	go.opentelemetry.io/proto/otlp v1.10.0
 	golang.org/x/text v0.34.0
 	golang.org/x/time v0.16.0
-	google.golang.org/protobuf v1.36.11
+	google.golang.org/protobuf v1.36.12
 	gopkg.in/yaml.v3 v3.0.1
 	modernc.org/sqlite v1.61.0
 )
