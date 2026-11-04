@@ -314,3 +314,78 @@ def test_adversarial_with_assertions(persona):
 repeat_result = test_adversarial_with_assertions()
 assert repeat_result.pass_rate is not None and repeat_result.pass_rate >= 0.9
 ```
+
+## TypeScript
+
+`@attest-ai/core` has the same helpers as functions instead of decorators. Seeded faults are deterministic within TypeScript for a fixed seed (the random sequence differs from Python's). `scenario` and `repeat` return async functions.
+
+```ts
+import {
+  FRIENDLY_USER,
+  MockToolRegistry,
+  TraceBuilder,
+  faultInject,
+  mockTool,
+  repeat,
+  scenario,
+} from "@attest-ai/core";
+import { useAttest } from "@attest-ai/vitest";
+
+// scenario: persona, mock tools, fault rate, jitter, turns, seed
+const run = scenario(
+  {
+    persona: FRIENDLY_USER,
+    mockTools: { search_web: () => ({ results: ["mock result"] }) },
+    faultErrorRate: 0.1,
+    faultLatencyJitterMs: 200,
+    maxTurns: 5,
+    seed: 42,
+  },
+  ({ persona, turn }) => runAgent(persona, turn), // returns an AgentResult
+);
+const result = await run(); // ScenarioResult: passed, outcome(), skipReason()
+useAttest().enforce(result); // fail with the turn diagnostics, or skip with the not-evaluated reasons
+
+// repeat: N trials aggregated as a RepeatResult
+const trials = await repeat(10, run)();
+trials.passRate; // passing / evaluated, or null
+trials.outcome(); // "fail" | "skip" | "pass"
+useAttest().enforce(trials); // enforce the aggregate only
+
+// mockTool + MockToolRegistry: TraceBuilder.addToolCall returns the mock's result
+const registry = new MockToolRegistry();
+registry.register("search", mockTool("search", (args) => ({ mocked: args.query })));
+const trace = registry.run(() =>
+  new TraceBuilder("agent").addToolCall("search", { args: { query: "hi" } }).setOutput({ result: "ok" }).build(),
+);
+
+// faultInject: wrap any function
+const flaky = faultInject({ errorRate: 0.5, latencyJitterMs: 50, seed: 1 }, fetchOrder);
+```
+
+| Python | TypeScript |
+| --- | --- |
+| `@scenario(persona=…, fault_error_rate=…)` | `scenario({ persona, faultErrorRate }, fn)`; `fn` receives `{ persona, turn }` |
+| `@repeat(n)` | `repeat(n, fn)` |
+| `@mock_tool(name)` / `MockToolRegistry` (`with`) | `mockTool(name, fn)` / `MockToolRegistry.run(fn)` |
+| `@fault_inject(error_rate=…)` | `faultInject({ errorRate }, fn)` |
+
+`enforce` (also exported as `enforceOutcome`) takes an `AgentResult`, a `ScenarioResult` or a `RepeatResult`, honors `ATTEST_STRICT` (or `{ strict: true }`) and does nothing inside a `trials()` trial, like Python's `attest.enforce`. Mock registries are scoped per async call chain (`AsyncLocalStorage`), so concurrent scenarios do not see each other's mocks. The full Python-to-TypeScript surface mapping is in the [parity matrix](parity.md).
+
+### Plugins in TypeScript
+
+An installed package declares its plugins in its own `package.json`, the TypeScript counterpart of Python's `attest.plugins` entry-point group:
+
+```json
+{ "name": "attest-plugin-safety", "attest": { "plugins": ["./dist/plugin.js"] } }
+```
+
+`loadPackagePlugins(registry, projectRoot?)` reads the project's direct dependencies (`dependencies`, `devDependencies`, `optionalDependencies`), imports each declared entry of every installed dependency and registers its default export (without one, every export with `name`, `pluginType` and `execute`). A broken entry is logged and skipped; the call returns the number of plugins loaded.
+
+```ts
+import { PluginRegistry, loadPackagePlugins } from "@attest-ai/core";
+
+const registry = new PluginRegistry();
+await loadPackagePlugins(registry); // projectRoot defaults to process.cwd()
+registry.listPlugins(); // ["assertion/safety"]
+```

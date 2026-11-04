@@ -5,6 +5,7 @@ import {
   STEP_TOOL_CALL,
   STEP_RETRIEVAL,
 } from "./proto/constants.js";
+import { activeMockRegistry } from "./simulation/context.js";
 
 export class TraceBuilder {
   private traceId: string;
@@ -56,11 +57,22 @@ export class TraceBuilder {
       metadata?: Record<string, unknown>;
     },
   ): this {
+    const mock = activeMockRegistry.getStore()?.get(name);
+    let result = options?.result;
+    if (mock !== undefined) {
+      const mocked = mock(options?.args ?? {});
+      if (typeof (mocked as { then?: unknown } | null)?.then === "function") {
+        throw new Error(`mock for tool '${name}' returned a Promise; mock tools must be synchronous`);
+      }
+      if (typeof mocked === "object" && mocked !== null && !Array.isArray(mocked)) {
+        result = mocked as Record<string, unknown>;
+      }
+    }
     this.steps.push({
       type: STEP_TOOL_CALL,
       name,
       args: options?.args,
-      result: options?.result,
+      result,
       metadata: options?.metadata,
     });
     return this;
