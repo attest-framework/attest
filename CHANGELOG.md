@@ -4,6 +4,10 @@ All notable changes to Attest are documented in this file. The format follows [K
 
 ## [Unreleased]
 
+## [1.0.0-rc.5] — 2026-11-04
+
+Fifth release candidate, themed "Parity and reach": the TypeScript SDK gains the simulation helpers and plugin discovery Python has, with a generated parity matrix that fails the test suites on an undocumented gap; `attest capture` records runs from Pydantic AI, the Vercel AI SDK, Mastra, the OpenAI Agents SDK (Python), the Claude Agent SDK and LangGraph (Python) through their OpenTelemetry instrumentation; and `attest view` renders a self-contained offline failure page with the failing span highlighted and a baseline diff.
+
 ### Added
 
 - `attest view <report.json...> [--baseline <report.json>...] [--mutation <mutate.json>] [--out FILE] [--no-open] [--json]` writes one self-contained offline HTML page: the test list, the trace tree with the failing span highlighted, expected versus actual, replay or live provenance, cost, a baseline-versus-head diff (pass rate, cost, latency, changed tool sequences) and surviving mutants. The page has no JavaScript and no external resources, carries a `default-src 'none'` Content-Security-Policy, escapes all report content and bounds every field and the page size. It opens in a browser only on a terminal outside CI. `--json` schema `cli/view.schema.json`; exit 0 written, 2 usage or input error. Guide: `docs/guides/viewer.md`.
@@ -285,7 +289,8 @@ Tagged, not published to registries. No GitHub release was created.
 
 Versions 0.1.0 through 0.6.0 are described in their [GitHub releases](https://github.com/attest-framework/attest/releases); 0.6.1 exists only as a tag. 0.1.0–0.6.0 were published to PyPI; 0.3.0–0.6.0 were also published to npm.
 
-[Unreleased]: https://github.com/attest-framework/attest/compare/v1.0.0-rc.4...HEAD
+[Unreleased]: https://github.com/attest-framework/attest/compare/v1.0.0-rc.5...HEAD
+[1.0.0-rc.5]: https://github.com/attest-framework/attest/releases/tag/v1.0.0-rc.5
 [1.0.0-rc.4]: https://github.com/attest-framework/attest/releases/tag/v1.0.0-rc.4
 [1.0.0-rc.3]: https://github.com/attest-framework/attest/releases/tag/v1.0.0-rc.3
 [1.0.0-rc.2]: https://github.com/attest-framework/attest/releases/tag/v1.0.0-rc.2
