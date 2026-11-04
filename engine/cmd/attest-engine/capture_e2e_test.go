@@ -59,7 +59,7 @@ func runScriptedAgentNote(openaiBase, tracesEndpoint, apiKey, note string) error
 	// export, and the process exits 1.
 	offline := os.Getenv("ATTEST_CAPTURE_HELPER_OFFLINE") == "1"
 	if offline {
-		return exportSpans(tracesEndpoint, note, offline)
+		return exportSpans(tracesEndpoint, note, true, true)
 	}
 	req, _ := http.NewRequest(http.MethodPost, openaiBase+"/chat/completions",
 		strings.NewReader(`{"model":"gpt-test","messages":[`+system+`{"role":"user","content":"refund O-7 for `+e2ePlantedEmail+`"}]}`))
@@ -74,10 +74,12 @@ func runScriptedAgentNote(openaiBase, tracesEndpoint, apiKey, note string) error
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("model call: %d", resp.StatusCode)
 	}
-	return exportSpans(tracesEndpoint, note, offline)
+	// ATTEST_CAPTURE_HELPER_CHAT_ONLY=1 plays a healthy run that only chats:
+	// one model call, no tool, exit 0.
+	return exportSpans(tracesEndpoint, note, os.Getenv("ATTEST_CAPTURE_HELPER_CHAT_ONLY") == "1", false)
 }
 
-func exportSpans(tracesEndpoint, note string, offline bool) error {
+func exportSpans(tracesEndpoint, note string, chatOnly, fail bool) error {
 	traceID, root := randomHex(16), randomHex(8)
 	start := time.Now().UnixNano()
 	at := func(i int) string { return fmt.Sprint(start + int64(i)*int64(time.Millisecond)) }
@@ -102,11 +104,11 @@ func exportSpans(tracesEndpoint, note string, offline bool) error {
 		tool("lookup_order", `{"order_id":"O-7"}`, 3),
 		tool("issue_refund", `{"order_id":"O-7","note":"`+note+` for `+e2ePlantedEmail+`"}`, 5),
 	}
-	if offline {
+	if chatOnly {
 		spans = spans[:2]
 	}
 	// ATTEST_CAPTURE_HELPER_REFUNDS=1 plays a healthy run with one refund.
-	if !offline && os.Getenv("ATTEST_CAPTURE_HELPER_REFUNDS") != "1" {
+	if !chatOnly && os.Getenv("ATTEST_CAPTURE_HELPER_REFUNDS") != "1" {
 		spans = append(spans, tool("issue_refund", `{"order_id":"O-7"}`, 7))
 	}
 	doc := `{"resourceSpans":[{"scopeSpans":[{"spans":[` + strings.Join(spans, ",") + `]}]}]}`
@@ -118,7 +120,7 @@ func exportSpans(tracesEndpoint, note string, offline bool) error {
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("export: %d", resp.StatusCode)
 	}
-	if offline {
+	if fail {
 		return errors.New("model unreachable")
 	}
 	return nil
@@ -238,9 +240,9 @@ func TestCaptureCommand_IncidentWithoutExpectFail_DraftsObservedMaxAndVerifies(t
 	}
 }
 
-// A command that exits 1 with no model call reaches no tool and no cost: no
-// contract is drafted, and the capture must not claim a verified fixture.
-func TestCaptureCommand_ExitsOneWithNoModelCalls_NeverVerified(t *testing.T) {
+// A command that exits non-zero with no model call is never green, and the
+// message names every cause that holds, the empty contract list included.
+func TestCaptureCommand_ExitsNonZeroWithNoModelCalls_NeverVerifiedNamesEveryCause(t *testing.T) {
 	bin := buildEngineBinary(t)
 	t.Setenv("ATTEST_CAPTURE_HELPER_OFFLINE", "1")
 
@@ -249,16 +251,56 @@ func TestCaptureCommand_ExitsOneWithNoModelCalls_NeverVerified(t *testing.T) {
 	if r.code != 1 {
 		t.Fatalf("exit %d, want 1\n%s", r.code, r.stderr)
 	}
-	if strings.Contains(r.stderr, "  verified:") {
-		t.Fatalf("zero drafted contracts reported verified:\n%s", r.stderr)
+	if strings.Contains(r.stderr, "  verified:") || strings.Contains(r.stderr, "captured: nothing to verify") {
+		t.Fatalf("false green:\n%s", r.stderr)
 	}
-	for _, want := range []string{"not verified: no contracts were drafted", "no model calls were recorded", "the command exited 3"} {
+	for _, want := range []string{"not verified: ", "no model calls were recorded", "the command exited 3", "no contracts were drafted"} {
 		if !strings.Contains(r.stderr, want) {
 			t.Errorf("summary lacks %q:\n%s", want, r.stderr)
 		}
 	}
 	if !bytes.Contains(r.fixture, []byte(`"verified": false`)) {
 		t.Fatalf("fixture not recorded as unverified:\n%s", r.fixture)
+	}
+}
+
+// A healthy chat-only run drafts nothing: the fixture is written unverified,
+// the capture exits 0 and never says "verified".
+func TestCaptureCommand_ChatOnlyRun_NothingToVerifyExitsZero(t *testing.T) {
+	bin := buildEngineBinary(t)
+	t.Setenv("ATTEST_CAPTURE_HELPER_CHAT_ONLY", "1")
+	dir := t.TempDir()
+	resultFile := filepath.Join(dir, "result.json")
+
+	r := runCaptureCommand(t, bin, fakeModel(t), dir, "--result-file", resultFile)
+
+	if r.code != 0 {
+		t.Fatalf("exit %d\n%s", r.code, r.stderr)
+	}
+	if !strings.Contains(r.stderr, "captured: nothing to verify (no tool call, structured output or cost); replay-only fixture, no test drafted") {
+		t.Fatalf("summary:\n%s", r.stderr)
+	}
+	if strings.Contains(r.stderr, "  verified:") || strings.Contains(r.stderr, "not verified") {
+		t.Fatalf("summary claims a verification result:\n%s", r.stderr)
+	}
+	if !bytes.Contains(r.fixture, []byte(`"verified": false`)) {
+		t.Fatalf("fixture:\n%s", r.fixture)
+	}
+	data, err := os.ReadFile(resultFile)
+	if err != nil || !strings.Contains(string(data), `"outcome":"nothing_to_verify"`) {
+		t.Fatalf("result file %s (%v)", data, err)
+	}
+}
+
+// --json carries the outcome; a chat-only run exits 0 with nothing_to_verify.
+func TestCaptureCommand_JSON_ChatOnlyReportsNothingToVerify(t *testing.T) {
+	bin := buildEngineBinary(t)
+	t.Setenv("ATTEST_CAPTURE_HELPER_CHAT_ONLY", "1")
+
+	r := runCaptureCommand(t, bin, fakeModel(t), t.TempDir(), "--json")
+
+	if r.code != 0 || !strings.Contains(r.stdout, `"outcome": "nothing_to_verify"`) || !strings.Contains(r.stdout, `"verified": false`) {
+		t.Fatalf("exit %d\n%s\n%s", r.code, r.stdout, r.stderr)
 	}
 }
 

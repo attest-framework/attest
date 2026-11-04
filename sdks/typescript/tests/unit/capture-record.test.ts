@@ -49,4 +49,26 @@ describe("record() with a misbehaving engine", () => {
     expect(err).toBeInstanceOf(CaptureError);
     expect((err as InstanceType<typeof CaptureError>).message).toMatch(/not verified; no test drafted/);
   });
+
+  it("returns verified false without throwing when the engine reports nothing_to_verify", async () => {
+    const engine = fakeEngine(
+      `echo '{"env":{}}'; cat >/dev/null; echo '{"fixture":"/f","verified":false,"outcome":"nothing_to_verify"}'`,
+    );
+
+    const result = await record("x", () => 7, { enginePath: engine });
+
+    expect(result).toMatchObject({ value: 7, fixture: "/f", verified: false, outcome: "nothing_to_verify", testFile: null });
+  });
+
+  it("throws for a not_verified outcome and for a non-zero engine exit", async () => {
+    const notVerified = fakeEngine(
+      `echo '{"env":{}}'; cat >/dev/null; echo '{"fixture":"/f","verified":false,"outcome":"not_verified"}'`,
+    );
+    const failed = fakeEngine(
+      `echo '{"env":{}}'; cat >/dev/null; echo '{"fixture":"/f","verified":false,"outcome":"nothing_to_verify"}'; exit 1`,
+    );
+
+    await expect(record("x", () => undefined, { enginePath: notVerified })).rejects.toThrow(/not verified/);
+    await expect(record("x", () => undefined, { enginePath: failed })).rejects.toThrow(/not verified/);
+  });
 });

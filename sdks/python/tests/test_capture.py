@@ -328,3 +328,45 @@ def test_emit_pytest_symlink_at_target_raises_and_writes_nothing(
 
     assert victim.exists() is not dangling
     assert dangling or victim.read_text() == "keep"
+
+
+def _fake_engine(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, result: str, code: int) -> str:
+    monkeypatch.setattr("attest.engine_manager.resolve_engine", lambda path: str(path))
+    engine = tmp_path / "attest-engine"
+    engine.write_text(
+        f"#!/bin/sh\necho '{{\"env\":{{}}}}'\ncat >/dev/null\necho '{result}'\nexit {code}\n"
+    )
+    engine.chmod(0o755)
+    return str(engine)
+
+
+def test_record_nothing_to_verify_returns_unverified_result_without_raising(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    engine = _fake_engine(
+        tmp_path, monkeypatch, '{"fixture":"/f","verified":false,"outcome":"nothing_to_verify"}', 0
+    )
+
+    with record("x", engine_path=engine, emit_test=True) as capture:
+        pass
+
+    assert capture.result.verified is False
+    assert capture.result.outcome == "nothing_to_verify"
+    assert capture.result.test_file is None
+
+
+@pytest.mark.parametrize(
+    ("result", "code"),
+    [
+        ('{"fixture":"/f","verified":false,"outcome":"not_verified"}', 0),
+        ('{"fixture":"/f","verified":false,"outcome":"nothing_to_verify"}', 1),
+    ],
+)
+def test_record_not_verified_or_failed_engine_raises_capture_error(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, result: str, code: int
+) -> None:
+    engine = _fake_engine(tmp_path, monkeypatch, result, code)
+
+    with pytest.raises(CaptureError, match="is not verified"):
+        with record("x", engine_path=engine):
+            pass

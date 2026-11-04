@@ -62,7 +62,9 @@ Capture drafts these contracts from the run:
 
 Cardinality depends on the capture mode. A normal capture sets N to the most calls the run made with any one value, so a healthy agent that reads an order twice still verifies. With `--expect-fail`, N is 1 for every such tool, so the calls the incident repeated fail: capturing INC-1042 that way fails only `cardinality-issue_refund-per-order_id` (it refunded order O-1042 twice) and records it as the expected failure. A normal capture of the same run drafts `issue_refund` at 2 and verifies, since without `--expect-fail` capture cannot know the run is an incident.
 
-- Without `--expect-fail`, the fixture is **verified** when at least one contract was drafted, every drafted contract passes and the captured trace passes trace check; otherwise it is unverified and `attest capture` exits 1, naming the reason. A capture that drafted no contract is never verified: nothing was checked. The message names the cause: `no model calls were recorded`, `the command exited N`, or a trace with no tool call, structured output or cost to draft from.
+- Without `--expect-fail`, the fixture is **verified** when at least one contract was drafted, every drafted contract passes and the captured trace passes trace check. It is **not verified** (`attest capture` exits 1, naming every cause that holds, joined by `;`) when any of these holds: a drafted contract fails; the trace check failed; the command exited non-zero; a replay-capable capture recorded no model call; no `llm_call` or `tool_call` step was mapped. A capture that drafted nothing is never reported verified.
+- A healthy run with nothing to draft from (the command succeeded, the trace check is clean, model calls were recorded, but the trace has no tool call, structured output or cost) has the outcome `nothing_to_verify`: the fixture is written with `verified: false`, `attest capture` exits 0 and prints `captured: nothing to verify (no tool call, structured output or cost); replay-only fixture, no test drafted`, and no test is drafted. The fixture is still usable for replay. With `--expect-fail`, drafting nothing is not verified (exit 1).
+- `attest capture --json` and `--result-file` report `"outcome"`: `verified`, `not_verified` or `nothing_to_verify`, next to the `verified` boolean (`true` only for `verified`). Branch on `outcome` or the exit code, not on `verified` alone.
 - With `--expect-fail`, the fixture is an **incident reproduction**: verified when at least one drafted contract fails and the rest pass. The failing contracts are recorded as `expected_failures`.
 
 ## The drafted test
@@ -124,7 +126,7 @@ const result = await record(
 
 `record()` starts `attest-engine capture --serve`, sets the three variables in the process environment for the block, restores them afterwards, and writes the fixture and the drafted test. Model clients and OTLP exporters read the variables when they are constructed, so build them inside the block. Python flushes the global OpenTelemetry tracer provider on exit when the application loaded one; in TypeScript pass the provider's `forceFlush` as `flush`. Child processes started inside the block inherit the variables; `capture.env` holds them for a subprocess started with an explicit environment.
 
-If the block raises, the capture is abandoned and no fixture is written. A fixture that is not verified raises `attest.CaptureError` (TypeScript: `CaptureError`) after it is written, and no test is drafted.
+If the block raises, the capture is abandoned and no fixture is written. A fixture that is not verified raises `attest.CaptureError` (TypeScript: `CaptureError`) after it is written, and no test is drafted. A `nothing_to_verify` capture does not raise: `capture.result.verified` is `False` and `capture.result.outcome` is `"nothing_to_verify"` (TypeScript: `verified: false`, `outcome: "nothing_to_verify"`), and no test is drafted.
 
 Options: `out_dir` / `outDir` (default `tests/attest/fixtures`), `expect_fail` / `expectFail`, `agent_id` / `agentId`, `emit_test` / `emitTest` (default true), `engine_path` / `enginePath`, `world` (a `world.yaml` to host for the block; see [world fixtures](world-fixtures.md)), and in TypeScript `flush`. `record()` sets process-wide variables, so captures cannot overlap; a second `record()` while one runs raises `CaptureError`.
 
@@ -300,14 +302,18 @@ Capture does not template ids a framework invents inside values it owns, so thes
 - raw span ids in `turns[].from_agent` (OpenAI Agents);
 - LangChain message ids and `lc_run--` UUIDv7 ids inside the LangSmith prompt and completion strings (LangGraph).
 
-Replay keys are unaffected. `keyOf` hashes only an exchange's templated request (model, params, normalized prompt fields and tool-schema hash), and these ids live in the trace, never in the request sent to the provider.
+Replay keys are unaffected by these. `keyOf` hashes only an exchange's templated request (model, params, normalized prompt fields and tool-schema hash), and these ids live in the trace, not in the request sent to the provider.
+
+One framework puts a per-run id inside the request:
+
+- Claude Agent SDK (Claude Code): the session id (`session_id`) is sent in the Anthropic request as `metadata.user_id`, so it appears in `exchanges[].request.…metadata.user_id` and differs between two captures. Capture does not template it. `metadata` is part of the replay key's params (checked with `keyOf`), so a live run in a new session computes a different key from the recorded one: expect a replay miss on params for these fixtures until the id is templated. The fixture still works as a record of the run and for `attest trace check` and the drafted contracts.
 
 ## Exit codes
 
 | Exit | Meaning |
 | --- | --- |
-| 0 | The fixture is verified (`--check-redaction`: no secret found). |
-| 1 | The fixture is not verified (it is still written; this includes a capture that drafted no contract), no fixture could be built (no spans, an unfinished model call, a malformed export), or `--check-redaction` found a secret. |
+| 0 | The fixture is verified or captured with nothing to verify (`--check-redaction`: no secret found). |
+| 1 | The fixture is not verified (it is still written): the command exited non-zero, a replay-capable capture recorded no model call, the trace check failed, no step was mapped, a drafted contract failed or `--expect-fail` drafted nothing; no fixture could be built (no spans, an unfinished model call, a malformed export), or `--check-redaction` found a secret. |
 | 2 | Usage error. |
 
 `attest trace check <fixture>` checks a fixture: it decodes, its trace passes the engine's trace validation, and its capture-time trace check was clean; an unverified fixture is a warning.

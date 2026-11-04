@@ -4,6 +4,7 @@
   "expect_fail": false,
   "fixture": "fx/inc.attest.json",
   "name": "inc",
+  "outcome": "verified",
   "replay_capable": false,
   "source": "otlp_file",
   "steps": 9,

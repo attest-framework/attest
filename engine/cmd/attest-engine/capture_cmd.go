@@ -30,8 +30,8 @@ func init() {
 		run:     handleCaptureCommand,
 		schema:  "cli/capture.schema.json",
 		exits: []exitCode{
-			{exitOK, "the fixture is verified, or --check-redaction found no secrets; the command's own exit code is recorded, not propagated"},
-			{exitFailure, "the fixture is not verified (including a capture that drafted no contract) or was not written, the capture failed, or --check-redaction found secrets"},
+			{exitOK, "the fixture is verified or captured with nothing to verify, or --check-redaction found no secrets; the command's own exit code is recorded, not propagated"},
+			{exitFailure, "the fixture is not verified (the command failed, no model call was recorded, the trace check failed, or --expect-fail drafted nothing) or was not written, the capture failed, or --check-redaction found secrets"},
 			{exitUsage, "usage error, an invalid --world file, or a --refresh that was not confirmed"},
 		},
 	})
@@ -47,7 +47,8 @@ Runs <command> with OPENAI_BASE_URL and ANTHROPIC_BASE_URL pointing at a
 recording proxy and OTEL_EXPORTER_OTLP_TRACES_ENDPOINT at a trace receiver,
 both on 127.0.0.1. Writes <out-dir>/<name>.attest.json with secrets redacted,
 volatile values templated and drafted contracts verified. Exits 0 when the
-fixture is verified, 1 when it is not.
+fixture is verified or the run was healthy with nothing to verify (outcome
+nothing_to_verify), 1 when it is not verified.
 
 options:
   --out-dir <dir>        fixture directory (default tests/attest/fixtures)
@@ -55,7 +56,7 @@ options:
                          contracts fail, recorded as expected failures
   --agent-id <id>        trace agent_id (default: the first turn's agent name;
                          with --refresh, the fixture's)
-  --result-file <path>   also write {"fixture", "verified"} JSON to <path>
+  --result-file <path>   also write {"fixture", "verified", "outcome"} JSON to <path>
   --from <otlp.json>     build from an OTLP/JSON export (trace only; no replay)
   --yes                  with --refresh: run the recorded command without asking
                          (required when CI is set, with --json, or when stdin
@@ -385,7 +386,8 @@ func finishCapture(o *captureOptions, in capture.BuildInput, stdout, stderr io.W
 		fmt.Fprintf(stderr, "capture: writing fixture: %s\n", terminalSafe(err.Error()))
 		return 1
 	}
-	result := map[string]any{"fixture": path, "verified": f.Verification.Verified}
+	outcome, _ := capture.OutcomeOf(f)
+	result := map[string]any{"fixture": path, "verified": f.Verification.Verified, "outcome": outcome}
 	if o.resultFile != "" {
 		if err := writeJSONFile(o.resultFile, result); err != nil {
 			fmt.Fprintf(stderr, "capture: writing result file: %s\n", terminalSafe(err.Error()))
@@ -413,8 +415,10 @@ func finishCapture(o *captureOptions, in capture.BuildInput, stdout, stderr io.W
 	return verifiedExit(f)
 }
 
+// verifiedExit is 1 only for a not_verified capture: a healthy run with
+// nothing to draft exits 0 (and never prints "verified").
 func verifiedExit(f *capture.Fixture) int {
-	if !f.Verification.Verified {
+	if outcome, _ := capture.OutcomeOf(f); outcome == capture.OutcomeNotVerified {
 		return 1
 	}
 	return 0
@@ -424,7 +428,9 @@ func verifiedExit(f *capture.Fixture) int {
 // whether it verified, and the captured command's own exit code (null when
 // the fixture did not come from a command).
 func captureJSONResult(path string, f *capture.Fixture) map[string]any {
+	outcome, _ := capture.OutcomeOf(f)
 	return map[string]any{
+		"outcome":        outcome,
 		"name":           f.Name,
 		"fixture":        path,
 		"verified":       f.Verification.Verified,
@@ -467,60 +473,21 @@ func writeCaptureSummary(w io.Writer, path string, f *capture.Fixture) {
 	}
 	tw.Flush()
 	v := f.Verification
+	outcome, causes := capture.OutcomeOf(f)
 	switch {
-	case !v.Verified && !capture.HasModelOrToolSteps(f.Trace):
-		fmt.Fprintf(w, "  not verified: %s\n", noStepsReason)
-	case !v.Verified && len(v.Results) == 0:
-		fmt.Fprintf(w, "  not verified: no contracts were drafted, so there is nothing to verify: %s\n", noContractsCause(f))
-	case v.Verified && v.ExpectFail:
-		fmt.Fprintf(w, "  verified: incident reproduction; expected %s: %s\n", plural(len(v.ExpectedFailures), "failure", "failures"), terminalSafe(strings.Join(v.ExpectedFailures, ", ")))
-	case v.Verified:
-		fmt.Fprintln(w, "  verified: every drafted contract passes")
-	case v.ExpectFail && len(v.ExpectedFailures) == 0:
-		fmt.Fprintln(w, "  not verified: --expect-fail given but every drafted contract passes")
-	default:
-		fmt.Fprintf(w, "  not verified: %s\n", terminalSafe(unverifiedReason(f)))
-	}
-}
-
-// noStepsReason explains a fixture whose trace holds no model or tool step:
-// spans arrived, but no llm_call or tool_call step was mapped from them.
-const noStepsReason = "no llm_call or tool_call step was mapped from the spans, so there is nothing to verify. " +
-	"Either no span follows the GenAI semantic conventions attest maps (gen_ai.operation.name chat, execute_tool, ...) " +
-	"or only agent and retrieval spans do. Switch the framework's OpenTelemetry " +
-	"instrumentation to one attest maps; see the Frameworks section of the capture guide (attest-engine guide capture)"
-
-// noContractsCause names why a capture drafted no contract: the model was
-// never reached, the command failed, or the trace has nothing to draft from.
-func noContractsCause(f *capture.Fixture) string {
-	var causes []string
-	if f.Source.ReplayCapable && len(f.Exchanges) == 0 {
-		causes = append(causes, "no model calls were recorded")
-	}
-	if c := f.Source.ExitCode; c != nil && *c != 0 {
-		causes = append(causes, fmt.Sprintf("the command exited %d", *c))
-	}
-	if len(causes) == 0 {
-		causes = append(causes, "the trace has no tool call, structured output or cost to draft from")
-	}
-	return strings.Join(causes, "; ")
-}
-
-func unverifiedReason(f *capture.Fixture) string {
-	if !f.Verification.TraceCheck.OK {
-		return "the captured trace fails trace check"
-	}
-	var failed []string
-	for _, r := range f.Verification.Results {
-		if r.Status != "pass" && !contains(f.Verification.ExpectedFailures, r.Contract) {
-			failed = append(failed, r.Contract)
+	case outcome == capture.OutcomeNothingToVerify:
+		kind := "replay-only"
+		if !f.Source.ReplayCapable {
+			kind = "trace-only"
 		}
+		fmt.Fprintf(w, "  captured: nothing to verify (no tool call, structured output or cost); %s fixture, no test drafted\n", kind)
+	case outcome == capture.OutcomeNotVerified:
+		fmt.Fprintf(w, "  not verified: %s\n", terminalSafe(strings.Join(causes, "; ")))
+	case v.ExpectFail:
+		fmt.Fprintf(w, "  verified: incident reproduction; expected %s: %s\n", plural(len(v.ExpectedFailures), "failure", "failures"), terminalSafe(strings.Join(v.ExpectedFailures, ", ")))
+	default:
+		fmt.Fprintln(w, "  verified: every drafted contract passes")
 	}
-	msg := "failing " + strings.Join(failed, ", ")
-	if !f.Verification.ExpectFail {
-		msg += "; edit the drafted contracts or re-run with --expect-fail to save an incident reproduction"
-	}
-	return msg
 }
 
 func apiSummary(apis map[string]int) string {
