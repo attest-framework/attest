@@ -6,13 +6,23 @@ All notable changes to Attest are documented in this file. The format follows [K
 
 ### Added
 
+- Framework capture through OpenTelemetry, with no attest-specific adapter: `docs/guides/capture.md` gains a Frameworks section with the instrumentation switch, tested versions and caveats for Pydantic AI, the Vercel AI SDK, Mastra, the OpenAI Agents SDK (Python), the Claude Agent SDK (Python and TypeScript) and LangGraph (Python). Golden OTLP fixtures for each route join `protocol-tests/trace-v2/otlp/`.
+- The OTLP parser keeps `tool.output` span events (the first four per span, among the first 256 events); all other events are never read. A malformed `tool.output` event is dropped and `trace check` warns `malformed_event`. Claude Code records a tool's result there.
+- Claude Code native traces (beta): `claude_code.llm_request` is a model call with its native model, token and cache-token attributes; `claude_code.tool` takes its result from its `tool.output` event; `claude_code.tool.execution` and `claude_code.tool.blocked_on_user` are not steps. A native attribute of the wrong type is skipped with a `malformed_native_attribute` warning from `trace check` instead of failing conversion.
+- Tool spans without `gen_ai.tool.call.arguments` or `gen_ai.tool.call.result` fall back to `gen_ai.prompt` and `gen_ai.completion`, decoding LangSmith's result wrapper shapes on LangSmith spans.
 - TypeScript simulation helpers in `@attest-ai/core`: `scenario`, `faultInject`, `mockTool`, `MockToolRegistry` and `repeat`, with `ScenarioResult` and `RepeatResult` aggregating verdicts like Python's. `TraceBuilder.addToolCall` returns the active mock's result. Guide: [simulation](docs/guides/simulation.md).
 - TypeScript `useAttest().enforce(verdict)` and `enforceOutcome` accept a `ScenarioResult` or `RepeatResult` as well as an `AgentResult` (fail with diagnostics, skip with the not-evaluated reasons, strict mode fails skips), as Python's `attest.enforce` does.
 - TypeScript plugin discovery: `loadPackagePlugins(registry, projectRoot?)` loads plugins that an installed dependency declares in `package.json` under `"attest": {"plugins": [...]}`; `registerPlugin` mirrors Python's `register_plugin`.
 - A parity matrix, [docs/guides/parity.md](docs/guides/parity.md), generated from both SDKs' public surfaces (`sdks/parity/`). The existing Python and TypeScript test commands fail on a Python capability with no TypeScript counterpart or documented exception, on a stale exception, and when the snapshots or the guide are out of date (regenerate with `ATTEST_UPDATE_PARITY=1`).
 
+### Changed
+
+- A span whose `gen_ai.operation.name` is present but unknown (`chain`, `agent_step`, `unknown`, ...) is no longer a step; its children still attach to the nearest enclosing step. Spans with no operation attribute keep the attribute heuristics.
+- `attest capture` does not verify a fixture where no `llm_call` or `tool_call` step was mapped (exit 1, with the cause and a pointer to the capture guide). The `trace check` `no_genai_spans` message points to the same guide section.
+
 ### Fixed
 
+- Finish reasons `tool-calls` (Vercel AI SDK, Mastra) and a JSON array in a string, as Mastra records it, count as tool requests in `trace check`; it no longer warns `unrequested_tool` on those exports.
 - TypeScript `executePluginAssertion` clears its timeout timer when the plugin finishes, so a completed assertion no longer holds the process open for the timeout.
 
 ## [1.0.0-rc.4] — 2026-11-04

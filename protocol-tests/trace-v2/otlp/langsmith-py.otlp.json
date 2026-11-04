@@ -1,0 +1,1923 @@
+{
+  "resourceSpans": [
+    {
+      "resource": {
+        "attributes": [
+          {
+            "key": "service.name",
+            "value": {
+              "stringValue": "langgraph-example"
+            }
+          }
+        ]
+      },
+      "scopeSpans": [
+        {
+          "scope": {
+            "name": ""
+          },
+          "spans": [
+            {
+              "traceId": "2de6833fc3dbb437f84129b9d5bfb173",
+              "spanId": "e244a91ca55c3a48",
+              "name": "LangGraph",
+              "kind": "SPAN_KIND_INTERNAL",
+              "startTimeUnixNano": "1793749256383934976",
+              "endTimeUnixNano": "1793749256440967936",
+              "attributes": [
+                {
+                  "key": "langsmith.span.kind",
+                  "value": {
+                    "stringValue": "chain"
+                  }
+                },
+                {
+                  "key": "langsmith.trace.name",
+                  "value": {
+                    "stringValue": "LangGraph"
+                  }
+                },
+                {
+                  "key": "langsmith.trace.session_name",
+                  "value": {
+                    "stringValue": "default"
+                  }
+                },
+                {
+                  "key": "gen_ai.operation.name",
+                  "value": {
+                    "stringValue": "chain"
+                  }
+                },
+                {
+                  "key": "gen_ai.system",
+                  "value": {
+                    "stringValue": "langchain"
+                  }
+                },
+                {
+                  "key": "langsmith.metadata.ls_integration",
+                  "value": {
+                    "stringValue": "langgraph"
+                  }
+                },
+                {
+                  "key": "langsmith.metadata.LANGSMITH_TRACING",
+                  "value": {
+                    "stringValue": "true"
+                  }
+                },
+                {
+                  "key": "langsmith.metadata.LANGSMITH_TRACING_MODE",
+                  "value": {
+                    "stringValue": "otel"
+                  }
+                },
+                {
+                  "key": "gen_ai.prompt",
+                  "value": {
+                    "stringValue": "{\"messages\":[[\"user\",\"Where is order O-1?\"]]}"
+                  }
+                },
+                {
+                  "key": "gen_ai.completion",
+                  "value": {
+                    "stringValue": "{\"messages\":[{\"content\":\"Where is order O-1?\",\"additional_kwargs\":{},\"response_metadata\":{},\"type\":\"human\",\"id\":\"00000000-0000-4000-8000-000000000006\"},{\"content\":\"\",\"additional_kwargs\":{\"refusal\":null},\"response_metadata\":{\"token_usage\":{\"completion_tokens\":7,\"prompt_tokens\":12,\"total_tokens\":19,\"completion_tokens_details\":null,\"prompt_tokens_details\":null},\"model_provider\":\"openai\",\"model_name\":\"gpt-4o-mini\",\"system_fingerprint\":null,\"id\":\"chatcmpl-1\",\"finish_reason\":\"tool_calls\",\"logprobs\":null},\"type\":\"ai\",\"id\":\"lc_run--00000000-0000-4000-8000-000000000007-0\",\"tool_calls\":[{\"name\":\"lookup_order\",\"args\":{\"order_id\":\"O-1\"},\"id\":\"call_1\",\"type\":\"tool_call\"}],\"invalid_tool_calls\":[],\"usage_metadata\":{\"input_tokens\":12,\"output_tokens\":7,\"total_tokens\":19,\"input_token_details\":{},\"output_token_details\":{}}},{\"content\":\"shipped\",\"additional_kwargs\":{},\"response_metadata\":{},\"type\":\"tool\",\"name\":\"lookup_order\",\"id\":\"00000000-0000-4000-8000-000000000008\",\"tool_call_id\":\"call_1\",\"status\":\"success\"},{\"content\":\"Order O-1 has shipped.\",\"additional_kwargs\":{\"refusal\":null},\"response_metadata\":{\"token_usage\":{\"completion_tokens\":7,\"prompt_tokens\":12,\"total_tokens\":19,\"completion_tokens_details\":null,\"prompt_tokens_details\":null},\"model_provider\":\"openai\",\"model_name\":\"gpt-4o-mini\",\"system_fingerprint\":null,\"id\":\"chatcmpl-1\",\"finish_reason\":\"stop\",\"logprobs\":null},\"type\":\"ai\",\"id\":\"lc_run--00000000-0000-4000-8000-000000000009-0\",\"tool_calls\":[],\"invalid_tool_calls\":[],\"usage_metadata\":{\"input_tokens\":12,\"output_tokens\":7,\"total_tokens\":19,\"input_token_details\":{},\"output_token_details\":{}}}]}"
+                  }
+                }
+              ],
+              "status": {
+                "code": "STATUS_CODE_OK"
+              },
+              "flags": 256
+            },
+            {
+              "traceId": "2de6833fc3dbb437f84129b9d5bfb173",
+              "spanId": "919fa27cf2b98975",
+              "parentSpanId": "e244a91ca55c3a48",
+              "name": "agent",
+              "kind": "SPAN_KIND_INTERNAL",
+              "startTimeUnixNano": "1793749256420459008",
+              "endTimeUnixNano": "1793749256433460992",
+              "attributes": [
+                {
+                  "key": "langsmith.span.kind",
+                  "value": {
+                    "stringValue": "chain"
+                  }
+                },
+                {
+                  "key": "langsmith.trace.name",
+                  "value": {
+                    "stringValue": "agent"
+                  }
+                },
+                {
+                  "key": "langsmith.trace.session_name",
+                  "value": {
+                    "stringValue": "default"
+                  }
+                },
+                {
+                  "key": "gen_ai.operation.name",
+                  "value": {
+                    "stringValue": "chain"
+                  }
+                },
+                {
+                  "key": "gen_ai.system",
+                  "value": {
+                    "stringValue": "langchain"
+                  }
+                },
+                {
+                  "key": "langsmith.metadata.ls_integration",
+                  "value": {
+                    "stringValue": "langgraph"
+                  }
+                },
+                {
+                  "key": "langsmith.metadata.langgraph_step",
+                  "value": {
+                    "intValue": "1"
+                  }
+                },
+                {
+                  "key": "langsmith.metadata.langgraph_node",
+                  "value": {
+                    "stringValue": "agent"
+                  }
+                },
+                {
+                  "key": "langsmith.metadata.langgraph_triggers",
+                  "value": {
+                    "stringValue": "[\"branch:to:agent\"]"
+                  }
+                },
+                {
+                  "key": "langsmith.metadata.langgraph_path",
+                  "value": {
+                    "stringValue": "[\"__pregel_pull\",\"agent\"]"
+                  }
+                },
+                {
+                  "key": "langsmith.metadata.langgraph_checkpoint_ns",
+                  "value": {
+                    "stringValue": "agent:00000000-0000-4000-8000-000000000010"
+                  }
+                },
+                {
+                  "key": "langsmith.metadata.LANGSMITH_TRACING",
+                  "value": {
+                    "stringValue": "true"
+                  }
+                },
+                {
+                  "key": "langsmith.metadata.LANGSMITH_TRACING_MODE",
+                  "value": {
+                    "stringValue": "otel"
+                  }
+                },
+                {
+                  "key": "langsmith.span.tags",
+                  "value": {
+                    "stringValue": "graph:step:1"
+                  }
+                },
+                {
+                  "key": "gen_ai.prompt",
+                  "value": {
+                    "stringValue": "{\"messages\":[{\"content\":\"Where is order O-1?\",\"additional_kwargs\":{},\"response_metadata\":{},\"type\":\"human\",\"id\":\"00000000-0000-4000-8000-000000000006\"}],\"remaining_steps\":10006}"
+                  }
+                },
+                {
+                  "key": "gen_ai.completion",
+                  "value": {
+                    "stringValue": "{\"messages\":[{\"content\":\"\",\"additional_kwargs\":{\"refusal\":null},\"response_metadata\":{\"token_usage\":{\"completion_tokens\":7,\"prompt_tokens\":12,\"total_tokens\":19,\"completion_tokens_details\":null,\"prompt_tokens_details\":null},\"model_provider\":\"openai\",\"model_name\":\"gpt-4o-mini\",\"system_fingerprint\":null,\"id\":\"chatcmpl-1\",\"finish_reason\":\"tool_calls\",\"logprobs\":null},\"type\":\"ai\",\"id\":\"lc_run--00000000-0000-4000-8000-000000000007-0\",\"tool_calls\":[{\"name\":\"lookup_order\",\"args\":{\"order_id\":\"O-1\"},\"id\":\"call_1\",\"type\":\"tool_call\"}],\"invalid_tool_calls\":[],\"usage_metadata\":{\"input_tokens\":12,\"output_tokens\":7,\"total_tokens\":19,\"input_token_details\":{},\"output_token_details\":{}}}]}"
+                  }
+                }
+              ],
+              "status": {
+                "code": "STATUS_CODE_OK"
+              },
+              "flags": 256
+            },
+            {
+              "traceId": "2de6833fc3dbb437f84129b9d5bfb173",
+              "spanId": "431f865cf36afcd1",
+              "parentSpanId": "919fa27cf2b98975",
+              "name": "call_model",
+              "kind": "SPAN_KIND_INTERNAL",
+              "startTimeUnixNano": "1793749256421011968",
+              "endTimeUnixNano": "1793749256432403200",
+              "attributes": [
+                {
+                  "key": "langsmith.span.kind",
+                  "value": {
+                    "stringValue": "chain"
+                  }
+                },
+                {
+                  "key": "langsmith.trace.name",
+                  "value": {
+                    "stringValue": "call_model"
+                  }
+                },
+                {
+                  "key": "langsmith.trace.session_name",
+                  "value": {
+                    "stringValue": "default"
+                  }
+                },
+                {
+                  "key": "gen_ai.operation.name",
+                  "value": {
+                    "stringValue": "chain"
+                  }
+                },
+                {
+                  "key": "gen_ai.system",
+                  "value": {
+                    "stringValue": "langchain"
+                  }
+                },
+                {
+                  "key": "langsmith.metadata.ls_integration",
+                  "value": {
+                    "stringValue": "langgraph"
+                  }
+                },
+                {
+                  "key": "langsmith.metadata.langgraph_step",
+                  "value": {
+                    "intValue": "1"
+                  }
+                },
+                {
+                  "key": "langsmith.metadata.langgraph_node",
+                  "value": {
+                    "stringValue": "agent"
+                  }
+                },
+                {
+                  "key": "langsmith.metadata.langgraph_triggers",
+                  "value": {
+                    "stringValue": "[\"branch:to:agent\"]"
+                  }
+                },
+                {
+                  "key": "langsmith.metadata.langgraph_path",
+                  "value": {
+                    "stringValue": "[\"__pregel_pull\",\"agent\"]"
+                  }
+                },
+                {
+                  "key": "langsmith.metadata.langgraph_checkpoint_ns",
+                  "value": {
+                    "stringValue": "agent:00000000-0000-4000-8000-000000000010"
+                  }
+                },
+                {
+                  "key": "langsmith.metadata.LANGSMITH_TRACING",
+                  "value": {
+                    "stringValue": "true"
+                  }
+                },
+                {
+                  "key": "langsmith.metadata.LANGSMITH_TRACING_MODE",
+                  "value": {
+                    "stringValue": "otel"
+                  }
+                },
+                {
+                  "key": "langsmith.span.tags",
+                  "value": {
+                    "stringValue": "seq:step:1"
+                  }
+                },
+                {
+                  "key": "gen_ai.prompt",
+                  "value": {
+                    "stringValue": "{\"messages\":[{\"content\":\"Where is order O-1?\",\"additional_kwargs\":{},\"response_metadata\":{},\"type\":\"human\",\"id\":\"00000000-0000-4000-8000-000000000006\"}],\"remaining_steps\":10006}"
+                  }
+                },
+                {
+                  "key": "gen_ai.completion",
+                  "value": {
+                    "stringValue": "{\"messages\":[{\"content\":\"\",\"additional_kwargs\":{\"refusal\":null},\"response_metadata\":{\"token_usage\":{\"completion_tokens\":7,\"prompt_tokens\":12,\"total_tokens\":19,\"completion_tokens_details\":null,\"prompt_tokens_details\":null},\"model_provider\":\"openai\",\"model_name\":\"gpt-4o-mini\",\"system_fingerprint\":null,\"id\":\"chatcmpl-1\",\"finish_reason\":\"tool_calls\",\"logprobs\":null},\"type\":\"ai\",\"id\":\"lc_run--00000000-0000-4000-8000-000000000007-0\",\"tool_calls\":[{\"name\":\"lookup_order\",\"args\":{\"order_id\":\"O-1\"},\"id\":\"call_1\",\"type\":\"tool_call\"}],\"invalid_tool_calls\":[],\"usage_metadata\":{\"input_tokens\":12,\"output_tokens\":7,\"total_tokens\":19,\"input_token_details\":{},\"output_token_details\":{}}}]}"
+                  }
+                }
+              ],
+              "status": {
+                "code": "STATUS_CODE_OK"
+              },
+              "flags": 256
+            },
+            {
+              "traceId": "2de6833fc3dbb437f84129b9d5bfb173",
+              "spanId": "ed99f00b9c8334ef",
+              "parentSpanId": "431f865cf36afcd1",
+              "name": "RunnableSequence",
+              "kind": "SPAN_KIND_INTERNAL",
+              "startTimeUnixNano": "1793749256421339136",
+              "endTimeUnixNano": "1793749256432329984",
+              "attributes": [
+                {
+                  "key": "langsmith.span.kind",
+                  "value": {
+                    "stringValue": "chain"
+                  }
+                },
+                {
+                  "key": "langsmith.trace.name",
+                  "value": {
+                    "stringValue": "RunnableSequence"
+                  }
+                },
+                {
+                  "key": "langsmith.trace.session_name",
+                  "value": {
+                    "stringValue": "default"
+                  }
+                },
+                {
+                  "key": "gen_ai.operation.name",
+                  "value": {
+                    "stringValue": "chain"
+                  }
+                },
+                {
+                  "key": "gen_ai.system",
+                  "value": {
+                    "stringValue": "langchain"
+                  }
+                },
+                {
+                  "key": "langsmith.metadata.ls_integration",
+                  "value": {
+                    "stringValue": "langgraph"
+                  }
+                },
+                {
+                  "key": "langsmith.metadata.langgraph_step",
+                  "value": {
+                    "intValue": "1"
+                  }
+                },
+                {
+                  "key": "langsmith.metadata.langgraph_node",
+                  "value": {
+                    "stringValue": "agent"
+                  }
+                },
+                {
+                  "key": "langsmith.metadata.langgraph_triggers",
+                  "value": {
+                    "stringValue": "[\"branch:to:agent\"]"
+                  }
+                },
+                {
+                  "key": "langsmith.metadata.langgraph_path",
+                  "value": {
+                    "stringValue": "[\"__pregel_pull\",\"agent\"]"
+                  }
+                },
+                {
+                  "key": "langsmith.metadata.langgraph_checkpoint_ns",
+                  "value": {
+                    "stringValue": "agent:00000000-0000-4000-8000-000000000010"
+                  }
+                },
+                {
+                  "key": "langsmith.metadata.checkpoint_ns",
+                  "value": {
+                    "stringValue": "agent:00000000-0000-4000-8000-000000000010"
+                  }
+                },
+                {
+                  "key": "langsmith.metadata.LANGSMITH_TRACING",
+                  "value": {
+                    "stringValue": "true"
+                  }
+                },
+                {
+                  "key": "langsmith.metadata.LANGSMITH_TRACING_MODE",
+                  "value": {
+                    "stringValue": "otel"
+                  }
+                },
+                {
+                  "key": "langsmith.span.tags",
+                  "value": {
+                    "stringValue": "seq:step:1"
+                  }
+                },
+                {
+                  "key": "gen_ai.prompt",
+                  "value": {
+                    "stringValue": "{\"messages\":[{\"content\":\"Where is order O-1?\",\"additional_kwargs\":{},\"response_metadata\":{},\"type\":\"human\",\"id\":\"00000000-0000-4000-8000-000000000006\"}],\"remaining_steps\":10006}"
+                  }
+                },
+                {
+                  "key": "gen_ai.usage.input_tokens",
+                  "value": {
+                    "intValue": "12"
+                  }
+                },
+                {
+                  "key": "gen_ai.usage.output_tokens",
+                  "value": {
+                    "intValue": "7"
+                  }
+                },
+                {
+                  "key": "gen_ai.usage.total_tokens",
+                  "value": {
+                    "intValue": "19"
+                  }
+                },
+                {
+                  "key": "gen_ai.completion",
+                  "value": {
+                    "stringValue": "{\"output\":{\"content\":\"\",\"additional_kwargs\":{\"refusal\":null},\"response_metadata\":{\"token_usage\":{\"completion_tokens\":7,\"prompt_tokens\":12,\"total_tokens\":19,\"completion_tokens_details\":null,\"prompt_tokens_details\":null},\"model_provider\":\"openai\",\"model_name\":\"gpt-4o-mini\",\"system_fingerprint\":null,\"id\":\"chatcmpl-1\",\"finish_reason\":\"tool_calls\",\"logprobs\":null},\"type\":\"ai\",\"id\":\"lc_run--00000000-0000-4000-8000-000000000007-0\",\"tool_calls\":[{\"name\":\"lookup_order\",\"args\":{\"order_id\":\"O-1\"},\"id\":\"call_1\",\"type\":\"tool_call\"}],\"invalid_tool_calls\":[],\"usage_metadata\":{\"input_tokens\":12,\"output_tokens\":7,\"total_tokens\":19,\"input_token_details\":{},\"output_token_details\":{}}}}"
+                  }
+                }
+              ],
+              "status": {
+                "code": "STATUS_CODE_OK"
+              },
+              "flags": 256
+            },
+            {
+              "traceId": "2de6833fc3dbb437f84129b9d5bfb173",
+              "spanId": "0d42cdb8f13b8807",
+              "parentSpanId": "ed99f00b9c8334ef",
+              "name": "Prompt",
+              "kind": "SPAN_KIND_INTERNAL",
+              "startTimeUnixNano": "1793749256421488128",
+              "endTimeUnixNano": "1793749256421576960",
+              "attributes": [
+                {
+                  "key": "langsmith.span.kind",
+                  "value": {
+                    "stringValue": "chain"
+                  }
+                },
+                {
+                  "key": "langsmith.trace.name",
+                  "value": {
+                    "stringValue": "Prompt"
+                  }
+                },
+                {
+                  "key": "langsmith.trace.session_name",
+                  "value": {
+                    "stringValue": "default"
+                  }
+                },
+                {
+                  "key": "gen_ai.operation.name",
+                  "value": {
+                    "stringValue": "chain"
+                  }
+                },
+                {
+                  "key": "gen_ai.system",
+                  "value": {
+                    "stringValue": "langchain"
+                  }
+                },
+                {
+                  "key": "langsmith.metadata.ls_integration",
+                  "value": {
+                    "stringValue": "langgraph"
+                  }
+                },
+                {
+                  "key": "langsmith.metadata.langgraph_step",
+                  "value": {
+                    "intValue": "1"
+                  }
+                },
+                {
+                  "key": "langsmith.metadata.langgraph_node",
+                  "value": {
+                    "stringValue": "agent"
+                  }
+                },
+                {
+                  "key": "langsmith.metadata.langgraph_triggers",
+                  "value": {
+                    "stringValue": "[\"branch:to:agent\"]"
+                  }
+                },
+                {
+                  "key": "langsmith.metadata.langgraph_path",
+                  "value": {
+                    "stringValue": "[\"__pregel_pull\",\"agent\"]"
+                  }
+                },
+                {
+                  "key": "langsmith.metadata.langgraph_checkpoint_ns",
+                  "value": {
+                    "stringValue": "agent:00000000-0000-4000-8000-000000000010"
+                  }
+                },
+                {
+                  "key": "langsmith.metadata.checkpoint_ns",
+                  "value": {
+                    "stringValue": "agent:00000000-0000-4000-8000-000000000010"
+                  }
+                },
+                {
+                  "key": "langsmith.metadata.LANGSMITH_TRACING",
+                  "value": {
+                    "stringValue": "true"
+                  }
+                },
+                {
+                  "key": "langsmith.metadata.LANGSMITH_TRACING_MODE",
+                  "value": {
+                    "stringValue": "otel"
+                  }
+                },
+                {
+                  "key": "langsmith.span.tags",
+                  "value": {
+                    "stringValue": "seq:step:1"
+                  }
+                },
+                {
+                  "key": "gen_ai.prompt",
+                  "value": {
+                    "stringValue": "{\"messages\":[{\"content\":\"Where is order O-1?\",\"additional_kwargs\":{},\"response_metadata\":{},\"type\":\"human\",\"id\":\"00000000-0000-4000-8000-000000000006\"}],\"remaining_steps\":10006}"
+                  }
+                },
+                {
+                  "key": "gen_ai.completion",
+                  "value": {
+                    "stringValue": "{\"output\":[{\"content\":\"Where is order O-1?\",\"additional_kwargs\":{},\"response_metadata\":{},\"type\":\"human\",\"id\":\"00000000-0000-4000-8000-000000000006\"}]}"
+                  }
+                }
+              ],
+              "status": {
+                "code": "STATUS_CODE_OK"
+              },
+              "flags": 256
+            },
+            {
+              "traceId": "2de6833fc3dbb437f84129b9d5bfb173",
+              "spanId": "cc298745fc9e4ed2",
+              "parentSpanId": "ed99f00b9c8334ef",
+              "name": "ChatOpenAI",
+              "kind": "SPAN_KIND_INTERNAL",
+              "startTimeUnixNano": "1793749256422192128",
+              "endTimeUnixNano": "1793749256432188160",
+              "attributes": [
+                {
+                  "key": "langsmith.span.kind",
+                  "value": {
+                    "stringValue": "llm"
+                  }
+                },
+                {
+                  "key": "langsmith.trace.name",
+                  "value": {
+                    "stringValue": "ChatOpenAI"
+                  }
+                },
+                {
+                  "key": "langsmith.trace.session_name",
+                  "value": {
+                    "stringValue": "default"
+                  }
+                },
+                {
+                  "key": "gen_ai.operation.name",
+                  "value": {
+                    "stringValue": "chat"
+                  }
+                },
+                {
+                  "key": "gen_ai.system",
+                  "value": {
+                    "stringValue": "openai"
+                  }
+                },
+                {
+                  "key": "gen_ai.request.model",
+                  "value": {
+                    "stringValue": "gpt-4o-mini"
+                  }
+                },
+                {
+                  "key": "gen_ai.tool.definitions",
+                  "value": {
+                    "stringValue": "[{\"type\":\"function\",\"function\":{\"name\":\"lookup_order\",\"description\":\"Look up an order's shipping status.\",\"parameters\":{\"properties\":{\"order_id\":{\"type\":\"string\"}},\"required\":[\"order_id\"],\"type\":\"object\"}}}]"
+                  }
+                },
+                {
+                  "key": "langsmith.metadata.ls_integration",
+                  "value": {
+                    "stringValue": "langchain_chat_model"
+                  }
+                },
+                {
+                  "key": "langsmith.metadata.langgraph_step",
+                  "value": {
+                    "intValue": "1"
+                  }
+                },
+                {
+                  "key": "langsmith.metadata.langgraph_node",
+                  "value": {
+                    "stringValue": "agent"
+                  }
+                },
+                {
+                  "key": "langsmith.metadata.langgraph_triggers",
+                  "value": {
+                    "stringValue": "[\"branch:to:agent\"]"
+                  }
+                },
+                {
+                  "key": "langsmith.metadata.langgraph_path",
+                  "value": {
+                    "stringValue": "[\"__pregel_pull\",\"agent\"]"
+                  }
+                },
+                {
+                  "key": "langsmith.metadata.langgraph_checkpoint_ns",
+                  "value": {
+                    "stringValue": "agent:00000000-0000-4000-8000-000000000010"
+                  }
+                },
+                {
+                  "key": "langsmith.metadata.checkpoint_ns",
+                  "value": {
+                    "stringValue": "agent:00000000-0000-4000-8000-000000000010"
+                  }
+                },
+                {
+                  "key": "langsmith.metadata.ls_provider",
+                  "value": {
+                    "stringValue": "openai"
+                  }
+                },
+                {
+                  "key": "langsmith.metadata.ls_model_name",
+                  "value": {
+                    "stringValue": "gpt-4o-mini"
+                  }
+                },
+                {
+                  "key": "langsmith.metadata.ls_model_type",
+                  "value": {
+                    "stringValue": "chat"
+                  }
+                },
+                {
+                  "key": "langsmith.metadata.lc_versions",
+                  "value": {
+                    "stringValue": "{\"langchain-core\":\"1.7.4\",\"langchain-openai\":\"1.7.3\"}"
+                  }
+                },
+                {
+                  "key": "langsmith.metadata.model",
+                  "value": {
+                    "stringValue": "gpt-4o-mini"
+                  }
+                },
+                {
+                  "key": "langsmith.metadata.model_name",
+                  "value": {
+                    "stringValue": "gpt-4o-mini"
+                  }
+                },
+                {
+                  "key": "langsmith.metadata.stream",
+                  "value": {
+                    "boolValue": false
+                  }
+                },
+                {
+                  "key": "langsmith.metadata._type",
+                  "value": {
+                    "stringValue": "openai-chat"
+                  }
+                },
+                {
+                  "key": "langsmith.metadata.usage_metadata",
+                  "value": {
+                    "stringValue": "{\"input_tokens\":12,\"output_tokens\":7,\"total_tokens\":19,\"input_token_details\":{},\"output_token_details\":{}}"
+                  }
+                },
+                {
+                  "key": "langsmith.metadata.LANGSMITH_TRACING",
+                  "value": {
+                    "stringValue": "true"
+                  }
+                },
+                {
+                  "key": "langsmith.metadata.LANGSMITH_TRACING_MODE",
+                  "value": {
+                    "stringValue": "otel"
+                  }
+                },
+                {
+                  "key": "langsmith.span.tags",
+                  "value": {
+                    "stringValue": "seq:step:2"
+                  }
+                },
+                {
+                  "key": "gen_ai.serialized.name",
+                  "value": {
+                    "stringValue": "ChatOpenAI"
+                  }
+                },
+                {
+                  "key": "gen_ai.prompt",
+                  "value": {
+                    "stringValue": "{\"messages\":[[{\"lc\":1,\"type\":\"constructor\",\"id\":[\"langchain\",\"schema\",\"messages\",\"HumanMessage\"],\"kwargs\":{\"content\":\"Where is order O-1?\",\"type\":\"human\",\"id\":\"00000000-0000-4000-8000-000000000006\"}}]]}"
+                  }
+                },
+                {
+                  "key": "gen_ai.usage.input_tokens",
+                  "value": {
+                    "intValue": "12"
+                  }
+                },
+                {
+                  "key": "gen_ai.usage.output_tokens",
+                  "value": {
+                    "intValue": "7"
+                  }
+                },
+                {
+                  "key": "gen_ai.usage.total_tokens",
+                  "value": {
+                    "intValue": "19"
+                  }
+                },
+                {
+                  "key": "gen_ai.completion",
+                  "value": {
+                    "stringValue": "{\"generations\":[[{\"text\":\"\",\"generation_info\":{\"finish_reason\":\"tool_calls\",\"logprobs\":null},\"type\":\"ChatGeneration\",\"message\":{\"lc\":1,\"type\":\"constructor\",\"id\":[\"langchain\",\"schema\",\"messages\",\"AIMessage\"],\"kwargs\":{\"content\":\"\",\"additional_kwargs\":{\"refusal\":null},\"response_metadata\":{\"token_usage\":{\"completion_tokens\":7,\"prompt_tokens\":12,\"total_tokens\":19,\"completion_tokens_details\":null,\"prompt_tokens_details\":null},\"model_provider\":\"openai\",\"model_name\":\"gpt-4o-mini\",\"system_fingerprint\":null,\"id\":\"chatcmpl-1\",\"finish_reason\":\"tool_calls\",\"logprobs\":null},\"type\":\"ai\",\"id\":\"lc_run--00000000-0000-4000-8000-000000000007-0\",\"tool_calls\":[{\"name\":\"lookup_order\",\"args\":{\"order_id\":\"O-1\"},\"id\":\"call_1\",\"type\":\"tool_call\"}],\"usage_metadata\":{\"input_tokens\":12,\"output_tokens\":7,\"total_tokens\":19,\"input_token_details\":{},\"output_token_details\":{}},\"invalid_tool_calls\":[]}}}]],\"llm_output\":{\"token_usage\":{\"completion_tokens\":7,\"prompt_tokens\":12,\"total_tokens\":19,\"completion_tokens_details\":null,\"prompt_tokens_details\":null},\"model_provider\":\"openai\",\"model_name\":\"gpt-4o-mini\",\"system_fingerprint\":null,\"id\":\"chatcmpl-1\"},\"run\":null,\"type\":\"LLMResult\"}"
+                  }
+                }
+              ],
+              "status": {
+                "code": "STATUS_CODE_OK"
+              },
+              "flags": 256
+            },
+            {
+              "traceId": "2de6833fc3dbb437f84129b9d5bfb173",
+              "spanId": "61b655776a864050",
+              "parentSpanId": "919fa27cf2b98975",
+              "name": "should_continue",
+              "kind": "SPAN_KIND_INTERNAL",
+              "startTimeUnixNano": "1793749256432545024",
+              "endTimeUnixNano": "1793749256432691968",
+              "attributes": [
+                {
+                  "key": "langsmith.span.kind",
+                  "value": {
+                    "stringValue": "chain"
+                  }
+                },
+                {
+                  "key": "langsmith.trace.name",
+                  "value": {
+                    "stringValue": "should_continue"
+                  }
+                },
+                {
+                  "key": "langsmith.trace.session_name",
+                  "value": {
+                    "stringValue": "default"
+                  }
+                },
+                {
+                  "key": "gen_ai.operation.name",
+                  "value": {
+                    "stringValue": "chain"
+                  }
+                },
+                {
+                  "key": "gen_ai.system",
+                  "value": {
+                    "stringValue": "langchain"
+                  }
+                },
+                {
+                  "key": "langsmith.metadata.ls_integration",
+                  "value": {
+                    "stringValue": "langgraph"
+                  }
+                },
+                {
+                  "key": "langsmith.metadata.langgraph_step",
+                  "value": {
+                    "intValue": "1"
+                  }
+                },
+                {
+                  "key": "langsmith.metadata.langgraph_node",
+                  "value": {
+                    "stringValue": "agent"
+                  }
+                },
+                {
+                  "key": "langsmith.metadata.langgraph_triggers",
+                  "value": {
+                    "stringValue": "[\"branch:to:agent\"]"
+                  }
+                },
+                {
+                  "key": "langsmith.metadata.langgraph_path",
+                  "value": {
+                    "stringValue": "[\"__pregel_pull\",\"agent\"]"
+                  }
+                },
+                {
+                  "key": "langsmith.metadata.langgraph_checkpoint_ns",
+                  "value": {
+                    "stringValue": "agent:00000000-0000-4000-8000-000000000010"
+                  }
+                },
+                {
+                  "key": "langsmith.metadata.LANGSMITH_TRACING",
+                  "value": {
+                    "stringValue": "true"
+                  }
+                },
+                {
+                  "key": "langsmith.metadata.LANGSMITH_TRACING_MODE",
+                  "value": {
+                    "stringValue": "otel"
+                  }
+                },
+                {
+                  "key": "langsmith.span.tags",
+                  "value": {
+                    "stringValue": "seq:step:3"
+                  }
+                },
+                {
+                  "key": "gen_ai.prompt",
+                  "value": {
+                    "stringValue": "{\"messages\":[{\"content\":\"Where is order O-1?\",\"additional_kwargs\":{},\"response_metadata\":{},\"type\":\"human\",\"id\":\"00000000-0000-4000-8000-000000000006\"},{\"content\":\"\",\"additional_kwargs\":{\"refusal\":null},\"response_metadata\":{\"token_usage\":{\"completion_tokens\":7,\"prompt_tokens\":12,\"total_tokens\":19,\"completion_tokens_details\":null,\"prompt_tokens_details\":null},\"model_provider\":\"openai\",\"model_name\":\"gpt-4o-mini\",\"system_fingerprint\":null,\"id\":\"chatcmpl-1\",\"finish_reason\":\"tool_calls\",\"logprobs\":null},\"type\":\"ai\",\"id\":\"lc_run--00000000-0000-4000-8000-000000000007-0\",\"tool_calls\":[{\"name\":\"lookup_order\",\"args\":{\"order_id\":\"O-1\"},\"id\":\"call_1\",\"type\":\"tool_call\"}],\"invalid_tool_calls\":[],\"usage_metadata\":{\"input_tokens\":12,\"output_tokens\":7,\"total_tokens\":19,\"input_token_details\":{},\"output_token_details\":{}}}],\"remaining_steps\":10006}"
+                  }
+                },
+                {
+                  "key": "gen_ai.completion",
+                  "value": {
+                    "stringValue": "{\"output\":[\"Send(node='tools', arg={'__type': 'tool_call_with_context', 'tool_call': {'name': 'lookup_order', 'args': {'order_id': 'O-1'}, 'id': 'call_1', 'type': 'tool_call'}, 'state': {'messages': [HumanMessage(content='Where is order O-1?', additional_kwargs={}, response_metadata={}, id='00000000-0000-4000-8000-000000000006'), AIMessage(content='', additional_kwargs={'refusal': None}, response_metadata={'token_usage': {'completion_tokens': 7, 'prompt_tokens': 12, 'total_tokens': 19, 'completion_tokens_details': None, 'prompt_tokens_details': None}, 'model_provider': 'openai', 'model_name': 'gpt-4o-mini', 'system_fingerprint': None, 'id': 'chatcmpl-1', 'finish_reason': 'tool_calls', 'logprobs': None}, id='lc_run--00000000-0000-4000-8000-000000000007-0', tool_calls=[{'name': 'lookup_order', 'args': {'order_id': 'O-1'}, 'id': 'call_1', 'type': 'tool_call'}], invalid_tool_calls=[], usage_metadata={'input_tokens': 12, 'output_tokens': 7, 'total_tokens': 19, 'input_token_details': {}, 'output_token_details': {}})], 'remaining_steps': 10006}})\"]}"
+                  }
+                }
+              ],
+              "status": {
+                "code": "STATUS_CODE_OK"
+              },
+              "flags": 256
+            },
+            {
+              "traceId": "2de6833fc3dbb437f84129b9d5bfb173",
+              "spanId": "8fad0077b3d15c15",
+              "parentSpanId": "e244a91ca55c3a48",
+              "name": "tools",
+              "kind": "SPAN_KIND_INTERNAL",
+              "startTimeUnixNano": "1793749256433816832",
+              "endTimeUnixNano": "1793749256434990848",
+              "attributes": [
+                {
+                  "key": "langsmith.span.kind",
+                  "value": {
+                    "stringValue": "chain"
+                  }
+                },
+                {
+                  "key": "langsmith.trace.name",
+                  "value": {
+                    "stringValue": "tools"
+                  }
+                },
+                {
+                  "key": "langsmith.trace.session_name",
+                  "value": {
+                    "stringValue": "default"
+                  }
+                },
+                {
+                  "key": "gen_ai.operation.name",
+                  "value": {
+                    "stringValue": "chain"
+                  }
+                },
+                {
+                  "key": "gen_ai.system",
+                  "value": {
+                    "stringValue": "langchain"
+                  }
+                },
+                {
+                  "key": "langsmith.metadata.ls_integration",
+                  "value": {
+                    "stringValue": "langgraph"
+                  }
+                },
+                {
+                  "key": "langsmith.metadata.langgraph_step",
+                  "value": {
+                    "intValue": "2"
+                  }
+                },
+                {
+                  "key": "langsmith.metadata.langgraph_node",
+                  "value": {
+                    "stringValue": "tools"
+                  }
+                },
+                {
+                  "key": "langsmith.metadata.langgraph_triggers",
+                  "value": {
+                    "stringValue": "[\"__pregel_push\"]"
+                  }
+                },
+                {
+                  "key": "langsmith.metadata.langgraph_path",
+                  "value": {
+                    "stringValue": "[\"__pregel_push\",0,false]"
+                  }
+                },
+                {
+                  "key": "langsmith.metadata.langgraph_checkpoint_ns",
+                  "value": {
+                    "stringValue": "tools:00000000-0000-4000-8000-000000000011"
+                  }
+                },
+                {
+                  "key": "langsmith.metadata.LANGSMITH_TRACING",
+                  "value": {
+                    "stringValue": "true"
+                  }
+                },
+                {
+                  "key": "langsmith.metadata.LANGSMITH_TRACING_MODE",
+                  "value": {
+                    "stringValue": "otel"
+                  }
+                },
+                {
+                  "key": "langsmith.span.tags",
+                  "value": {
+                    "stringValue": "graph:step:2"
+                  }
+                },
+                {
+                  "key": "gen_ai.prompt",
+                  "value": {
+                    "stringValue": "{\"__type\":\"tool_call_with_context\",\"tool_call\":{\"name\":\"lookup_order\",\"args\":{\"order_id\":\"O-1\"},\"id\":\"call_1\",\"type\":\"tool_call\"},\"state\":{\"messages\":[{\"content\":\"Where is order O-1?\",\"additional_kwargs\":{},\"response_metadata\":{},\"type\":\"human\",\"id\":\"00000000-0000-4000-8000-000000000006\"},{\"content\":\"\",\"additional_kwargs\":{\"refusal\":null},\"response_metadata\":{\"token_usage\":{\"completion_tokens\":7,\"prompt_tokens\":12,\"total_tokens\":19,\"completion_tokens_details\":null,\"prompt_tokens_details\":null},\"model_provider\":\"openai\",\"model_name\":\"gpt-4o-mini\",\"system_fingerprint\":null,\"id\":\"chatcmpl-1\",\"finish_reason\":\"tool_calls\",\"logprobs\":null},\"type\":\"ai\",\"id\":\"lc_run--00000000-0000-4000-8000-000000000007-0\",\"tool_calls\":[{\"name\":\"lookup_order\",\"args\":{\"order_id\":\"O-1\"},\"id\":\"call_1\",\"type\":\"tool_call\"}],\"invalid_tool_calls\":[],\"usage_metadata\":{\"input_tokens\":12,\"output_tokens\":7,\"total_tokens\":19,\"input_token_details\":{},\"output_token_details\":{}}}],\"remaining_steps\":10006}}"
+                  }
+                },
+                {
+                  "key": "gen_ai.completion",
+                  "value": {
+                    "stringValue": "{\"messages\":[{\"content\":\"shipped\",\"additional_kwargs\":{},\"response_metadata\":{},\"type\":\"tool\",\"name\":\"lookup_order\",\"tool_call_id\":\"call_1\",\"status\":\"success\"}]}"
+                  }
+                }
+              ],
+              "status": {
+                "code": "STATUS_CODE_OK"
+              },
+              "flags": 256
+            },
+            {
+              "traceId": "2de6833fc3dbb437f84129b9d5bfb173",
+              "spanId": "e617750d8dc34946",
+              "parentSpanId": "8fad0077b3d15c15",
+              "name": "lookup_order",
+              "kind": "SPAN_KIND_INTERNAL",
+              "startTimeUnixNano": "1793749256434370048",
+              "endTimeUnixNano": "1793749256434776064",
+              "attributes": [
+                {
+                  "key": "langsmith.span.kind",
+                  "value": {
+                    "stringValue": "tool"
+                  }
+                },
+                {
+                  "key": "langsmith.trace.name",
+                  "value": {
+                    "stringValue": "lookup_order"
+                  }
+                },
+                {
+                  "key": "langsmith.trace.session_name",
+                  "value": {
+                    "stringValue": "default"
+                  }
+                },
+                {
+                  "key": "gen_ai.operation.name",
+                  "value": {
+                    "stringValue": "execute_tool"
+                  }
+                },
+                {
+                  "key": "gen_ai.system",
+                  "value": {
+                    "stringValue": "langchain"
+                  }
+                },
+                {
+                  "key": "gen_ai.tool.name",
+                  "value": {
+                    "stringValue": "lookup_order"
+                  }
+                },
+                {
+                  "key": "gen_ai.tool.call.id",
+                  "value": {
+                    "stringValue": "call_1"
+                  }
+                },
+                {
+                  "key": "langsmith.metadata.ls_integration",
+                  "value": {
+                    "stringValue": "langgraph"
+                  }
+                },
+                {
+                  "key": "langsmith.metadata.langgraph_step",
+                  "value": {
+                    "intValue": "2"
+                  }
+                },
+                {
+                  "key": "langsmith.metadata.langgraph_node",
+                  "value": {
+                    "stringValue": "tools"
+                  }
+                },
+                {
+                  "key": "langsmith.metadata.langgraph_triggers",
+                  "value": {
+                    "stringValue": "[\"__pregel_push\"]"
+                  }
+                },
+                {
+                  "key": "langsmith.metadata.langgraph_path",
+                  "value": {
+                    "stringValue": "[\"__pregel_push\",0,false]"
+                  }
+                },
+                {
+                  "key": "langsmith.metadata.langgraph_checkpoint_ns",
+                  "value": {
+                    "stringValue": "tools:00000000-0000-4000-8000-000000000011"
+                  }
+                },
+                {
+                  "key": "langsmith.metadata.checkpoint_ns",
+                  "value": {
+                    "stringValue": "tools:00000000-0000-4000-8000-000000000011"
+                  }
+                },
+                {
+                  "key": "langsmith.metadata.LANGSMITH_TRACING",
+                  "value": {
+                    "stringValue": "true"
+                  }
+                },
+                {
+                  "key": "langsmith.metadata.LANGSMITH_TRACING_MODE",
+                  "value": {
+                    "stringValue": "otel"
+                  }
+                },
+                {
+                  "key": "langsmith.span.tags",
+                  "value": {
+                    "stringValue": "seq:step:1"
+                  }
+                },
+                {
+                  "key": "gen_ai.prompt",
+                  "value": {
+                    "stringValue": "{\"order_id\":\"O-1\"}"
+                  }
+                },
+                {
+                  "key": "gen_ai.completion",
+                  "value": {
+                    "stringValue": "{\"output\":{\"content\":\"shipped\",\"additional_kwargs\":{},\"response_metadata\":{},\"type\":\"tool\",\"name\":\"lookup_order\",\"tool_call_id\":\"call_1\",\"status\":\"success\"}}"
+                  }
+                }
+              ],
+              "status": {
+                "code": "STATUS_CODE_OK"
+              },
+              "flags": 256
+            },
+            {
+              "traceId": "2de6833fc3dbb437f84129b9d5bfb173",
+              "spanId": "6ecb5e8aadef4e12",
+              "parentSpanId": "e244a91ca55c3a48",
+              "name": "agent",
+              "kind": "SPAN_KIND_INTERNAL",
+              "startTimeUnixNano": "1793749256435357184",
+              "endTimeUnixNano": "1793749256440801024",
+              "attributes": [
+                {
+                  "key": "langsmith.span.kind",
+                  "value": {
+                    "stringValue": "chain"
+                  }
+                },
+                {
+                  "key": "langsmith.trace.name",
+                  "value": {
+                    "stringValue": "agent"
+                  }
+                },
+                {
+                  "key": "langsmith.trace.session_name",
+                  "value": {
+                    "stringValue": "default"
+                  }
+                },
+                {
+                  "key": "gen_ai.operation.name",
+                  "value": {
+                    "stringValue": "chain"
+                  }
+                },
+                {
+                  "key": "gen_ai.system",
+                  "value": {
+                    "stringValue": "langchain"
+                  }
+                },
+                {
+                  "key": "langsmith.metadata.ls_integration",
+                  "value": {
+                    "stringValue": "langgraph"
+                  }
+                },
+                {
+                  "key": "langsmith.metadata.langgraph_step",
+                  "value": {
+                    "intValue": "3"
+                  }
+                },
+                {
+                  "key": "langsmith.metadata.langgraph_node",
+                  "value": {
+                    "stringValue": "agent"
+                  }
+                },
+                {
+                  "key": "langsmith.metadata.langgraph_triggers",
+                  "value": {
+                    "stringValue": "[\"branch:to:agent\"]"
+                  }
+                },
+                {
+                  "key": "langsmith.metadata.langgraph_path",
+                  "value": {
+                    "stringValue": "[\"__pregel_pull\",\"agent\"]"
+                  }
+                },
+                {
+                  "key": "langsmith.metadata.langgraph_checkpoint_ns",
+                  "value": {
+                    "stringValue": "agent:00000000-0000-4000-8000-000000000012"
+                  }
+                },
+                {
+                  "key": "langsmith.metadata.LANGSMITH_TRACING",
+                  "value": {
+                    "stringValue": "true"
+                  }
+                },
+                {
+                  "key": "langsmith.metadata.LANGSMITH_TRACING_MODE",
+                  "value": {
+                    "stringValue": "otel"
+                  }
+                },
+                {
+                  "key": "langsmith.span.tags",
+                  "value": {
+                    "stringValue": "graph:step:3"
+                  }
+                },
+                {
+                  "key": "gen_ai.prompt",
+                  "value": {
+                    "stringValue": "{\"messages\":[{\"content\":\"Where is order O-1?\",\"additional_kwargs\":{},\"response_metadata\":{},\"type\":\"human\",\"id\":\"00000000-0000-4000-8000-000000000006\"},{\"content\":\"\",\"additional_kwargs\":{\"refusal\":null},\"response_metadata\":{\"token_usage\":{\"completion_tokens\":7,\"prompt_tokens\":12,\"total_tokens\":19,\"completion_tokens_details\":null,\"prompt_tokens_details\":null},\"model_provider\":\"openai\",\"model_name\":\"gpt-4o-mini\",\"system_fingerprint\":null,\"id\":\"chatcmpl-1\",\"finish_reason\":\"tool_calls\",\"logprobs\":null},\"type\":\"ai\",\"id\":\"lc_run--00000000-0000-4000-8000-000000000007-0\",\"tool_calls\":[{\"name\":\"lookup_order\",\"args\":{\"order_id\":\"O-1\"},\"id\":\"call_1\",\"type\":\"tool_call\"}],\"invalid_tool_calls\":[],\"usage_metadata\":{\"input_tokens\":12,\"output_tokens\":7,\"total_tokens\":19,\"input_token_details\":{},\"output_token_details\":{}}},{\"content\":\"shipped\",\"additional_kwargs\":{},\"response_metadata\":{},\"type\":\"tool\",\"name\":\"lookup_order\",\"id\":\"00000000-0000-4000-8000-000000000008\",\"tool_call_id\":\"call_1\",\"status\":\"success\"}],\"remaining_steps\":10004}"
+                  }
+                },
+                {
+                  "key": "gen_ai.completion",
+                  "value": {
+                    "stringValue": "{\"messages\":[{\"content\":\"Order O-1 has shipped.\",\"additional_kwargs\":{\"refusal\":null},\"response_metadata\":{\"token_usage\":{\"completion_tokens\":7,\"prompt_tokens\":12,\"total_tokens\":19,\"completion_tokens_details\":null,\"prompt_tokens_details\":null},\"model_provider\":\"openai\",\"model_name\":\"gpt-4o-mini\",\"system_fingerprint\":null,\"id\":\"chatcmpl-1\",\"finish_reason\":\"stop\",\"logprobs\":null},\"type\":\"ai\",\"id\":\"lc_run--00000000-0000-4000-8000-000000000009-0\",\"tool_calls\":[],\"invalid_tool_calls\":[],\"usage_metadata\":{\"input_tokens\":12,\"output_tokens\":7,\"total_tokens\":19,\"input_token_details\":{},\"output_token_details\":{}}}]}"
+                  }
+                }
+              ],
+              "status": {
+                "code": "STATUS_CODE_OK"
+              },
+              "flags": 256
+            },
+            {
+              "traceId": "2de6833fc3dbb437f84129b9d5bfb173",
+              "spanId": "66b1b79aa2cbbf33",
+              "parentSpanId": "6ecb5e8aadef4e12",
+              "name": "call_model",
+              "kind": "SPAN_KIND_INTERNAL",
+              "startTimeUnixNano": "1793749256435504896",
+              "endTimeUnixNano": "1793749256440483072",
+              "attributes": [
+                {
+                  "key": "langsmith.span.kind",
+                  "value": {
+                    "stringValue": "chain"
+                  }
+                },
+                {
+                  "key": "langsmith.trace.name",
+                  "value": {
+                    "stringValue": "call_model"
+                  }
+                },
+                {
+                  "key": "langsmith.trace.session_name",
+                  "value": {
+                    "stringValue": "default"
+                  }
+                },
+                {
+                  "key": "gen_ai.operation.name",
+                  "value": {
+                    "stringValue": "chain"
+                  }
+                },
+                {
+                  "key": "gen_ai.system",
+                  "value": {
+                    "stringValue": "langchain"
+                  }
+                },
+                {
+                  "key": "langsmith.metadata.ls_integration",
+                  "value": {
+                    "stringValue": "langgraph"
+                  }
+                },
+                {
+                  "key": "langsmith.metadata.langgraph_step",
+                  "value": {
+                    "intValue": "3"
+                  }
+                },
+                {
+                  "key": "langsmith.metadata.langgraph_node",
+                  "value": {
+                    "stringValue": "agent"
+                  }
+                },
+                {
+                  "key": "langsmith.metadata.langgraph_triggers",
+                  "value": {
+                    "stringValue": "[\"branch:to:agent\"]"
+                  }
+                },
+                {
+                  "key": "langsmith.metadata.langgraph_path",
+                  "value": {
+                    "stringValue": "[\"__pregel_pull\",\"agent\"]"
+                  }
+                },
+                {
+                  "key": "langsmith.metadata.langgraph_checkpoint_ns",
+                  "value": {
+                    "stringValue": "agent:00000000-0000-4000-8000-000000000012"
+                  }
+                },
+                {
+                  "key": "langsmith.metadata.LANGSMITH_TRACING",
+                  "value": {
+                    "stringValue": "true"
+                  }
+                },
+                {
+                  "key": "langsmith.metadata.LANGSMITH_TRACING_MODE",
+                  "value": {
+                    "stringValue": "otel"
+                  }
+                },
+                {
+                  "key": "langsmith.span.tags",
+                  "value": {
+                    "stringValue": "seq:step:1"
+                  }
+                },
+                {
+                  "key": "gen_ai.prompt",
+                  "value": {
+                    "stringValue": "{\"messages\":[{\"content\":\"Where is order O-1?\",\"additional_kwargs\":{},\"response_metadata\":{},\"type\":\"human\",\"id\":\"00000000-0000-4000-8000-000000000006\"},{\"content\":\"\",\"additional_kwargs\":{\"refusal\":null},\"response_metadata\":{\"token_usage\":{\"completion_tokens\":7,\"prompt_tokens\":12,\"total_tokens\":19,\"completion_tokens_details\":null,\"prompt_tokens_details\":null},\"model_provider\":\"openai\",\"model_name\":\"gpt-4o-mini\",\"system_fingerprint\":null,\"id\":\"chatcmpl-1\",\"finish_reason\":\"tool_calls\",\"logprobs\":null},\"type\":\"ai\",\"id\":\"lc_run--00000000-0000-4000-8000-000000000007-0\",\"tool_calls\":[{\"name\":\"lookup_order\",\"args\":{\"order_id\":\"O-1\"},\"id\":\"call_1\",\"type\":\"tool_call\"}],\"invalid_tool_calls\":[],\"usage_metadata\":{\"input_tokens\":12,\"output_tokens\":7,\"total_tokens\":19,\"input_token_details\":{},\"output_token_details\":{}}},{\"content\":\"shipped\",\"additional_kwargs\":{},\"response_metadata\":{},\"type\":\"tool\",\"name\":\"lookup_order\",\"id\":\"00000000-0000-4000-8000-000000000008\",\"tool_call_id\":\"call_1\",\"status\":\"success\"}],\"remaining_steps\":10004}"
+                  }
+                },
+                {
+                  "key": "gen_ai.completion",
+                  "value": {
+                    "stringValue": "{\"messages\":[{\"content\":\"Order O-1 has shipped.\",\"additional_kwargs\":{\"refusal\":null},\"response_metadata\":{\"token_usage\":{\"completion_tokens\":7,\"prompt_tokens\":12,\"total_tokens\":19,\"completion_tokens_details\":null,\"prompt_tokens_details\":null},\"model_provider\":\"openai\",\"model_name\":\"gpt-4o-mini\",\"system_fingerprint\":null,\"id\":\"chatcmpl-1\",\"finish_reason\":\"stop\",\"logprobs\":null},\"type\":\"ai\",\"id\":\"lc_run--00000000-0000-4000-8000-000000000009-0\",\"tool_calls\":[],\"invalid_tool_calls\":[],\"usage_metadata\":{\"input_tokens\":12,\"output_tokens\":7,\"total_tokens\":19,\"input_token_details\":{},\"output_token_details\":{}}}]}"
+                  }
+                }
+              ],
+              "status": {
+                "code": "STATUS_CODE_OK"
+              },
+              "flags": 256
+            },
+            {
+              "traceId": "2de6833fc3dbb437f84129b9d5bfb173",
+              "spanId": "d39e43f763afc78a",
+              "parentSpanId": "66b1b79aa2cbbf33",
+              "name": "RunnableSequence",
+              "kind": "SPAN_KIND_INTERNAL",
+              "startTimeUnixNano": "1793749256436062976",
+              "endTimeUnixNano": "1793749256440416000",
+              "attributes": [
+                {
+                  "key": "langsmith.span.kind",
+                  "value": {
+                    "stringValue": "chain"
+                  }
+                },
+                {
+                  "key": "langsmith.trace.name",
+                  "value": {
+                    "stringValue": "RunnableSequence"
+                  }
+                },
+                {
+                  "key": "langsmith.trace.session_name",
+                  "value": {
+                    "stringValue": "default"
+                  }
+                },
+                {
+                  "key": "gen_ai.operation.name",
+                  "value": {
+                    "stringValue": "chain"
+                  }
+                },
+                {
+                  "key": "gen_ai.system",
+                  "value": {
+                    "stringValue": "langchain"
+                  }
+                },
+                {
+                  "key": "langsmith.metadata.ls_integration",
+                  "value": {
+                    "stringValue": "langgraph"
+                  }
+                },
+                {
+                  "key": "langsmith.metadata.langgraph_step",
+                  "value": {
+                    "intValue": "3"
+                  }
+                },
+                {
+                  "key": "langsmith.metadata.langgraph_node",
+                  "value": {
+                    "stringValue": "agent"
+                  }
+                },
+                {
+                  "key": "langsmith.metadata.langgraph_triggers",
+                  "value": {
+                    "stringValue": "[\"branch:to:agent\"]"
+                  }
+                },
+                {
+                  "key": "langsmith.metadata.langgraph_path",
+                  "value": {
+                    "stringValue": "[\"__pregel_pull\",\"agent\"]"
+                  }
+                },
+                {
+                  "key": "langsmith.metadata.langgraph_checkpoint_ns",
+                  "value": {
+                    "stringValue": "agent:00000000-0000-4000-8000-000000000012"
+                  }
+                },
+                {
+                  "key": "langsmith.metadata.checkpoint_ns",
+                  "value": {
+                    "stringValue": "agent:00000000-0000-4000-8000-000000000012"
+                  }
+                },
+                {
+                  "key": "langsmith.metadata.LANGSMITH_TRACING",
+                  "value": {
+                    "stringValue": "true"
+                  }
+                },
+                {
+                  "key": "langsmith.metadata.LANGSMITH_TRACING_MODE",
+                  "value": {
+                    "stringValue": "otel"
+                  }
+                },
+                {
+                  "key": "langsmith.span.tags",
+                  "value": {
+                    "stringValue": "seq:step:1"
+                  }
+                },
+                {
+                  "key": "gen_ai.prompt",
+                  "value": {
+                    "stringValue": "{\"messages\":[{\"content\":\"Where is order O-1?\",\"additional_kwargs\":{},\"response_metadata\":{},\"type\":\"human\",\"id\":\"00000000-0000-4000-8000-000000000006\"},{\"content\":\"\",\"additional_kwargs\":{\"refusal\":null},\"response_metadata\":{\"token_usage\":{\"completion_tokens\":7,\"prompt_tokens\":12,\"total_tokens\":19,\"completion_tokens_details\":null,\"prompt_tokens_details\":null},\"model_provider\":\"openai\",\"model_name\":\"gpt-4o-mini\",\"system_fingerprint\":null,\"id\":\"chatcmpl-1\",\"finish_reason\":\"tool_calls\",\"logprobs\":null},\"type\":\"ai\",\"id\":\"lc_run--00000000-0000-4000-8000-000000000007-0\",\"tool_calls\":[{\"name\":\"lookup_order\",\"args\":{\"order_id\":\"O-1\"},\"id\":\"call_1\",\"type\":\"tool_call\"}],\"invalid_tool_calls\":[],\"usage_metadata\":{\"input_tokens\":12,\"output_tokens\":7,\"total_tokens\":19,\"input_token_details\":{},\"output_token_details\":{}}},{\"content\":\"shipped\",\"additional_kwargs\":{},\"response_metadata\":{},\"type\":\"tool\",\"name\":\"lookup_order\",\"id\":\"00000000-0000-4000-8000-000000000008\",\"tool_call_id\":\"call_1\",\"status\":\"success\"}],\"remaining_steps\":10004}"
+                  }
+                },
+                {
+                  "key": "gen_ai.usage.input_tokens",
+                  "value": {
+                    "intValue": "12"
+                  }
+                },
+                {
+                  "key": "gen_ai.usage.output_tokens",
+                  "value": {
+                    "intValue": "7"
+                  }
+                },
+                {
+                  "key": "gen_ai.usage.total_tokens",
+                  "value": {
+                    "intValue": "19"
+                  }
+                },
+                {
+                  "key": "gen_ai.completion",
+                  "value": {
+                    "stringValue": "{\"output\":{\"content\":\"Order O-1 has shipped.\",\"additional_kwargs\":{\"refusal\":null},\"response_metadata\":{\"token_usage\":{\"completion_tokens\":7,\"prompt_tokens\":12,\"total_tokens\":19,\"completion_tokens_details\":null,\"prompt_tokens_details\":null},\"model_provider\":\"openai\",\"model_name\":\"gpt-4o-mini\",\"system_fingerprint\":null,\"id\":\"chatcmpl-1\",\"finish_reason\":\"stop\",\"logprobs\":null},\"type\":\"ai\",\"id\":\"lc_run--00000000-0000-4000-8000-000000000009-0\",\"tool_calls\":[],\"invalid_tool_calls\":[],\"usage_metadata\":{\"input_tokens\":12,\"output_tokens\":7,\"total_tokens\":19,\"input_token_details\":{},\"output_token_details\":{}}}}"
+                  }
+                }
+              ],
+              "status": {
+                "code": "STATUS_CODE_OK"
+              },
+              "flags": 256
+            },
+            {
+              "traceId": "2de6833fc3dbb437f84129b9d5bfb173",
+              "spanId": "a3ba2adc0601227c",
+              "parentSpanId": "d39e43f763afc78a",
+              "name": "Prompt",
+              "kind": "SPAN_KIND_INTERNAL",
+              "startTimeUnixNano": "1793749256436212992",
+              "endTimeUnixNano": "1793749256436312064",
+              "attributes": [
+                {
+                  "key": "langsmith.span.kind",
+                  "value": {
+                    "stringValue": "chain"
+                  }
+                },
+                {
+                  "key": "langsmith.trace.name",
+                  "value": {
+                    "stringValue": "Prompt"
+                  }
+                },
+                {
+                  "key": "langsmith.trace.session_name",
+                  "value": {
+                    "stringValue": "default"
+                  }
+                },
+                {
+                  "key": "gen_ai.operation.name",
+                  "value": {
+                    "stringValue": "chain"
+                  }
+                },
+                {
+                  "key": "gen_ai.system",
+                  "value": {
+                    "stringValue": "langchain"
+                  }
+                },
+                {
+                  "key": "langsmith.metadata.ls_integration",
+                  "value": {
+                    "stringValue": "langgraph"
+                  }
+                },
+                {
+                  "key": "langsmith.metadata.langgraph_step",
+                  "value": {
+                    "intValue": "3"
+                  }
+                },
+                {
+                  "key": "langsmith.metadata.langgraph_node",
+                  "value": {
+                    "stringValue": "agent"
+                  }
+                },
+                {
+                  "key": "langsmith.metadata.langgraph_triggers",
+                  "value": {
+                    "stringValue": "[\"branch:to:agent\"]"
+                  }
+                },
+                {
+                  "key": "langsmith.metadata.langgraph_path",
+                  "value": {
+                    "stringValue": "[\"__pregel_pull\",\"agent\"]"
+                  }
+                },
+                {
+                  "key": "langsmith.metadata.langgraph_checkpoint_ns",
+                  "value": {
+                    "stringValue": "agent:00000000-0000-4000-8000-000000000012"
+                  }
+                },
+                {
+                  "key": "langsmith.metadata.checkpoint_ns",
+                  "value": {
+                    "stringValue": "agent:00000000-0000-4000-8000-000000000012"
+                  }
+                },
+                {
+                  "key": "langsmith.metadata.LANGSMITH_TRACING",
+                  "value": {
+                    "stringValue": "true"
+                  }
+                },
+                {
+                  "key": "langsmith.metadata.LANGSMITH_TRACING_MODE",
+                  "value": {
+                    "stringValue": "otel"
+                  }
+                },
+                {
+                  "key": "langsmith.span.tags",
+                  "value": {
+                    "stringValue": "seq:step:1"
+                  }
+                },
+                {
+                  "key": "gen_ai.prompt",
+                  "value": {
+                    "stringValue": "{\"messages\":[{\"content\":\"Where is order O-1?\",\"additional_kwargs\":{},\"response_metadata\":{},\"type\":\"human\",\"id\":\"00000000-0000-4000-8000-000000000006\"},{\"content\":\"\",\"additional_kwargs\":{\"refusal\":null},\"response_metadata\":{\"token_usage\":{\"completion_tokens\":7,\"prompt_tokens\":12,\"total_tokens\":19,\"completion_tokens_details\":null,\"prompt_tokens_details\":null},\"model_provider\":\"openai\",\"model_name\":\"gpt-4o-mini\",\"system_fingerprint\":null,\"id\":\"chatcmpl-1\",\"finish_reason\":\"tool_calls\",\"logprobs\":null},\"type\":\"ai\",\"id\":\"lc_run--00000000-0000-4000-8000-000000000007-0\",\"tool_calls\":[{\"name\":\"lookup_order\",\"args\":{\"order_id\":\"O-1\"},\"id\":\"call_1\",\"type\":\"tool_call\"}],\"invalid_tool_calls\":[],\"usage_metadata\":{\"input_tokens\":12,\"output_tokens\":7,\"total_tokens\":19,\"input_token_details\":{},\"output_token_details\":{}}},{\"content\":\"shipped\",\"additional_kwargs\":{},\"response_metadata\":{},\"type\":\"tool\",\"name\":\"lookup_order\",\"id\":\"00000000-0000-4000-8000-000000000008\",\"tool_call_id\":\"call_1\",\"status\":\"success\"}],\"remaining_steps\":10004}"
+                  }
+                },
+                {
+                  "key": "gen_ai.completion",
+                  "value": {
+                    "stringValue": "{\"output\":[{\"content\":\"Where is order O-1?\",\"additional_kwargs\":{},\"response_metadata\":{},\"type\":\"human\",\"id\":\"00000000-0000-4000-8000-000000000006\"},{\"content\":\"\",\"additional_kwargs\":{\"refusal\":null},\"response_metadata\":{\"token_usage\":{\"completion_tokens\":7,\"prompt_tokens\":12,\"total_tokens\":19,\"completion_tokens_details\":null,\"prompt_tokens_details\":null},\"model_provider\":\"openai\",\"model_name\":\"gpt-4o-mini\",\"system_fingerprint\":null,\"id\":\"chatcmpl-1\",\"finish_reason\":\"tool_calls\",\"logprobs\":null},\"type\":\"ai\",\"id\":\"lc_run--00000000-0000-4000-8000-000000000007-0\",\"tool_calls\":[{\"name\":\"lookup_order\",\"args\":{\"order_id\":\"O-1\"},\"id\":\"call_1\",\"type\":\"tool_call\"}],\"invalid_tool_calls\":[],\"usage_metadata\":{\"input_tokens\":12,\"output_tokens\":7,\"total_tokens\":19,\"input_token_details\":{},\"output_token_details\":{}}},{\"content\":\"shipped\",\"additional_kwargs\":{},\"response_metadata\":{},\"type\":\"tool\",\"name\":\"lookup_order\",\"id\":\"00000000-0000-4000-8000-000000000008\",\"tool_call_id\":\"call_1\",\"status\":\"success\"}]}"
+                  }
+                }
+              ],
+              "status": {
+                "code": "STATUS_CODE_OK"
+              },
+              "flags": 256
+            },
+            {
+              "traceId": "2de6833fc3dbb437f84129b9d5bfb173",
+              "spanId": "fb9913e9848ac753",
+              "parentSpanId": "d39e43f763afc78a",
+              "name": "ChatOpenAI",
+              "kind": "SPAN_KIND_INTERNAL",
+              "startTimeUnixNano": "1793749256436587008",
+              "endTimeUnixNano": "1793749256440282112",
+              "attributes": [
+                {
+                  "key": "langsmith.span.kind",
+                  "value": {
+                    "stringValue": "llm"
+                  }
+                },
+                {
+                  "key": "langsmith.trace.name",
+                  "value": {
+                    "stringValue": "ChatOpenAI"
+                  }
+                },
+                {
+                  "key": "langsmith.trace.session_name",
+                  "value": {
+                    "stringValue": "default"
+                  }
+                },
+                {
+                  "key": "gen_ai.operation.name",
+                  "value": {
+                    "stringValue": "chat"
+                  }
+                },
+                {
+                  "key": "gen_ai.system",
+                  "value": {
+                    "stringValue": "openai"
+                  }
+                },
+                {
+                  "key": "gen_ai.request.model",
+                  "value": {
+                    "stringValue": "gpt-4o-mini"
+                  }
+                },
+                {
+                  "key": "gen_ai.tool.definitions",
+                  "value": {
+                    "stringValue": "[{\"type\":\"function\",\"function\":{\"name\":\"lookup_order\",\"description\":\"Look up an order's shipping status.\",\"parameters\":{\"properties\":{\"order_id\":{\"type\":\"string\"}},\"required\":[\"order_id\"],\"type\":\"object\"}}}]"
+                  }
+                },
+                {
+                  "key": "langsmith.metadata.ls_integration",
+                  "value": {
+                    "stringValue": "langchain_chat_model"
+                  }
+                },
+                {
+                  "key": "langsmith.metadata.langgraph_step",
+                  "value": {
+                    "intValue": "3"
+                  }
+                },
+                {
+                  "key": "langsmith.metadata.langgraph_node",
+                  "value": {
+                    "stringValue": "agent"
+                  }
+                },
+                {
+                  "key": "langsmith.metadata.langgraph_triggers",
+                  "value": {
+                    "stringValue": "[\"branch:to:agent\"]"
+                  }
+                },
+                {
+                  "key": "langsmith.metadata.langgraph_path",
+                  "value": {
+                    "stringValue": "[\"__pregel_pull\",\"agent\"]"
+                  }
+                },
+                {
+                  "key": "langsmith.metadata.langgraph_checkpoint_ns",
+                  "value": {
+                    "stringValue": "agent:00000000-0000-4000-8000-000000000012"
+                  }
+                },
+                {
+                  "key": "langsmith.metadata.checkpoint_ns",
+                  "value": {
+                    "stringValue": "agent:00000000-0000-4000-8000-000000000012"
+                  }
+                },
+                {
+                  "key": "langsmith.metadata.ls_provider",
+                  "value": {
+                    "stringValue": "openai"
+                  }
+                },
+                {
+                  "key": "langsmith.metadata.ls_model_name",
+                  "value": {
+                    "stringValue": "gpt-4o-mini"
+                  }
+                },
+                {
+                  "key": "langsmith.metadata.ls_model_type",
+                  "value": {
+                    "stringValue": "chat"
+                  }
+                },
+                {
+                  "key": "langsmith.metadata.lc_versions",
+                  "value": {
+                    "stringValue": "{\"langchain-core\":\"1.7.4\",\"langchain-openai\":\"1.7.3\"}"
+                  }
+                },
+                {
+                  "key": "langsmith.metadata.model",
+                  "value": {
+                    "stringValue": "gpt-4o-mini"
+                  }
+                },
+                {
+                  "key": "langsmith.metadata.model_name",
+                  "value": {
+                    "stringValue": "gpt-4o-mini"
+                  }
+                },
+                {
+                  "key": "langsmith.metadata.stream",
+                  "value": {
+                    "boolValue": false
+                  }
+                },
+                {
+                  "key": "langsmith.metadata._type",
+                  "value": {
+                    "stringValue": "openai-chat"
+                  }
+                },
+                {
+                  "key": "langsmith.metadata.usage_metadata",
+                  "value": {
+                    "stringValue": "{\"input_tokens\":12,\"output_tokens\":7,\"total_tokens\":19,\"input_token_details\":{},\"output_token_details\":{}}"
+                  }
+                },
+                {
+                  "key": "langsmith.metadata.LANGSMITH_TRACING",
+                  "value": {
+                    "stringValue": "true"
+                  }
+                },
+                {
+                  "key": "langsmith.metadata.LANGSMITH_TRACING_MODE",
+                  "value": {
+                    "stringValue": "otel"
+                  }
+                },
+                {
+                  "key": "langsmith.span.tags",
+                  "value": {
+                    "stringValue": "seq:step:2"
+                  }
+                },
+                {
+                  "key": "gen_ai.serialized.name",
+                  "value": {
+                    "stringValue": "ChatOpenAI"
+                  }
+                },
+                {
+                  "key": "gen_ai.prompt",
+                  "value": {
+                    "stringValue": "{\"messages\":[[{\"lc\":1,\"type\":\"constructor\",\"id\":[\"langchain\",\"schema\",\"messages\",\"HumanMessage\"],\"kwargs\":{\"content\":\"Where is order O-1?\",\"type\":\"human\",\"id\":\"00000000-0000-4000-8000-000000000006\"}},{\"lc\":1,\"type\":\"constructor\",\"id\":[\"langchain\",\"schema\",\"messages\",\"AIMessage\"],\"kwargs\":{\"content\":\"\",\"additional_kwargs\":{\"refusal\":null},\"response_metadata\":{\"token_usage\":{\"completion_tokens\":7,\"prompt_tokens\":12,\"total_tokens\":19,\"completion_tokens_details\":null,\"prompt_tokens_details\":null},\"model_provider\":\"openai\",\"model_name\":\"gpt-4o-mini\",\"system_fingerprint\":null,\"id\":\"chatcmpl-1\",\"finish_reason\":\"tool_calls\",\"logprobs\":null},\"type\":\"ai\",\"id\":\"lc_run--00000000-0000-4000-8000-000000000007-0\",\"tool_calls\":[{\"name\":\"lookup_order\",\"args\":{\"order_id\":\"O-1\"},\"id\":\"call_1\",\"type\":\"tool_call\"}],\"usage_metadata\":{\"input_tokens\":12,\"output_tokens\":7,\"total_tokens\":19,\"input_token_details\":{},\"output_token_details\":{}},\"invalid_tool_calls\":[]}},{\"lc\":1,\"type\":\"constructor\",\"id\":[\"langchain\",\"schema\",\"messages\",\"ToolMessage\"],\"kwargs\":{\"content\":\"shipped\",\"type\":\"tool\",\"name\":\"lookup_order\",\"id\":\"00000000-0000-4000-8000-000000000008\",\"tool_call_id\":\"call_1\",\"status\":\"success\"}}]]}"
+                  }
+                },
+                {
+                  "key": "gen_ai.usage.input_tokens",
+                  "value": {
+                    "intValue": "12"
+                  }
+                },
+                {
+                  "key": "gen_ai.usage.output_tokens",
+                  "value": {
+                    "intValue": "7"
+                  }
+                },
+                {
+                  "key": "gen_ai.usage.total_tokens",
+                  "value": {
+                    "intValue": "19"
+                  }
+                },
+                {
+                  "key": "gen_ai.completion",
+                  "value": {
+                    "stringValue": "{\"generations\":[[{\"text\":\"Order O-1 has shipped.\",\"generation_info\":{\"finish_reason\":\"stop\",\"logprobs\":null},\"type\":\"ChatGeneration\",\"message\":{\"lc\":1,\"type\":\"constructor\",\"id\":[\"langchain\",\"schema\",\"messages\",\"AIMessage\"],\"kwargs\":{\"content\":\"Order O-1 has shipped.\",\"additional_kwargs\":{\"refusal\":null},\"response_metadata\":{\"token_usage\":{\"completion_tokens\":7,\"prompt_tokens\":12,\"total_tokens\":19,\"completion_tokens_details\":null,\"prompt_tokens_details\":null},\"model_provider\":\"openai\",\"model_name\":\"gpt-4o-mini\",\"system_fingerprint\":null,\"id\":\"chatcmpl-1\",\"finish_reason\":\"stop\",\"logprobs\":null},\"type\":\"ai\",\"id\":\"lc_run--00000000-0000-4000-8000-000000000009-0\",\"usage_metadata\":{\"input_tokens\":12,\"output_tokens\":7,\"total_tokens\":19,\"input_token_details\":{},\"output_token_details\":{}},\"tool_calls\":[],\"invalid_tool_calls\":[]}}}]],\"llm_output\":{\"token_usage\":{\"completion_tokens\":7,\"prompt_tokens\":12,\"total_tokens\":19,\"completion_tokens_details\":null,\"prompt_tokens_details\":null},\"model_provider\":\"openai\",\"model_name\":\"gpt-4o-mini\",\"system_fingerprint\":null,\"id\":\"chatcmpl-1\"},\"run\":null,\"type\":\"LLMResult\"}"
+                  }
+                }
+              ],
+              "status": {
+                "code": "STATUS_CODE_OK"
+              },
+              "flags": 256
+            },
+            {
+              "traceId": "2de6833fc3dbb437f84129b9d5bfb173",
+              "spanId": "eaf2abeb80740b85",
+              "parentSpanId": "6ecb5e8aadef4e12",
+              "name": "should_continue",
+              "kind": "SPAN_KIND_INTERNAL",
+              "startTimeUnixNano": "1793749256440613120",
+              "endTimeUnixNano": "1793749256440754944",
+              "attributes": [
+                {
+                  "key": "langsmith.span.kind",
+                  "value": {
+                    "stringValue": "chain"
+                  }
+                },
+                {
+                  "key": "langsmith.trace.name",
+                  "value": {
+                    "stringValue": "should_continue"
+                  }
+                },
+                {
+                  "key": "langsmith.trace.session_name",
+                  "value": {
+                    "stringValue": "default"
+                  }
+                },
+                {
+                  "key": "gen_ai.operation.name",
+                  "value": {
+                    "stringValue": "chain"
+                  }
+                },
+                {
+                  "key": "gen_ai.system",
+                  "value": {
+                    "stringValue": "langchain"
+                  }
+                },
+                {
+                  "key": "langsmith.metadata.ls_integration",
+                  "value": {
+                    "stringValue": "langgraph"
+                  }
+                },
+                {
+                  "key": "langsmith.metadata.langgraph_step",
+                  "value": {
+                    "intValue": "3"
+                  }
+                },
+                {
+                  "key": "langsmith.metadata.langgraph_node",
+                  "value": {
+                    "stringValue": "agent"
+                  }
+                },
+                {
+                  "key": "langsmith.metadata.langgraph_triggers",
+                  "value": {
+                    "stringValue": "[\"branch:to:agent\"]"
+                  }
+                },
+                {
+                  "key": "langsmith.metadata.langgraph_path",
+                  "value": {
+                    "stringValue": "[\"__pregel_pull\",\"agent\"]"
+                  }
+                },
+                {
+                  "key": "langsmith.metadata.langgraph_checkpoint_ns",
+                  "value": {
+                    "stringValue": "agent:00000000-0000-4000-8000-000000000012"
+                  }
+                },
+                {
+                  "key": "langsmith.metadata.LANGSMITH_TRACING",
+                  "value": {
+                    "stringValue": "true"
+                  }
+                },
+                {
+                  "key": "langsmith.metadata.LANGSMITH_TRACING_MODE",
+                  "value": {
+                    "stringValue": "otel"
+                  }
+                },
+                {
+                  "key": "langsmith.span.tags",
+                  "value": {
+                    "stringValue": "seq:step:3"
+                  }
+                },
+                {
+                  "key": "gen_ai.prompt",
+                  "value": {
+                    "stringValue": "{\"messages\":[{\"content\":\"Where is order O-1?\",\"additional_kwargs\":{},\"response_metadata\":{},\"type\":\"human\",\"id\":\"00000000-0000-4000-8000-000000000006\"},{\"content\":\"\",\"additional_kwargs\":{\"refusal\":null},\"response_metadata\":{\"token_usage\":{\"completion_tokens\":7,\"prompt_tokens\":12,\"total_tokens\":19,\"completion_tokens_details\":null,\"prompt_tokens_details\":null},\"model_provider\":\"openai\",\"model_name\":\"gpt-4o-mini\",\"system_fingerprint\":null,\"id\":\"chatcmpl-1\",\"finish_reason\":\"tool_calls\",\"logprobs\":null},\"type\":\"ai\",\"id\":\"lc_run--00000000-0000-4000-8000-000000000007-0\",\"tool_calls\":[{\"name\":\"lookup_order\",\"args\":{\"order_id\":\"O-1\"},\"id\":\"call_1\",\"type\":\"tool_call\"}],\"invalid_tool_calls\":[],\"usage_metadata\":{\"input_tokens\":12,\"output_tokens\":7,\"total_tokens\":19,\"input_token_details\":{},\"output_token_details\":{}}},{\"content\":\"shipped\",\"additional_kwargs\":{},\"response_metadata\":{},\"type\":\"tool\",\"name\":\"lookup_order\",\"id\":\"00000000-0000-4000-8000-000000000008\",\"tool_call_id\":\"call_1\",\"status\":\"success\"},{\"content\":\"Order O-1 has shipped.\",\"additional_kwargs\":{\"refusal\":null},\"response_metadata\":{\"token_usage\":{\"completion_tokens\":7,\"prompt_tokens\":12,\"total_tokens\":19,\"completion_tokens_details\":null,\"prompt_tokens_details\":null},\"model_provider\":\"openai\",\"model_name\":\"gpt-4o-mini\",\"system_fingerprint\":null,\"id\":\"chatcmpl-1\",\"finish_reason\":\"stop\",\"logprobs\":null},\"type\":\"ai\",\"id\":\"lc_run--00000000-0000-4000-8000-000000000009-0\",\"tool_calls\":[],\"invalid_tool_calls\":[],\"usage_metadata\":{\"input_tokens\":12,\"output_tokens\":7,\"total_tokens\":19,\"input_token_details\":{},\"output_token_details\":{}}}],\"remaining_steps\":10004}"
+                  }
+                },
+                {
+                  "key": "gen_ai.completion",
+                  "value": {
+                    "stringValue": "{\"output\":\"__end__\"}"
+                  }
+                }
+              ],
+              "status": {
+                "code": "STATUS_CODE_OK"
+              },
+              "flags": 256
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -218,8 +218,9 @@ var evaluators = map[string]interface {
 // Verify evaluates contracts on the trace. Without expectFail the fixture is
 // verified when every contract passes; with expectFail (an incident
 // reproduction) when at least one fails and the rest pass, and the failing
-// ones are recorded as expected failures. A trace that fails trace check is
-// never verified.
+// ones are recorded as expected failures. A trace that fails trace check, or
+// holds no llm_call and no tool_call step (nothing to verify), is never
+// verified.
 func Verify(t *types.Trace, contracts []Contract, expectFail bool, check TraceCheckResult) (Verification, error) {
 	v := Verification{ExpectFail: expectFail, TraceCheck: check, Results: []ContractResult{}, ExpectedFailures: []string{}}
 	var failing, other []string
@@ -238,11 +239,23 @@ func Verify(t *types.Trace, contracts []Contract, expectFail bool, check TraceCh
 			other = append(other, c.ID)
 		}
 	}
+	evidence := HasModelOrToolSteps(t)
 	if expectFail {
 		v.ExpectedFailures = append(v.ExpectedFailures, failing...)
-		v.Verified = check.OK && len(failing) > 0 && len(other) == 0
+		v.Verified = check.OK && evidence && len(failing) > 0 && len(other) == 0
 	} else {
-		v.Verified = check.OK && len(failing) == 0 && len(other) == 0
+		v.Verified = check.OK && evidence && len(failing) == 0 && len(other) == 0
 	}
 	return v, nil
+}
+
+// HasModelOrToolSteps reports whether a trace records at least one llm_call or
+// tool_call step. Contracts over a trace without either pass vacuously.
+func HasModelOrToolSteps(t *types.Trace) bool {
+	for i := range t.Steps {
+		if k := t.Steps[i].Type; k == types.StepTypeLLMCall || k == types.StepTypeToolCall {
+			return true
+		}
+	}
+	return false
 }

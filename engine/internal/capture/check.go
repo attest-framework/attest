@@ -165,7 +165,11 @@ func CheckFixture(data []byte) *trace.CheckReport {
 	if tc := f.Verification.TraceCheck; !tc.OK {
 		add(trace.SeverityError, IssueCaptureCheck, fmt.Sprintf("the captured spans failed trace check with %d errors", tc.Errors))
 	}
-	if !f.Verification.Verified {
+	switch {
+	case f.Verification.Verified:
+	case !HasModelOrToolSteps(t):
+		add(trace.SeverityWarning, IssueUnverified, "fixture is not verified; its trace has no llm_call or tool_call step, so there was nothing to verify")
+	default:
 		add(trace.SeverityWarning, IssueUnverified, "fixture is not verified; its drafted contracts did not hold at capture")
 	}
 	r.OK = len(r.Errors()) == 0

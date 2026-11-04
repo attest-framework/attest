@@ -29,19 +29,43 @@ const (
 	traceIDHexLength  = 32
 	spanIDHexLength   = 16
 	statusErrorString = "STATUS_CODE_ERROR"
+
+	// EventToolOutput is the span event Claude Code records a tool's output
+	// on. It is the only span event the parser retains.
+	EventToolOutput = "tool.output"
+	// maxEventsPerSpan bounds the events inspected per span; maxKeptEvents
+	// bounds the retained ones (the first maxKeptEvents tool.output events).
+	// Every other event is decoded as JSON and dropped.
+	maxEventsPerSpan = 256
+	maxKeptEvents    = 4
 )
+
+// limitError is an input-limit violation. Limit errors always reject the
+// export; other errors in a tool.output event only drop that event.
+type limitError struct{ msg string }
+
+func (e *limitError) Error() string { return e.msg }
+
+// Event is a retained OTLP span event (only EventToolOutput events are kept).
+type Event struct {
+	Name       string
+	Attributes map[string]any
+}
 
 // Span is one OTLP span reduced to the fields trace conversion and trace
 // check read. IDs are lowercase hex. Attribute values are string, bool,
 // int64, float64, []any or map[string]any.
 type Span struct {
-	TraceID       string
-	SpanID        string
-	ParentSpanID  string
-	Name          string
-	StartNs       uint64
-	EndNs         uint64
-	Attributes    map[string]any
+	TraceID      string
+	SpanID       string
+	ParentSpanID string
+	Name         string
+	StartNs      uint64
+	EndNs        uint64
+	Attributes   map[string]any
+	Events       []Event
+	// DroppedEvents counts tool.output events dropped as malformed.
+	DroppedEvents int
 	StatusError   bool
 	StatusMessage string
 	// Order is the span's position in the input document.
@@ -236,6 +260,9 @@ type rawSpan struct {
 	traceID, spanID, parentID, name string
 	start, end                      *uint64
 	attrs                           map[string]any
+	events                          []Event
+	droppedEvents                   int
+	nEvents                         int
 	statusError                     bool
 	statusMessage                   string
 	nAttrs                          int
@@ -271,6 +298,34 @@ func (p *otlpParser) span() (Span, error) {
 				}
 				return nil
 			})
+		case "events":
+			// Counted across repeats of the key, like attributes.
+			_, err = p.array("events", func(int) error {
+				r.nEvents++
+				// Only tool.output events are read. The rest, and everything
+				// past the cap, are decoded (stdlib nesting cap) and dropped,
+				// so a producer with many or odd events still converts.
+				var raw json.RawMessage
+				if err := p.dec.Decode(&raw); err != nil {
+					return fmt.Errorf("events: %w", err)
+				}
+				if r.nEvents > maxEventsPerSpan || len(r.events) >= maxKeptEvents || eventName(raw) != EventToolOutput {
+					return nil
+				}
+				ev, err := p.subParser(raw).event()
+				var limit *limitError
+				switch {
+				case errors.As(err, &limit):
+					return fmt.Errorf("events: %w", err)
+				case err != nil:
+					// A malformed tool.output event is dropped, not fatal;
+					// trace check warns (malformed_event).
+					r.droppedEvents++
+				case ev.Name == EventToolOutput:
+					r.events = append(r.events, ev)
+				}
+				return nil
+			})
 		case "status":
 			_, err = p.object("status", func(key string) error {
 				var err error
@@ -293,6 +348,67 @@ func (p *otlpParser) span() (Span, error) {
 		return Span{}, err
 	}
 	return r.validate()
+}
+
+// eventName is the name of a raw event, or "" when it is not an object with a
+// string name.
+func eventName(raw []byte) string {
+	// Exact, case-sensitive key, like the strict event parser.
+	var e map[string]json.RawMessage
+	if json.Unmarshal(raw, &e) != nil {
+		return ""
+	}
+	var name string
+	if json.Unmarshal(e["name"], &name) != nil {
+		return ""
+	}
+	return name
+}
+
+// subParser reads one already-decoded value; it shares this parser's value
+// count, so event attributes count toward the document-wide value cap.
+func (p *otlpParser) subParser(raw []byte) *otlpSub {
+	d := json.NewDecoder(bytes.NewReader(raw))
+	d.UseNumber()
+	return &otlpSub{p: &otlpParser{dec: d, values: p.values}, parent: p}
+}
+
+// otlpSub folds the sub-parser's value count back into its parent.
+type otlpSub struct {
+	p      *otlpParser
+	parent *otlpParser
+}
+
+func (s *otlpSub) event() (Event, error) {
+	ev, err := s.p.event()
+	s.parent.values = s.p.values
+	return ev, err
+}
+
+// event reads one span event. Its attributes are capped at MaxAttrsPerSpan
+// per event and count toward the document-wide value cap.
+func (p *otlpParser) event() (Event, error) {
+	ev := Event{Attributes: map[string]any{}}
+	n := 0
+	_, err := p.object("event", func(key string) error {
+		switch key {
+		case "name":
+			name, err := p.str("event.name")
+			ev.Name = name
+			return err
+		case "attributes":
+			_, err := p.array("event.attributes", func(int) error {
+				n++
+				if n > MaxAttrsPerSpan {
+					return &limitError{fmt.Sprintf("event.attributes: more than %d entries", MaxAttrsPerSpan)}
+				}
+				return p.keyValue(ev.Attributes, 0)
+			})
+			return err
+		}
+		return p.skip()
+	})
+	return ev, err
 }
 
 func (r *rawSpan) validate() (Span, error) {
@@ -322,6 +438,8 @@ func (r *rawSpan) validate() (Span, error) {
 		StartNs:       *r.start,
 		EndNs:         *r.end,
 		Attributes:    r.attrs,
+		Events:        r.events,
+		DroppedEvents: r.droppedEvents,
 		StatusError:   r.statusError,
 		StatusMessage: r.statusMessage,
 	}, nil
@@ -409,7 +527,7 @@ func (p *otlpParser) statusCode() (bool, error) {
 func (p *otlpParser) countValue() error {
 	p.values++
 	if p.values > MaxOTLPValues {
-		return fmt.Errorf("OTLP input has more than %d attribute values", MaxOTLPValues)
+		return &limitError{fmt.Sprintf("OTLP input has more than %d attribute values", MaxOTLPValues)}
 	}
 	return nil
 }
@@ -452,7 +570,7 @@ func (p *otlpParser) keyValue(into map[string]any, depth int) error {
 // anyValue reads an OTLP AnyValue. An empty or null AnyValue is nil.
 func (p *otlpParser) anyValue(depth int) (any, error) {
 	if depth >= MaxAnyValueDepth {
-		return nil, fmt.Errorf("value nesting exceeds %d levels", MaxAnyValueDepth)
+		return nil, &limitError{fmt.Sprintf("value nesting exceeds %d levels", MaxAnyValueDepth)}
 	}
 	if err := p.countValue(); err != nil {
 		return nil, err

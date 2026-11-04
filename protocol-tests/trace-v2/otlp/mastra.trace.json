@@ -1,0 +1,95 @@
+{
+  "schema_version": 2,
+  "trace_id": "otel_229e701d185e148c",
+  "agent_id": "Order Agent",
+  "input": {},
+  "steps": [
+    {
+      "type": "llm_call",
+      "name": "chat gpt-4o-mini",
+      "args": {
+        "model": "gpt-4o-mini",
+        "operation": "chat",
+        "provider": "openai.chat"
+      },
+      "result": {
+        "finish_reasons": [
+          "tool-calls"
+        ],
+        "input_tokens": 12,
+        "output_tokens": 7
+      },
+      "metadata": {
+        "duration_ms": 43
+      },
+      "started_at_ms": 1793749285569,
+      "ended_at_ms": 1793749285612,
+      "agent_id": "order-agent",
+      "agent_role": "Order Agent",
+      "span_id": "f7fbc11a9b20cb3f",
+      "parent_span_id": "13405e093f04a3f7"
+    },
+    {
+      "type": "tool_call",
+      "name": "lookup_order",
+      "args": {
+        "order_id": "O-1"
+      },
+      "result": {
+        "result": "shipped"
+      },
+      "metadata": {
+        "duration_ms": 3
+      },
+      "started_at_ms": 1793749285617,
+      "ended_at_ms": 1793749285620,
+      "span_id": "9391536fe5060662",
+      "parent_span_id": "13405e093f04a3f7",
+      "tool_call_id": "call_1"
+    },
+    {
+      "type": "llm_call",
+      "name": "chat gpt-4o-mini",
+      "args": {
+        "model": "gpt-4o-mini",
+        "operation": "chat",
+        "provider": "openai.chat"
+      },
+      "result": {
+        "finish_reasons": [
+          "stop"
+        ],
+        "input_tokens": 12,
+        "output_tokens": 7
+      },
+      "metadata": {
+        "duration_ms": 19
+      },
+      "started_at_ms": 1793749285636,
+      "ended_at_ms": 1793749285655,
+      "agent_id": "order-agent",
+      "agent_role": "Order Agent",
+      "span_id": "ec3561aa58585a14",
+      "parent_span_id": "14262f87c6be5fa0"
+    }
+  ],
+  "output": {
+    "message": ""
+  },
+  "metadata": {
+    "total_tokens": 38,
+    "latency_ms": 185,
+    "model": "gpt-4o-mini"
+  },
+  "turns": [
+    {
+      "index": 0,
+      "span_id": "ce79949831d4bc07",
+      "step_indices": [
+        0,
+        1,
+        2
+      ]
+    }
+  ]
+}
