@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -53,6 +54,13 @@ func runScriptedAgentNote(openaiBase, tracesEndpoint, apiKey, note string) error
 	if v := os.Getenv("ATTEST_CAPTURE_HELPER_SYSTEM"); v != "" {
 		system = fmt.Sprintf(`{"role":"system","content":%q},`, v)
 	}
+	// ATTEST_CAPTURE_HELPER_OFFLINE=1 plays an agent whose model is
+	// unreachable: no model call is made, only an agent and a chat span
+	// export, and the process exits 1.
+	offline := os.Getenv("ATTEST_CAPTURE_HELPER_OFFLINE") == "1"
+	if offline {
+		return exportSpans(tracesEndpoint, note, offline)
+	}
 	req, _ := http.NewRequest(http.MethodPost, openaiBase+"/chat/completions",
 		strings.NewReader(`{"model":"gpt-test","messages":[`+system+`{"role":"user","content":"refund O-7 for `+e2ePlantedEmail+`"}]}`))
 	req.Header.Set("Authorization", "Bearer "+apiKey)
@@ -66,6 +74,10 @@ func runScriptedAgentNote(openaiBase, tracesEndpoint, apiKey, note string) error
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("model call: %d", resp.StatusCode)
 	}
+	return exportSpans(tracesEndpoint, note, offline)
+}
+
+func exportSpans(tracesEndpoint, note string, offline bool) error {
 	traceID, root := randomHex(16), randomHex(8)
 	start := time.Now().UnixNano()
 	at := func(i int) string { return fmt.Sprint(start + int64(i)*int64(time.Millisecond)) }
@@ -84,23 +96,30 @@ func runScriptedAgentNote(openaiBase, tracesEndpoint, apiKey, note string) error
 			attr("gen_ai.tool.call.arguments", args), attr("gen_ai.tool.call.result", `{"ok":true}`))
 	}
 	spans := []string{
-		spanJSON(root, "", "invoke_agent refund-desk", 0, attr("gen_ai.operation.name", "invoke_agent"), attr("gen_ai.agent.name", "refund-desk")),
+		spanJSON(root, "", "invoke_agent refund-desk", 0, attr("gen_ai.operation.name", "invoke_agent"), attr("gen_ai.agent.name", "refund-desk"),
+			attr("gen_ai.conversation.id", fmt.Sprintf("conv-%d", time.Now().UnixNano()))),
 		spanJSON(randomHex(8), root, "chat gpt-test", 1, attr("gen_ai.operation.name", "chat"), attr("gen_ai.request.model", "gpt-test")),
 		tool("lookup_order", `{"order_id":"O-7"}`, 3),
 		tool("issue_refund", `{"order_id":"O-7","note":"`+note+` for `+e2ePlantedEmail+`"}`, 5),
 	}
+	if offline {
+		spans = spans[:2]
+	}
 	// ATTEST_CAPTURE_HELPER_REFUNDS=1 plays a healthy run with one refund.
-	if os.Getenv("ATTEST_CAPTURE_HELPER_REFUNDS") != "1" {
+	if !offline && os.Getenv("ATTEST_CAPTURE_HELPER_REFUNDS") != "1" {
 		spans = append(spans, tool("issue_refund", `{"order_id":"O-7"}`, 7))
 	}
 	doc := `{"resourceSpans":[{"scopeSpans":[{"spans":[` + strings.Join(spans, ",") + `]}]}]}`
-	resp, err = http.Post(tracesEndpoint, "application/json", strings.NewReader(doc))
+	resp, err := http.Post(tracesEndpoint, "application/json", strings.NewReader(doc))
 	if err != nil {
 		return err
 	}
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("export: %d", resp.StatusCode)
+	}
+	if offline {
+		return errors.New("model unreachable")
 	}
 	return nil
 }
@@ -169,6 +188,9 @@ func TestCaptureCommand_IncidentTwice_ByteIdenticalRedactedVerified(t *testing.T
 	if !bytes.Equal(a.fixture, b.fixture) {
 		t.Fatalf("fixtures differ:\n%s\n---\n%s", a.fixture, b.fixture)
 	}
+	if !bytes.Contains(a.fixture, []byte(`"conversation_id": "{{conversation_1}}"`)) || bytes.Contains(a.fixture, []byte("conv-")) {
+		t.Errorf("conversation id not templated:\n%s", a.fixture)
+	}
 	for _, secret := range []string{e2ePlantedKey, e2ePlantedEmail} {
 		if bytes.Contains(a.fixture, []byte(secret)) || strings.Contains(a.stderr, secret) {
 			t.Errorf("fixture or output contains %q", secret)
@@ -213,6 +235,30 @@ func TestCaptureCommand_IncidentWithoutExpectFail_DraftsObservedMaxAndVerifies(t
 	}
 	if !bytes.Contains(r.fixture, []byte(`"description": "issue_refund at most 2× per order_id (observed maximum)"`)) {
 		t.Fatalf("issue_refund not drafted at its observed maximum:\n%s", r.fixture)
+	}
+}
+
+// A command that exits 1 with no model call reaches no tool and no cost: no
+// contract is drafted, and the capture must not claim a verified fixture.
+func TestCaptureCommand_ExitsOneWithNoModelCalls_NeverVerified(t *testing.T) {
+	bin := buildEngineBinary(t)
+	t.Setenv("ATTEST_CAPTURE_HELPER_OFFLINE", "1")
+
+	r := runCaptureCommand(t, bin, fakeModel(t), t.TempDir())
+
+	if r.code != 1 {
+		t.Fatalf("exit %d, want 1\n%s", r.code, r.stderr)
+	}
+	if strings.Contains(r.stderr, "  verified:") {
+		t.Fatalf("zero drafted contracts reported verified:\n%s", r.stderr)
+	}
+	for _, want := range []string{"not verified: no contracts were drafted", "no model calls were recorded", "the command exited 3"} {
+		if !strings.Contains(r.stderr, want) {
+			t.Errorf("summary lacks %q:\n%s", want, r.stderr)
+		}
+	}
+	if !bytes.Contains(r.fixture, []byte(`"verified": false`)) {
+		t.Fatalf("fixture not recorded as unverified:\n%s", r.fixture)
 	}
 }
 

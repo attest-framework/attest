@@ -65,6 +65,10 @@ var (
 	sseTimestampPattern = regexp.MustCompile(`"(created|created_at|completed_at)":\s*(\d+)`)
 )
 
+// conversationIDKeys hold a framework-chosen conversation id, often derived
+// from the clock. It becomes {{conversation_N}}, numbered by first occurrence.
+var conversationIDKeys = map[string]bool{"conversation_id": true, "gen_ai.conversation.id": true}
+
 // idKeys hold a provider id as their whole value.
 var idKeys = map[string]bool{
 	"id": true, "tool_call_id": true, "call_id": true, "tool_use_id": true,
@@ -179,6 +183,8 @@ func (t *templater) collect(v any, key string) {
 			t.idFor(t.traceIDs, x, "trace", 32)
 		case spanIDKeys[key] && x != "":
 			t.idFor(t.spanIDs, x, "span", 16)
+		case conversationIDKeys[key] && x != "":
+			t.placeholder("conversation", x)
 		case idKeys[key] && providerIDPattern.FindString(x) == x:
 			t.knownIDs[x] = true
 		}
@@ -251,6 +257,8 @@ func (t *templater) rewriteString(s, key string) string {
 		if p, ok := t.spanIDs[s]; ok {
 			return p
 		}
+	case conversationIDKeys[key] && s != "":
+		return t.placeholder("conversation", s)
 	case timestampKeys[key] && isDigits(s):
 		return fmt.Sprint(t.nextStamp())
 	}

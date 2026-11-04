@@ -62,7 +62,7 @@ Capture drafts these contracts from the run:
 
 Cardinality depends on the capture mode. A normal capture sets N to the most calls the run made with any one value, so a healthy agent that reads an order twice still verifies. With `--expect-fail`, N is 1 for every such tool, so the calls the incident repeated fail: capturing INC-1042 that way fails only `cardinality-issue_refund-per-order_id` (it refunded order O-1042 twice) and records it as the expected failure. A normal capture of the same run drafts `issue_refund` at 2 and verifies, since without `--expect-fail` capture cannot know the run is an incident.
 
-- Without `--expect-fail`, the fixture is **verified** when every drafted contract passes and the captured trace passes trace check; otherwise it is unverified and `attest capture` exits 1, naming the reason.
+- Without `--expect-fail`, the fixture is **verified** when at least one contract was drafted, every drafted contract passes and the captured trace passes trace check; otherwise it is unverified and `attest capture` exits 1, naming the reason. A capture that drafted no contract is never verified: nothing was checked. The message names the cause: `no model calls were recorded`, `the command exited N`, or a trace with no tool call, structured output or cost to draft from.
 - With `--expect-fail`, the fixture is an **incident reproduction**: verified when at least one drafted contract fails and the rest pass. The failing contracts are recorded as `expected_failures`.
 
 ## The drafted test
@@ -289,17 +289,25 @@ Values that differ between two runs of the same scenario become stable placehold
 | trace and span ids | `0000…01`, `0000…02`, … (same width; a prefix such as `otel_` is kept) |
 | provider response, item and tool-call ids (`chatcmpl-`, `resp_`, `msg_`, `call_`, `toolu_`, `fc_`, `rs_`, with a digit after the prefix) | the prefix plus `{{id_N}}` |
 | emails | `{{email_N}}` |
+| conversation ids (`trace.conversation_id`, the `gen_ai.conversation.id` attribute), which frameworks often derive from the clock | `{{conversation_N}}`, numbered by first occurrence |
 | timestamps: numeric fields (`started_at_ms`, `ended_at_ms`, `created`, `created_at`, `startTimeUnixNano`, …) and ISO-8601 strings anywhere | a sequence number by position, never by value: the fixture is walked with arrays in order and, in each object, start-like keys first, other keys by name, end-like keys last. Numeric fields become the number and text becomes `{{timestamp_N}}`. Every start precedes its end, a parent's start and end bracket its children, and runs that differ only in timing write the same bytes |
 | durations (`latency_ms`, `duration_ms`, …) | `0` |
 
-Keys are sorted and indentation is fixed, so capturing the same scripted run twice writes byte-identical fixtures, and a re-capture diff shows only what the agent did differently.
+Keys are sorted and indentation is fixed, so capturing the same scripted run twice writes the same bytes in every field capture controls: the values above, and key order. A re-capture diff shows what the agent did differently, plus the framework-internal ids below.
+
+Capture does not template ids a framework invents inside values it owns, so these differ between two captures of the same run and show up in a re-capture diff:
+
+- raw span ids in `turns[].from_agent` (OpenAI Agents);
+- LangChain message ids and `lc_run--` UUIDv7 ids inside the LangSmith prompt and completion strings (LangGraph).
+
+Replay keys are unaffected. `keyOf` hashes only an exchange's templated request (model, params, normalized prompt fields and tool-schema hash), and these ids live in the trace, never in the request sent to the provider.
 
 ## Exit codes
 
 | Exit | Meaning |
 | --- | --- |
 | 0 | The fixture is verified (`--check-redaction`: no secret found). |
-| 1 | The fixture is not verified (it is still written), no fixture could be built (no spans, an unfinished model call, a malformed export), or `--check-redaction` found a secret. |
+| 1 | The fixture is not verified (it is still written; this includes a capture that drafted no contract), no fixture could be built (no spans, an unfinished model call, a malformed export), or `--check-redaction` found a secret. |
 | 2 | Usage error. |
 
 `attest trace check <fixture>` checks a fixture: it decodes, its trace passes the engine's trace validation, and its capture-time trace check was clean; an unverified fixture is a warning.

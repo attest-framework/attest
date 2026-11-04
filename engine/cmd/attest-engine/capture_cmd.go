@@ -31,7 +31,7 @@ func init() {
 		schema:  "cli/capture.schema.json",
 		exits: []exitCode{
 			{exitOK, "the fixture is verified, or --check-redaction found no secrets; the command's own exit code is recorded, not propagated"},
-			{exitFailure, "the fixture is not verified or was not written, the capture failed, or --check-redaction found secrets"},
+			{exitFailure, "the fixture is not verified (including a capture that drafted no contract) or was not written, the capture failed, or --check-redaction found secrets"},
 			{exitUsage, "usage error, an invalid --world file, or a --refresh that was not confirmed"},
 		},
 	})
@@ -470,6 +470,8 @@ func writeCaptureSummary(w io.Writer, path string, f *capture.Fixture) {
 	switch {
 	case !v.Verified && !capture.HasModelOrToolSteps(f.Trace):
 		fmt.Fprintf(w, "  not verified: %s\n", noStepsReason)
+	case !v.Verified && len(v.Results) == 0:
+		fmt.Fprintf(w, "  not verified: no contracts were drafted, so there is nothing to verify: %s\n", noContractsCause(f))
 	case v.Verified && v.ExpectFail:
 		fmt.Fprintf(w, "  verified: incident reproduction; expected %s: %s\n", plural(len(v.ExpectedFailures), "failure", "failures"), terminalSafe(strings.Join(v.ExpectedFailures, ", ")))
 	case v.Verified:
@@ -487,6 +489,22 @@ const noStepsReason = "no llm_call or tool_call step was mapped from the spans, 
 	"Either no span follows the GenAI semantic conventions attest maps (gen_ai.operation.name chat, execute_tool, ...) " +
 	"or only agent and retrieval spans do. Switch the framework's OpenTelemetry " +
 	"instrumentation to one attest maps; see the Frameworks section of the capture guide (attest-engine guide capture)"
+
+// noContractsCause names why a capture drafted no contract: the model was
+// never reached, the command failed, or the trace has nothing to draft from.
+func noContractsCause(f *capture.Fixture) string {
+	var causes []string
+	if f.Source.ReplayCapable && len(f.Exchanges) == 0 {
+		causes = append(causes, "no model calls were recorded")
+	}
+	if c := f.Source.ExitCode; c != nil && *c != 0 {
+		causes = append(causes, fmt.Sprintf("the command exited %d", *c))
+	}
+	if len(causes) == 0 {
+		causes = append(causes, "the trace has no tool call, structured output or cost to draft from")
+	}
+	return strings.Join(causes, "; ")
+}
 
 func unverifiedReason(f *capture.Fixture) string {
 	if !f.Verification.TraceCheck.OK {

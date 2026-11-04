@@ -218,9 +218,9 @@ var evaluators = map[string]interface {
 // Verify evaluates contracts on the trace. Without expectFail the fixture is
 // verified when every contract passes; with expectFail (an incident
 // reproduction) when at least one fails and the rest pass, and the failing
-// ones are recorded as expected failures. A trace that fails trace check, or
-// holds no llm_call and no tool_call step (nothing to verify), is never
-// verified.
+// ones are recorded as expected failures. A trace that fails trace check,
+// holds no llm_call and no tool_call step, or yields no contracts (nothing to
+// verify) is never verified.
 func Verify(t *types.Trace, contracts []Contract, expectFail bool, check TraceCheckResult) (Verification, error) {
 	v := Verification{ExpectFail: expectFail, TraceCheck: check, Results: []ContractResult{}, ExpectedFailures: []string{}}
 	var failing, other []string
@@ -239,7 +239,9 @@ func Verify(t *types.Trace, contracts []Contract, expectFail bool, check TraceCh
 			other = append(other, c.ID)
 		}
 	}
-	evidence := HasModelOrToolSteps(t)
+	// A capture that drafted no contract has nothing to hold: passing it
+	// would be vacuous.
+	evidence := HasModelOrToolSteps(t) && len(contracts) > 0
 	if expectFail {
 		v.ExpectedFailures = append(v.ExpectedFailures, failing...)
 		v.Verified = check.OK && evidence && len(failing) > 0 && len(other) == 0

@@ -169,6 +169,8 @@ func CheckFixture(data []byte) *trace.CheckReport {
 	case f.Verification.Verified:
 	case !HasModelOrToolSteps(t):
 		add(trace.SeverityWarning, IssueUnverified, "fixture is not verified; its trace has no llm_call or tool_call step, so there was nothing to verify")
+	case len(f.Verification.Results) == 0:
+		add(trace.SeverityWarning, IssueUnverified, "fixture is not verified; no contracts were drafted, so there was nothing to verify")
 	default:
 		add(trace.SeverityWarning, IssueUnverified, "fixture is not verified; its drafted contracts did not hold at capture")
 	}
