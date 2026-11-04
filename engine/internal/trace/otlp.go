@@ -39,6 +39,8 @@ const (
 	maxKeptEvents    = 4
 )
 
+var toolOutputName = []byte(EventToolOutput)
+
 // Event is a retained OTLP span event (only EventToolOutput events are kept).
 type Event struct {
 	Name       string
@@ -292,14 +294,21 @@ func (p *otlpParser) span() (Span, error) {
 			// Counted across repeats of the key, like attributes.
 			_, err = p.array("events", func(int) error {
 				r.nEvents++
-				if r.nEvents > maxEventsPerSpan {
-					return fmt.Errorf("events: more than %d entries", maxEventsPerSpan)
+				// Events other than tool.output are never read; past the cap
+				// they are not even inspected, so a producer with many events
+				// per span still converts.
+				var raw json.RawMessage
+				if err := p.dec.Decode(&raw); err != nil {
+					return fmt.Errorf("events: %w", err)
 				}
-				ev, err := p.event()
+				if r.nEvents > maxEventsPerSpan || len(r.events) >= maxKeptEvents || !bytes.Contains(raw, toolOutputName) {
+					return nil
+				}
+				ev, err := p.subParser(raw).event()
 				if err != nil {
 					return fmt.Errorf("events: %w", err)
 				}
-				if ev.Name == EventToolOutput && len(r.events) < maxKeptEvents {
+				if ev.Name == EventToolOutput {
 					r.events = append(r.events, ev)
 				}
 				return nil
@@ -328,8 +337,28 @@ func (p *otlpParser) span() (Span, error) {
 	return r.validate()
 }
 
-// event reads one span event. Its attributes share the per-span attribute cap
-// and the document-wide value cap.
+// subParser reads one already-decoded value; it shares this parser's value
+// count, so event attributes count toward the document-wide value cap.
+func (p *otlpParser) subParser(raw []byte) *otlpSub {
+	d := json.NewDecoder(bytes.NewReader(raw))
+	d.UseNumber()
+	return &otlpSub{p: &otlpParser{dec: d, values: p.values}, parent: p}
+}
+
+// otlpSub folds the sub-parser's value count back into its parent.
+type otlpSub struct {
+	p      *otlpParser
+	parent *otlpParser
+}
+
+func (s *otlpSub) event() (Event, error) {
+	ev, err := s.p.event()
+	s.parent.values = s.p.values
+	return ev, err
+}
+
+// event reads one span event. Its attributes are capped at MaxAttrsPerSpan
+// per event and count toward the document-wide value cap.
 func (p *otlpParser) event() (Event, error) {
 	ev := Event{Attributes: map[string]any{}}
 	n := 0

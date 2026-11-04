@@ -546,7 +546,8 @@ func claudeUsage(a, args, result map[string]any) error {
 			args["model"] = m
 		}
 	}
-	for attr, key := range map[string]string{attrNativeCacheRead: "cache_read_tokens", attrNativeCacheCreation: "cache_creation_tokens"} {
+	for _, c := range [...]struct{ attr, key string }{{attrNativeCacheRead, "cache_read_tokens"}, {attrNativeCacheCreation, "cache_creation_tokens"}} {
+		attr, key := c.attr, c.key
 		n, ok, err := intAttr(a, attr)
 		if err != nil {
 			return err

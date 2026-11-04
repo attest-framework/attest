@@ -380,17 +380,26 @@ func TestParseOTLP_SpanEvents(t *testing.T) {
 			}
 		}
 	})
-	t.Run("malformed events are errors", func(t *testing.T) {
-		for _, ev := range []string{`{}`, `"x"`, `[1]`, `["x"]`, `[{"name":1}]`, `[{"attributes":{}}]`, `[{"attributes":[1]}]`, `[{"attributes":[{"key":"","value":{"stringValue":"x"}}]}]`, `[{"name":"tool.output","attributes":[{"key":"output","value":`} {
+	t.Run("malformed tool.output events and invalid JSON are errors", func(t *testing.T) {
+		for _, ev := range []string{`[{"name":"tool.output","attributes":{}}]`, `[{"name":"tool.output","attributes":[1]}]`, `[{"name":"tool.output","attributes":[{"key":"","value":{"stringValue":"x"}}]}]`, `[{"name":"tool.output","attributes":[{"key":"output","value":`, `{}`, `"x"`, `[1`} {
 			if _, err := ParseOTLP(span(ev)); err == nil {
 				t.Errorf("%s: parsed, want an error", ev)
 			}
 		}
 	})
-	t.Run("event count is capped", func(t *testing.T) {
-		evs := strings.Repeat(`{"name":"x"},`, maxEventsPerSpan) + `{"name":"x"}`
-		if _, err := ParseOTLP(span("[" + evs + "]")); err == nil || !strings.Contains(err.Error(), "events: more than") {
-			t.Errorf("err = %v", err)
+	t.Run("events other than tool.output are never read", func(t *testing.T) {
+		for _, ev := range []string{`[1]`, `["x"]`, `[{"name":1}]`, `[{"attributes":{}}]`, `[{"name":"gen_ai.user.message","attributes":[{"key":"","value":1}]}]`} {
+			spans, err := ParseOTLP(span(ev))
+			if err != nil || len(spans[0].Events) != 0 {
+				t.Errorf("%s: err %v, events %v", ev, err, spans[0].Events)
+			}
+		}
+	})
+	t.Run("events past the cap are ignored, not an error", func(t *testing.T) {
+		evs := strings.Repeat(`{"name":"x"},`, maxEventsPerSpan*2) + toolOutputEvent(t, "late")
+		spans, err := ParseOTLP(span("[" + evs + "]"))
+		if err != nil || len(spans[0].Events) != 0 {
+			t.Errorf("err %v, events %v", err, spans[0].Events)
 		}
 	})
 	t.Run("event attribute count is capped per event", func(t *testing.T) {
@@ -401,11 +410,11 @@ func TestParseOTLP_SpanEvents(t *testing.T) {
 	})
 	t.Run("event attributes count toward the document value limit", func(t *testing.T) {
 		kv := strings.Repeat(`{"key":"k","value":{"stringValue":"v"}},`, MaxAttrsPerSpan-1) + `{"key":"k","value":{"stringValue":"v"}}`
-		ev := `{"name":"x","attributes":[` + kv + `]}`
+		ev := `{"name":"tool.output","attributes":[` + kv + `]}`
+		evs := strings.Repeat(ev+",", maxKeptEvents-1) + ev
 		var spans []string
-		for i := 0; i < 8; i++ {
+		for i := 0; i < 130; i++ {
 			s := spanJSON(t, fmt.Sprintf("%016x", i+1), "", "s", 1, 2, nil)
-			evs := strings.Repeat(ev+",", 100) + ev // 101 events of 1,024 attributes
 			spans = append(spans, strings.TrimSuffix(s, "}")+`,"events":[`+evs+`]}`)
 		}
 		if _, err := ParseOTLP(otlpDoc(spans...)); err == nil || !strings.Contains(err.Error(), "attribute values") {
