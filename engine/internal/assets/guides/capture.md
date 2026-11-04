@@ -289,7 +289,7 @@ Values that differ between two runs of the same scenario become stable placehold
 | trace and span ids | `0000…01`, `0000…02`, … (same width; a prefix such as `otel_` is kept) |
 | provider response, item and tool-call ids (`chatcmpl-`, `resp_`, `msg_`, `call_`, `toolu_`, `fc_`, `rs_`, with a digit after the prefix) | the prefix plus `{{id_N}}` |
 | emails | `{{email_N}}` |
-| conversation ids (`trace.conversation_id`, the `gen_ai.conversation.id` attribute), which frameworks often derive from the clock | `{{conversation_N}}`, numbered by first occurrence |
+| conversation ids (`trace.conversation_id`, the `gen_ai.conversation.id` span attribute; a tool argument named `conversation_id` stays literal), which frameworks often derive from the clock | `{{conversation_N}}`, numbered by first occurrence |
 | timestamps: numeric fields (`started_at_ms`, `ended_at_ms`, `created`, `created_at`, `startTimeUnixNano`, …) and ISO-8601 strings anywhere | a sequence number by position, never by value: the fixture is walked with arrays in order and, in each object, start-like keys first, other keys by name, end-like keys last. Numeric fields become the number and text becomes `{{timestamp_N}}`. Every start precedes its end, a parent's start and end bracket its children, and runs that differ only in timing write the same bytes |
 | durations (`latency_ms`, `duration_ms`, …) | `0` |
 

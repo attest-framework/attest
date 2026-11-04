@@ -246,3 +246,11 @@ func TestTemplate_ConversationID_ClockDerivedValuesGiveSameOutput(t *testing.T) 
 		t.Fatalf("same id must map to one placeholder: %s", a)
 	}
 }
+
+func TestTemplate_ConversationIDInToolArguments_StaysLiteral(t *testing.T) {
+	got := templated(t, `{"trace":{"conversation_id":"conv-1","steps":[{"args":{"conversation_id":"C-42"}}]}}`)
+
+	if !strings.Contains(got, `"conversation_id":"C-42"`) || !strings.Contains(got, `"conversation_id":"{{conversation_1}}"`) {
+		t.Fatalf("got %s", got)
+	}
+}

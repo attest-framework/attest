@@ -6,7 +6,7 @@ All notable changes to Attest are documented in this file. The format follows [K
 
 ### Fixed
 
-- `attest capture` no longer reports a fixture as verified when it drafted no contract (for example a command that exited non-zero with no model call recorded). It exits 1 with `not verified: no contracts were drafted` and names the cause; the fixture's `verification.verified` and the `--json` `verified` field are `false`. `attest trace check` warns on such a fixture.
+- `attest capture` no longer reports a fixture as verified when it drafted no contract (for example a command that exited non-zero with no model call recorded). It exits 1 with `not verified: no contracts were drafted` and names the cause (a healthy chat-only run with no tool call, structured output or cost drafts nothing and now exits 1); the fixture's `verification.verified` and the `--json` `verified` field are `false`. `attest trace check` warns on such a fixture.
 - Re-capturing the same scripted run writes the same `trace.conversation_id`: clock-derived conversation ids are templated to `{{conversation_N}}`. The capture guide now names the framework-internal ids that still differ between captures (raw span ids in `turns[].from_agent` for OpenAI Agents; LangChain message and `lc_run--` ids in LangSmith strings) instead of promising identical fixtures.
 
 ## [1.0.0-rc.5] — 2026-11-04

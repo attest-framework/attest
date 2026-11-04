@@ -67,7 +67,9 @@ var (
 
 // conversationIDKeys hold a framework-chosen conversation id, often derived
 // from the clock. It becomes {{conversation_N}}, numbered by first occurrence.
-var conversationIDKeys = map[string]bool{"conversation_id": true, "gen_ai.conversation.id": true}
+// Only the span attribute and the trace's own conversation_id (see template)
+// qualify: a tool argument named conversation_id is evidence and stays literal.
+var conversationIDKeys = map[string]bool{"gen_ai.conversation.id": true}
 
 // idKeys hold a provider id as their whole value.
 var idKeys = map[string]bool{
@@ -100,6 +102,13 @@ func newTemplater() *templater {
 }
 
 func (t *templater) template(doc any) any {
+	if m, ok := doc.(map[string]any); ok {
+		if tr, ok := m["trace"].(map[string]any); ok {
+			if id, ok := tr["conversation_id"].(string); ok && id != "" {
+				tr["conversation_id"] = t.placeholder("conversation", id)
+			}
+		}
+	}
 	t.collect(doc, "")
 	return t.rewrite(doc, "")
 }
