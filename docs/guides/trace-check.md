@@ -39,14 +39,14 @@ Each error names the span id it concerns.
 | `orphan_span` | The span's `parentSpanId` is not in the trace. (When no span in the export is a root, the export is one service's part of a distributed trace: each span whose parent is missing is a local root and gets a `remote_parent` warning, not an error.) Orphaned spans are left out of tool pairing, so one orphan is reported once. |
 | `parent_cycle` | Following parents from the span leads back to it. |
 | `duplicate_span_id` | Two spans share an id. |
-| `unpaired_tool_call` | A model call finished with a tool request (`gen_ai.response.finish_reasons` contains `tool_calls`, `tool_call`, `tool_use` or `function_call`) but no tool span follows it before the next model call in the same agent, or a tool call id requested in its recorded `gen_ai.output.messages` has no tool span with that `gen_ai.tool.call.id`. |
+| `unpaired_tool_call` | A model call finished with a tool request (`gen_ai.response.finish_reasons` contains `tool_calls`, `tool-calls`, `tool_call`, `tool_use` or `function_call`; a JSON array in a string, as Mastra records it, is read as a list) but no tool span follows it before the next model call in the same agent, or a tool call id requested in its recorded `gen_ai.output.messages` has no tool span with that `gen_ai.tool.call.id`. |
 | `unpaired_tool_result` | A tool span has no model call before it in the same agent (a tool span nested under a model call belongs to it), or follows a model call with recorded output messages that did not request its `gen_ai.tool.call.id`. |
 | `multiple_traces` | The file holds more than one trace id; check one trace per file. |
 | `conversion_failed` | The spans cannot become an Attest trace, for example a non-numeric `gen_ai.usage.input_tokens`. |
 
 Tool calls are paired within each agent (the spans under one `invoke_agent` span, or under none) in start order, so a tool span may be a sibling of the model call, its child, or under a separate framework node span. Embeddings calls do not take part. Where the requesting model call recorded output messages, tool call ids are matched exactly; otherwise the finish reasons are used.
 
-Warnings flag suspicious structure without failing: `outside_parent` (a span runs outside its parent's time range), `end_before_start`, `multiple_roots`, `no_root`, `remote_parent`, `unrequested_tool` (a tool span follows a model call whose finish reasons do not request tools; Gemini reports `STOP` for tool requests), and `no_genai_spans` (no span carries GenAI attributes).
+Warnings flag suspicious structure without failing: `outside_parent` (a span runs outside its parent's time range), `end_before_start`, `multiple_roots`, `no_root`, `remote_parent`, `unrequested_tool` (a tool span follows a model call whose finish reasons do not request tools; Gemini reports `STOP` for tool requests), and `no_genai_spans` (no span carries GenAI attributes that attest maps; the message points to the Frameworks section of the capture guide).
 
 ## Coverage
 
@@ -69,7 +69,7 @@ An assertion whose evidence is absent does not fail: it reports `not_evaluated` 
 uv run attest trace convert trace.otlp.json > trace.json
 ```
 
-The engine maps spans by `gen_ai.operation.name` (`chat`, `text_completion`, `generate_content`, `embeddings` → `llm_call`; `execute_tool` → `tool_call`; `invoke_agent` → `agent_call`; `retrieval` → `retrieval`). Spans without GenAI attributes, such as HTTP client spans, are not steps. Trace v2 adds, all optional:
+The engine maps spans by `gen_ai.operation.name` (`chat`, `text_completion`, `generate_content`, `embeddings` → `llm_call`; `execute_tool` → `tool_call`; `invoke_agent` → `agent_call`; `retrieval` → `retrieval`). Spans without GenAI attributes, such as HTTP client spans, are not steps. A span whose `gen_ai.operation.name` is not in this list (`chain`, `agent_step`, `unknown`, ...) is not a step either, and its children still attach to the nearest enclosing step. Claude Code's native spans carry no operation on model calls: `claude_code.llm_request` is a model call, with its native `model`, `input_tokens`, `output_tokens` and cache token attributes used when the GenAI keys are absent, while `claude_code.tool.execution` and `claude_code.tool.blocked_on_user` are not steps. Trace v2 adds, all optional:
 
 | Field | Source |
 | --- | --- |
@@ -81,6 +81,6 @@ The engine maps spans by `gen_ai.operation.name` (`chat`, `text_completion`, `ge
 | `steps[].span_id`, `parent_span_id`, `tool_call_id` | Provenance from the export. |
 | `conversation_id` | `gen_ai.conversation.id`. |
 
-Tool steps take their `args` and `result` from the JSON in `gen_ai.tool.call.arguments` and `gen_ai.tool.call.result` (a value that is not a JSON object is kept under `arguments` or `result`). `output.message` is the text of the last turn's recorded output messages, else of the model call that ended last directly inside a top-level agent. `metadata.total_tokens` and `metadata.cost_usd` sum the model spans that record them and stay unset when none do; `metadata.latency_ms` is the root span's duration. The schema is `proto/attest/v1/trace-v2.schema.json`.
+Tool steps take their `args` and `result` from the JSON in `gen_ai.tool.call.arguments` and `gen_ai.tool.call.result` (a value that is not a JSON object is kept under `arguments` or `result`). Without `gen_ai.tool.call.result`, the result is the `output` attribute of the span's `tool.output` event (Claude Code), else `gen_ai.completion`; without `gen_ai.tool.call.arguments`, the arguments are `gen_ai.prompt` (LangSmith). On spans LangSmith exported (`langsmith.span.kind`), a sole `input` or `output` wrapper key and a tool message's `content` are unwrapped; text that is not JSON is kept as recorded. `output.message` is the text of the last turn's recorded output messages, else of the model call that ended last directly inside a top-level agent. `metadata.total_tokens` and `metadata.cost_usd` sum the model spans that record them and stay unset when none do; `metadata.latency_ms` is the root span's duration. The schema is `proto/attest/v1/trace-v2.schema.json`.
 
 Input limits, enforced while reading: 32 MiB, 20,000 spans, 1,024 attributes per span, 1,000,000 attribute values in total, values nested at most 32 levels, and at most 10 MB of content copied into the trace (messages, tool arguments and results, and the other attribute values, counted as encoded JSON). Both `trace check` and `trace convert` enforce the content limit before decoding anything, and error messages repeat at most 64 bytes of an offending value. Malformed input (invalid ids or timestamps, non-finite numbers, invalid base64, trailing data) is an error naming the span. Text from the file is printed with control characters escaped.

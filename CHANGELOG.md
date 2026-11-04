@@ -4,6 +4,22 @@ All notable changes to Attest are documented in this file. The format follows [K
 
 ## [Unreleased]
 
+### Added
+
+- Framework capture through OpenTelemetry, with no attest-specific adapter: `docs/guides/capture.md` gains a Frameworks section with the instrumentation switch, tested versions and caveats for Pydantic AI, the Vercel AI SDK, Mastra, the OpenAI Agents SDK (Python), the Claude Agent SDK (Python and TypeScript) and LangGraph (Python). Golden OTLP fixtures for each route join `protocol-tests/trace-v2/otlp/`.
+- The OTLP parser keeps `tool.output` span events (at most four per span, 256 events per span); Claude Code records a tool's result there.
+- Claude Code native traces (beta): `claude_code.llm_request` is a model call with its native model, token and cache-token attributes; `claude_code.tool` takes its result from its `tool.output` event; `claude_code.tool.execution` and `claude_code.tool.blocked_on_user` are not steps.
+- Tool spans without `gen_ai.tool.call.arguments` or `gen_ai.tool.call.result` fall back to `gen_ai.prompt` and `gen_ai.completion`, decoding LangSmith's wrapper shapes on LangSmith spans.
+
+### Changed
+
+- A span whose `gen_ai.operation.name` is present but unknown (`chain`, `agent_step`, `unknown`, ...) is no longer a step; its children still attach to the nearest enclosing step. Spans with no operation attribute keep the attribute heuristics.
+- `attest capture` does not verify a fixture whose trace has no `llm_call` and no `tool_call` step (exit 1, with the cause and a pointer to the capture guide). The `trace check` `no_genai_spans` message points to the same guide section.
+
+### Fixed
+
+- Finish reasons `tool-calls` (Vercel AI SDK, Mastra) and a JSON array in a string, as Mastra records it, count as tool requests in `trace check`; it no longer warns `unrequested_tool` on those exports.
+
 ## [1.0.0-rc.4] — 2026-11-04
 
 Fourth release candidate, themed "Agent-native": coding agents operate attest without the website through `--json` output with published schemas and stable exit codes, offline guides (`attest guide`), installable skills and plugins, and an MCP server whose closed contract grammar drafts and checks contracts. `attest mutate` measures how much of an agent's behavior the suite would actually catch.
