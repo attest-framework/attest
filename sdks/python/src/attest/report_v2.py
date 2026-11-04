@@ -10,6 +10,7 @@ evaluate`` gates on ``results``; the pr-annotate action places inline comments w
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -22,6 +23,7 @@ from attest._proto.types import (
     STATUS_PASS,
     STATUS_SOFT_FAIL,
     AssertionResult,
+    Trace,
     Usage,
 )
 from attest.replay import MODE_AUTO, ReplaySummary
@@ -30,6 +32,40 @@ from attest.result import AgentResult
 REPORT_VERSION = 2
 
 TEST_OUTCOMES = frozenset({"passed", "failed", "skipped"})
+
+#: Set to ``1`` to embed the evaluated traces in the report (``traces`` and each row's
+#: ``trace_id``) for ``attest view``. Off by default: traces hold prompts, model outputs
+#: and tool arguments.
+REPORT_TRACES_ENV = "ATTEST_REPORT_TRACES"
+
+
+def report_traces_enabled() -> bool:
+    """True when ``ATTEST_REPORT_TRACES=1``."""
+    return os.environ.get(REPORT_TRACES_ENV, "").strip() == "1"
+
+
+class _TraceTable:
+    """The report's ``traces`` map: one entry per distinct trace.
+
+    Equal traces share an id. Distinct traces that share a ``trace_id`` (trial loops reuse
+    one) get ``<id>#2``, ``<id>#3``..., and a trace without an id gets ``trace-<n>``, so a
+    row's ``trace_id`` always names exactly the trace it was evaluated against.
+    """
+
+    def __init__(self) -> None:
+        self.traces: dict[str, dict[str, Any]] = {}
+
+    def add(self, trace: Trace) -> str:
+        doc = trace.to_dict()
+        base = trace.trace_id or f"trace-{len(self.traces) + 1}"
+        key, n = base, 1
+        while key in self.traces:
+            if self.traces[key] == doc:
+                return key
+            n += 1
+            key = f"{base}#{n}"
+        self.traces[key] = doc
+        return key
 
 
 @dataclass
@@ -59,9 +95,13 @@ class TestRecord:
             raise ValueError(f"{self.test_id}: trials must be >= 1, got {self.trials}")
 
 
-def build_report(tests: list[TestRecord], *, simulated: bool, usage: Usage) -> dict[str, Any]:
+def build_report(
+    tests: list[TestRecord], *, simulated: bool, usage: Usage, include_traces: bool = False
+) -> dict[str, Any]:
     """Return the report-v2 document for ``tests``; ``usage`` is the session's
-    attest model usage (``summary.usage``)."""
+    attest model usage (``summary.usage``). ``include_traces`` adds the ``traces`` map and
+    a ``trace_id`` on every row evaluated against a trace."""
+    table = _TraceTable() if include_traces else None
     rows: list[dict[str, Any]] = []
     test_rows: list[dict[str, Any]] = []
     total_cost = 0.0
@@ -72,15 +112,17 @@ def build_report(tests: list[TestRecord], *, simulated: bool, usage: Usage) -> d
         for agent_result in test.agent_results:
             total_cost += agent_result.total_cost
             total_duration_ms += agent_result.total_duration_ms
+            trace_id = table.add(agent_result.trace) if table is not None else None
             for result in agent_result.assertion_results:
-                rows.append(
-                    {
-                        **result.to_dict(),
-                        "test_id": test.test_id,
-                        "file": test.file,
-                        "line": test.line,
-                    }
-                )
+                row = {
+                    **result.to_dict(),
+                    "test_id": test.test_id,
+                    "file": test.file,
+                    "line": test.line,
+                }
+                if trace_id is not None:
+                    row["trace_id"] = trace_id
+                rows.append(row)
                 if result.assertion_id not in assertion_ids:
                     assertion_ids.append(result.assertion_id)
                 if result.status == STATUS_NOT_EVALUATED and result.reason not in reasons:
@@ -127,7 +169,7 @@ def build_report(tests: list[TestRecord], *, simulated: bool, usage: Usage) -> d
             "live_cost_usd": sum(s.live_cost_usd for s in replays),
             "unpriced_live_calls": sum(s.unpriced_live_calls for s in replays),
         }
-    return {
+    document: dict[str, Any] = {
         "report_version": REPORT_VERSION,
         "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "simulated": simulated,
@@ -137,6 +179,9 @@ def build_report(tests: list[TestRecord], *, simulated: bool, usage: Usage) -> d
         "total_cost": total_cost,
         "total_duration_ms": total_duration_ms,
     }
+    if table is not None:
+        document["traces"] = table.traces
+    return document
 
 
 def _replay_miss_result(summary: ReplaySummary) -> AssertionResult:
@@ -170,7 +215,12 @@ def _test_replay(summaries: list[ReplaySummary]) -> dict[str, Any]:
 
 
 def write_report(path: Path, tests: list[TestRecord], *, simulated: bool, usage: Usage) -> None:
-    """Write the report-v2 document for ``tests`` to ``path``, creating parent directories."""
+    """Write the report-v2 document for ``tests`` to ``path``, creating parent directories.
+
+    Embeds the traces when ``ATTEST_REPORT_TRACES=1``.
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
-    report = build_report(tests, simulated=simulated, usage=usage)
+    report = build_report(
+        tests, simulated=simulated, usage=usage, include_traces=report_traces_enabled()
+    )
     path.write_text(json.dumps(report, indent=2) + "\n")

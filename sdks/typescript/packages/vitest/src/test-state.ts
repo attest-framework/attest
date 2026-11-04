@@ -18,7 +18,7 @@ import {
   type Trace,
   type Usage,
 } from "@attest-ai/core";
-import type { AttestTaskMeta } from "./report.js";
+import { reportTracesEnabled, TraceTable, type AttestTaskMeta } from "./report.js";
 
 export type RunningTest = NonNullable<TestContext["task"]>;
 
@@ -256,8 +256,17 @@ export function recordOnTest(test: RunningTest, result: AgentResult, trial: numb
   const state = attemptState(test);
   state.usage = addUsage(state.usage, result.usage);
   const meta = attemptMeta(test);
+  let traceId: string | undefined;
+  if (reportTracesEnabled()) {
+    meta.traces ??= {};
+    traceId = new TraceTable(meta.traces).add(result.trace);
+  }
   meta.results.push(
-    ...result.assertionResults.map((r) => (trial === undefined ? r : { ...r, trial })),
+    ...result.assertionResults.map((r) => ({
+      ...r,
+      ...(trial === undefined ? {} : { trial }),
+      ...(traceId === undefined ? {} : { trace_id: traceId }),
+    })),
   );
   meta.totalCost += result.totalCost;
   meta.totalDurationMs += result.totalDurationMs;

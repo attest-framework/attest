@@ -16,6 +16,7 @@ import {
   usageSummaryLine,
   zeroUsage,
   type AssertionResult,
+  type Trace,
   type Usage,
 } from "@attest-ai/core";
 
@@ -27,7 +28,44 @@ export const REPORT_VERSION = 2;
 export type TestOutcome = "passed" | "failed" | "skipped";
 
 /** An assertion result as recorded for the report; `trial` is set under trials() with N > 1. */
-export type RecordedResult = AssertionResult & { readonly trial?: number };
+export type RecordedResult = AssertionResult & {
+  readonly trial?: number;
+  /** Key into `AttestTaskMeta.traces`; set only when `ATTEST_REPORT_TRACES=1`. */
+  readonly trace_id?: string;
+};
+
+/**
+ * Set `ATTEST_REPORT_TRACES=1` to embed the evaluated traces in the report (`traces` and each
+ * row's `trace_id`) for `attest view`. Off by default: traces hold prompts, model outputs and
+ * tool arguments.
+ */
+export const REPORT_TRACES_ENV = "ATTEST_REPORT_TRACES";
+
+export function reportTracesEnabled(): boolean {
+  return (process.env[REPORT_TRACES_ENV] ?? "").trim() === "1";
+}
+
+/**
+ * The report's `traces` map: one entry per distinct trace. Equal traces share an id; distinct
+ * traces sharing a `trace_id` get `<id>#2`, `<id>#3`, ... and a trace without an id gets
+ * `trace-<n>`, so a row's `trace_id` names exactly the trace it was evaluated against.
+ */
+export class TraceTable {
+  constructor(readonly traces: Record<string, Trace> = {}) {}
+
+  add(trace: Trace): string {
+    const base = trace.trace_id === "" ? `trace-${Object.keys(this.traces).length + 1}` : trace.trace_id;
+    const doc = JSON.stringify(trace);
+    let key = base;
+    for (let n = 1; key in this.traces; ) {
+      if (JSON.stringify(this.traces[key]) === doc) return key;
+      n += 1;
+      key = `${base}#${n}`;
+    }
+    this.traces[key] = trace;
+    return key;
+  }
+}
 
 /** How a trials() call with N > 1 went. */
 export interface TrialsMeta {
@@ -52,6 +90,8 @@ export interface AttestTaskMeta {
   /** Attest model usage of every attempt of the test, including retried ones. */
   usage: Usage;
   trials?: TrialsMeta;
+  /** Traces the results were evaluated against, by `trace_id` (only with `ATTEST_REPORT_TRACES=1`). */
+  traces?: Record<string, Trace>;
 }
 
 declare module "vitest" {
@@ -82,7 +122,9 @@ export function buildReport(
   tests: readonly TestRecord[],
   simulated: boolean,
   unattached: Usage = zeroUsage(),
+  includeTraces = false,
 ): Record<string, unknown> {
+  const table = includeTraces ? new TraceTable() : undefined;
   const rows: Record<string, unknown>[] = [];
   const testRows: Record<string, unknown>[] = [];
   let totalCost = 0;
@@ -93,8 +135,21 @@ export function buildReport(
     const reasons: string[] = [];
     totalCost += test.attest?.totalCost ?? 0;
     totalDurationMs += test.attest?.totalDurationMs ?? 0;
+    // The worker keyed traces per test; re-key them into the report-wide table.
+    const traceKeys = new Map<string, string>();
+    for (const [local, trace] of Object.entries(test.attest?.traces ?? {})) {
+      if (table !== undefined) traceKeys.set(local, table.add(trace));
+    }
     for (const result of test.attest?.results ?? []) {
-      rows.push({ ...result, test_id: test.testId, file: test.file, line: test.line });
+      const { trace_id: local, ...rest } = result;
+      const traceId = local === undefined ? undefined : traceKeys.get(local);
+      rows.push({
+        ...rest,
+        ...(traceId === undefined ? {} : { trace_id: traceId }),
+        test_id: test.testId,
+        file: test.file,
+        line: test.line,
+      });
       assertionIds.add(result.assertion_id);
       if (result.status === STATUS_NOT_EVALUATED && !reasons.includes(String(result.reason))) {
         reasons.push(String(result.reason));
@@ -159,6 +214,7 @@ export function buildReport(
     tests: testRows,
     total_cost: totalCost,
     total_duration_ms: totalDurationMs,
+    ...(table === undefined ? {} : { traces: table.traces }),
   };
 }
 
