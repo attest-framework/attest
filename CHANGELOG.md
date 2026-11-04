@@ -7,6 +7,7 @@ All notable changes to Attest are documented in this file. The format follows [K
 ### Added
 
 - TypeScript simulation helpers in `@attest-ai/core`: `scenario`, `faultInject`, `mockTool`, `MockToolRegistry` and `repeat`, with `ScenarioResult` and `RepeatResult` aggregating verdicts like Python's. `TraceBuilder.addToolCall` returns the active mock's result. Guide: [simulation](docs/guides/simulation.md).
+- TypeScript `useAttest().enforce(verdict)` and `enforceOutcome` accept a `ScenarioResult` or `RepeatResult` as well as an `AgentResult` (fail with diagnostics, skip with the not-evaluated reasons, strict mode fails skips), as Python's `attest.enforce` does.
 - TypeScript plugin discovery: `loadPackagePlugins(registry, projectRoot?)` loads plugins that an installed dependency declares in `package.json` under `"attest": {"plugins": [...]}`; `registerPlugin` mirrors Python's `register_plugin`.
 - A parity matrix, [docs/guides/parity.md](docs/guides/parity.md), generated from both SDKs' public surfaces (`sdks/parity/`). The existing Python and TypeScript test commands fail on a Python capability with no TypeScript counterpart or documented exception, on a stale exception, and when the snapshots or the guide are out of date (regenerate with `ATTEST_UPDATE_PARITY=1`).
 

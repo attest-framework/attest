@@ -3,6 +3,7 @@
     "BaseAdapter": "TraceAdapter",
     "LangChainCallbackHandler": "LangChainAdapter",
     "Persona": "SimulatePersona",
+    "attest": "useAttest",
     "attest_budget": "evaluate",
     "attest_engine": "useAttest",
     "attest_min_pass_rate": "trials",
@@ -13,13 +14,14 @@
     "expect": "attestExpect",
     "load_entrypoint_plugins": "loadPackagePlugins"
   },
+  "alias_notes": {
+    "attest": "The pytest `attest` marker and fixture map to `useAttest()`; Vitest selects tests by file glob.",
+    "attest_budget": "Pass the `testBudget` option to `evaluate`/`inspect`.",
+    "attest_min_pass_rate": "Pass the `minPassRate` option to `trials`.",
+    "attest_tier": "Filter with `filterByTier`; tag tests with `tier`.",
+    "configure": "`config` configures simulation mode in TypeScript."
+  },
   "exceptions": [
-    {
-      "python": "BaseProviderAdapter",
-      "section": "exports",
-      "reason": "language_idiom",
-      "note": "TypeScript adapters implement the `TraceAdapter` interface directly; there is no template-method base class."
-    },
     {
       "python": "CrewAIAdapter",
       "section": "adapters",
@@ -39,10 +41,22 @@
       "note": "Capture LlamaIndex runs through its OpenTelemetry spans with `attest capture`."
     },
     {
-      "python": "attest",
-      "section": "test_runner",
+      "python": "BaseProviderAdapter",
+      "section": "exports",
       "reason": "language_idiom",
-      "note": "Vitest selects Attest tests by file glob and `describe`; no marker is needed."
+      "note": "TypeScript adapters implement the `TraceAdapter` interface directly; there is no template-method base class."
+    },
+    {
+      "python": "evaluate_async",
+      "section": "fixture_methods",
+      "reason": "language_idiom",
+      "note": "`evaluate` is already async in TypeScript."
+    },
+    {
+      "python": "inspect_async",
+      "section": "fixture_methods",
+      "reason": "language_idiom",
+      "note": "`inspect` is already async in TypeScript."
     },
     {
       "python": "integration",

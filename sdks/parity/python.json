@@ -121,6 +121,16 @@
     "trajectory_partial_order",
     "world"
   ],
+  "fixture_methods": [
+    "client",
+    "enforce",
+    "evaluate",
+    "evaluate_async",
+    "inspect",
+    "inspect_async",
+    "start",
+    "stop"
+  ],
   "init_flags": [
     "--ci",
     "--json",

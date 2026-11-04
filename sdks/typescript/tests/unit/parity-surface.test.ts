@@ -14,6 +14,7 @@ const empty: Surface = {
   adapters: [],
   exports: [],
   expect_chain: [],
+  fixture_methods: [],
   init_flags: [],
   plugins: [],
   simulation: [],

@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import {
   AgentResult,
   FRIENDLY_USER,
@@ -123,19 +123,35 @@ describe("faultInject", () => {
     expect(first).toContain(false);
   });
 
-  it("applies latency jitter and still returns the result", async () => {
-    const fn = faultInject({ latencyJitterMs: 20, seed: 0 }, () => "ok");
-    expect(await fn()).toBe("ok");
+  it("delays each call by the seeded jitter before running", async () => {
+    vi.useFakeTimers();
+    try {
+      let ran = false;
+      const fn = faultInject({ latencyJitterMs: 1000, seed: 3 }, () => {
+        ran = true;
+        return "ok";
+      });
+      const pending = fn();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(ran).toBe(false);
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(await pending).toBe("ok");
+      expect(ran).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 
 describe("scenario", () => {
   it("passes persona and turn, and activates mock tools", async () => {
     const seen: unknown[] = [];
+    const mocked: unknown[] = [];
     const run = scenario(
       { persona: FRIENDLY_USER, mockTools: { search: (a) => ({ mocked: a["query"] }) } },
       (ctx) => {
         seen.push(ctx);
+        mocked.push(searchTrace().steps[0]?.result);
         return verdict("pass");
       },
     );
@@ -143,6 +159,7 @@ describe("scenario", () => {
     expect(result).toBeInstanceOf(ScenarioResult);
     expect(result.results).toHaveLength(1);
     expect(seen).toEqual([{ persona: FRIENDLY_USER, turn: 0 }]);
+    expect(mocked).toEqual([{ mocked: "hello" }]);
     expect(result.passed).toBe(true);
   });
 
@@ -171,25 +188,29 @@ describe("scenario", () => {
     await expect(run()).rejects.toThrow("Injected fault at turn 0");
   });
 
-  it("gives identical results for a fixed seed", async () => {
-    const run = async (): Promise<string> => {
-      const fn = scenario({ faultErrorRate: 0.5, maxTurns: 1, seed: 7 }, () => verdict("pass"));
-      return fn().then(
-        () => "ok",
+  it("injects the same fault turn for a fixed seed and a different one for another seed", async () => {
+    const faultTurn = (seed: number): Promise<string> =>
+      scenario({ faultErrorRate: 0.3, maxTurns: 50, seed }, () => verdict("pass"))().then(
+        () => "none",
         (e: Error) => e.message,
       );
-    };
-    const outcomes = await Promise.all([run(), run(), run()]);
-    expect(new Set(outcomes).size).toBe(1);
+    const [a1, a2, b] = [await faultTurn(7), await faultTurn(7), await faultTurn(8)];
+    expect(a1).toMatch(/^Injected fault at turn \d+$/);
+    expect(a2).toBe(a1);
+    const others = await Promise.all([1, 2, 3, 4, 5].map(faultTurn));
+    expect(new Set([a1, b, ...others]).size).toBeGreaterThan(1);
   });
 
-  it("aggregates turn outcomes: soft_fail passes, hard_fail fails", async () => {
-    const soft = new ScenarioResult(
-      { mockTools: {}, faultErrorRate: 0, faultLatencyJitterMs: 0, maxTurns: 1 },
-      [verdict("soft_fail")],
-    );
+  it("aggregates turn outcomes: soft_fail passes, hard_fail fails with diagnostics", () => {
+    const cfg = { mockTools: {}, faultErrorRate: 0, faultLatencyJitterMs: 0, maxTurns: 2 };
+    const soft = new ScenarioResult(cfg, [verdict("pass"), verdict("soft_fail")]);
     expect(soft.outcome()).toBe("pass");
     expect(soft.passed).toBe(true);
+
+    const hard = new ScenarioResult(cfg, [verdict("pass"), verdict("hard_fail")]);
+    expect(hard.outcome()).toBe("fail");
+    expect(hard.passed).toBe(false);
+    expect(hard.renderDiagnostics()).toContain("turn 2/2");
   });
 });
 

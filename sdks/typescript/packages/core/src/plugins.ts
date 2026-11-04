@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { dirname, join, relative, resolve, isAbsolute, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 import type { Trace } from "./proto/types.js";
@@ -146,8 +146,12 @@ function pluginsOf(mod: Record<string, unknown>): AttestPlugin[] {
 }
 
 function isInside(root: string, file: string): boolean {
-  const rel = relative(root, file);
-  return rel !== "" && rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel);
+  const within = (r: string, f: string): boolean => {
+    const rel = relative(r, f);
+    return rel !== "" && rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel);
+  };
+  // Lexical check first, then resolve symlinks on both sides (throws when the file is missing).
+  return within(root, file) && within(realpathSync(root), realpathSync(file));
 }
 
 /**
@@ -157,15 +161,21 @@ function isInside(root: string, file: string): boolean {
  * `"attest": {"plugins": ["./dist/plugin.js"]}`. Each entry is imported and
  * its default export (or, without one, every export implementing the
  * plugin shape) is registered under the plugin's `name`. A failure loading
- * one entry is logged and does not stop the others, as with Python's
- * `load_entrypoint_plugins`. Dependencies that are declared but not
+ * one entry, or reading the project's `package.json`, is logged and does not
+ * raise, as with Python's `load_entrypoint_plugins`. Dependencies that are declared but not
  * installed are skipped. Returns the number of plugins loaded.
  */
 export async function loadPackagePlugins(
   registry: PluginRegistry,
   projectRoot: string = process.cwd(),
 ): Promise<number> {
-  const project = readJson(join(projectRoot, "package.json"));
+  let project: Record<string, unknown>;
+  try {
+    project = readJson(join(projectRoot, "package.json"));
+  } catch (err) {
+    console.error(`attest: cannot read ${join(projectRoot, "package.json")}; no plugins loaded:`, err);
+    return 0;
+  }
   const depNames = new Set<string>();
   for (const field of ["dependencies", "devDependencies", "optionalDependencies"]) {
     const deps = project[field];

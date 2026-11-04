@@ -35,19 +35,25 @@ export function formatSkipReason(counts: Readonly<Record<string, number>>): stri
   return `not evaluated: ${parts.join(", ")}`;
 }
 
+type Renderable = Verdict & { renderDiagnostics?(options?: { color?: boolean }): string };
+
+/** Diagnostics of one verdict: an `AgentResult` or an aggregate. */
+export function renderVerdictDiagnostics(verdict: Renderable, color = false): string {
+  return verdict instanceof AgentResult
+    ? renderDiagnostics(verdict, { color })
+    : (verdict.renderDiagnostics?.({ color }) ?? "");
+}
+
 /** Diagnostics of every verdict whose outcome is not pass, headed by its index. */
 export function verdictsDiagnostics(
-  results: readonly (Verdict & { renderDiagnostics?(options?: { color?: boolean }): string })[],
+  results: readonly Renderable[],
   label: string,
   color = false,
 ): string {
-  const blocks = results.flatMap((r, i) => {
-    if (r.outcome() === OUTCOME_PASS) return [];
-    const body =
-      r instanceof AgentResult
-        ? renderDiagnostics(r, { color })
-        : (r.renderDiagnostics?.({ color }) ?? "");
-    return [`${label} ${i + 1}/${results.length}:${body}`];
-  });
+  const blocks = results.flatMap((r, i) =>
+    r.outcome() === OUTCOME_PASS
+      ? []
+      : [`${label} ${i + 1}/${results.length}:${renderVerdictDiagnostics(r, color)}`],
+  );
   return blocks.length > 0 ? blocks.join("\n") : `  (no failing ${label}s)\n`;
 }

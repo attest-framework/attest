@@ -114,6 +114,7 @@ export {
   ScenarioResult,
   faultInject,
   mockTool,
+  renderVerdictDiagnostics,
   repeat,
   scenario,
 } from "./simulation/index.js";

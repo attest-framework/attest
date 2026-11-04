@@ -11,3 +11,4 @@ export { RepeatResult, repeat } from "./repeat.js";
 export { ScenarioResult, scenario } from "./scenario.js";
 export type { ScenarioConfig, ScenarioContext, ScenarioOptions } from "./scenario.js";
 export type { Verdict } from "./verdict.js";
+export { renderVerdictDiagnostics } from "./verdict.js";

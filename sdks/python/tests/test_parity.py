@@ -13,6 +13,7 @@ import attest.plugins as plugins_module
 import attest.simulation as simulation_module
 from attest.cli import admin
 from attest.expect import ExpectChain
+from attest.plugin import AttestEngineFixture
 from tests.parity_matrix import (
     SECTIONS,
     UPDATE_ENV,
@@ -79,6 +80,7 @@ def collect_surface() -> Surface:
         "adapters": adapters,
         "exports": _public([n for n in attest.__all__ if n not in adapters]),
         "expect_chain": _public(dir(ExpectChain)),
+        "fixture_methods": _public(dir(AttestEngineFixture)),
         "init_flags": init_flags_from_source(inspect.getsource(admin._parse_init_args)),
         "plugins": _public(
             [
@@ -262,3 +264,23 @@ def test_parity_checker_does_not_apply_an_exception_to_another_section() -> None
         "gap exports.integration: no TypeScript counterpart 'integration' "
         "and no documented exception"
     ]
+
+
+def test_parity_checker_flags_alias_once_typescript_exports_the_plain_name() -> None:
+    matrix = build_matrix(
+        _surface(exports=["make_thing"]),
+        _surface(exports=["makeThing", "createThing"]),
+        {"aliases": {"make_thing": "createThing"}, "exceptions": []},
+    )
+
+    assert matrix.problems == ["stale alias make_thing: TypeScript now exports makeThing"]
+
+
+def test_parity_checker_flags_note_for_unknown_alias() -> None:
+    matrix = build_matrix(
+        _surface(exports=["Agent"]),
+        _surface(exports=["Agent"]),
+        {"aliases": {}, "alias_notes": {"ghost": "n"}, "exceptions": []},
+    )
+
+    assert matrix.problems == ["stale alias note ghost: no such alias"]

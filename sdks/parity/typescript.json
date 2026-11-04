@@ -206,6 +206,7 @@
     "renderAssertionFailure",
     "renderDiagnostics",
     "renderSummary",
+    "renderVerdictDiagnostics",
     "renderVitest",
     "repeat",
     "requireSimulationCapability",
@@ -275,6 +276,14 @@
     "trajectoryPartialOrder",
     "world"
   ],
+  "fixture_methods": [
+    "client",
+    "enforce",
+    "evaluate",
+    "inspect",
+    "start",
+    "stop"
+  ],
   "init_flags": [
     "--ci",
     "--json",
@@ -309,6 +318,7 @@
     "faultInject",
     "isSimulationMode",
     "mockTool",
+    "renderVerdictDiagnostics",
     "repeat",
     "scenario"
   ],

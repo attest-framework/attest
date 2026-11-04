@@ -329,6 +329,7 @@ import {
   repeat,
   scenario,
 } from "@attest-ai/core";
+import { useAttest } from "@attest-ai/vitest";
 
 // scenario: persona, mock tools, fault rate, jitter, turns, seed
 const run = scenario(
@@ -343,11 +344,13 @@ const run = scenario(
   ({ persona, turn }) => runAgent(persona, turn), // returns an AgentResult
 );
 const result = await run(); // ScenarioResult: passed, outcome(), skipReason()
+useAttest().enforce(result); // fail with the turn diagnostics, or skip with the not-evaluated reasons
 
 // repeat: N trials aggregated as a RepeatResult
 const trials = await repeat(10, run)();
 trials.passRate; // passing / evaluated, or null
 trials.outcome(); // "fail" | "skip" | "pass"
+useAttest().enforce(trials); // enforce the aggregate only
 
 // mockTool + MockToolRegistry: TraceBuilder.addToolCall returns the mock's result
 const registry = new MockToolRegistry();
@@ -367,7 +370,7 @@ const flaky = faultInject({ errorRate: 0.5, latencyJitterMs: 50, seed: 1 }, fetc
 | `@mock_tool(name)` / `MockToolRegistry` (`with`) | `mockTool(name, fn)` / `MockToolRegistry.run(fn)` |
 | `@fault_inject(error_rate=…)` | `faultInject({ errorRate }, fn)` |
 
-Mock registries are scoped per async call chain (`AsyncLocalStorage`), so concurrent scenarios do not see each other's mocks. The full Python-to-TypeScript surface mapping is in the [parity matrix](parity.md).
+`enforce` (also exported as `enforceOutcome`) takes an `AgentResult`, a `ScenarioResult` or a `RepeatResult`, honors `ATTEST_STRICT` (or `{ strict: true }`) and does nothing inside a `trials()` trial, like Python's `attest.enforce`. Mock registries are scoped per async call chain (`AsyncLocalStorage`), so concurrent scenarios do not see each other's mocks. The full Python-to-TypeScript surface mapping is in the [parity matrix](parity.md).
 
 ### Plugins in TypeScript
 

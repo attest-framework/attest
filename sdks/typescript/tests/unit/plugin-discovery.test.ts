@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -76,7 +76,7 @@ describe("loadPackagePlugins", () => {
   it("logs a broken entry and still loads the others", async () => {
     const errors = vi.spyOn(console, "error").mockImplementation(() => undefined);
     writeJson(join(root, "package.json"), { dependencies: { "mixed-plugin": "1.0.0" } });
-    installPackage("mixed-plugin", ["./broken.mjs", "./empty.mjs", "./good.mjs", "../../escape.mjs"], {
+    installPackage("mixed-plugin", ["./broken.mjs", "./empty.mjs", "./good.mjs"], {
       "broken.mjs": "throw new Error('boom');",
       "empty.mjs": "export const x = 1;",
       "good.mjs": PLUGIN_SRC("good"),
@@ -85,7 +85,31 @@ describe("loadPackagePlugins", () => {
     const registry = new PluginRegistry();
     expect(await loadPackagePlugins(registry, root)).toBe(1);
     expect(registry.listPlugins()).toEqual(["assertion/good"]);
-    expect(errors).toHaveBeenCalledTimes(3);
+    expect(errors).toHaveBeenCalledTimes(2);
+  });
+
+  it("rejects entries that escape the package, by path or by symlink", async () => {
+    const errors = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    writeJson(join(root, "package.json"), { dependencies: { "escaper-plugin": "1.0.0" } });
+    // A valid plugin outside the package: <root>/escape.mjs and an absolute-path target.
+    writeFileSync(join(root, "escape.mjs"), PLUGIN_SRC("escaped"));
+    const outside = mkdtempSync(join(tmpdir(), "attest-outside-"));
+    writeFileSync(join(outside, "linked.mjs"), PLUGIN_SRC("linked"));
+    installPackage("escaper-plugin", ["../../escape.mjs", "./link.mjs", "./ok..mjs"], {
+      "ok..mjs": PLUGIN_SRC("dotdot-name"),
+    });
+    symlinkSync(join(outside, "linked.mjs"), join(root, "node_modules", "escaper-plugin", "link.mjs"));
+
+    const registry = new PluginRegistry();
+    try {
+      expect(await loadPackagePlugins(registry, root)).toBe(1);
+    } finally {
+      rmSync(outside, { recursive: true, force: true });
+    }
+
+    expect(registry.listPlugins()).toEqual(["assertion/dotdot-name"]);
+    const messages = errors.mock.calls.map((c) => String(c[0]) + String(c[1]));
+    expect(messages.filter((m) => m.includes("escapes package"))).toHaveLength(2);
   });
 
   it("loads CommonJS plugins: module.exports, exports.default and named exports", async () => {
@@ -118,8 +142,11 @@ describe("loadPackagePlugins", () => {
     expect(errors).toHaveBeenCalledTimes(2);
   });
 
-  it("throws when the project has no package.json", async () => {
-    await expect(loadPackagePlugins(new PluginRegistry(), root)).rejects.toThrow();
+  it("logs and returns 0 when the project has no package.json", async () => {
+    const errors = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    expect(await loadPackagePlugins(new PluginRegistry(), root)).toBe(0);
+    expect(errors).toHaveBeenCalledTimes(1);
   });
 });
 

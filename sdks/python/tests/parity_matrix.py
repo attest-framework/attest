@@ -18,6 +18,7 @@ SECTIONS = (
     "adapters",
     "exports",
     "expect_chain",
+    "fixture_methods",
     "init_flags",
     "plugins",
     "simulation",
@@ -27,6 +28,7 @@ SECTION_TITLES = {
     "adapters": "Adapters",
     "exports": "Top-level exports",
     "expect_chain": "ExpectChain methods",
+    "fixture_methods": "Engine fixture methods",
     "init_flags": "`init` flags",
     "plugins": "Plugin runner",
     "simulation": "Simulation",
@@ -64,6 +66,10 @@ OUTCOME_NAMES = frozenset(
         "WorldSession",
         "attest_world",
         "start_world",
+        # enforcement of test outcomes
+        "enforce",
+        "evaluate",
+        "inspect",
         # trials
         "attest_budget",
         "attest_min_pass_rate",
@@ -156,8 +162,11 @@ def _alias_problems(
     problems: list[str] = []
     for name, target in aliases.items():
         where = [s for s in SECTIONS if name in python.get(s, [])]
+        plain = snake_to_camel(name)
         if not where:
             problems.append(f"stale alias {name}: no such Python name")
+        elif all(plain in typescript.get(s, []) for s in where):
+            problems.append(f"stale alias {name}: TypeScript now exports {plain}")
         elif any(target not in typescript.get(s, []) for s in where):
             problems.append(f"stale alias {name}: TypeScript does not export {target}")
         if any((section, name) in exception_keys for section in where):
@@ -171,6 +180,8 @@ def build_matrix(python: Surface, typescript: Surface, exceptions_doc: dict[str,
     by_key = {(e["section"], e["python"]): e for e in exceptions if "section" in e}
     problems = _exception_problems(exceptions, python, typescript, aliases)
     problems += _alias_problems(aliases, python, typescript, set(by_key))
+    notes: dict[str, str] = exceptions_doc.get("alias_notes", {})
+    problems += [f"stale alias note {n}: no such alias" for n in sorted(set(notes) - set(aliases))]
 
     rows: list[Row] = []
     for section in SECTIONS:
@@ -179,7 +190,7 @@ def build_matrix(python: Surface, typescript: Surface, exceptions_doc: dict[str,
             target = aliases.get(name, snake_to_camel(name))
             if target in have:
                 status = "alias" if name in aliases else "match"
-                rows.append(Row(section, name, target, status))
+                rows.append(Row(section, name, target, status, note=notes.get(name, "")))
             elif (section, name) in by_key:
                 exc = by_key[(section, name)]
                 rows.append(
@@ -227,13 +238,13 @@ def render_matrix(matrix: Matrix) -> str:
         out += [
             f"## {SECTION_TITLES[section]}",
             "",
-            "| Python | TypeScript | Status |",
-            "| --- | --- | --- |",
+            "| Python | TypeScript | Status | Note |",
+            "| --- | --- | --- | --- |",
         ]
         for r in rows:
             ts = f"`{r.typescript}`" if r.typescript != "-" else "-"
             status = r.status if r.status != "exception" else f"exception (`{r.reason}`)"
-            out.append(f"| `{r.python}` | {ts} | {status} |")
+            out.append(f"| `{r.python}` | {ts} | {status} | {r.note or '-'} |")
         out.append("")
     return "\n".join(out).rstrip() + "\n"
 
