@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sort"
 	"strconv"
+	"strings"
 
 	"github.com/attest-ai/attest/engine/internal/redact"
 	"github.com/attest-ai/attest/engine/internal/trace"
@@ -165,12 +166,8 @@ func CheckFixture(data []byte) *trace.CheckReport {
 	if tc := f.Verification.TraceCheck; !tc.OK {
 		add(trace.SeverityError, IssueCaptureCheck, fmt.Sprintf("the captured spans failed trace check with %d errors", tc.Errors))
 	}
-	switch {
-	case f.Verification.Verified:
-	case !HasModelOrToolSteps(t):
-		add(trace.SeverityWarning, IssueUnverified, "fixture is not verified; its trace has no llm_call or tool_call step, so there was nothing to verify")
-	default:
-		add(trace.SeverityWarning, IssueUnverified, "fixture is not verified; its drafted contracts did not hold at capture")
+	if outcome, causes := OutcomeOf(f); outcome == OutcomeNotVerified {
+		add(trace.SeverityWarning, IssueUnverified, "fixture is not verified; "+strings.Join(causes, "; "))
 	}
 	r.OK = len(r.Errors()) == 0
 	return r

@@ -230,20 +230,21 @@ function captureAndEmit(engine: string, args: string[]): number {
   }
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "attest-capture-"));
   const resultFile = path.join(tmp, "result.json");
-  let result: { fixture: string; verified: boolean };
+  let result: { fixture: string; verified: boolean; outcome: string };
   let code: number;
   try {
     const proc = spawnSync(engine, ["capture", "--result-file", resultFile, ...args], { stdio: "inherit" });
     if (proc.error) throw proc.error;
     code = exitStatus(proc.status, proc.signal);
     if (!fs.existsSync(resultFile)) return code;
-    result = JSON.parse(fs.readFileSync(resultFile, "utf8")) as { fixture: string; verified: boolean };
+    result = JSON.parse(fs.readFileSync(resultFile, "utf8")) as { fixture: string; verified: boolean; outcome: string };
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
   }
   const fixture = result.fixture;
   if (!result.verified) {
-    process.stderr.write(`  test: none drafted for unverified ${fixture}\n`);
+    const reason = result.outcome === "nothing_to_verify" ? "with nothing to verify" : "for unverified";
+    process.stderr.write(`  test: none drafted ${reason} ${fixture}\n`);
     return code;
   }
   const written = emitVitest(fixture);

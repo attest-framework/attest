@@ -65,6 +65,12 @@ var (
 	sseTimestampPattern = regexp.MustCompile(`"(created|created_at|completed_at)":\s*(\d+)`)
 )
 
+// conversationIDKeys hold a framework-chosen conversation id, often derived
+// from the clock. It becomes {{conversation_N}}, numbered by first occurrence.
+// Only the span attribute and the trace's own conversation_id (see template)
+// qualify: a tool argument named conversation_id is evidence and stays literal.
+var conversationIDKeys = map[string]bool{"gen_ai.conversation.id": true}
+
 // idKeys hold a provider id as their whole value.
 var idKeys = map[string]bool{
 	"id": true, "tool_call_id": true, "call_id": true, "tool_use_id": true,
@@ -96,6 +102,13 @@ func newTemplater() *templater {
 }
 
 func (t *templater) template(doc any) any {
+	if m, ok := doc.(map[string]any); ok {
+		if tr, ok := m["trace"].(map[string]any); ok {
+			if id, ok := tr["conversation_id"].(string); ok && id != "" {
+				tr["conversation_id"] = t.placeholder("conversation", id)
+			}
+		}
+	}
 	t.collect(doc, "")
 	return t.rewrite(doc, "")
 }
@@ -179,6 +192,8 @@ func (t *templater) collect(v any, key string) {
 			t.idFor(t.traceIDs, x, "trace", 32)
 		case spanIDKeys[key] && x != "":
 			t.idFor(t.spanIDs, x, "span", 16)
+		case conversationIDKeys[key] && x != "":
+			t.placeholder("conversation", x)
 		case idKeys[key] && providerIDPattern.FindString(x) == x:
 			t.knownIDs[x] = true
 		}
@@ -251,6 +266,8 @@ func (t *templater) rewriteString(s, key string) string {
 		if p, ok := t.spanIDs[s]; ok {
 			return p
 		}
+	case conversationIDKeys[key] && s != "":
+		return t.placeholder("conversation", s)
 	case timestampKeys[key] && isDigits(s):
 		return fmt.Sprint(t.nextStamp())
 	}

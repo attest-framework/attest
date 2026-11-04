@@ -11,6 +11,7 @@
         "name",
         "fixture",
         "verified",
+        "outcome",
         "expect_fail",
         "source",
         "replay_capable",
@@ -29,6 +30,15 @@
         },
         "verified": {
           "type": "boolean"
+        },
+        "outcome": {
+          "type": "string",
+          "enum": [
+            "verified",
+            "not_verified",
+            "nothing_to_verify"
+          ],
+          "description": "verified: every drafted contract held (or the incident reproduced). not_verified: a check failed or there is no evidence (the command exited non-zero, a replay-capable source recorded no exchange, trace check failed, --expect-fail drafted nothing); the process exits 1. nothing_to_verify: a healthy run with no tool call, structured output or cost to draft a contract from; verified is false and the process exits 0."
         },
         "expect_fail": {
           "type": "boolean"
@@ -61,7 +71,47 @@
           "minimum": 0
         }
       },
-      "description": "A capture: the fixture written and whether it verified. exit_code is the captured command's (null for --from)."
+      "description": "A capture: the fixture written and whether it verified. exit_code is the captured command's (null for --from).",
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "outcome": {
+                "const": "verified"
+              }
+            },
+            "required": [
+              "outcome"
+            ]
+          },
+          "then": {
+            "properties": {
+              "verified": {
+                "const": true
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "verified": {
+                "const": true
+              }
+            },
+            "required": [
+              "verified"
+            ]
+          },
+          "then": {
+            "properties": {
+              "outcome": {
+                "const": "verified"
+              }
+            }
+          }
+        }
+      ]
     },
     {
       "type": "object",

@@ -358,6 +358,12 @@ export interface RecordResult<T> {
   value: T;
   fixture: string;
   verified: boolean;
+  /**
+   * `verified`, `not_verified` or `nothing_to_verify`: a healthy run with no tool call,
+   * structured output or cost to draft a contract from. `record` throws for
+   * `not_verified`; `nothing_to_verify` returns `verified: false` and no test file.
+   */
+  outcome: "verified" | "nothing_to_verify";
   testFile: string | null;
 }
 
@@ -463,8 +469,10 @@ let recording = false;
  * abandoned and no fixture is written. Captures cannot overlap.
  *
  * @throws CaptureError when another capture is running, the engine writes no fixture,
- *   or the fixture is not verified (its drafted contracts did not hold; the fixture is
- *   still written and no test is drafted).
+ *   or the fixture is not verified (a drafted contract did not hold, the trace check
+ *   failed or no model call was recorded; the fixture is still written and no test is
+ *   drafted). A healthy run with nothing to draft a contract from does not throw: the
+ *   result has `outcome: "nothing_to_verify"`, `verified: false` and no test file.
  */
 export async function record<T>(
   name: string,
@@ -514,10 +522,17 @@ async function recordExclusive<T>(
   if (lines.length < 2) {
     throw new CaptureError(`capture ${name} wrote no fixture (${exitDetail(exit)})`);
   }
-  const outcome = JSON.parse(lines[lines.length - 1] ?? "") as { fixture: string; verified: boolean };
-  if (exit.code !== 0 || !outcome.verified) {
+  const outcome = JSON.parse(lines[lines.length - 1] ?? "") as {
+    fixture: string;
+    verified: boolean;
+    outcome: "verified" | "not_verified" | "nothing_to_verify";
+  };
+  if (exit.code !== 0 || outcome.outcome === "not_verified") {
     throw new CaptureError(`capture ${name}: fixture ${outcome.fixture} is not verified; no test drafted`, outcome.fixture);
   }
+  if (outcome.outcome === "nothing_to_verify") {
+    return { value, fixture: outcome.fixture, verified: false, outcome: "nothing_to_verify", testFile: null };
+  }
   const testFile = opts.emitTest === false ? null : emitVitest(outcome.fixture);
-  return { value, fixture: outcome.fixture, verified: true, testFile };
+  return { value, fixture: outcome.fixture, verified: true, outcome: "verified", testFile };
 }

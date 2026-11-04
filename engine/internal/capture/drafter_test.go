@@ -262,3 +262,21 @@ func TestVerify_NoModelOrToolStep_NeverVerified(t *testing.T) {
 		}
 	}
 }
+
+func TestVerify_NoContractsDrafted_NeverVerified(t *testing.T) {
+	for _, expectFail := range []bool{false, true} {
+		tr := &types.Trace{
+			SchemaVersion: 2, TraceID: "t",
+			Steps: []types.Step{{Type: types.StepTypeLLMCall, Name: "chat", Args: json.RawMessage(`{}`), Result: json.RawMessage(`{}`)}},
+		}
+
+		v, err := Verify(tr, nil, expectFail, TraceCheckResult{OK: true})
+
+		if err != nil {
+			t.Fatal(err)
+		}
+		if v.Verified {
+			t.Errorf("expectFail=%v: zero contracts verified", expectFail)
+		}
+	}
+}

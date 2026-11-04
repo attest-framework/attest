@@ -351,6 +351,10 @@ class CaptureResult:
 
     fixture: Path | None = None
     verified: bool | None = None
+    #: ``verified``, ``not_verified`` or ``nothing_to_verify`` (a healthy run with no
+    #: tool call, structured output or cost to draft a contract from: the fixture is
+    #: written with ``verified`` False and no test is drafted).
+    outcome: str | None = None
     test_file: Path | None = None
 
 
@@ -418,7 +422,10 @@ def record(
 
     Raises:
         CaptureError: The engine could not write the fixture, or the fixture is not
-            verified (its drafted contracts did not hold; the fixture is still written).
+            verified (a drafted contract did not hold, the trace check failed, or no model
+            call was recorded; the fixture is still written). A healthy run with nothing to
+            draft a contract from does not raise: ``capture.result.outcome`` is
+            ``"nothing_to_verify"``, ``verified`` is False and no test is drafted.
     """
     # attest.engine_manager imports the attest package, which imports this module.
     from attest.engine_manager import resolve_engine
@@ -437,11 +444,11 @@ def record(
             yield capture
     finally:
         _RECORDING.release()
-    if not capture.result.verified:
+    if capture.result.outcome == "not_verified":
         raise CaptureError(
             f"capture {name}: fixture {capture.result.fixture} is not verified; no test drafted"
         )
-    if emit_test and capture.result.fixture is not None:
+    if emit_test and capture.result.verified and capture.result.fixture is not None:
         capture.result.test_file = emit_pytest(capture.result.fixture)
 
 
@@ -493,6 +500,7 @@ def _serve(
     outcome = json.loads(out.strip().splitlines()[-1])
     capture.result.fixture = Path(outcome["fixture"])
     capture.result.verified = proc.returncode == 0 and bool(outcome["verified"])
+    capture.result.outcome = outcome["outcome"] if proc.returncode == 0 else "not_verified"
 
 
 # One capture at a time: record() sets process-wide environment variables, so a

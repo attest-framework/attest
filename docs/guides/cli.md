@@ -69,8 +69,8 @@ The table is checked against the engine's command registry by a test; a change t
 | `calibrate` | 0 | success |
 | `calibrate` | 1 | the labels file could not be read, has no judge_score rows or no usable agreement, or persisting failed |
 | `calibrate` | 2 | usage error |
-| `capture` | 0 | the fixture is verified, or --check-redaction found no secrets; the command's own exit code is recorded, not propagated |
-| `capture` | 1 | the fixture is not verified or was not written, the capture failed, or --check-redaction found secrets |
+| `capture` | 0 | the fixture is verified or captured with nothing to verify, or --check-redaction found no secrets; the command's own exit code is recorded, not propagated |
+| `capture` | 1 | the fixture is not verified (a drafted contract failed, the trace check failed, no step was mapped, --expect-fail drafted nothing, or nothing was drafted while the command exited non-zero or recorded no model call) or was not written, the capture failed, or --check-redaction found secrets |
 | `capture` | 2 | usage error, an invalid --world file, or a --refresh that was not confirmed |
 | `doctor` | 0 | success |
 | `doctor` | 1 | configuration error the JSON-RPC server would refuse to start with |

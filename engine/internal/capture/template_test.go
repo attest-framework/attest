@@ -232,3 +232,25 @@ func TestTemplaterEmails_KeysThatCollideAfterTemplatingAreAnError(t *testing.T) 
 		t.Fatal("collision accepted")
 	}
 }
+
+func TestTemplate_ConversationID_ClockDerivedValuesGiveSameOutput(t *testing.T) {
+	doc := `{"trace":{"conversation_id":"conv-%d","steps":[]},"spans":[{"attributes":{"gen_ai.conversation.id":"conv-%d"}}]}`
+
+	a := templated(t, fmt.Sprintf(doc, 1762300000111, 1762300000111))
+	b := templated(t, fmt.Sprintf(doc, 1762300999222, 1762300999222))
+
+	if a != b {
+		t.Fatalf("clock-derived conversation ids leak:\n%s\n%s", a, b)
+	}
+	if strings.Count(a, "{{conversation_1}}") != 2 || strings.Contains(a, "conv-") {
+		t.Fatalf("same id must map to one placeholder: %s", a)
+	}
+}
+
+func TestTemplate_ConversationIDInToolArguments_StaysLiteral(t *testing.T) {
+	got := templated(t, `{"trace":{"conversation_id":"conv-1","steps":[{"args":{"conversation_id":"C-42"}}]}}`)
+
+	if !strings.Contains(got, `"conversation_id":"C-42"`) || !strings.Contains(got, `"conversation_id":"{{conversation_1}}"`) {
+		t.Fatalf("got %s", got)
+	}
+}

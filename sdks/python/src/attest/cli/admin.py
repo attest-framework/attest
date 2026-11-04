@@ -248,7 +248,12 @@ def _capture_and_emit(engine: str, args: Sequence[str]) -> int:
         result = json.loads(result_file.read_text(encoding="utf-8"))
     fixture = Path(result["fixture"])
     if not result["verified"]:
-        print(f"  test: none drafted for unverified {fixture}", file=sys.stderr)
+        reason = (
+            "with nothing to verify"
+            if result["outcome"] == "nothing_to_verify"
+            else "for unverified"
+        )
+        print(f"  test: none drafted {reason} {fixture}", file=sys.stderr)
         return code
     written = emit_pytest(fixture)
     if written is None:

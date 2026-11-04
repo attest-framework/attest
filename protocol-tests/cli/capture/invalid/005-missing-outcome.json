@@ -1,0 +1,11 @@
+{
+  "exchanges": 1,
+  "exit_code": 0,
+  "expect_fail": false,
+  "fixture": "tests/attest/fixtures/chat.attest.json",
+  "name": "chat",
+  "replay_capable": true,
+  "source": "command",
+  "steps": 1,
+  "verified": false
+}

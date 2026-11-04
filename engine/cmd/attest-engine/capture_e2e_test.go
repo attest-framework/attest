@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -53,6 +54,13 @@ func runScriptedAgentNote(openaiBase, tracesEndpoint, apiKey, note string) error
 	if v := os.Getenv("ATTEST_CAPTURE_HELPER_SYSTEM"); v != "" {
 		system = fmt.Sprintf(`{"role":"system","content":%q},`, v)
 	}
+	// ATTEST_CAPTURE_HELPER_OFFLINE=1 plays an agent whose model is
+	// unreachable: no model call is made, only an agent and a chat span
+	// export, and the process exits 1.
+	offline := os.Getenv("ATTEST_CAPTURE_HELPER_OFFLINE") == "1"
+	if offline {
+		return exportSpans(tracesEndpoint, note, true, true)
+	}
 	req, _ := http.NewRequest(http.MethodPost, openaiBase+"/chat/completions",
 		strings.NewReader(`{"model":"gpt-test","messages":[`+system+`{"role":"user","content":"refund O-7 for `+e2ePlantedEmail+`"}]}`))
 	req.Header.Set("Authorization", "Bearer "+apiKey)
@@ -66,6 +74,12 @@ func runScriptedAgentNote(openaiBase, tracesEndpoint, apiKey, note string) error
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("model call: %d", resp.StatusCode)
 	}
+	// ATTEST_CAPTURE_HELPER_CHAT_ONLY=1 plays a healthy run that only chats:
+	// one model call, no tool, exit 0.
+	return exportSpans(tracesEndpoint, note, os.Getenv("ATTEST_CAPTURE_HELPER_CHAT_ONLY") == "1", false)
+}
+
+func exportSpans(tracesEndpoint, note string, chatOnly, fail bool) error {
 	traceID, root := randomHex(16), randomHex(8)
 	start := time.Now().UnixNano()
 	at := func(i int) string { return fmt.Sprint(start + int64(i)*int64(time.Millisecond)) }
@@ -84,23 +98,30 @@ func runScriptedAgentNote(openaiBase, tracesEndpoint, apiKey, note string) error
 			attr("gen_ai.tool.call.arguments", args), attr("gen_ai.tool.call.result", `{"ok":true}`))
 	}
 	spans := []string{
-		spanJSON(root, "", "invoke_agent refund-desk", 0, attr("gen_ai.operation.name", "invoke_agent"), attr("gen_ai.agent.name", "refund-desk")),
+		spanJSON(root, "", "invoke_agent refund-desk", 0, attr("gen_ai.operation.name", "invoke_agent"), attr("gen_ai.agent.name", "refund-desk"),
+			attr("gen_ai.conversation.id", fmt.Sprintf("conv-%d", time.Now().UnixNano()))),
 		spanJSON(randomHex(8), root, "chat gpt-test", 1, attr("gen_ai.operation.name", "chat"), attr("gen_ai.request.model", "gpt-test")),
 		tool("lookup_order", `{"order_id":"O-7"}`, 3),
 		tool("issue_refund", `{"order_id":"O-7","note":"`+note+` for `+e2ePlantedEmail+`"}`, 5),
 	}
+	if chatOnly {
+		spans = spans[:2]
+	}
 	// ATTEST_CAPTURE_HELPER_REFUNDS=1 plays a healthy run with one refund.
-	if os.Getenv("ATTEST_CAPTURE_HELPER_REFUNDS") != "1" {
+	if !chatOnly && os.Getenv("ATTEST_CAPTURE_HELPER_REFUNDS") != "1" {
 		spans = append(spans, tool("issue_refund", `{"order_id":"O-7"}`, 7))
 	}
 	doc := `{"resourceSpans":[{"scopeSpans":[{"spans":[` + strings.Join(spans, ",") + `]}]}]}`
-	resp, err = http.Post(tracesEndpoint, "application/json", strings.NewReader(doc))
+	resp, err := http.Post(tracesEndpoint, "application/json", strings.NewReader(doc))
 	if err != nil {
 		return err
 	}
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("export: %d", resp.StatusCode)
+	}
+	if fail {
+		return errors.New("model unreachable")
 	}
 	return nil
 }
@@ -169,6 +190,9 @@ func TestCaptureCommand_IncidentTwice_ByteIdenticalRedactedVerified(t *testing.T
 	if !bytes.Equal(a.fixture, b.fixture) {
 		t.Fatalf("fixtures differ:\n%s\n---\n%s", a.fixture, b.fixture)
 	}
+	if !bytes.Contains(a.fixture, []byte(`"conversation_id": "{{conversation_1}}"`)) || bytes.Contains(a.fixture, []byte("conv-")) {
+		t.Errorf("conversation id not templated:\n%s", a.fixture)
+	}
 	for _, secret := range []string{e2ePlantedKey, e2ePlantedEmail} {
 		if bytes.Contains(a.fixture, []byte(secret)) || strings.Contains(a.stderr, secret) {
 			t.Errorf("fixture or output contains %q", secret)
@@ -213,6 +237,70 @@ func TestCaptureCommand_IncidentWithoutExpectFail_DraftsObservedMaxAndVerifies(t
 	}
 	if !bytes.Contains(r.fixture, []byte(`"description": "issue_refund at most 2× per order_id (observed maximum)"`)) {
 		t.Fatalf("issue_refund not drafted at its observed maximum:\n%s", r.fixture)
+	}
+}
+
+// A command that exits non-zero with no model call is never green, and the
+// message names every cause that holds, the empty contract list included.
+func TestCaptureCommand_ExitsNonZeroWithNoModelCalls_NeverVerifiedNamesEveryCause(t *testing.T) {
+	bin := buildEngineBinary(t)
+	t.Setenv("ATTEST_CAPTURE_HELPER_OFFLINE", "1")
+
+	r := runCaptureCommand(t, bin, fakeModel(t), t.TempDir())
+
+	if r.code != 1 {
+		t.Fatalf("exit %d, want 1\n%s", r.code, r.stderr)
+	}
+	if strings.Contains(r.stderr, "  verified:") || strings.Contains(r.stderr, "captured: nothing to verify") {
+		t.Fatalf("false green:\n%s", r.stderr)
+	}
+	for _, want := range []string{"not verified: ", "no model calls were recorded", "the command exited 3", "no contracts were drafted"} {
+		if !strings.Contains(r.stderr, want) {
+			t.Errorf("summary lacks %q:\n%s", want, r.stderr)
+		}
+	}
+	if !bytes.Contains(r.fixture, []byte(`"verified": false`)) {
+		t.Fatalf("fixture not recorded as unverified:\n%s", r.fixture)
+	}
+}
+
+// A healthy chat-only run drafts nothing: the fixture is written unverified,
+// the capture exits 0 and never says "verified".
+func TestCaptureCommand_ChatOnlyRun_NothingToVerifyExitsZero(t *testing.T) {
+	bin := buildEngineBinary(t)
+	t.Setenv("ATTEST_CAPTURE_HELPER_CHAT_ONLY", "1")
+	dir := t.TempDir()
+	resultFile := filepath.Join(dir, "result.json")
+
+	r := runCaptureCommand(t, bin, fakeModel(t), dir, "--result-file", resultFile)
+
+	if r.code != 0 {
+		t.Fatalf("exit %d\n%s", r.code, r.stderr)
+	}
+	if !strings.Contains(r.stderr, "captured: nothing to verify (no tool call, structured output or cost); replay-only fixture, no test drafted") {
+		t.Fatalf("summary:\n%s", r.stderr)
+	}
+	if strings.Contains(r.stderr, "  verified:") || strings.Contains(r.stderr, "not verified") {
+		t.Fatalf("summary claims a verification result:\n%s", r.stderr)
+	}
+	if !bytes.Contains(r.fixture, []byte(`"verified": false`)) {
+		t.Fatalf("fixture:\n%s", r.fixture)
+	}
+	data, err := os.ReadFile(resultFile)
+	if err != nil || !strings.Contains(string(data), `"outcome":"nothing_to_verify"`) {
+		t.Fatalf("result file %s (%v)", data, err)
+	}
+}
+
+// --json carries the outcome; a chat-only run exits 0 with nothing_to_verify.
+func TestCaptureCommand_JSON_ChatOnlyReportsNothingToVerify(t *testing.T) {
+	bin := buildEngineBinary(t)
+	t.Setenv("ATTEST_CAPTURE_HELPER_CHAT_ONLY", "1")
+
+	r := runCaptureCommand(t, bin, fakeModel(t), t.TempDir(), "--json")
+
+	if r.code != 0 || !strings.Contains(r.stdout, `"outcome": "nothing_to_verify"`) || !strings.Contains(r.stdout, `"verified": false`) {
+		t.Fatalf("exit %d\n%s\n%s", r.code, r.stdout, r.stderr)
 	}
 }
 
