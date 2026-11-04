@@ -65,7 +65,9 @@ def test_scaffold_project_ci_github_writes_merge_gate_workflow(tmp_path: Path) -
     run_tests = by_name["Run tests"]
     assert "continue-on-error: true" in run_tests
     assert "pytest --attest-report=attest-report.json" in run_tests
-    assert 'ATTEST_REPORT_TRACES: "1"' in run_tests
+    assert '# env:\n        #   ATTEST_REPORT_TRACES: "1"' in run_tests
+    assert "\n        env:" not in run_tests
+    assert "not redacted" in run_tests and "private repositories" in run_tests
     for name in (
         "Write the JUnit report",
         "Write the failure viewer",

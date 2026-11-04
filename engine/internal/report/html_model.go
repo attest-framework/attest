@@ -30,6 +30,9 @@ const (
 	viewMaxDepth         = 6
 	viewMaxSequence      = 200
 	viewMaxListed        = 200
+	viewMaxNotices       = 50
+	viewMaxNoticeBytes   = 300
+	viewMaxIndentDepth   = 32
 )
 
 // Test classes in View output; they pick a CSS class and nothing else.
@@ -200,31 +203,47 @@ type viewBuilder struct {
 	stringsCut int
 	stepCount  int
 	stepsCut   bool
+	noticesCut int
 	notices    []string
 }
 
 // text bounds one report string: cut at viewMaxString bytes on a rune
 // boundary, and replaced once the page's text budget is spent.
-func (b *viewBuilder) text(s string) string {
+func (b *viewBuilder) text(s string) string { return b.textTotal(s, len(s)) }
+
+// textTotal is text for a string whose caller already cut it to a prefix of a
+// value total bytes long, so a huge value is never copied whole.
+func (b *viewBuilder) textTotal(s string, total int) string {
 	if b.used >= viewMaxTotalBytes {
 		b.budgetCut = true
 		return "[omitted: page size limit]"
 	}
-	s = strings.ToValidUTF8(s, "�")
-	if len(s) > viewMaxString {
-		cut := viewMaxString
-		for cut > 0 && !utf8.RuneStart(s[cut]) {
+	s = strings.ToValidUTF8(s, "\uFFFD")
+	if len(s) > viewMaxString || total > len(s) {
+		cut := min(viewMaxString, len(s))
+		for cut > 0 && cut < len(s) && !utf8.RuneStart(s[cut]) {
 			cut--
 		}
 		b.stringsCut++
-		s = fmt.Sprintf("%s … [truncated, %d bytes total]", s[:cut], len(s))
+		s = fmt.Sprintf("%s … [truncated, %d bytes total]", s[:cut], total)
 	}
 	b.used += len(s)
 	return s
 }
 
+// notef records a page notice. A notice is cut to viewMaxNoticeBytes, counts
+// against the text budget, and past viewMaxNotices only a count is kept.
 func (b *viewBuilder) notef(format string, args ...any) {
-	b.notices = append(b.notices, fmt.Sprintf(format, args...))
+	if len(b.notices) >= viewMaxNotices {
+		b.noticesCut++
+		return
+	}
+	msg := fmt.Sprintf(format, args...)
+	if len(msg) > viewMaxNoticeBytes {
+		msg = strings.ToValidUTF8(msg[:viewMaxNoticeBytes], "") + "…"
+	}
+	b.used += len(msg)
+	b.notices = append(b.notices, msg)
 }
 
 // inputBudget bounds the bytes read across every input file of one run.
@@ -326,6 +345,9 @@ func BuildView(opts ViewOptions) (*View, error) {
 	}
 	if b.stringsCut > 0 {
 		b.notef("%d field(s) longer than %d bytes were truncated", b.stringsCut, viewMaxString)
+	}
+	if b.noticesCut > 0 {
+		b.notices = append(b.notices, fmt.Sprintf("%d more notice(s) omitted", b.noticesCut))
 	}
 	v.Notices = b.notices
 	return v, nil
@@ -478,7 +500,9 @@ func (b *viewBuilder) tests(v *View, r *CIReport) {
 	if len(orphan) > 0 {
 		b.notef("%d assertion row(s) carry no test context and are not listed", len(orphan))
 	}
-	b.notices = append(b.notices, traces.notices...)
+	for _, n := range traces.notices {
+		b.notef("%s", n)
+	}
 }
 
 // fillTest adds a test's findings, passed ids and traces, and highlights the
@@ -496,8 +520,12 @@ func (b *viewBuilder) fillTest(tv *TestView, rows []CIResult, traces *traceDecod
 		}
 	}
 	must := map[string]map[int]bool{}
-	for n, res := range rows {
-		if n >= viewMaxFindingRows {
+	nonPass := 0
+	for _, res := range rows {
+		if res.Status == types.StatusPass {
+			continue
+		}
+		if nonPass++; nonPass > viewMaxFindingRows { // the findings rendered below
 			break
 		}
 		if idx, ok := stepIndex(res.TraceNodePath); ok && isFailure(res.Status) {
@@ -510,7 +538,7 @@ func (b *viewBuilder) fillTest(tv *TestView, rows []CIResult, traces *traceDecod
 	byID := map[string]int{}
 	for _, id := range traceIDs {
 		if len(tv.Traces) >= viewMaxTracesPerTest {
-			b.notef("test %s: %d more trace(s) not rendered", tv.Name, len(traceIDs)-viewMaxTracesPerTest)
+			b.notef("test %s: %d more trace(s) not rendered", clipForNotice(tv.Name), len(traceIDs)-viewMaxTracesPerTest)
 			break
 		}
 		tr := traces.get(id)
@@ -621,7 +649,7 @@ func (d *traceDecoder) get(id string) *types.Trace {
 	}
 	var t types.Trace
 	if err := json.Unmarshal(raw, &t); err != nil {
-		d.notices = append(d.notices, fmt.Sprintf("trace %q is not a valid trace: %v", clipForNotice(id), err))
+		d.notices = append(d.notices, fmt.Sprintf("trace %q is not a valid trace: %v", clipForNotice(id), clipForNotice(err.Error())))
 		d.decoded[id] = nil
 		return nil
 	}
@@ -702,10 +730,45 @@ func (b *viewBuilder) stepView(prefix string, i int, s *types.Step, depth int, m
 // per-string cap is cut before indenting, so a huge blob never costs more than
 // the cap.
 func (b *viewBuilder) jsonText(raw json.RawMessage) string {
-	if len(raw) > 4*viewMaxString {
+	if len(raw) == 0 || string(raw) == "null" {
+		return ""
+	}
+	if b.used >= viewMaxTotalBytes {
+		b.budgetCut = true
+		return "[omitted: page size limit]"
+	}
+	if len(raw) > viewMaxString {
+		// Compact text, cut before it is copied.
+		return b.textTotal(string(raw[:min(len(raw), viewMaxString+utf8.UTFMax)]), len(raw))
+	}
+	if jsonDepthOver(raw, viewMaxIndentDepth) {
 		return b.text(string(raw))
 	}
 	return b.text(prettyJSON(raw))
+}
+
+// jsonDepthOver reports whether raw nests arrays or objects deeper than max.
+// json.Indent is quadratic in nesting depth, so deep values stay compact.
+func jsonDepthOver(raw []byte, max int) bool {
+	depth, inString, escaped := 0, false, false
+	for _, c := range raw {
+		switch {
+		case inString && escaped:
+			escaped = false
+		case inString && c == '\\':
+			escaped = true
+		case c == '"':
+			inString = !inString
+		case inString:
+		case c == '[' || c == '{':
+			if depth++; depth > max {
+				return true
+			}
+		case c == ']' || c == '}':
+			depth--
+		}
+	}
+	return false
 }
 
 // prettyJSON indents a JSON value for display; raw is already valid JSON

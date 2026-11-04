@@ -2,6 +2,8 @@ package main
 
 import (
 	"bytes"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -10,7 +12,9 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 
+	"github.com/attest-ai/attest/engine/internal/llm/providers"
 	"github.com/attest-ai/attest/engine/internal/report"
 )
 
@@ -53,9 +57,29 @@ func defaultViewEnv() viewEnv {
 	info, err := os.Stdout.Stat()
 	return viewEnv{
 		isTTY: err == nil && info.Mode()&os.ModeCharDevice != 0,
-		ci:    os.Getenv("CI") != "",
+		ci:    inCI(),
 		open:  openInBrowser,
 	}
+}
+
+// inCI reports whether any CI marker variable is set, with any value.
+func inCI() bool {
+	for _, name := range providers.CIEnvVars {
+		if _, ok := os.LookupEnv(name); ok {
+			return true
+		}
+	}
+	return false
+}
+
+// openable reports whether path is a page the opener may be handed: only HTML
+// files, never an arbitrary file type chosen with --out.
+func openable(path string) bool {
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".html", ".htm":
+		return true
+	}
+	return false
 }
 
 // openInBrowser starts the platform's file opener with path as one argv
@@ -104,6 +128,14 @@ func parseViewArgs(args []string, stderr io.Writer) (*viewArgs, bool) {
 	fs.StringVar(&va.out, "out", "", "output file (default attest-report.html next to the first report)")
 	fs.BoolVar(&va.noOpen, "no-open", false, "write the page without opening a browser")
 	fs.BoolVar(&va.asJSON, "json", false, `print {"out","reports","tests","failures","traces","baseline","mutation","opened"} as JSON`)
+	// Everything after a bare -- is a report path, even when it starts with -.
+	var tail []string
+	for i, a := range args {
+		if a == "--" {
+			args, tail = args[:i], args[i+1:]
+			break
+		}
+	}
 	for {
 		if err := fs.Parse(args); err != nil {
 			return nil, false
@@ -114,6 +146,7 @@ func parseViewArgs(args []string, stderr io.Writer) (*viewArgs, bool) {
 		va.reports = append(va.reports, fs.Arg(0))
 		args = fs.Args()[1:]
 	}
+	va.reports = append(va.reports, tail...)
 	if len(va.reports) == 0 {
 		fmt.Fprintln(stderr, "view: at least one report is required")
 		fmt.Fprintln(stderr, viewUsage)
@@ -151,7 +184,11 @@ func runView(args []string, stdout, stderr io.Writer, env viewEnv) int {
 	}
 	opened := false
 	if env.isTTY && !env.ci && !va.noOpen {
-		opened = tryOpen(va.out, stderr, env)
+		if openable(va.out) {
+			opened = tryOpen(va.out, stderr, env)
+		} else {
+			fmt.Fprintf(stderr, "view: not opening %s: only .html and .htm files are opened\n", va.out)
+		}
 	}
 	res := viewResult{
 		Out: va.out, Reports: len(va.reports), Tests: len(v.Tests), Failures: v.Failures, Traces: v.TraceCount,
@@ -200,24 +237,18 @@ func tryOpen(path string, stderr io.Writer, env viewEnv) bool {
 	return true
 }
 
-// writeFileAtomic writes data to path with mode 0644 through a temporary file
-// in the same directory and a rename.
+// writeFileAtomic writes data to path through an exclusively created temporary
+// file in the same directory and a rename. The file gets mode 0644 minus the
+// umask.
 func writeFileAtomic(path string, data []byte) error {
-	tmp, err := os.CreateTemp(filepath.Dir(path), ".attest-view-*")
+	tmp, name, err := createTemp(filepath.Dir(path))
 	if err != nil {
 		return err
 	}
-	name := tmp.Name()
-	fail := func(err error) error {
+	if _, err := tmp.Write(data); err != nil {
 		_ = tmp.Close()
 		_ = os.Remove(name)
 		return err
-	}
-	if _, err := tmp.Write(data); err != nil {
-		return fail(err)
-	}
-	if err := tmp.Chmod(0o644); err != nil {
-		return fail(err)
 	}
 	if err := tmp.Close(); err != nil {
 		_ = os.Remove(name)
@@ -228,4 +259,24 @@ func writeFileAtomic(path string, data []byte) error {
 		return err
 	}
 	return nil
+}
+
+// createTemp creates a new file with a random name in dir with O_EXCL and mode
+// 0644, so the process umask applies.
+func createTemp(dir string) (*os.File, string, error) {
+	for range 8 {
+		var rnd [8]byte
+		if _, err := rand.Read(rnd[:]); err != nil {
+			return nil, "", err
+		}
+		name := filepath.Join(dir, ".attest-view-"+hex.EncodeToString(rnd[:]))
+		f, err := os.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+		if err == nil {
+			return f, name, nil
+		}
+		if !os.IsExist(err) {
+			return nil, "", err
+		}
+	}
+	return nil, "", fmt.Errorf("could not create a temporary file in %s", dir)
 }

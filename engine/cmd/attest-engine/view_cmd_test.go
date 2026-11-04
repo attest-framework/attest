@@ -178,3 +178,69 @@ func TestRunView_UsageAndInputErrors_ExitTwoWithNothingOnStdout(t *testing.T) {
 		})
 	}
 }
+
+func TestInCI_AnyVendorMarkerCounts(t *testing.T) {
+	for _, name := range []string{"CI", "GITHUB_ACTIONS", "GITLAB_CI", "BUILDKITE", "CIRCLECI", "JENKINS_URL", "TF_BUILD", "TEAMCITY_VERSION"} {
+		t.Run(name, func(t *testing.T) {
+			for _, other := range []string{"CI", "GITHUB_ACTIONS", "GITLAB_CI", "BUILDKITE", "CIRCLECI", "JENKINS_URL", "TF_BUILD", "TEAMCITY_VERSION"} {
+				t.Setenv(other, "")
+				_ = os.Unsetenv(other)
+			}
+			if inCI() {
+				t.Fatal("no marker set: not CI")
+			}
+			t.Setenv(name, "")
+
+			if !inCI() {
+				t.Errorf("%s set (empty) must count as CI", name)
+			}
+		})
+	}
+}
+
+func TestRunView_OnlyHTMLOutputsAreOpened(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		file     string
+		wantOpen bool
+	}{{"html", "p.html", true}, {"upper htm", "p.HTM", true}, {"exe", "p.exe", false}, {"none", "page", false}} {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := &openRecorder{}
+			out := filepath.Join(t.TempDir(), tc.file)
+
+			code, _, stderr := runViewForTest(t, viewEnv{isTTY: true, open: rec.open}, viewTestHead, "--out", out)
+
+			if code != exitOK {
+				t.Fatalf("exit %d: %s", code, stderr)
+			}
+			if (len(rec.paths) == 1) != tc.wantOpen {
+				t.Errorf("opener calls %v, want open=%v", rec.paths, tc.wantOpen)
+			}
+			if !tc.wantOpen && !strings.Contains(stderr, "not opening") {
+				t.Errorf("stderr must say the file was not opened: %q", stderr)
+			}
+			if _, err := os.Stat(out); err != nil {
+				t.Errorf("the page must still be written: %v", err)
+			}
+		})
+	}
+}
+
+func TestRunView_AfterDoubleDash_ArgsAreReportPaths(t *testing.T) {
+	dir := t.TempDir()
+	odd := filepath.Join(dir, "-odd.json")
+	data, err := os.ReadFile(viewTestHead)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(odd, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(dir)
+
+	code, stdout, stderr := runViewForTest(t, viewEnv{}, "--json", "--no-open", "--", "-odd.json")
+
+	if code != exitOK || !strings.Contains(stdout, `"reports":1`) {
+		t.Fatalf("exit %d stdout %q stderr %q", code, stdout, stderr)
+	}
+}

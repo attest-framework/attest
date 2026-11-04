@@ -99,8 +99,10 @@ jobs:
       - name: Run tests
         id: tests
         continue-on-error: true
-        env:
-          ATTEST_REPORT_TRACES: "1"
+        # Traces (prompts, outputs, tool args; not redacted) travel in the artifact; on a public
+        # repository any signed-in GitHub user can download it. Enable on private repositories only:
+        # env:
+        #   ATTEST_REPORT_TRACES: "1"
         run: npx vitest run ${REPORT_ARGS}
       - name: Write the JUnit report
         if: always()

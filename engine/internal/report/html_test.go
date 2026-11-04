@@ -7,8 +7,10 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 	"testing"
+	"time"
 )
 
 const viewFixtures = "testdata/view"
@@ -538,5 +540,150 @@ func TestBuildView_TwoBaselines_Merge(t *testing.T) {
 	}
 	if rate != "0" || v.Baseline == nil {
 		t.Fatalf("merged baseline rows = %+v", v.Baseline.Rows)
+	}
+}
+
+func TestRenderHTML_DeeplyNestedJSON_StaysBoundedInTimeAndMemory(t *testing.T) {
+	for _, depth := range []int{40, 2000, 8000} {
+		t.Run(fmt.Sprint(depth), func(t *testing.T) {
+			nested := json.RawMessage(strings.Repeat("[", depth) + strings.Repeat("]", depth))
+			dir := t.TempDir()
+			path := writeEdited(t, dir, "deep.json", func(head map[string]any) {
+				tr := head["traces"].(map[string]any)["trc_inc_1042"].(map[string]any)
+				tr["steps"].([]any)[0].(map[string]any)["args"] = nested
+			})
+			var before, after runtime.MemStats
+			runtime.ReadMemStats(&before)
+			start := time.Now()
+
+			page := renderOpts(t, ViewOptions{Reports: []string{path}})
+
+			runtime.ReadMemStats(&after)
+			if d := time.Since(start); d > 2*time.Second {
+				t.Errorf("render took %v", d)
+			}
+			if grew := after.TotalAlloc - before.TotalAlloc; grew > 64<<20 {
+				t.Errorf("render allocated %d MiB", grew>>20)
+			}
+			if len(page) > 1<<20 {
+				t.Errorf("page is %d bytes", len(page))
+			}
+		})
+	}
+}
+
+func TestJSONDepthOver_IgnoresBracketsInStrings(t *testing.T) {
+	if jsonDepthOver([]byte(`{"a":"[[[[[[[\"[[[["}`), 2) {
+		t.Error("brackets inside strings do not nest")
+	}
+	if !jsonDepthOver([]byte(`[[[1]]]`), 2) {
+		t.Error("three levels exceed a max of two")
+	}
+}
+
+func TestRenderHTML_PlantedPayloads_InReasonsPathsIDsMutantsAndNotices(t *testing.T) {
+	for i, p := range payloads {
+		t.Run(fmt.Sprint(i), func(t *testing.T) {
+			planted := plant(p)
+			dir := t.TempDir()
+			head := writeEdited(t, dir, "head.json", func(doc map[string]any) {
+				doc["tests"].([]any)[2].(map[string]any)["not_evaluated_reasons"] = []any{planted}
+				traces := doc["traces"].(map[string]any)
+				// A trace that cannot decode: its id and the error text reach a notice.
+				traces[planted] = map[string]any{"steps": "not a list"}
+				for _, r := range doc["results"].([]any) {
+					m := r.(map[string]any)
+					if m["status"] == "hard_fail" {
+						m["trace_node_path"] = planted
+						m["trace_id"] = planted
+					}
+				}
+			})
+			mut := editMutation(t, dir, func(m map[string]any) {
+				mm := m["mutants"].([]any)[1].(map[string]any)
+				mm["id"], mm["fixture"], mm["operator"], mm["description"] = planted, planted, planted, planted
+				sg := m["survivors_suggestions"].([]any)[0].(map[string]any)
+				sg["mutant_id"], sg["description"] = planted, planted
+				sg["contract"].(map[string]any)["description"] = planted
+			})
+
+			page := renderOpts(t, ViewOptions{Reports: []string{head}, Mutation: mut})
+
+			if escapedForm(planted) != planted && strings.Contains(page, planted) {
+				t.Fatalf("raw payload %q in the page", planted)
+			}
+			if !strings.Contains(page, escapedForm(planted)) {
+				t.Fatalf("escaped payload missing")
+			}
+			assertPageIsInert(t, page)
+		})
+	}
+}
+
+func editMutation(t *testing.T, dir string, edit func(map[string]any)) string {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(viewFixtures, "mutate.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(data, &doc); err != nil {
+		t.Fatal(err)
+	}
+	edit(doc)
+	out, _ := json.Marshal(doc)
+	path := filepath.Join(dir, "mutate.json")
+	if err := os.WriteFile(path, out, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func TestBuildView_Notices_AreClippedAndCapped(t *testing.T) {
+	dir := t.TempDir()
+	path := writeEdited(t, dir, "many.json", func(doc map[string]any) {
+		traces := doc["traces"].(map[string]any)
+		for i := 0; i < 3*viewMaxNotices; i++ {
+			traces[fmt.Sprintf("bad_%d_%s", i, strings.Repeat("x", 5000))] = map[string]any{"steps": "no"}
+		}
+		results := doc["results"].([]any)
+		for i := 0; i < 3*viewMaxNotices; i++ {
+			results = append(results, map[string]any{"assertion_id": "a", "status": "pass", "test_id": "tests/test_refund.py::test_inc_1042",
+				"file": "tests/test_refund.py", "line": 12, "trace_id": fmt.Sprintf("bad_%d_%s", i, strings.Repeat("x", 5000))})
+		}
+		doc["results"] = results
+	})
+
+	v, err := BuildView(ViewOptions{Reports: []string{path}})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(v.Notices) > viewMaxNotices+1 {
+		t.Errorf("%d notices, want at most %d plus the omitted count", len(v.Notices), viewMaxNotices)
+	}
+	for _, n := range v.Notices {
+		if len(n) > viewMaxNoticeBytes+len("…") {
+			t.Errorf("notice of %d bytes is not clipped", len(n))
+		}
+	}
+	if !strings.Contains(v.Notices[len(v.Notices)-1], "more notice(s) omitted") {
+		t.Errorf("last notice = %q", v.Notices[len(v.Notices)-1])
+	}
+}
+
+func TestRenderHTML_HighlightCapCountsOnlyFailingRowsPastPassingOnes(t *testing.T) {
+	page := renderFixtures(t, func(head map[string]any) {
+		rows := head["results"].([]any)
+		var pad []any
+		for i := 0; i < viewMaxFindingRows+10; i++ { // passing rows ahead of the failing one
+			pad = append(pad, map[string]any{"assertion_id": "p", "status": "pass", "test_id": "tests/test_refund.py::test_inc_1042",
+				"file": "tests/test_refund.py", "line": 12, "trace_id": "trc_inc_1042"})
+		}
+		head["results"] = append(pad, rows...)
+	}, false, false)
+
+	if !strings.Contains(page, `<li class="step hit" id="t0-tr0-s3">`) {
+		t.Fatal("passing rows must not use up the highlight cap")
 	}
 }
