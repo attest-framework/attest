@@ -8,7 +8,7 @@ All notable changes to Attest are documented in this file. The format follows [K
 
 - Framework capture through OpenTelemetry, with no attest-specific adapter: `docs/guides/capture.md` gains a Frameworks section with the instrumentation switch, tested versions and caveats for Pydantic AI, the Vercel AI SDK, Mastra, the OpenAI Agents SDK (Python), the Claude Agent SDK (Python and TypeScript) and LangGraph (Python). Golden OTLP fixtures for each route join `protocol-tests/trace-v2/otlp/`.
 - The OTLP parser keeps `tool.output` span events (the first four per span, among the first 256 events); all other events are never read. A malformed `tool.output` event is dropped and `trace check` warns `malformed_event`. Claude Code records a tool's result there.
-- Claude Code native traces (beta): `claude_code.llm_request` is a model call with its native model, token and cache-token attributes; `claude_code.tool` takes its result from its `tool.output` event; `claude_code.tool.execution` and `claude_code.tool.blocked_on_user` are not steps.
+- Claude Code native traces (beta): `claude_code.llm_request` is a model call with its native model, token and cache-token attributes; `claude_code.tool` takes its result from its `tool.output` event; `claude_code.tool.execution` and `claude_code.tool.blocked_on_user` are not steps. A native attribute of the wrong type is skipped with a `malformed_native_attribute` warning from `trace check` instead of failing conversion.
 - Tool spans without `gen_ai.tool.call.arguments` or `gen_ai.tool.call.result` fall back to `gen_ai.prompt` and `gen_ai.completion`, decoding LangSmith's result wrapper shapes on LangSmith spans.
 
 ### Changed

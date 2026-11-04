@@ -571,7 +571,7 @@ func toolHasResult(s *Span) bool {
 		return true
 	}
 	for _, ev := range s.Events {
-		if _, ok := ev.Attributes[attrToolOutputEvent]; ok {
+		if _, ok := ev.Attributes[attrToolOutputEvent]; ok && ev.Name == EventToolOutput {
 			return true
 		}
 	}

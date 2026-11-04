@@ -321,7 +321,7 @@ func (p *otlpParser) span() (Span, error) {
 					// A malformed tool.output event is dropped, not fatal;
 					// trace check warns (malformed_event).
 					r.droppedEvents++
-				default:
+				case ev.Name == EventToolOutput:
 					r.events = append(r.events, ev)
 				}
 				return nil
@@ -353,13 +353,16 @@ func (p *otlpParser) span() (Span, error) {
 // eventName is the name of a raw event, or "" when it is not an object with a
 // string name.
 func eventName(raw []byte) string {
-	var e struct {
-		Name string `json:"name"`
-	}
+	// Exact, case-sensitive key, like the strict event parser.
+	var e map[string]json.RawMessage
 	if json.Unmarshal(raw, &e) != nil {
 		return ""
 	}
-	return e.Name
+	var name string
+	if json.Unmarshal(e["name"], &name) != nil {
+		return ""
+	}
+	return name
 }
 
 // subParser reads one already-decoded value; it shares this parser's value

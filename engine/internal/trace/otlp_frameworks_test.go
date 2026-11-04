@@ -428,6 +428,9 @@ func TestParseOTLP_SpanEvents(t *testing.T) {
 			// Text that merely mentions tool.output does not make an event one.
 			`[{"name":"exception","attributes":[{"key":"exception.message","value":{"stringValue":"tool.output failed"}},1]}]`,
 			`[{"name":"x","attributes":[{"key":"","value":{"stringValue":"tool.output"}}]}]`,
+			// The key is exactly "name".
+			`[{"NAME":"tool.output","attributes":[{"key":"output","value":{"stringValue":"x"}}]}]`,
+			`[{"Name":"tool.output","attributes":[{"key":"output","value":{"stringValue":"x"}}]}]`,
 			`[{"name":"exception","message":"tool.output","attributes":[null,{"key":"k"}]}]`,
 		} {
 			spans, err := ParseOTLP(span(ev))
@@ -496,4 +499,32 @@ func TestCheck_CoverageMatchesConversion(t *testing.T) {
 			t.Error("tool span without arguments reported complete")
 		}
 	})
+}
+
+func TestConvert_FinishReasonsStringIsStoredAsArrayInResultAndExchange(t *testing.T) {
+	tr, err := convertSpans(t, fwSpan(t, "0000000000000001", "", "chat m", 1, 2, map[string]any{
+		"gen_ai.operation.name": "chat", "gen_ai.response.finish_reasons": `["tool-calls"]`,
+		"gen_ai.input.messages": `[]`, "gen_ai.output.messages": `[]`,
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var res, resp map[string]any
+	_ = json.Unmarshal(tr.Steps[0].Result, &res)
+	_ = json.Unmarshal(tr.Steps[0].Exchange.Response, &resp)
+	want := []any{"tool-calls"}
+	if !reflect.DeepEqual(res["finish_reasons"], want) || !reflect.DeepEqual(resp["finish_reasons"], want) {
+		t.Errorf("result %v, exchange response %v, want %v", res["finish_reasons"], resp["finish_reasons"], want)
+	}
+}
+
+func TestConvert_MiscasedEventNameGivesNoToolResult(t *testing.T) {
+	root := fwSpan(t, "0000000000000001", "", "r", 1, 9, map[string]any{"gen_ai.operation.name": "invoke_agent"})
+	tool := strings.TrimSuffix(spanJSON(t, "0000000000000002", "0000000000000001", "t", 2, 3, map[string]any{"gen_ai.operation.name": "execute_tool", "gen_ai.tool.name": "x"}), "}") +
+		`,"events":[{"NAME":"tool.output","attributes":[{"key":"output","value":{"stringValue":"leak"}}]}]}`
+	tr, err := convertSpans(t, root, tool)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertJSONObject(t, "result", tr.Steps[0].Result, map[string]any{})
 }

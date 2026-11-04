@@ -54,12 +54,12 @@ Coverage counts spans that lack evidence some assertions need:
 
 | Field | Span kind | Attributes |
 | --- | --- | --- |
-| `tokens` | model calls | `gen_ai.usage.input_tokens`, `gen_ai.usage.output_tokens` |
+| `tokens` | model calls | `gen_ai.usage.input_tokens`, `gen_ai.usage.output_tokens` (Claude Code: native `input_tokens`/`output_tokens`) |
 | `cost` | model calls | `gen_ai.usage.cost` (USD; not yet part of the GenAI conventions) |
 | `content` | model calls | `gen_ai.input.messages` and `gen_ai.output.messages` (or the deprecated `gen_ai.prompt` / `gen_ai.completion`) |
 | `model` | model calls | `gen_ai.response.model` or `gen_ai.request.model` |
 | `tool_call_id` | tool calls | `gen_ai.tool.call.id` |
-| `tool_content` | tool calls | `gen_ai.tool.call.arguments`, `gen_ai.tool.call.result` |
+| `tool_content` | tool calls | `gen_ai.tool.call.arguments`, `gen_ai.tool.call.result` (or `gen_ai.prompt` / `gen_ai.completion` / a `tool.output` event) |
 
 An assertion whose evidence is absent does not fail: it reports `not_evaluated` with reason `missing_evidence`. For example `cost_under(0.05)` on a trace converted from an export without `gen_ai.usage.cost` reports `not_evaluated: missing_evidence (metadata.cost_usd absent)`. Message content is opt-in in most GenAI instrumentations (for OpenTelemetry Python, `OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT=true`).
 
