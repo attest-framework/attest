@@ -9,10 +9,18 @@ All notable changes to Attest are documented in this file. The format follows [K
 - `attest view <report.json...> [--baseline <report.json>...] [--mutation <mutate.json>] [--out FILE] [--no-open] [--json]` writes one self-contained offline HTML page: the test list, the trace tree with the failing span highlighted, expected versus actual, replay or live provenance, cost, a baseline-versus-head diff (pass rate, cost, latency, changed tool sequences) and surviving mutants. The page has no JavaScript and no external resources, carries a `default-src 'none'` Content-Security-Policy, escapes all report content and bounds every field and the page size. It opens in a browser only on a terminal outside CI. `--json` schema `cli/view.schema.json`; exit 0 written, 2 usage or input error. Guide: `docs/guides/viewer.md`.
 - `ATTEST_REPORT_TRACES=1` makes the pytest plugin and the Vitest reporter add a top-level `traces` map (trace id to trace-v2) and a `trace_id` on each result row to report-v2. Both fields are optional in `report-v2.schema.json`; `report_version` is unchanged. Traces hold prompts, outputs and tool arguments, so the variable is off by default.
 - `attest init --ci github` (Python and TypeScript) sets `ATTEST_REPORT_TRACES: "1"` on the test step, adds a `Write the failure viewer` step and uploads `attest-report.html` in the `attest-report` artifact.
+- TypeScript simulation helpers in `@attest-ai/core`: `scenario`, `faultInject`, `mockTool`, `MockToolRegistry` and `repeat`, with `ScenarioResult` and `RepeatResult` aggregating verdicts like Python's. `TraceBuilder.addToolCall` returns the active mock's result. Guide: [simulation](docs/guides/simulation.md).
+- TypeScript `useAttest().enforce(verdict)` and `enforceOutcome` accept a `ScenarioResult` or `RepeatResult` as well as an `AgentResult` (fail with diagnostics, skip with the not-evaluated reasons, strict mode fails skips), as Python's `attest.enforce` does.
+- TypeScript plugin discovery: `loadPackagePlugins(registry, projectRoot?)` loads plugins that an installed dependency declares in `package.json` under `"attest": {"plugins": [...]}`; `registerPlugin` mirrors Python's `register_plugin`.
+- A parity matrix, [docs/guides/parity.md](docs/guides/parity.md), generated from both SDKs' public surfaces (`sdks/parity/`). The existing Python and TypeScript test commands fail on a Python capability with no TypeScript counterpart or documented exception, on a stale exception, and when the snapshots or the guide are out of date (regenerate with `ATTEST_UPDATE_PARITY=1`).
 
 ### Changed
 
 - A `tool_cardinality` check that fails on `max` now sets `trace_node_path` to `steps[N]`, the first call over the limit, instead of `trace.tool_cardinality`; a `min` violation keeps the old path. Reports and `attest report rows` consumers that match the old value for that check see the new one.
+
+### Fixed
+
+- TypeScript `executePluginAssertion` clears its timeout timer when the plugin finishes, so a completed assertion no longer holds the process open for the timeout.
 
 ## [1.0.0-rc.4] — 2026-11-04
 

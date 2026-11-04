@@ -88,7 +88,12 @@ export {
   resetConfig,
 } from "./config.js";
 export type { AttestPlugin, PluginResult } from "./plugins.js";
-export { PluginRegistry, executePluginAssertion } from "./plugins.js";
+export {
+  PluginRegistry,
+  executePluginAssertion,
+  loadPackagePlugins,
+  registerPlugin,
+} from "./plugins.js";
 export { ContinuousEvalRunner, Sampler, AlertDispatcher } from "./continuous.js";
 export {
   computeAgreement,
@@ -103,6 +108,25 @@ export {
   CONFUSED_USER,
   COOPERATIVE_USER,
 } from "./personas.js";
+export {
+  MockToolRegistry,
+  RepeatResult,
+  ScenarioResult,
+  faultInject,
+  mockTool,
+  renderVerdictDiagnostics,
+  repeat,
+  scenario,
+} from "./simulation/index.js";
+export type {
+  FaultInjectOptions,
+  MockTool,
+  MockToolFn,
+  ScenarioConfig,
+  ScenarioContext,
+  ScenarioOptions,
+  Verdict,
+} from "./simulation/index.js";
 export type { AlertPayload } from "./continuous.js";
 export type { TraceAdapter } from "./adapters/index.js";
 export {
