@@ -1,0 +1,916 @@
+{
+  "resourceSpans": [
+    {
+      "resource": {
+        "attributes": [
+          {
+            "key": "service.name",
+            "value": {
+              "stringValue": "mastra-example"
+            }
+          }
+        ]
+      },
+      "scopeSpans": [
+        {
+          "scope": {
+            "name": "@mastra/otel-exporter"
+          },
+          "spans": [
+            {
+              "traceId": "229e701d185e148c71561e0259745f4b",
+              "spanId": "e23c904de777bc44",
+              "parentSpanId": "13405e093f04a3f7",
+              "name": "processor_run Provider History Compat",
+              "kind": 1,
+              "startTimeUnixNano": "1793749285567000000",
+              "endTimeUnixNano": "1793749285568000000",
+              "attributes": [
+                {
+                  "key": "gen_ai.operation.name",
+                  "value": {
+                    "stringValue": "processor_run"
+                  }
+                },
+                {
+                  "key": "mastra.span.type",
+                  "value": {
+                    "stringValue": "processor_run"
+                  }
+                },
+                {
+                  "key": "mastra.processor_run.input",
+                  "value": {
+                    "stringValue": "{\"prompt\":[{\"role\":\"system\",\"content\":\"Use lookup_order to answer order status questions.\"},{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"Where is order O-1?\",\"providerOptions\":{\"mastra\":{\"createdAt\":1793749285542}}}]}],\"stepNumber\":0,\"retryCount\":0}"
+                  }
+                },
+                {
+                  "key": "mastra.processor_run.output",
+                  "value": {
+                    "stringValue": "{\"shortCircuited\":false}"
+                  }
+                },
+                {
+                  "key": "mastra.metadata.runId",
+                  "value": {
+                    "stringValue": "00000000-0000-4000-8000-000000000003"
+                  }
+                }
+              ],
+              "droppedAttributesCount": 0,
+              "events": [],
+              "droppedEventsCount": 0,
+              "status": {
+                "code": 1
+              },
+              "links": [],
+              "droppedLinksCount": 0,
+              "flags": 257
+            },
+            {
+              "traceId": "229e701d185e148c71561e0259745f4b",
+              "spanId": "bc677e01aab32eda",
+              "parentSpanId": "13405e093f04a3f7",
+              "name": "processor_run Unsupported File Handler",
+              "kind": 1,
+              "startTimeUnixNano": "1793749285568000000",
+              "endTimeUnixNano": "1793749285568000000",
+              "attributes": [
+                {
+                  "key": "gen_ai.operation.name",
+                  "value": {
+                    "stringValue": "processor_run"
+                  }
+                },
+                {
+                  "key": "mastra.span.type",
+                  "value": {
+                    "stringValue": "processor_run"
+                  }
+                },
+                {
+                  "key": "mastra.processor_run.input",
+                  "value": {
+                    "stringValue": "{\"prompt\":[{\"role\":\"system\",\"content\":\"Use lookup_order to answer order status questions.\"},{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"Where is order O-1?\",\"providerOptions\":{\"mastra\":{\"createdAt\":1793749285542}}}]}],\"stepNumber\":0,\"retryCount\":0}"
+                  }
+                },
+                {
+                  "key": "mastra.processor_run.output",
+                  "value": {
+                    "stringValue": "{\"shortCircuited\":false}"
+                  }
+                },
+                {
+                  "key": "mastra.metadata.runId",
+                  "value": {
+                    "stringValue": "00000000-0000-4000-8000-000000000003"
+                  }
+                }
+              ],
+              "droppedAttributesCount": 0,
+              "events": [],
+              "droppedEventsCount": 0,
+              "status": {
+                "code": 1
+              },
+              "links": [],
+              "droppedLinksCount": 0,
+              "flags": 257
+            },
+            {
+              "traceId": "229e701d185e148c71561e0259745f4b",
+              "spanId": "e51def91addefc5f",
+              "parentSpanId": "13405e093f04a3f7",
+              "name": "model_chunk Order Agent",
+              "kind": 1,
+              "startTimeUnixNano": "1793749285610000000",
+              "endTimeUnixNano": "1793749285611000000",
+              "attributes": [
+                {
+                  "key": "gen_ai.operation.name",
+                  "value": {
+                    "stringValue": "model_chunk"
+                  }
+                },
+                {
+                  "key": "mastra.span.type",
+                  "value": {
+                    "stringValue": "model_chunk"
+                  }
+                },
+                {
+                  "key": "mastra.model_chunk.output",
+                  "value": {
+                    "stringValue": "{\"toolName\":\"lookup_order\",\"toolCallId\":\"call_1\",\"toolInput\":{\"order_id\":\"O-1\"}}"
+                  }
+                },
+                {
+                  "key": "mastra.metadata.runId",
+                  "value": {
+                    "stringValue": "00000000-0000-4000-8000-000000000003"
+                  }
+                }
+              ],
+              "droppedAttributesCount": 0,
+              "events": [],
+              "droppedEventsCount": 0,
+              "status": {
+                "code": 1
+              },
+              "links": [],
+              "droppedLinksCount": 0,
+              "flags": 257
+            },
+            {
+              "traceId": "229e701d185e148c71561e0259745f4b",
+              "spanId": "f7fbc11a9b20cb3f",
+              "parentSpanId": "13405e093f04a3f7",
+              "name": "chat gpt-4o-mini",
+              "kind": 3,
+              "startTimeUnixNano": "1793749285569000000",
+              "endTimeUnixNano": "1793749285612000000",
+              "attributes": [
+                {
+                  "key": "gen_ai.operation.name",
+                  "value": {
+                    "stringValue": "chat"
+                  }
+                },
+                {
+                  "key": "mastra.span.type",
+                  "value": {
+                    "stringValue": "model_inference"
+                  }
+                },
+                {
+                  "key": "gen_ai.input.messages",
+                  "value": {
+                    "stringValue": "[{\"role\":\"system\",\"parts\":[{\"type\":\"text\",\"content\":\"Use lookup_order to answer order status questions.\"}]},{\"role\":\"user\",\"parts\":[{\"type\":\"text\",\"content\":\"Where is order O-1?\"}]}]"
+                  }
+                },
+                {
+                  "key": "gen_ai.request.model",
+                  "value": {
+                    "stringValue": "gpt-4o-mini"
+                  }
+                },
+                {
+                  "key": "gen_ai.provider.name",
+                  "value": {
+                    "stringValue": "openai.chat"
+                  }
+                },
+                {
+                  "key": "gen_ai.usage.input_tokens",
+                  "value": {
+                    "intValue": 12
+                  }
+                },
+                {
+                  "key": "gen_ai.usage.output_tokens",
+                  "value": {
+                    "intValue": 7
+                  }
+                },
+                {
+                  "key": "gen_ai.usage.reasoning_tokens",
+                  "value": {
+                    "intValue": 0
+                  }
+                },
+                {
+                  "key": "gen_ai.usage.cache_read.input_tokens",
+                  "value": {
+                    "intValue": 0
+                  }
+                },
+                {
+                  "key": "gen_ai.agent.id",
+                  "value": {
+                    "stringValue": "order-agent"
+                  }
+                },
+                {
+                  "key": "gen_ai.agent.name",
+                  "value": {
+                    "stringValue": "Order Agent"
+                  }
+                },
+                {
+                  "key": "mastra.completion_start_time",
+                  "value": {
+                    "stringValue": "2026-11-03T23:41:25.609Z"
+                  }
+                },
+                {
+                  "key": "gen_ai.response.finish_reasons",
+                  "value": {
+                    "stringValue": "[\"tool-calls\"]"
+                  }
+                },
+                {
+                  "key": "mastra.metadata.runId",
+                  "value": {
+                    "stringValue": "00000000-0000-4000-8000-000000000003"
+                  }
+                }
+              ],
+              "droppedAttributesCount": 0,
+              "events": [],
+              "droppedEventsCount": 0,
+              "status": {
+                "code": 1
+              },
+              "links": [],
+              "droppedLinksCount": 0,
+              "flags": 257
+            },
+            {
+              "traceId": "229e701d185e148c71561e0259745f4b",
+              "spanId": "9391536fe5060662",
+              "parentSpanId": "13405e093f04a3f7",
+              "name": "execute_tool lookup_order",
+              "kind": 1,
+              "startTimeUnixNano": "1793749285617000000",
+              "endTimeUnixNano": "1793749285620000000",
+              "attributes": [
+                {
+                  "key": "gen_ai.operation.name",
+                  "value": {
+                    "stringValue": "execute_tool"
+                  }
+                },
+                {
+                  "key": "mastra.span.type",
+                  "value": {
+                    "stringValue": "tool_call"
+                  }
+                },
+                {
+                  "key": "gen_ai.tool.call.arguments",
+                  "value": {
+                    "stringValue": "{\"order_id\":\"O-1\"}"
+                  }
+                },
+                {
+                  "key": "gen_ai.tool.call.result",
+                  "value": {
+                    "stringValue": "shipped"
+                  }
+                },
+                {
+                  "key": "gen_ai.tool.name",
+                  "value": {
+                    "stringValue": "lookup_order"
+                  }
+                },
+                {
+                  "key": "gen_ai.tool.call.id",
+                  "value": {
+                    "stringValue": "call_1"
+                  }
+                },
+                {
+                  "key": "gen_ai.tool.description",
+                  "value": {
+                    "stringValue": "Look up the shipping status of an order"
+                  }
+                },
+                {
+                  "key": "gen_ai.tool.type",
+                  "value": {
+                    "stringValue": "tool"
+                  }
+                },
+                {
+                  "key": "mastra.metadata.runId",
+                  "value": {
+                    "stringValue": "00000000-0000-4000-8000-000000000003"
+                  }
+                }
+              ],
+              "droppedAttributesCount": 0,
+              "events": [],
+              "droppedEventsCount": 0,
+              "status": {
+                "code": 1
+              },
+              "links": [],
+              "droppedLinksCount": 0,
+              "flags": 257
+            },
+            {
+              "traceId": "229e701d185e148c71561e0259745f4b",
+              "spanId": "bd6c774026751205",
+              "parentSpanId": "13405e093f04a3f7",
+              "name": "model_chunk Order Agent",
+              "kind": 1,
+              "startTimeUnixNano": "1793749285622000000",
+              "endTimeUnixNano": "1793749285622000000",
+              "attributes": [
+                {
+                  "key": "gen_ai.operation.name",
+                  "value": {
+                    "stringValue": "model_chunk"
+                  }
+                },
+                {
+                  "key": "mastra.span.type",
+                  "value": {
+                    "stringValue": "model_chunk"
+                  }
+                },
+                {
+                  "key": "mastra.metadata.runId",
+                  "value": {
+                    "stringValue": "00000000-0000-4000-8000-000000000003"
+                  }
+                },
+                {
+                  "key": "mastra.metadata.toolCallId",
+                  "value": {
+                    "stringValue": "call_1"
+                  }
+                },
+                {
+                  "key": "mastra.metadata.toolName",
+                  "value": {
+                    "stringValue": "lookup_order"
+                  }
+                }
+              ],
+              "droppedAttributesCount": 0,
+              "events": [],
+              "droppedEventsCount": 0,
+              "status": {
+                "code": 1
+              },
+              "links": [],
+              "droppedLinksCount": 0,
+              "flags": 257
+            },
+            {
+              "traceId": "229e701d185e148c71561e0259745f4b",
+              "spanId": "13405e093f04a3f7",
+              "parentSpanId": "3df0aefd8eef0ecb",
+              "name": "agent_step Order Agent",
+              "kind": 1,
+              "startTimeUnixNano": "1793749285561000000",
+              "endTimeUnixNano": "1793749285627000000",
+              "attributes": [
+                {
+                  "key": "gen_ai.operation.name",
+                  "value": {
+                    "stringValue": "agent_step"
+                  }
+                },
+                {
+                  "key": "mastra.span.type",
+                  "value": {
+                    "stringValue": "model_step"
+                  }
+                },
+                {
+                  "key": "mastra.model_step.input",
+                  "value": {
+                    "stringValue": "[{\"role\":\"system\",\"content\":\"Use lookup_order to answer order status questions.\"},{\"role\":\"user\",\"content\":\"Where is order O-1?\"}]"
+                  }
+                },
+                {
+                  "key": "mastra.model_step.output",
+                  "value": {
+                    "stringValue": "{\"text\":\"\",\"toolCalls\":[{\"toolCallId\":\"call_1\",\"toolName\":\"lookup_order\",\"args\":{\"order_id\":\"O-1\"}}]}"
+                  }
+                },
+                {
+                  "key": "mastra.model_step.step_index",
+                  "value": {
+                    "intValue": 0
+                  }
+                },
+                {
+                  "key": "mastra.model_step.is_continued",
+                  "value": {
+                    "boolValue": true
+                  }
+                },
+                {
+                  "key": "mastra.metadata.runId",
+                  "value": {
+                    "stringValue": "00000000-0000-4000-8000-000000000003"
+                  }
+                },
+                {
+                  "key": "mastra.metadata.headers",
+                  "value": {
+                    "stringValue": "{\"content-length\":\"431\",\"content-type\":\"application/json\",\"date\":\"Tue, 03 Nov 2026 23:41:25 GMT\",\"server\":\"BaseHTTP/0.6 Python/3.11.9\"}"
+                  }
+                },
+                {
+                  "key": "mastra.metadata.modelMetadata",
+                  "value": {
+                    "stringValue": "{\"modelId\":\"gpt-4o-mini\",\"modelVersion\":\"v4\",\"modelProvider\":\"openai.chat\"}"
+                  }
+                }
+              ],
+              "droppedAttributesCount": 0,
+              "events": [],
+              "droppedEventsCount": 0,
+              "status": {
+                "code": 1
+              },
+              "links": [],
+              "droppedLinksCount": 0,
+              "flags": 257
+            },
+            {
+              "traceId": "229e701d185e148c71561e0259745f4b",
+              "spanId": "b0b3524c2ed36a32",
+              "parentSpanId": "14262f87c6be5fa0",
+              "name": "processor_run Provider History Compat",
+              "kind": 1,
+              "startTimeUnixNano": "1793749285635000000",
+              "endTimeUnixNano": "1793749285636000000",
+              "attributes": [
+                {
+                  "key": "gen_ai.operation.name",
+                  "value": {
+                    "stringValue": "processor_run"
+                  }
+                },
+                {
+                  "key": "mastra.span.type",
+                  "value": {
+                    "stringValue": "processor_run"
+                  }
+                },
+                {
+                  "key": "mastra.processor_run.input",
+                  "value": {
+                    "stringValue": "{\"prompt\":[{\"role\":\"system\",\"content\":\"Use lookup_order to answer order status questions.\"},{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"Where is order O-1?\",\"providerOptions\":{\"mastra\":{\"createdAt\":1793749285542}}}]},{\"role\":\"assistant\",\"content\":[{\"type\":\"tool-call\",\"toolCallId\":\"call_1\",\"toolName\":\"lookup_order\",\"input\":{\"order_id\":\"O-1\"}}]},{\"role\":\"tool\",\"content\":[{\"type\":\"tool-result\",\"toolCallId\":\"call_1\",\"toolName\":\"lookup_order\",\"output\":{\"type\":\"text\",\"value\":\"shipped\"},\"input\":{\"order_id\":\"O-1\"}}]}],\"stepNumber\":1,\"retryCount\":0}"
+                  }
+                },
+                {
+                  "key": "mastra.processor_run.output",
+                  "value": {
+                    "stringValue": "{\"shortCircuited\":false}"
+                  }
+                },
+                {
+                  "key": "mastra.metadata.runId",
+                  "value": {
+                    "stringValue": "00000000-0000-4000-8000-000000000003"
+                  }
+                }
+              ],
+              "droppedAttributesCount": 0,
+              "events": [],
+              "droppedEventsCount": 0,
+              "status": {
+                "code": 1
+              },
+              "links": [],
+              "droppedLinksCount": 0,
+              "flags": 257
+            },
+            {
+              "traceId": "229e701d185e148c71561e0259745f4b",
+              "spanId": "a56470d16580fbc3",
+              "parentSpanId": "14262f87c6be5fa0",
+              "name": "processor_run Unsupported File Handler",
+              "kind": 1,
+              "startTimeUnixNano": "1793749285636000000",
+              "endTimeUnixNano": "1793749285636000000",
+              "attributes": [
+                {
+                  "key": "gen_ai.operation.name",
+                  "value": {
+                    "stringValue": "processor_run"
+                  }
+                },
+                {
+                  "key": "mastra.span.type",
+                  "value": {
+                    "stringValue": "processor_run"
+                  }
+                },
+                {
+                  "key": "mastra.processor_run.input",
+                  "value": {
+                    "stringValue": "{\"prompt\":[{\"role\":\"system\",\"content\":\"Use lookup_order to answer order status questions.\"},{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"Where is order O-1?\",\"providerOptions\":{\"mastra\":{\"createdAt\":1793749285542}}}]},{\"role\":\"assistant\",\"content\":[{\"type\":\"tool-call\",\"toolCallId\":\"call_1\",\"toolName\":\"lookup_order\",\"input\":{\"order_id\":\"O-1\"}}]},{\"role\":\"tool\",\"content\":[{\"type\":\"tool-result\",\"toolCallId\":\"call_1\",\"toolName\":\"lookup_order\",\"output\":{\"type\":\"text\",\"value\":\"shipped\"},\"input\":{\"order_id\":\"O-1\"}}]}],\"stepNumber\":1,\"retryCount\":0}"
+                  }
+                },
+                {
+                  "key": "mastra.processor_run.output",
+                  "value": {
+                    "stringValue": "{\"shortCircuited\":false}"
+                  }
+                },
+                {
+                  "key": "mastra.metadata.runId",
+                  "value": {
+                    "stringValue": "00000000-0000-4000-8000-000000000003"
+                  }
+                }
+              ],
+              "droppedAttributesCount": 0,
+              "events": [],
+              "droppedEventsCount": 0,
+              "status": {
+                "code": 1
+              },
+              "links": [],
+              "droppedLinksCount": 0,
+              "flags": 257
+            },
+            {
+              "traceId": "229e701d185e148c71561e0259745f4b",
+              "spanId": "8ce97b0fb7f0db7d",
+              "parentSpanId": "14262f87c6be5fa0",
+              "name": "model_chunk Order Agent",
+              "kind": 1,
+              "startTimeUnixNano": "1793749285654000000",
+              "endTimeUnixNano": "1793749285655000000",
+              "attributes": [
+                {
+                  "key": "gen_ai.operation.name",
+                  "value": {
+                    "stringValue": "model_chunk"
+                  }
+                },
+                {
+                  "key": "mastra.span.type",
+                  "value": {
+                    "stringValue": "model_chunk"
+                  }
+                },
+                {
+                  "key": "mastra.model_chunk.output",
+                  "value": {
+                    "stringValue": "{\"text\":\"Order O-1 has shipped.\"}"
+                  }
+                },
+                {
+                  "key": "mastra.metadata.runId",
+                  "value": {
+                    "stringValue": "00000000-0000-4000-8000-000000000003"
+                  }
+                }
+              ],
+              "droppedAttributesCount": 0,
+              "events": [],
+              "droppedEventsCount": 0,
+              "status": {
+                "code": 1
+              },
+              "links": [],
+              "droppedLinksCount": 0,
+              "flags": 257
+            },
+            {
+              "traceId": "229e701d185e148c71561e0259745f4b",
+              "spanId": "ec3561aa58585a14",
+              "parentSpanId": "14262f87c6be5fa0",
+              "name": "chat gpt-4o-mini",
+              "kind": 3,
+              "startTimeUnixNano": "1793749285636000000",
+              "endTimeUnixNano": "1793749285655000000",
+              "attributes": [
+                {
+                  "key": "gen_ai.operation.name",
+                  "value": {
+                    "stringValue": "chat"
+                  }
+                },
+                {
+                  "key": "mastra.span.type",
+                  "value": {
+                    "stringValue": "model_inference"
+                  }
+                },
+                {
+                  "key": "gen_ai.input.messages",
+                  "value": {
+                    "stringValue": "[{\"role\":\"system\",\"parts\":[{\"type\":\"text\",\"content\":\"Use lookup_order to answer order status questions.\"}]},{\"role\":\"user\",\"parts\":[{\"type\":\"text\",\"content\":\"Where is order O-1?\"}]},{\"role\":\"assistant\",\"parts\":[{\"type\":\"text\",\"content\":\"[tool: lookup_order]\"}]},{\"role\":\"tool\",\"parts\":[{\"type\":\"text\",\"content\":\"[tool-result: lookup_order]\"}]}]"
+                  }
+                },
+                {
+                  "key": "gen_ai.request.model",
+                  "value": {
+                    "stringValue": "gpt-4o-mini"
+                  }
+                },
+                {
+                  "key": "gen_ai.provider.name",
+                  "value": {
+                    "stringValue": "openai.chat"
+                  }
+                },
+                {
+                  "key": "gen_ai.usage.input_tokens",
+                  "value": {
+                    "intValue": 12
+                  }
+                },
+                {
+                  "key": "gen_ai.usage.output_tokens",
+                  "value": {
+                    "intValue": 7
+                  }
+                },
+                {
+                  "key": "gen_ai.usage.reasoning_tokens",
+                  "value": {
+                    "intValue": 0
+                  }
+                },
+                {
+                  "key": "gen_ai.usage.cache_read.input_tokens",
+                  "value": {
+                    "intValue": 0
+                  }
+                },
+                {
+                  "key": "gen_ai.agent.id",
+                  "value": {
+                    "stringValue": "order-agent"
+                  }
+                },
+                {
+                  "key": "gen_ai.agent.name",
+                  "value": {
+                    "stringValue": "Order Agent"
+                  }
+                },
+                {
+                  "key": "mastra.completion_start_time",
+                  "value": {
+                    "stringValue": "2026-11-03T23:41:25.653Z"
+                  }
+                },
+                {
+                  "key": "gen_ai.response.finish_reasons",
+                  "value": {
+                    "stringValue": "[\"stop\"]"
+                  }
+                },
+                {
+                  "key": "mastra.metadata.runId",
+                  "value": {
+                    "stringValue": "00000000-0000-4000-8000-000000000003"
+                  }
+                }
+              ],
+              "droppedAttributesCount": 0,
+              "events": [],
+              "droppedEventsCount": 0,
+              "status": {
+                "code": 1
+              },
+              "links": [],
+              "droppedLinksCount": 0,
+              "flags": 257
+            },
+            {
+              "traceId": "229e701d185e148c71561e0259745f4b",
+              "spanId": "14262f87c6be5fa0",
+              "parentSpanId": "3df0aefd8eef0ecb",
+              "name": "agent_step Order Agent",
+              "kind": 1,
+              "startTimeUnixNano": "1793749285628000000",
+              "endTimeUnixNano": "1793749285658000000",
+              "attributes": [
+                {
+                  "key": "gen_ai.operation.name",
+                  "value": {
+                    "stringValue": "agent_step"
+                  }
+                },
+                {
+                  "key": "mastra.span.type",
+                  "value": {
+                    "stringValue": "model_step"
+                  }
+                },
+                {
+                  "key": "mastra.model_step.input",
+                  "value": {
+                    "stringValue": "[{\"role\":\"system\",\"content\":\"Use lookup_order to answer order status questions.\"},{\"role\":\"user\",\"content\":\"Where is order O-1?\"},{\"role\":\"assistant\",\"content\":\"[tool: lookup_order]\"},{\"role\":\"tool\",\"content\":\"[tool-result: lookup_order]\"}]"
+                  }
+                },
+                {
+                  "key": "mastra.model_step.output",
+                  "value": {
+                    "stringValue": "{\"text\":\"Order O-1 has shipped.\",\"toolCalls\":[]}"
+                  }
+                },
+                {
+                  "key": "mastra.model_step.step_index",
+                  "value": {
+                    "intValue": 1
+                  }
+                },
+                {
+                  "key": "mastra.model_step.is_continued",
+                  "value": {
+                    "boolValue": false
+                  }
+                },
+                {
+                  "key": "mastra.metadata.runId",
+                  "value": {
+                    "stringValue": "00000000-0000-4000-8000-000000000003"
+                  }
+                },
+                {
+                  "key": "mastra.metadata.headers",
+                  "value": {
+                    "stringValue": "{\"content-length\":\"313\",\"content-type\":\"application/json\",\"date\":\"Tue, 03 Nov 2026 23:41:25 GMT\",\"server\":\"BaseHTTP/0.6 Python/3.11.9\"}"
+                  }
+                },
+                {
+                  "key": "mastra.metadata.modelMetadata",
+                  "value": {
+                    "stringValue": "{\"modelId\":\"gpt-4o-mini\",\"modelVersion\":\"v4\",\"modelProvider\":\"openai.chat\"}"
+                  }
+                }
+              ],
+              "droppedAttributesCount": 0,
+              "events": [],
+              "droppedEventsCount": 0,
+              "status": {
+                "code": 1
+              },
+              "links": [],
+              "droppedLinksCount": 0,
+              "flags": 257
+            },
+            {
+              "traceId": "229e701d185e148c71561e0259745f4b",
+              "spanId": "3df0aefd8eef0ecb",
+              "parentSpanId": "ce79949831d4bc07",
+              "name": "model_generation gpt-4o-mini",
+              "kind": 1,
+              "startTimeUnixNano": "1793749285551000000",
+              "endTimeUnixNano": "1793749285659000000",
+              "attributes": [
+                {
+                  "key": "gen_ai.operation.name",
+                  "value": {
+                    "stringValue": "model_generation"
+                  }
+                },
+                {
+                  "key": "mastra.span.type",
+                  "value": {
+                    "stringValue": "model_generation"
+                  }
+                },
+                {
+                  "key": "mastra.model_generation.input",
+                  "value": {
+                    "stringValue": "{\"messages\":[{\"role\":\"system\",\"content\":\"Use lookup_order to answer order status questions.\"},{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"Where is order O-1?\",\"providerOptions\":{\"mastra\":{\"createdAt\":1793749285542}}}]}]}"
+                  }
+                },
+                {
+                  "key": "mastra.model_generation.output",
+                  "value": {
+                    "stringValue": "{\"files\":[],\"reasoning\":[],\"sources\":[],\"text\":\"Order O-1 has shipped.\",\"warnings\":[],\"toolCalls\":[{\"toolCallId\":\"call_1\",\"toolName\":\"lookup_order\",\"args\":{\"order_id\":\"O-1\"}}]}"
+                  }
+                },
+                {
+                  "key": "mastra.metadata.runId",
+                  "value": {
+                    "stringValue": "00000000-0000-4000-8000-000000000003"
+                  }
+                }
+              ],
+              "droppedAttributesCount": 0,
+              "events": [],
+              "droppedEventsCount": 0,
+              "status": {
+                "code": 1
+              },
+              "links": [],
+              "droppedLinksCount": 0,
+              "flags": 257
+            },
+            {
+              "traceId": "229e701d185e148c71561e0259745f4b",
+              "spanId": "ce79949831d4bc07",
+              "name": "invoke_agent Order Agent",
+              "kind": 1,
+              "startTimeUnixNano": "1793749285534000000",
+              "endTimeUnixNano": "1793749285719000000",
+              "attributes": [
+                {
+                  "key": "gen_ai.operation.name",
+                  "value": {
+                    "stringValue": "invoke_agent"
+                  }
+                },
+                {
+                  "key": "mastra.span.type",
+                  "value": {
+                    "stringValue": "agent_run"
+                  }
+                },
+                {
+                  "key": "mastra.agent_run.input",
+                  "value": {
+                    "stringValue": "Where is order O-1?"
+                  }
+                },
+                {
+                  "key": "mastra.agent_run.output",
+                  "value": {
+                    "stringValue": "{\"text\":\"Order O-1 has shipped.\",\"files\":[]}"
+                  }
+                },
+                {
+                  "key": "gen_ai.agent.id",
+                  "value": {
+                    "stringValue": "order-agent"
+                  }
+                },
+                {
+                  "key": "gen_ai.agent.name",
+                  "value": {
+                    "stringValue": "Order Agent"
+                  }
+                },
+                {
+                  "key": "gen_ai.tool.definitions",
+                  "value": {
+                    "stringValue": "[\"lookup_order\"]"
+                  }
+                },
+                {
+                  "key": "gen_ai.system_instructions",
+                  "value": {
+                    "stringValue": "Use lookup_order to answer order status questions."
+                  }
+                },
+                {
+                  "key": "mastra.metadata.runId",
+                  "value": {
+                    "stringValue": "00000000-0000-4000-8000-000000000003"
+                  }
+                }
+              ],
+              "droppedAttributesCount": 0,
+              "events": [],
+              "droppedEventsCount": 0,
+              "status": {
+                "code": 1
+              },
+              "links": [],
+              "droppedLinksCount": 0,
+              "flags": 257
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

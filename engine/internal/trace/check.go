@@ -1,6 +1,7 @@
 package trace
 
 import (
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -31,12 +32,16 @@ const (
 	IssueMultipleRoots      = "multiple_roots"
 	IssueNoRoot             = "no_root"
 	IssueNoGenAISpans       = "no_genai_spans"
+	IssueMalformedEvent     = "malformed_event"
+	IssueMalformedNative    = "malformed_native_attribute"
 )
 
 // toolRequestReasons are finish reasons with which providers end a model
-// call that requests tools (OpenAI, Anthropic and Bedrock, legacy OpenAI).
+// call that requests tools (OpenAI, Anthropic and Bedrock, legacy OpenAI,
+// Vercel AI SDK and Mastra "tool-calls", Pydantic AI "tool_call").
 var toolRequestReasons = map[string]bool{
 	"tool_calls":    true,
+	"tool-calls":    true,
 	"tool_call":     true,
 	"tool_use":      true,
 	"function_call": true,
@@ -113,6 +118,7 @@ func Check(spans []Span) *CheckReport {
 		c.checkToolPairing()
 	}
 	c.coverage()
+	c.checkDroppedInput()
 
 	if t, err := FromSpans(spans, ConvertOptions{}); err != nil {
 		if !multiple {
@@ -128,7 +134,7 @@ func Check(spans []Span) *CheckReport {
 		r.Turns = len(t.Turns)
 		r.Handoffs = len(t.Handoffs)
 		if len(t.Steps) == 0 && len(t.Turns) == 0 {
-			c.add(SeverityWarning, IssueNoGenAISpans, "", "no span carries GenAI semantic convention attributes (gen_ai.operation.name)")
+			c.add(SeverityWarning, IssueNoGenAISpans, "", "no span carries GenAI semantic convention attributes (gen_ai.operation.name) that attest maps; see the Frameworks section of the capture guide (attest-engine guide capture)")
 		}
 	}
 	r.OK = len(r.Errors()) == 0
@@ -311,9 +317,29 @@ func recordedToolCallIDs(s *Span) ([]string, bool) {
 	return ids, true
 }
 
+// maxFinishReasonsText bounds a finish-reasons string that is decoded as JSON.
+const maxFinishReasonsText = 4096
+
+// finishReasonList decodes a finish-reasons string holding a JSON array of
+// strings (Mastra records the list that way) into the list; any other value is
+// returned unchanged.
+func finishReasonList(v any) any {
+	str, ok := v.(string)
+	if !ok {
+		return v
+	}
+	var decoded []string
+	if t := strings.TrimSpace(str); len(t) <= maxFinishReasonsText && strings.HasPrefix(t, "[") && json.Unmarshal([]byte(t), &decoded) == nil {
+		return decoded
+	}
+	return v
+}
+
 func finishReasons(s *Span) []string {
 	var out []string
-	switch v := s.Attributes[attrFinishReasons].(type) {
+	switch v := finishReasonList(s.Attributes[attrFinishReasons]).(type) {
+	case []string:
+		return v
 	case string:
 		out = append(out, v)
 	case []any:
@@ -347,27 +373,29 @@ type coverageRule struct {
 	field    string
 	kind     string
 	attrs    []string
-	complete func(a map[string]any) bool
+	complete func(s *Span) bool
 }
 
 var coverageRules = []coverageRule{
-	{"tokens", types.StepTypeLLMCall, []string{attrInputTokens, attrOutputTokens}, func(a map[string]any) bool {
-		return hasAll(a, attrInputTokens, attrOutputTokens)
+	{"tokens", types.StepTypeLLMCall, []string{attrInputTokens, attrOutputTokens}, func(s *Span) bool {
+		return hasAll(s.Attributes, attrInputTokens, attrOutputTokens) ||
+			(s.Name == spanClaudeLLMRequest && hasAll(s.Attributes, attrNativeInputTokens, attrNativeOutputTokens))
 	}},
-	{"cost", types.StepTypeLLMCall, []string{attrCost}, func(a map[string]any) bool {
-		return hasAll(a, attrCost)
+	{"cost", types.StepTypeLLMCall, []string{attrCost}, func(s *Span) bool {
+		return hasAll(s.Attributes, attrCost)
 	}},
-	{"content", types.StepTypeLLMCall, []string{attrInputMessages, attrOutputMessages}, func(a map[string]any) bool {
+	{"content", types.StepTypeLLMCall, []string{attrInputMessages, attrOutputMessages}, func(s *Span) bool {
+		a := s.Attributes
 		return (hasAll(a, attrInputMessages) || hasAll(a, attrPrompt)) && (hasAll(a, attrOutputMessages) || hasAll(a, attrCompletion))
 	}},
-	{"model", types.StepTypeLLMCall, []string{attrResponseModel, attrRequestModel}, func(a map[string]any) bool {
-		return hasAny(a, attrResponseModel, attrRequestModel)
+	{"model", types.StepTypeLLMCall, []string{attrResponseModel, attrRequestModel}, func(s *Span) bool {
+		return hasAny(s.Attributes, attrResponseModel, attrRequestModel)
 	}},
-	{"tool_call_id", types.StepTypeToolCall, []string{attrToolCallID}, func(a map[string]any) bool {
-		return hasAll(a, attrToolCallID)
+	{"tool_call_id", types.StepTypeToolCall, []string{attrToolCallID}, func(s *Span) bool {
+		return hasAll(s.Attributes, attrToolCallID)
 	}},
-	{"tool_content", types.StepTypeToolCall, []string{attrToolArguments, attrToolResult}, func(a map[string]any) bool {
-		return hasAll(a, attrToolArguments, attrToolResult)
+	{"tool_content", types.StepTypeToolCall, []string{attrToolArguments, attrToolResult}, func(s *Span) bool {
+		return toolHasArguments(s) && toolHasResult(s)
 	}},
 }
 
@@ -388,13 +416,33 @@ func (c *checker) coverage() {
 				continue
 			}
 			gap.Total++
-			if !rule.complete(c.x.spans[i].Attributes) {
+			if !rule.complete(&c.x.spans[i]) {
 				gap.Missing++
 				gap.SpanIDs = append(gap.SpanIDs, c.x.spans[i].SpanID)
 			}
 		}
 		if gap.Missing > 0 {
 			c.r.Coverage = append(c.r.Coverage, gap)
+		}
+	}
+}
+
+// checkDroppedInput warns about input the converter skipped instead of
+// rejecting: a malformed tool.output event, and Claude Code native attributes
+// of the wrong type.
+func (c *checker) checkDroppedInput() {
+	for i := range c.x.spans {
+		s := &c.x.spans[i]
+		if s.DroppedEvents > 0 {
+			c.add(SeverityWarning, IssueMalformedEvent, s.SpanID, fmt.Sprintf("span %s has %d malformed tool.output events, which were dropped", quoteShort(s.Name), s.DroppedEvents))
+		}
+		if s.Name != spanClaudeLLMRequest {
+			continue
+		}
+		for _, key := range []string{attrNativeInputTokens, attrNativeOutputTokens, attrNativeCacheRead, attrNativeCacheCreation} {
+			if _, _, err := intAttr(s.Attributes, key); err != nil {
+				c.add(SeverityWarning, IssueMalformedNative, s.SpanID, fmt.Sprintf("span %s: Claude Code native attribute %s is not a non-negative integer and was ignored (traces are a beta)", quoteShort(s.Name), key))
+			}
 		}
 	}
 }

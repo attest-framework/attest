@@ -1,0 +1,94 @@
+{
+  "schema_version": 2,
+  "trace_id": "otel_e1146fa81b8f81f9",
+  "agent_id": "",
+  "input": {},
+  "steps": [
+    {
+      "type": "llm_call",
+      "name": "claude_code.llm_request",
+      "args": {
+        "model": "claude-sonnet-4-5",
+        "provider": "anthropic",
+        "system": "anthropic"
+      },
+      "result": {
+        "cache_creation_tokens": 0,
+        "cache_read_tokens": 0,
+        "finish_reasons": [
+          "tool_use"
+        ],
+        "input_tokens": 12,
+        "output_tokens": 7
+      },
+      "metadata": {
+        "duration_ms": 23
+      },
+      "started_at_ms": 1793749337307,
+      "ended_at_ms": 1793749337330,
+      "span_id": "d9f6afa8fe4561e8",
+      "parent_span_id": "802887bb069a667f"
+    },
+    {
+      "type": "tool_call",
+      "name": "lookup_order",
+      "args": {},
+      "result": {
+        "result": "shipped"
+      },
+      "metadata": {
+        "duration_ms": 11
+      },
+      "started_at_ms": 1793749337323,
+      "ended_at_ms": 1793749337334,
+      "span_id": "c881ae2ae77f7d7d",
+      "parent_span_id": "802887bb069a667f",
+      "tool_call_id": "toolu_1"
+    },
+    {
+      "type": "llm_call",
+      "name": "claude_code.llm_request",
+      "args": {
+        "model": "claude-sonnet-4-5",
+        "provider": "anthropic",
+        "system": "anthropic"
+      },
+      "result": {
+        "cache_creation_tokens": 0,
+        "cache_read_tokens": 0,
+        "finish_reasons": [
+          "end_turn"
+        ],
+        "input_tokens": 12,
+        "output_tokens": 7
+      },
+      "metadata": {
+        "duration_ms": 5
+      },
+      "started_at_ms": 1793749337340,
+      "ended_at_ms": 1793749337345,
+      "span_id": "ce9f536a65e0ced5",
+      "parent_span_id": "802887bb069a667f"
+    }
+  ],
+  "output": {
+    "message": ""
+  },
+  "metadata": {
+    "total_tokens": 38,
+    "latency_ms": 67,
+    "model": "claude-sonnet-4-5"
+  },
+  "conversation_id": "00000000-0000-4000-8000-000000000004",
+  "turns": [
+    {
+      "index": 0,
+      "span_id": "802887bb069a667f",
+      "step_indices": [
+        0,
+        1,
+        2
+      ]
+    }
+  ]
+}

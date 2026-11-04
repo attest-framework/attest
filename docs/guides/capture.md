@@ -136,6 +136,118 @@ uv run attest capture --name inc-1042 --expect-fail --from incidents/INC-1042/tr
 
 `--from` builds the fixture from an OTLP/JSON export. It has the trace and the drafted contracts but no model exchanges, so it is marked `"replay_capable": false`.
 
+## Frameworks
+
+Capture reads the spans an agent framework exports through its own OpenTelemetry instrumentation; there is no attest-specific adapter. Each framework below was run on a scripted model server through `attest capture` and produced a verified fixture. The versions are the ones tested. Every route needs the framework to export OTLP/HTTP to `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` (the capture environment sets it) and to flush its exporter before the process exits.
+
+| Framework | Instrumentation tested | Model API |
+| --- | --- | --- |
+| Pydantic AI (Python) | native, `pydantic-ai-slim` 2.65.0 | Chat Completions |
+| Vercel AI SDK (TypeScript) | native `@ai-sdk/otel` 1.0.162, `ai` 7.0.162 | Responses (default) or Chat Completions |
+| Mastra (TypeScript) | native `@mastra/otel-exporter` 1.5.0, `@mastra/core` 1.81.0 | Chat Completions |
+| OpenAI Agents SDK (Python) | `opentelemetry-instrumentation-openai-agents-v2` 0.1.0 (alpha), `openai-agents` 0.24.0 | Responses |
+| Claude Agent SDK (Python, TypeScript) | Claude Code native traces (beta), Claude Code 2.1.317 | Anthropic Messages (streaming) |
+| LangGraph (Python) | LangSmith 0.14.17 in OTel mode, `langgraph` 1.2.19 | Chat Completions |
+
+All of them read `OPENAI_BASE_URL` or `ANTHROPIC_BASE_URL` from the environment, so the recording proxy needs no code change in the agent.
+
+**Pydantic AI.** Pass the native instrumentation capability an OTLP/HTTP tracer provider and pin the instrumentation version to 5:
+
+```python
+provider = TracerProvider()
+provider.add_span_processor(SimpleSpanProcessor(OTLPSpanExporter()))
+settings = InstrumentationSettings(tracer_provider=provider, include_content=True, version=5)
+agent = Agent(OpenAIChatModel("gpt-4.1", provider=OpenAIProvider()), capabilities=[Instrumentation(settings)])
+# ... agent.run_sync(...)
+provider.force_flush()
+```
+
+```bash
+uv add "pydantic-ai-slim[openai]" opentelemetry-sdk opentelemetry-exporter-otlp-proto-http
+```
+
+Version 3 also works. Version 2 names tool spans `running tool` and keeps arguments outside the GenAI keys, so the drafted contracts lose per-id cardinality.
+
+**Vercel AI SDK.** AI SDK 7 needs the integration registered, in addition to `experimental_telemetry`:
+
+```ts
+const provider = new NodeTracerProvider({ spanProcessors: [new SimpleSpanProcessor(new OTLPTraceExporter())] });
+provider.register();
+registerTelemetry(new OpenTelemetry()); // from @ai-sdk/otel
+// generateText({ ..., experimental_telemetry: { isEnabled: true } })
+await provider.forceFlush();
+```
+
+```bash
+npm install ai @ai-sdk/openai @ai-sdk/otel @opentelemetry/sdk-trace-node @opentelemetry/exporter-trace-otlp-http
+```
+
+Tested with `@opentelemetry/sdk-trace-node` 2.12.0 and `@opentelemetry/exporter-trace-otlp-http` 0.219.0; newer exporter releases require an OTel API the 2.12.0 provider does not accept. The legacy integration (`LegacyOpenTelemetry`, spans named `ai.generateText` and `ai.toolCall`) is not supported: it records no `gen_ai.operation.name`, so capture finds no model or tool step and refuses to verify.
+
+**Mastra.** Register an `OtelExporter` with a custom OTLP/HTTP endpoint and flush the observability instance:
+
+```ts
+const observability = new Observability({ configs: { otel: { serviceName: "my-agent", exporters: [new OtelExporter({
+  provider: { custom: { endpoints: { traces: process.env.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT }, protocol: "http/json" } },
+  signals: { traces: true, logs: false },
+})] } } });
+const mastra = new Mastra({ agents: { agent }, observability });
+// ... await agent.generate(...)
+await observability.flush();
+```
+
+```bash
+npm install @mastra/core @mastra/observability @mastra/otel-exporter @ai-sdk/openai
+```
+
+Use `createOpenAI().chat(...)` for the model, which Mastra's exporter reports as `openai.chat`. Mastra records finish reasons as the JSON text `["tool-calls"]`; trace check reads that form.
+
+**OpenAI Agents SDK (Python).** Use the OpenTelemetry project's instrumentation, not OpenInference, and remove the SDK's hosted trace processors first:
+
+```python
+set_trace_processors([])
+OpenAIAgentsInstrumentor().instrument(tracer_provider=provider, capture_message_content=True)
+```
+
+```bash
+uv add openai-agents opentelemetry-instrumentation-openai-agents-v2 opentelemetry-sdk opentelemetry-exporter-otlp-proto-http
+export OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT=true OTEL_INSTRUMENTATION_OPENAI_AGENTS_CAPTURE_METRICS=false
+```
+
+The instrumentation is alpha. It emits `unknown` spans for SDK internals; they are not steps. Its tool spans carry no `gen_ai.tool.call.id`, so trace check pairs them by order.
+
+**Claude Agent SDK (Python and TypeScript).** The SDK runs Claude Code, whose native traces are in beta and are off unless both switches are set. Set them in the environment of the process that runs the SDK:
+
+```bash
+export CLAUDE_CODE_ENABLE_TELEMETRY=1 CLAUDE_CODE_ENHANCED_TELEMETRY_BETA=1
+export OTEL_TRACES_EXPORTER=otlp OTEL_EXPORTER_OTLP_PROTOCOL=http/json OTEL_TRACES_EXPORT_INTERVAL=100
+export OTEL_METRICS_EXPORTER=none OTEL_LOGS_EXPORTER=none OTEL_LOG_TOOL_DETAILS=1 OTEL_LOG_TOOL_CONTENT=1
+```
+
+Without `CLAUDE_CODE_ENHANCED_TELEMETRY_BETA` Claude Code exports metrics and logs only. Capture maps `claude_code.llm_request` to a model call (model, `input_tokens`, `output_tokens` and cache tokens come from its native attributes), `claude_code.tool` to a tool call whose result is the `output` of its `tool.output` event, and `claude_code.interaction` to the turn. `claude_code.tool.execution` and `claude_code.tool.blocked_on_user` add no step. Claude Code records neither tool arguments nor message content, so the drafted contracts cover the tools called and their order but not per-id cardinality. `OTEL_LOG_TOOL_CONTENT=1` puts each tool's output (file contents, shell output) into the fixture as recorded, with only pattern-based secret redaction applied. Run `attest capture --check-redaction <fixture>` and read the fixture before committing it, or leave `OTEL_LOG_TOOL_CONTENT` unset to keep tool outputs out. Because the traces are a beta, attribute names can change between Claude Code releases.
+
+**LangGraph (Python).** Use LangSmith in OTel mode with a tracer provider you own, so spans go to the capture receiver and nowhere else:
+
+```python
+client = Client(tracing_mode="otel", otel_tracer_provider=provider)
+with tracing_context(enabled=True, client=client):
+    graph.invoke(...)
+provider.force_flush()
+```
+
+```bash
+uv add langgraph langchain-openai langsmith opentelemetry-sdk opentelemetry-exporter-otlp-proto-http
+export LANGSMITH_TRACING=true LANGSMITH_TRACING_MODE=otel LANGSMITH_API_KEY=unused
+```
+
+LangSmith exports every runnable as a span with `gen_ai.operation.name=chain`; capture ignores those and keeps the `chat` and `execute_tool` spans. Tool arguments and result arrive in `gen_ai.prompt` and `gen_ai.completion`; capture reads the argument object and the tool message's `content`. Export only to the local provider: LangSmith must run in OTel mode with your own exporter, and the key is never used.
+
+OpenAI Agents SDK and LangGraph for TypeScript have no instrumentation that emits GenAI spans yet, and OpenInference spans (`openinference.span.kind`, `llm.*`) are not mapped.
+
+### When capture reports no steps
+
+A capture where no `llm_call` or `tool_call` step was mapped is not verified (exit 1): contracts over a trace without them pass vacuously. Either no span carries a `gen_ai.operation.name` that attest maps (`chat`, `execute_tool`, ...), or only agent and retrieval spans do. Check the framework's instrumentation against the table above. `attest trace check <export>` reports `no_genai_spans` when no span at all is mapped.
+
 ## The fixture
 
 A fixture follows `proto/attest/v1/fixture-v1.schema.json`:

@@ -1,0 +1,181 @@
+{
+  "schema_version": 2,
+  "trace_id": "otel_adbd26d56e535f8e",
+  "agent_id": "",
+  "input": {},
+  "steps": [
+    {
+      "type": "agent_call",
+      "name": "Order desk",
+      "args": {
+        "agent_id": "agent",
+        "agent_name": "Order desk",
+        "description": "OpenAI Agents instrumentation"
+      },
+      "result": {},
+      "metadata": {
+        "duration_ms": 123
+      },
+      "started_at_ms": 1793749616465,
+      "ended_at_ms": 1793749616589,
+      "agent_id": "agent",
+      "agent_role": "Order desk",
+      "span_id": "23116caa2d2c3bf7",
+      "parent_span_id": "3537f523f694fe93"
+    },
+    {
+      "type": "llm_call",
+      "name": "chat gpt-4o-mini",
+      "args": {
+        "model": "gpt-4o-mini",
+        "operation": "chat",
+        "provider": "openai",
+        "system": "openai"
+      },
+      "result": {
+        "input_tokens": 12,
+        "model": "gpt-4o-mini",
+        "output_tokens": 7
+      },
+      "metadata": {
+        "duration_ms": 90
+      },
+      "started_at_ms": 1793749616466,
+      "ended_at_ms": 1793749616557,
+      "agent_id": "agent",
+      "agent_role": "OpenAI Agent",
+      "span_id": "74ec5c06e2a1a95a",
+      "parent_span_id": "ebdd646ee33bc5de",
+      "exchange": {
+        "request": {
+          "messages": [
+            {
+              "parts": [
+                {
+                  "content": "Where is order O-1?",
+                  "type": "text"
+                }
+              ],
+              "role": "user"
+            }
+          ],
+          "model": "gpt-4o-mini"
+        },
+        "response": {
+          "messages": [
+            {
+              "parts": [
+                {
+                  "content": "ResponseFunctionToolCall(arguments='{\"order_id\": \"O-1\"}', call_id='call_1', name='lookup_order', type='function_call', id='fc_1', async_=None, caller=None, namespace=None, status='completed')",
+                  "type": "text"
+                }
+              ],
+              "role": "assistant"
+            }
+          ],
+          "model": "gpt-4o-mini"
+        }
+      }
+    },
+    {
+      "type": "tool_call",
+      "name": "lookup_order",
+      "args": {
+        "order_id": "O-1"
+      },
+      "result": {
+        "result": "shipped"
+      },
+      "metadata": {
+        "duration_ms": 0
+      },
+      "started_at_ms": 1793749616567,
+      "ended_at_ms": 1793749616568,
+      "agent_id": "agent",
+      "agent_role": "OpenAI Agent",
+      "span_id": "d7660c4141372afe",
+      "parent_span_id": "ebdd646ee33bc5de"
+    },
+    {
+      "type": "llm_call",
+      "name": "chat gpt-4o-mini",
+      "args": {
+        "model": "gpt-4o-mini",
+        "operation": "chat",
+        "provider": "openai",
+        "system": "openai"
+      },
+      "result": {
+        "input_tokens": 12,
+        "model": "gpt-4o-mini",
+        "output_tokens": 7
+      },
+      "metadata": {
+        "duration_ms": 4
+      },
+      "started_at_ms": 1793749616575,
+      "ended_at_ms": 1793749616579,
+      "agent_id": "agent",
+      "agent_role": "OpenAI Agent",
+      "span_id": "155de625d0e366b6",
+      "parent_span_id": "eb485828e2e73178",
+      "exchange": {
+        "request": {
+          "messages": [
+            {
+              "parts": [
+                {
+                  "content": "Where is order O-1?",
+                  "type": "text"
+                }
+              ],
+              "role": "user"
+            }
+          ],
+          "model": "gpt-4o-mini"
+        },
+        "response": {
+          "messages": [
+            {
+              "parts": [
+                {
+                  "content": "Order O-1 has shipped.",
+                  "type": "text"
+                }
+              ],
+              "role": "assistant"
+            }
+          ],
+          "model": "gpt-4o-mini"
+        }
+      }
+    }
+  ],
+  "output": {
+    "message": "Order O-1 has shipped."
+  },
+  "metadata": {
+    "total_tokens": 38,
+    "latency_ms": 133,
+    "model": "gpt-4o-mini"
+  },
+  "turns": [
+    {
+      "index": 0,
+      "span_id": "ea058d9fa90d06f8",
+      "step_indices": [
+        0,
+        1,
+        2,
+        3
+      ]
+    }
+  ],
+  "handoffs": [
+    {
+      "from_agent": "ea058d9fa90d06f8",
+      "to_agent": "Order desk",
+      "step_index": 0
+    }
+  ]
+}

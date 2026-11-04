@@ -179,7 +179,7 @@ func TestDraft_StructuredOutputAndCost_DraftedAndPass(t *testing.T) {
 	tr := &types.Trace{
 		SchemaVersion: 2, TraceID: "t",
 		Output:   json.RawMessage(`{"message":"ok","structured":{"refund_id":"R-1","amount_cents":8400,"ratio":0.5,"approved":true,"tags":[],"meta":{},"note":null}}`),
-		Steps:    []types.Step{},
+		Steps:    []types.Step{{Type: types.StepTypeLLMCall, Name: "chat", Args: json.RawMessage(`{}`), Result: json.RawMessage(`{}`)}},
 		Metadata: &types.TraceMetadata{CostUSD: &cost},
 	}
 
@@ -241,5 +241,24 @@ func TestCheckFixture_Invariants(t *testing.T) {
 func TestIsFixture(t *testing.T) {
 	if !IsFixture([]byte(`{"fixture_version":1}`)) || IsFixture([]byte(`{"resourceSpans":[]}`)) || IsFixture([]byte(`[`)) {
 		t.Fatal("IsFixture misclassified")
+	}
+}
+
+func TestVerify_NoModelOrToolStep_NeverVerified(t *testing.T) {
+	for _, expectFail := range []bool{false, true} {
+		tr := &types.Trace{
+			SchemaVersion: 2, TraceID: "t",
+			Output: json.RawMessage(`{"message":"ok"}`),
+			Steps:  []types.Step{{Type: types.StepTypeAgentCall, Name: "agent", Args: json.RawMessage(`{}`), Result: json.RawMessage(`{}`)}},
+		}
+
+		v, err := Verify(tr, nil, expectFail, TraceCheckResult{OK: true})
+
+		if err != nil {
+			t.Fatal(err)
+		}
+		if v.Verified {
+			t.Errorf("expectFail=%v: trace with only an agent_call step verified", expectFail)
+		}
 	}
 }
