@@ -46,6 +46,7 @@ Commands that run a child process (`capture`, `replay`, `world` with `-- <comman
 | `trace check` | `cli/trace-check.schema.json` |
 | `trace convert` | `cli/trace-convert.schema.json` |
 | `version` | `cli/version.schema.json` |
+| `view` | `cli/view.schema.json` |
 | `world` | `cli/world.schema.json` |
 | `help` | `cli/help.schema.json` |
 
@@ -103,6 +104,8 @@ The table is checked against the engine's command registry by a test; a change t
 | `version` | 0 | success |
 | `version` | 1 | writing the output failed |
 | `version` | 2 | usage error |
+| `view` | 0 | success: the page was written |
+| `view` | 2 | usage error, or unreadable or invalid input, or the page could not be written |
 | `world` | 0 | the command exited 0, or --serve stopped cleanly |
 | `world` | 1 | the command exited non-zero (its code is not propagated; --json reports it as exit_code), or the world could not be served or its state written |
 | `world` | 2 | usage error or an invalid world.yaml |

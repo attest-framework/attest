@@ -27,6 +27,10 @@ type indexedStep struct {
 	step  *types.Step
 }
 
+// stepPath is the trace_node_path of top-level step i: `steps[i]`. The index is
+// the step's position in Trace.Steps; sub-trace steps are not indexed.
+func stepPath(i int) string { return fmt.Sprintf("steps[%d]", i) }
+
 func indexSteps(trace *types.Trace, keep func(*types.Step) bool) []indexedStep {
 	var out []indexedStep
 	for i := range trace.Steps {
@@ -195,7 +199,11 @@ func cardinality(tool string, calls []indexedStep, per string, minN, maxN *int) 
 	if per == "" {
 		n := len(calls)
 		text := fmt.Sprintf("%s called %d× (%s)", tool, n, bounds)
-		return checkOutcome{passed: !outOfBounds(n, minN, maxN), explanation: text}
+		out := checkOutcome{passed: !outOfBounds(n, minN, maxN), explanation: text}
+		if maxN != nil && n > *maxN {
+			out.nodePath = stepPath(calls[*maxN].index)
+		}
+		return out
 	}
 
 	// Groups are keyed by canonical JSON, so "7" and 7 stay apart while 7 and
@@ -203,6 +211,7 @@ func cardinality(tool string, calls []indexedStep, per string, minN, maxN *int) 
 	var keys []string
 	counts := map[string]int{}
 	shown := map[string]string{}
+	stepIdx := map[string][]int{}
 	var missing []string
 	for _, c := range calls {
 		raw, ok := resolveArg(c.step, per)
@@ -221,11 +230,16 @@ func cardinality(tool string, calls []indexedStep, per string, minN, maxN *int) 
 			shown[key] = displayJSON(raw)
 		}
 		counts[key]++
+		stepIdx[key] = append(stepIdx[key], c.index)
 	}
 
 	var violations []string
+	nodePath := ""
 	for _, key := range keys {
 		if outOfBounds(counts[key], minN, maxN) {
+			if nodePath == "" && maxN != nil && counts[key] > *maxN {
+				nodePath = stepPath(stepIdx[key][*maxN])
+			}
 			violations = append(violations, fmt.Sprintf("%s called %d× for %s=%s (%s)", tool, counts[key], per, shown[key], bounds))
 		}
 	}
@@ -233,7 +247,7 @@ func cardinality(tool string, calls []indexedStep, per string, minN, maxN *int) 
 		violations = append(violations, fmt.Sprintf("%s called 0× (%s)", tool, bounds))
 	}
 	if len(violations) > 0 {
-		return checkOutcome{explanation: strings.Join(violations, "; ")}
+		return checkOutcome{explanation: strings.Join(violations, "; "), nodePath: nodePath}
 	}
 	if len(missing) > 0 {
 		return checkOutcome{missing: fmt.Sprintf("%s call(s) at step(s) %s have no argument %q", tool, strings.Join(missing, ", "), per)}

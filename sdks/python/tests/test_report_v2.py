@@ -11,7 +11,7 @@ import jsonschema
 import pytest
 
 from attest._proto.types import AssertionResult, Trace, Usage
-from attest.report_v2 import TestRecord, build_report
+from attest.report_v2 import TestRecord, build_report, write_report
 from attest.result import AgentResult
 
 pytest_plugins = ["pytester"]
@@ -258,3 +258,79 @@ def test_setup_and_teardown_results_count_in_soft_failure_summary(report_path: s
     plugin._session_tests.clear()
     if report_path is not None:
         assert len(tests[0].agent_results) == 3
+
+
+def _traced_record(*traces: Trace) -> TestRecord:
+    return TestRecord(
+        test_id="tests/test_a.py::test_refund",
+        name="test_refund",
+        file="tests/test_a.py",
+        line=7,
+        agent_results=[
+            AgentResult(
+                trace=trace,
+                assertion_results=[
+                    AssertionResult(assertion_id="a1", status="pass", score=1.0, explanation="")
+                ],
+            )
+            for trace in traces
+        ],
+    )
+
+
+def test_build_report_traces_off_has_no_traces_or_trace_id() -> None:
+    record = _traced_record(Trace(trace_id="trc_1", output={"message": "ok"}))
+
+    report = build_report([record], simulated=False, usage=Usage())
+
+    assert "traces" not in report
+    assert all("trace_id" not in row for row in report["results"])
+
+
+def test_build_report_traces_on_embeds_trace_and_tags_rows_per_schema() -> None:
+    record = _traced_record(Trace(trace_id="trc_1", output={"message": "ok"}))
+
+    report = build_report([record], simulated=False, usage=Usage(), include_traces=True)
+
+    assert report["traces"] == {"trc_1": record.agent_results[0].trace.to_dict()}
+    assert [row["trace_id"] for row in report["results"]] == ["trc_1"]
+    _validate(report)
+
+
+def test_build_report_traces_on_dedupes_equal_traces_and_splits_colliding_ids() -> None:
+    same = Trace(trace_id="trc_1", output={"message": "ok"})
+    other = Trace(trace_id="trc_1", output={"message": "different"})
+    unnamed = Trace(trace_id="", output={"message": "x"})
+    record = _traced_record(same, same, other, unnamed)
+
+    report = build_report([record], simulated=False, usage=Usage(), include_traces=True)
+
+    assert [row["trace_id"] for row in report["results"]] == [
+        "trc_1",
+        "trc_1",
+        "trc_1#2",
+        "trace-3",
+    ]
+    assert report["traces"]["trc_1#2"]["output"] == {"message": "different"}
+    assert len(report["traces"]) == 3
+
+
+@pytest.mark.parametrize(
+    ("env", "embedded"), [(None, False), ("0", False), ("1", True)], ids=["unset", "zero", "one"]
+)
+def test_write_report_embeds_traces_only_when_env_is_1(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, env: str | None, embedded: bool
+) -> None:
+    if env is None:
+        monkeypatch.delenv("ATTEST_REPORT_TRACES", raising=False)
+    else:
+        monkeypatch.setenv("ATTEST_REPORT_TRACES", env)
+    record = _traced_record(Trace(trace_id="trc_1", output={"message": "ok"}))
+    path = tmp_path / "r.json"
+
+    write_report(path, [record], simulated=False, usage=Usage())
+
+    report = json.loads(path.read_text())
+    assert ("traces" in report) is embedded
+    assert all(("trace_id" in row) is embedded for row in report["results"])
+    _validate(report)

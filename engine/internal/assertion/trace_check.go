@@ -40,6 +40,9 @@ type checkOutcome struct {
 	passed      bool
 	explanation string
 	missing     string
+	// nodePath is the trace_node_path of the offending step (`steps[N]`) when
+	// the check can name one; empty keeps the inferred `trace.<check>` path.
+	nodePath string
 }
 
 // traceCheckRunner evaluates one check. A returned error is a spec error.
@@ -93,6 +96,8 @@ func (e *TraceEvaluator) Evaluate(trace *types.Trace, assertion *types.Assertion
 			Explanation: outcome.explanation,
 			DurationMS:  time.Since(start).Milliseconds(),
 			RequestID:   assertion.RequestID,
+
+			TraceNodePath: outcome.nodePath,
 		}
 	}
 	return passResult(assertion, start, outcome.explanation)
@@ -145,7 +150,9 @@ func runLoopDetection(trace *types.Trace, spec *traceSpec) (checkOutcome, error)
 	}
 	maxN := spec.MaxRepetitions
 	calls := indexSteps(trace, func(s *types.Step) bool { return s.Name == spec.Tool })
-	return cardinality(spec.Tool, calls, "", nil, &maxN), nil
+	out := cardinality(spec.Tool, calls, "", nil, &maxN)
+	out.nodePath = "" // loop_detection keeps its inferred trace.loop_detection path
+	return out, nil
 }
 
 func runNoDuplicates(trace *types.Trace, _ *traceSpec) (checkOutcome, error) {

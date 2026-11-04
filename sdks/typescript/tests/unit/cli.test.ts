@@ -144,6 +144,16 @@ describe("attest init", () => {
         "npx vitest run --reporter=default --reporter=@attest-ai/vitest/reporter " +
           "--outputFile.attest=attest-report.json",
       );
+      const runTests = byName.get("Run tests") ?? "";
+      expect(runTests).toContain('# env:\n        #   ATTEST_REPORT_TRACES: "1"');
+      expect(runTests).not.toContain("\n        env:");
+      expect(runTests).toContain("not redacted");
+      expect(runTests).toContain("private repositories");
+      expect(byName.get("Write the failure viewer")).toContain("if: always()");
+      expect(byName.get("Write the failure viewer")).toContain(
+        "npx attest view attest-report.json --no-open --out attest-report.html",
+      );
+      expect(byName.get("Upload the Attest report")).toContain("attest-report.html");
       expect(byName.get("Write the JUnit report")).toContain("if: always()");
       expect(byName.get("Write the JUnit report")).toContain(
         "npx attest report junit --report attest-report.json --out attest-junit.xml",

@@ -99,10 +99,17 @@ jobs:
       - name: Run tests
         id: tests
         continue-on-error: true
+        # Traces (prompts, outputs, tool args; not redacted) travel in the artifact; on a public
+        # repository any signed-in GitHub user can download it. Enable on private repositories only:
+        # env:
+        #   ATTEST_REPORT_TRACES: "1"
         run: npx vitest run ${REPORT_ARGS}
       - name: Write the JUnit report
         if: always()
         run: npx attest report junit --report attest-report.json --out attest-junit.xml
+      - name: Write the failure viewer
+        if: always()
+        run: npx attest view attest-report.json --no-open --out attest-report.html
       - name: Upload the Attest report
         if: always()
         uses: actions/upload-artifact@v7
@@ -111,6 +118,7 @@ jobs:
           path: |
             attest-report.json
             attest-junit.xml
+            attest-report.html
           if-no-files-found: error
       - name: Evaluate the merge policy
         if: always()

@@ -10,7 +10,7 @@ import {
   type Usage,
 } from "@attest-ai/core";
 import type { Reporter, TestModule, Vitest } from "vitest/node";
-import { buildReport, summaryLines, type TestRecord } from "./report.js";
+import { buildReport, reportTracesEnabled, summaryLines, type TestRecord } from "./report.js";
 import { ROOT_ENV, USAGE_DIR_ENV } from "./test-state.js";
 
 interface ReporterContext {
@@ -165,7 +165,7 @@ export class AttestReporter implements Reporter {
     if (outputFile === undefined) return;
     const path = resolve(this.root, outputFile);
     mkdirSync(dirname(path), { recursive: true });
-    writeFileSync(path, `${JSON.stringify(buildReport(tests, isSimulationMode(), unattached), null, 2)}\n`);
+    writeFileSync(path, `${JSON.stringify(buildReport(tests, isSimulationMode(), unattached, reportTracesEnabled()), null, 2)}\n`);
   }
 }
 

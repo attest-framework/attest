@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Attest report</title>
+<style>
+:root { color-scheme: light dark; --bg:#ffffff; --fg:#1b1f23; --muted:#5b6570; --line:#d8dee4; --card:#f6f8fa; --pass:#1a7f37; --fail:#cf222e; --ne:#9a6700; --hit:#fff1f0; }
+@media (prefers-color-scheme: dark) { :root { --bg:#0d1117; --fg:#e6edf3; --muted:#8b949e; --line:#30363d; --card:#161b22; --pass:#3fb950; --fail:#ff7b72; --ne:#d29922; --hit:#3b1519; } }
+* { box-sizing: border-box; }
+body { margin:0 auto; max-width:1100px; padding:24px 20px 64px; background:var(--bg); color:var(--fg); font:14px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+h1 { font-size:22px; margin:0 0 4px; }
+h2 { font-size:17px; margin:32px 0 10px; padding-bottom:4px; border-bottom:1px solid var(--line); }
+h3 { font-size:14px; margin:14px 0 6px; }
+code, pre, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size:12.5px; }
+pre { margin:4px 0; padding:8px 10px; background:var(--card); border:1px solid var(--line); border-radius:6px; white-space:pre-wrap; overflow-wrap:anywhere; max-height:320px; overflow:auto; }
+a { color:inherit; }
+table { border-collapse:collapse; width:100%; }
+th, td { text-align:left; padding:5px 8px; border-bottom:1px solid var(--line); vertical-align:top; }
+th { color:var(--muted); font-weight:600; font-size:12px; }
+.cards { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:10px; margin:12px 0; }
+.card { background:var(--card); border:1px solid var(--line); border-radius:8px; padding:10px 12px; }
+.card b { display:block; font-size:20px; }
+.muted { color:var(--muted); }
+.pass { color:var(--pass); } .fail { color:var(--fail); } .ne { color:var(--ne); } .skip { color:var(--muted); }
+.badge { display:inline-block; padding:0 7px; border:1px solid currentColor; border-radius:10px; font-size:12px; font-weight:600; }
+.notice { background:var(--card); border-left:3px solid var(--ne); padding:6px 10px; margin:8px 0; }
+.test { border:1px solid var(--line); border-radius:8px; margin:10px 0; background:var(--card); }
+.test > details > summary { padding:8px 12px; cursor:pointer; }
+.test .body { padding:0 12px 10px; }
+.finding { border:1px solid var(--line); border-left:4px solid var(--fail); border-radius:6px; padding:8px 10px; margin:8px 0; background:var(--bg); }
+.finding.ne { border-left-color:var(--ne); }
+.cols { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+@media (max-width:700px) { .cols { grid-template-columns:1fr; } }
+ul.tree, ul.tree ul { list-style:none; margin:0; padding-left:18px; }
+ul.tree { padding-left:0; }
+.step > details > summary { cursor:pointer; padding:2px 4px; border-radius:4px; }
+.step.hit > details > summary { background:var(--hit); outline:2px solid var(--fail); }
+.step .type { color:var(--muted); font-size:12px; }
+.mark { color:var(--fail); font-weight:700; }
+.seq-add { color:var(--pass); font-weight:600; } .seq-del { color:var(--fail); text-decoration:line-through; } .seq-keep { color:var(--muted); }
+</style>
+</head>
+<body>
+<h1>Attest report</h1>
+<p class="muted">Self-contained offline page. No scripts, no network requests.{{if .Summary.Simulated}} Simulation mode: layers 5 and 6 were not evaluated.{{end}}</p>
+
+{{range .Notices}}<p class="notice">{{.}}</p>
+{{end}}
+
+<h2 id="summary">Summary</h2>
+<div class="cards">
+  <div class="card"><span class="muted">Tests</span><b>{{.Summary.Tests}}</b></div>
+  <div class="card"><span class="muted">Pass</span><b class="pass">{{.Summary.Passed}}</b></div>
+  <div class="card"><span class="muted">Fail</span><b class="fail">{{.Summary.Failed}}</b></div>
+  <div class="card"><span class="muted">Not evaluated</span><b class="ne">{{.Summary.NotEvaluated}}</b></div>
+  <div class="card"><span class="muted">Skipped</span><b class="skip">{{.Summary.Skipped}}</b></div>
+</div>
+<table>
+  <tr><th>Assertions</th><td>{{.Summary.Assertions}}</td></tr>
+  <tr><th>Assertion pass rate</th><td>{{.Summary.PassRate}} <span class="muted">(not evaluated excluded)</span></td></tr>
+  {{if .Summary.NotEvaluatedBy}}<tr><th>Not evaluated because</th><td>{{range $i, $r := .Summary.NotEvaluatedBy}}{{if $i}}, {{end}}<code>{{$r}}</code>{{end}}</td></tr>{{end}}
+  <tr><th>Model calls</th><td>{{.Summary.Replay}}</td></tr>
+  <tr><th>Attest cost</th><td>{{.Summary.Cost}}</td></tr>
+  <tr><th>Duration</th><td>{{.Summary.Duration}}</td></tr>
+</table>
+{{if .TracesMissing}}<p class="notice">This report carries no traces, so the trace trees and tool-sequence diffs are empty. Re-run the tests with <code>ATTEST_REPORT_TRACES=1</code> to embed them (traces hold prompts, outputs and tool arguments).</p>{{end}}
+
+<h2 id="tests">Tests</h2>
+<table>
+  <tr><th>Outcome</th><th>Test</th><th>Location</th><th>Duration</th></tr>
+  {{range .Tests}}<tr><td><span class="badge {{.Class}}">{{.Label}}</span></td><td><a href="#{{.Anchor}}">{{.Name}}</a></td><td class="mono">{{.Location}}</td><td>{{.Duration}}</td></tr>
+  {{end}}
+</table>
+
+{{range .Tests}}
+<section class="test" id="{{.Anchor}}">
+<details{{if .Open}} open{{end}}>
+<summary><span class="badge {{.Class}}">{{.Label}}</span> <b>{{.Name}}</b> <span class="mono muted">{{.Location}}</span></summary>
+<div class="body">
+<p class="muted">{{.Provenance}}</p>
+{{range .Findings}}
+<div class="finding {{.Class}}" id="{{.Anchor}}">
+  <div><b>{{.AssertionID}}</b> <span class="badge {{.Class}}">{{.Status}}{{if .Reason}}: {{.Reason}}{{end}}</span>{{if .Type}} <span class="muted">type</span> <code>{{.Type}}</code>{{end}} <span class="muted">cost</span> {{.Cost}}</div>
+  {{if .Explanation}}<p>{{.Explanation}}</p>{{end}}
+  {{if or .Expected .Actual}}<div class="cols"><div><div class="muted">Expected</div><pre>{{.Expected}}</pre></div><div><div class="muted">Actual</div><pre>{{.Actual}}</pre></div></div>{{end}}
+  <div class="muted">Provenance: {{.Provenance}}</div>
+  {{if .Path}}<div class="muted">Trace node: <code>{{.Path}}</code>{{if .StepAnchor}} <a href="#{{.StepAnchor}}">jump to the failing span</a>{{end}}</div>{{end}}
+</div>
+{{end}}
+{{if .PassedIDs}}<p class="muted">Passed assertions: {{range $i, $id := .PassedIDs}}{{if $i}}, {{end}}<code>{{$id}}</code>{{end}}{{if .RowsCut}} and {{.RowsCut}} more{{end}}</p>{{else if .RowsCut}}<p class="muted">{{.RowsCut}} more assertion row(s) not shown.</p>{{end}}
+{{range .Traces}}
+<h3>Trace <code>{{.ID}}</code>{{if .AgentID}} <span class="muted">agent</span> <code>{{.AgentID}}</code>{{end}}</h3>
+{{if .Sequence}}<div class="muted">Tool sequence: <code>{{.Sequence}}</code></div>{{end}}
+<details><summary class="muted">Input and output</summary>
+{{if .Input}}<div class="muted">Input</div><pre>{{.Input}}</pre>{{end}}
+{{if .Output}}<div class="muted">Output</div><pre>{{.Output}}</pre>{{end}}
+</details>
+<ul class="tree" id="{{.Anchor}}">
+{{range .Steps}}{{template "step" .}}{{end}}
+</ul>
+{{end}}
+</div>
+</details>
+</section>
+{{end}}
+
+{{with .Baseline}}
+<h2 id="baseline">Baseline vs head</h2>
+<table>
+  <tr><th>Metric</th><th>Baseline</th><th>Head</th><th>Change</th></tr>
+  {{range .Rows}}<tr><td>{{.Metric}}</td><td>{{.Base}}</td><td>{{.Head}}</td><td class="{{.Class}}">{{.Delta}}</td></tr>
+  {{end}}
+</table>
+{{if .NoTraces}}<p class="notice">Tool-sequence comparison needs traces in both the baseline and the head reports (<code>ATTEST_REPORT_TRACES=1</code>).</p>{{end}}
+{{if .Tests}}
+<h3>Changed tests</h3>
+<table>
+  <tr><th>Test</th><th>Baseline</th><th>Head</th><th>Change</th></tr>
+  {{range .Tests}}<tr><td>{{.Name}}<div class="mono muted">{{.Location}}</div></td><td>{{.Base}}</td><td>{{.Head}}</td><td>{{.Note}}
+    {{if .Sequence}}<div class="mono">{{range $i, $op := .Sequence}}{{if $i}} → {{end}}<span class="seq-{{$op.Kind}}">{{if eq $op.Kind "add"}}+{{else if eq $op.Kind "del"}}-{{end}}{{$op.Name}}</span>{{end}}</div>{{end}}
+  </td></tr>
+  {{end}}
+</table>
+{{else}}<p class="muted">No test changed outcome or tool sequence.</p>{{end}}
+{{end}}
+
+{{with .Mutation}}
+<h2 id="mutants">Mutation testing</h2>
+<p>Score {{.Score}}: {{.Killed}} killed, {{.Survived}} survived.</p>
+{{if .Survivors}}
+<table>
+  <tr><th>Surviving mutant</th><th>Fixture</th><th>Operator</th><th>Suggested contract</th></tr>
+  {{range .Survivors}}<tr><td class="mono">{{.ID}}<div class="muted">{{.Description}}</div></td><td>{{.Fixture}}</td><td>{{.Operator}}</td><td>{{if .Suggestion}}{{.Suggestion}}<pre>{{.Contract}}</pre>{{else}}<span class="muted">none</span>{{end}}</td></tr>
+  {{end}}
+</table>
+{{else}}<p class="pass">No mutant survived.</p>{{end}}
+{{end}}
+</body>
+</html>
+{{define "step"}}{{if .Omitted}}<li class="step muted" id="{{.Anchor}}">… {{.Omitted}} step(s) omitted</li>
+{{else}}<li class="step{{if .Highlight}} hit{{end}}" id="{{.Anchor}}">
+<details{{if .Highlight}} open{{end}}>
+<summary>{{if .Path}}<span class="mono muted">{{.Path}}</span> {{end}}<span class="type">{{.Type}}</span> <b>{{.Name}}</b>{{if .Error}} <span class="fail">error</span>{{end}}{{range .Marks}} <span class="mark">&#9664; failing span</span> <a href="#{{.Anchor}}">{{.Label}}</a>{{end}}</summary>
+{{if .Args}}<div class="muted">args</div><pre>{{.Args}}</pre>{{end}}
+{{if .Result}}<div class="muted">result</div><pre>{{.Result}}</pre>{{end}}
+{{if .Error}}<div class="muted">error</div><pre>{{.Error}}</pre>{{end}}
+{{if .Children}}<ul class="tree">{{range .Children}}{{template "step" .}}{{end}}</ul>{{end}}
+</details>
+</li>
+{{end}}{{end}}

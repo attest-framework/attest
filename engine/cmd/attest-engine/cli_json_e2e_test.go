@@ -94,6 +94,10 @@ var cliJSONRunners = map[string]cliJSONRunner{
 	"report junit": func(t *testing.T, bin string, env []string, tmp string) []byte {
 		return cliRun(t, bin, env, tmp, 0, "report", "junit", "--json", "--report", cliAbs(t, mixedCIReport), "--out", filepath.Join(tmp, "junit.xml"))
 	},
+	"view": func(t *testing.T, bin string, env []string, tmp string) []byte {
+		return cliRun(t, bin, env, tmp, 0, "view", "--json", "--no-open", "--out", filepath.Join(tmp, "page.html"),
+			cliAbs(t, viewHeadReport), "--baseline", cliAbs(t, viewBaseReport))
+	},
 	"report summary": func(t *testing.T, bin string, env []string, tmp string) []byte {
 		return cliRun(t, bin, env, tmp, 0, "report", "summary", "--json", "--report", cliAbs(t, mixedCIReport))
 	},
@@ -117,6 +121,8 @@ var cliJSONRunners = map[string]cliJSONRunner{
 
 const (
 	mixedCIReport    = "../../internal/report/testdata/ci/mixed.json"
+	viewHeadReport   = "../../internal/report/testdata/view/head.json"
+	viewBaseReport   = "../../internal/report/testdata/view/base.json"
 	cliReplayFixture = "../../../protocol-tests/fixture-v1/valid/001-command-capture-expect-fail.attest.json"
 )
 
