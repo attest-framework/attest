@@ -47,7 +47,12 @@
     "p50_duration_ms": { "type": "integer", "minimum": 0 },
     "p95_duration_ms": { "type": "integer", "minimum": 0 },
     "failure_classes": { "type": "object", "additionalProperties": { "type": "integer", "minimum": 0 } },
-    "baseline": { "type": "object" }
+    "baseline": { "type": "object" },
+    "traces": {
+      "description": "Evaluated traces keyed by trace id, each a trace-v2 document. Written only when ATTEST_REPORT_TRACES=1 (traces hold prompts, outputs and tool arguments); read by `attest view`. Rows reference an entry through trace_id.",
+      "type": "object",
+      "additionalProperties": { "type": "object" }
+    }
   },
   "$defs": {
     "status": { "enum": ["pass", "soft_fail", "hard_fail", "not_evaluated"] },
@@ -128,6 +133,7 @@
         "judge_metadata": { "type": "object" },
         "failure_class": { "type": "string" },
         "trial": { "description": "1-based trial index when the test ran as fixed-N trials; rows of one assertion share assertion_id across trials.", "type": "integer", "minimum": 1 },
+        "trace_id": { "description": "Key into the top-level traces map of the trace this row was evaluated against; present only with ATTEST_REPORT_TRACES=1.", "type": "string", "minLength": 1 },
         "test_id": { "type": "string", "minLength": 1 },
         "file": { "$ref": "#/$defs/file" },
         "line": { "$ref": "#/$defs/line" }
