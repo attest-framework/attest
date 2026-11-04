@@ -65,14 +65,25 @@ def test_scaffold_project_ci_github_writes_merge_gate_workflow(tmp_path: Path) -
     run_tests = by_name["Run tests"]
     assert "continue-on-error: true" in run_tests
     assert "pytest --attest-report=attest-report.json" in run_tests
-    for name in ("Write the JUnit report", "Upload the Attest report", "Evaluate the merge policy"):
+    assert 'ATTEST_REPORT_TRACES: "1"' in run_tests
+    for name in (
+        "Write the JUnit report",
+        "Write the failure viewer",
+        "Upload the Attest report",
+        "Evaluate the merge policy",
+    ):
         assert "if: always()" in by_name[name], name
     assert (
         "uv run attest report junit --report attest-report.json --out attest-junit.xml"
         in by_name["Write the JUnit report"]
     )
+    assert (
+        "uv run attest view attest-report.json --no-open --out attest-report.html"
+        in by_name["Write the failure viewer"]
+    )
     upload = by_name["Upload the Attest report"]
     assert "attest-report.json\n" in upload and "attest-junit.xml" in upload
+    assert "attest-report.html" in upload
     assert "\npermissions:\n  contents: read\n\njobs:" in workflow
     assert "    permissions:\n      contents: read\n      pull-requests: write\n" in workflow
     assert '"$code" -eq 2' in by_name["Evaluate the merge policy"]

@@ -98,6 +98,7 @@ Plain `http` to a host other than `localhost` or a loopback address is allowed f
 
 | Variable | Purpose | Default |
 |---|---|---|
+| `ATTEST_REPORT_TRACES` | `1` embeds the evaluated traces in the report-v2 file (`traces` and a `trace_id` per row) for `attest view`. Traces hold prompts, outputs and tool arguments. Read by the pytest plugin and the Vitest reporter. See [viewer](viewer.md). | unset |
 | `ATTEST_CONTRACTS_DIR` | Directory where each engine process records the assertion specs it evaluates (one `0600` NDJSON file per process, no traces or outputs), for `attest mutate --contracts`. Off when unset. See [mutation](mutation.md). | unset |
 | `ATTEST_CACHE_DIR` | Cache, baseline and history database directory. | `~/.attest/cache` |
 | `ATTEST_HISTORY_MAX_ROWS` | Result history row limit (enables pruning). | `10000` when pruning is enabled |
