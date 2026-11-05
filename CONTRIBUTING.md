@@ -173,13 +173,19 @@ When modifying the protocol:
 
 ## CI
 
-CI runs automatically on pull requests:
+CI runs automatically on pull requests as one workflow, `.github/workflows/ci.yml`. Its first job, `changes`, detects which paths the pull request touches, and each suite runs only when the paths it guards changed:
 
-- **Engine CI** — Triggered by changes to `engine/**` or `proto/**`
-  - `go test`, `go vet`, `govulncheck`, `go build`
-- **Python SDK CI** — Triggered by changes to `sdks/python/**` or `proto/**`
+- **Engine** (`engine/**`, `proto/**`, `protocol-tests/**`, `docs/guides/**`, `skills/**`, plugin manifests, `VERSION`)
+  - `go test -race`, `go vet`, `govulncheck`, `go build`
+- **Python SDK** (`sdks/python/**`, `sdks/parity/**`, `protocol-tests/**`, `engine/**`, `proto/**`)
   - Matrix: Python 3.10, 3.11, 3.12
   - `pytest`, `ruff`, `mypy`, `pip-audit`
+- **TypeScript SDK** (`sdks/typescript/**`, `sdks/parity/**`, `protocol-tests/**`, `engine/**`)
+  - Matrix: Node 20, 22
+  - build, test, `tsc --noEmit`
+- **setup-attest** (`.github/actions/setup-attest/**`), **GitHub config** (`.github/**`), **version sources** (the files `scripts/verify-versions.sh` compares) and the **release dry run** (`release.yml`, the release scripts, `CHANGELOG.md`, `VERSION`)
+
+The final job, `required`, always runs. It fails when any job it depends on failed or was cancelled, and passes when they succeeded or were skipped, so a pull request that touches only `README.md` runs `changes` and `required` and nothing else. `required` is the one status check to require in branch protection.
 
 ## Code Standards
 

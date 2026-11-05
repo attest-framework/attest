@@ -8,10 +8,8 @@ import (
 	"io"
 	"os"
 	"os/exec"
-	"os/signal"
 	"path/filepath"
 	"strings"
-	"syscall"
 
 	"github.com/attest-framework/attest/engine/internal/capture"
 )
@@ -180,27 +178,14 @@ func replayCommand(s *capture.Session, o *replayOptions, environ []string, stdou
 	if o.json {
 		cmd.Stdout = os.Stderr
 	}
-	if err := cmd.Start(); err != nil {
+	stopForward, err := startForwardingSignals(cmd)
+	if err != nil {
 		_ = s.Close()
 		fmt.Fprintf(stderr, "replay: running %s: %s\n", terminalSafe(argv[0]), terminalSafe(err.Error()))
 		return 1
 	}
-	signals := make(chan os.Signal, 2)
-	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
-	stopForward := make(chan struct{})
-	go func() {
-		for {
-			select {
-			case sig := <-signals:
-				_ = cmd.Process.Signal(sig)
-			case <-stopForward:
-				return
-			}
-		}
-	}()
 	runErr := cmd.Wait()
-	signal.Stop(signals)
-	close(stopForward)
+	stopForward()
 	if err := s.Close(); err != nil {
 		fmt.Fprintf(stderr, "replay: %s\n", terminalSafe(err.Error()))
 		return 1

@@ -2,7 +2,7 @@
 
 The script is stdlib-only so the tests run on the same Ubuntu runner without
 `pip install`: ``python3 -m unittest discover -s .github/actions/pr-annotate``
-(CI: ci-github-config.yml). The stub engine (testdata/stub_engine.py) stands in
+(CI: the github-config job of ci.yml). The stub engine (testdata/stub_engine.py) stands in
 for `attest-engine report summary|rows` and `policy evaluate`.
 """
 
@@ -704,7 +704,7 @@ _REPO_ROOT = Path(__file__).resolve().parents[3]
 _POLICY = "layers:\n  0:\n    max_hard_fails: 0\nnot_evaluated: warn\n"
 
 
-@unittest.skipUnless(shutil.which("go"), "go toolchain not on PATH; CI (ci-github-config.yml) has it")
+@unittest.skipUnless(shutil.which("go"), "go toolchain not on PATH; CI (ci.yml github-config job) has it")
 class TestRealEngine(ActionCase):
     """The action script against the real attest-engine built from this checkout."""
 
