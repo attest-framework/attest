@@ -15,6 +15,7 @@ export default defineConfig([
     entry: ["src/index.ts", "src/proto/index.ts"],
     format: ["cjs"],
     outDir: "dist/cjs",
+    shims: true,
     dts: true,
     sourcemap: true,
     clean: false,

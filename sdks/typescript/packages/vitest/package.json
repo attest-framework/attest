@@ -20,7 +20,8 @@
     }
   },
   "files": [
-    "dist"
+    "dist",
+    "engine-checksums.json"
   ],
   "engines": {
     "node": ">=18"
