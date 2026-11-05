@@ -117,7 +117,7 @@ trace = adapter.trace_from_response(
 ### LangChain
 
 ```bash
-uv add 'attest-ai[langchain]>=1.0.0'
+uv add 'attest-ai[langchain]>=1.0.1'
 ```
 
 **Context manager usage:**
@@ -164,7 +164,7 @@ trace = handler.build_trace()
 ### Google ADK
 
 ```bash
-uv add 'attest-ai[google-adk]>=1.0.0'
+uv add 'attest-ai[google-adk]>=1.0.1'
 ```
 
 **Async capture:**
@@ -213,7 +213,7 @@ trace = GoogleADKAdapter.from_events(
 ### LlamaIndex
 
 ```bash
-uv add 'attest-ai[llamaindex]>=1.0.0'
+uv add 'attest-ai[llamaindex]>=1.0.1'
 ```
 
 **Context manager usage:**
@@ -258,7 +258,7 @@ trace = handler.build_trace(query="...", response="...")
 ### OpenTelemetry
 
 ```bash
-uv add 'attest-ai[otel]>=1.0.0'
+uv add 'attest-ai[otel]>=1.0.1'
 ```
 
 **From collected spans or an OTLP/JSON export:**

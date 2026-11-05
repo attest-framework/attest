@@ -1,6 +1,6 @@
 {
   "name": "attest",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Skills for testing AI agents with Attest: capture runs as fixtures, write deterministic assertions, and gate merges.",
   "author": {
     "name": "Attest Contributors"
