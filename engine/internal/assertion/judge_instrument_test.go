@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"regexp"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -310,5 +311,47 @@ func TestJudge_SpecErrors_AreLabelledSpecError(t *testing.T) {
 				t.Errorf("status=%s class=%q, want hard_fail spec_error", r.Status, r.FailureClass)
 			}
 		})
+	}
+}
+
+func TestJudge_RepeatAndProbes_EachRequestHasItsOwnNonce(t *testing.T) {
+	// Arrange
+	nonce := regexp.MustCompile(`AGENT_OUTPUT_START:([0-9a-f]{32})>>>`)
+	var mu sync.Mutex
+	var systemNonces, userNonces []string
+	fj := newFakeJudge(t, func(system, user string) string {
+		mu.Lock()
+		defer mu.Unlock()
+		if m := nonce.FindStringSubmatch(system); m != nil {
+			systemNonces = append(systemNonces, m[1])
+		}
+		if m := nonce.FindStringSubmatch(user); m != nil {
+			userNonces = append(userNonces, m[1])
+		}
+		return `{"score": 0.9, "explanation": "ok"}`
+	})
+	tr, a := specAssertion(`{"target":"output","repeat":3,"bias_probes":["position","verbosity"]}`)
+
+	// Act
+	r := evaluatorFor(t, fj.URL, nil).Evaluate(tr, a)
+
+	// Assert
+	if r.Status != types.StatusPass {
+		t.Fatalf("status=%s reason=%q, want pass", r.Status, r.Reason)
+	}
+	if got, want := len(systemNonces), 5; got != want {
+		t.Fatalf("requests carrying a nonce = %d, want %d (3 samples + 2 probes)", got, want)
+	}
+	seen := map[string]bool{}
+	for _, n := range systemNonces {
+		if seen[n] {
+			t.Fatalf("nonce %s reused across requests: %v", n, systemNonces)
+		}
+		seen[n] = true
+	}
+	for i := range systemNonces {
+		if systemNonces[i] != userNonces[i] {
+			t.Fatalf("request %d: system nonce %s != user nonce %s", i, systemNonces[i], userNonces[i])
+		}
 	}
 }

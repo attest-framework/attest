@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/attest-framework/attest/engine/internal/assertion/judge"
 	"github.com/attest-framework/attest/engine/internal/redact"
 )
 
@@ -47,6 +48,7 @@ func unplaceholder(v any) any {
 		}
 		return x
 	case string:
+		x = judge.CanonicalizeDelimiters(x)
 		x = emailPattern.ReplaceAllString(x, normalizedEmail)
 		return storedPlaceholder.ReplaceAllStringFunc(x, func(m string) string {
 			sub := storedPlaceholder.FindStringSubmatch(m)

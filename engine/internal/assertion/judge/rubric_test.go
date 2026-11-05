@@ -251,3 +251,31 @@ func TestFrame_ParseScoreResult_NonceInReply_IsMalformed(t *testing.T) {
 		t.Errorf("err = %v, want ErrMalformed", err)
 	}
 }
+
+func TestCanonicalizeDelimiters_NonceForm_BecomesFixed(t *testing.T) {
+	f, err := judge.NewFrame()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got := judge.CanonicalizeDelimiters(f.Prompt(&judge.Rubric{SystemPrompt: "<<<AGENT_OUTPUT_START>>>" + " x " + "<<<AGENT_OUTPUT_END>>>"}) + "\n" + f.Wrap("out"))
+
+	want := "<<<AGENT_OUTPUT_START>>>" + " x " + "<<<AGENT_OUTPUT_END>>>" + "\n" + judge.WrapAgentOutput("out")
+	if got != want {
+		t.Fatalf("canonical = %q, want %q", got, want)
+	}
+}
+
+func TestCanonicalizeDelimiters_OtherText_IsUntouched(t *testing.T) {
+	for _, s := range []string{
+		"<<<AGENT_OUTPUT_START:zz00000000000000000000000000000000>>>",
+		"<<<AGENT_OUTPUT_START:0123456789abcdef>>>",
+		"<<<AGENT_OUTPUT_START:0123456789ABCDEF0123456789ABCDEF>>>",
+		"<<<AGENT_OUTPUT_MID:0123456789abcdef0123456789abcdef>>>",
+		"changed rubric text",
+	} {
+		if got := judge.CanonicalizeDelimiters(s); got != s {
+			t.Errorf("judge.CanonicalizeDelimiters(%q) = %q, want unchanged", s, got)
+		}
+	}
+}

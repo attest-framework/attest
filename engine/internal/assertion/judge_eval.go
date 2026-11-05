@@ -114,10 +114,7 @@ func (e *JudgeEvaluator) EvaluateContext(parent context.Context, trace *types.Tr
 		model = e.provider.DefaultModel()
 	}
 
-	call, err := newJudgeCall(spec.Criteria, targetStr, rubric.Version, runs, probes)
-	if err != nil {
-		return notEvaluatedResult(assertion, start, types.ReasonProviderUnavailable, err.Error())
-	}
+	call := newJudgeCall(spec.Criteria, targetStr, rubric.Version, runs, probes)
 	if e.cache != nil {
 		if cached, cErr := e.cache.Get(call.cacheKey, rubricName, model); cErr == nil && cached != nil {
 			durationMS := time.Since(start).Milliseconds()
@@ -148,10 +145,9 @@ func (e *JudgeEvaluator) EvaluateContext(parent context.Context, trace *types.Tr
 
 // judgeCall is the prompt for one assertion evaluation.
 type judgeCall struct {
-	// frame carries the per-call nonce delimiting the agent output.
-	frame judge.Frame
-	// content is the user message sent to the judge, framed with the nonce.
-	content string
+	// criteria and target build the user message; each provider request frames
+	// it with its own nonce (see fresh).
+	criteria, target string
 	// canonical is the same message with the fixed delimiters: it is the same
 	// on every call, so it feeds the prompt hash.
 	canonical string
@@ -161,25 +157,31 @@ type judgeCall struct {
 	cacheKey string
 }
 
-func newJudgeCall(criteria, target, rubricVersion string, runs int, probes []string) (judgeCall, error) {
+func (c judgeCall) withCriteria(wrapped string) string {
+	if c.criteria == "" {
+		return wrapped
+	}
+	return fmt.Sprintf("Evaluation criteria: %s\n\n%s", c.criteria, wrapped)
+}
+
+// fresh returns a new Frame and the user message framed with its nonce. Every
+// provider request (each repeat sample and each bias probe) takes its own, so
+// a nonce leaked in one reply protects nothing about the next request.
+func (c judgeCall) fresh() (judge.Frame, string, error) {
 	frame, err := judge.NewFrame()
 	if err != nil {
-		return judgeCall{}, err
+		return judge.Frame{}, "", err
 	}
-	withCriteria := func(wrapped string) string {
-		if criteria == "" {
-			return wrapped
-		}
-		return fmt.Sprintf("Evaluation criteria: %s\n\n%s", criteria, wrapped)
-	}
-	canonical := withCriteria(judge.WrapAgentOutput(target))
+	return frame, c.withCriteria(frame.Wrap(c.target)), nil
+}
+
+func newJudgeCall(criteria, target, rubricVersion string, runs int, probes []string) judgeCall {
+	call := judgeCall{criteria: criteria, target: target}
+	canonical := call.withCriteria(judge.WrapAgentOutput(target))
 	key := fmt.Sprintf("%s\x00repeat=%d\x00probes=%s", canonical, runs, strings.Join(probes, ","))
-	return judgeCall{
-		frame:     frame,
-		content:   withCriteria(frame.Wrap(target)),
-		canonical: canonical,
-		cacheKey:  cache.JudgePromptKey(rubricVersion, key),
-	}, nil
+	call.canonical = canonical
+	call.cacheKey = cache.JudgePromptKey(rubricVersion, key)
+	return call
 }
 
 // specErrorResult fails an assertion whose spec cannot be evaluated and
@@ -320,10 +322,14 @@ func (e *JudgeEvaluator) evaluateSinglePass(
 	targetStr, rubricName string,
 	probes []string,
 ) *types.AssertionResult {
+	frame, content, err := call.fresh()
+	if err != nil {
+		return notEvaluatedResult(assertion, start, types.ReasonProviderUnavailable, err.Error())
+	}
 	req := &llm.CompletionRequest{
 		Model:        model,
-		SystemPrompt: call.frame.Prompt(rubric),
-		Messages:     []llm.Message{{Role: "user", Content: call.content}},
+		SystemPrompt: frame.Prompt(rubric),
+		Messages:     []llm.Message{{Role: "user", Content: content}},
 		Temperature:  0.0,
 		MaxTokens:    256,
 	}
@@ -333,7 +339,7 @@ func (e *JudgeEvaluator) evaluateSinglePass(
 		return judgeCallFailed(assertion, start, err)
 	}
 
-	scoreResult, err := call.frame.ParseScoreResult(resp.Content)
+	scoreResult, err := frame.ParseScoreResult(resp.Content)
 	if err != nil {
 		// The call was billed even though its output is unusable.
 		ar := notEvaluatedResult(assertion, start, judge.ReasonJudgeMalformed, fmt.Sprintf("judge response unusable: %v", err))
@@ -419,10 +425,15 @@ func (e *JudgeEvaluator) evaluateRepeated(
 		wg.Add(1)
 		go func(idx int) {
 			defer wg.Done()
+			frame, content, err := call.fresh()
+			if err != nil {
+				results[idx] = metaEvalResult{err: err}
+				return
+			}
 			req := &llm.CompletionRequest{
 				Model:        model,
-				SystemPrompt: call.frame.Prompt(rubric),
-				Messages:     []llm.Message{{Role: "user", Content: call.content}},
+				SystemPrompt: frame.Prompt(rubric),
+				Messages:     []llm.Message{{Role: "user", Content: content}},
 				Temperature:  metaEvalTemperature,
 				MaxTokens:    256,
 			}
@@ -436,7 +447,7 @@ func (e *JudgeEvaluator) evaluateRepeated(
 				return
 			}
 
-			sr, err := call.frame.ParseScoreResult(resp.Content)
+			sr, err := frame.ParseScoreResult(resp.Content)
 			if err != nil {
 				results[idx] = metaEvalResult{err: err, cost: resp.Cost}
 				return

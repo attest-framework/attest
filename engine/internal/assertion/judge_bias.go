@@ -140,10 +140,15 @@ func runBiasProbes(
 	out := make([]types.BiasProbe, 0, len(probes))
 	var addedCost float64
 	for _, name := range probes {
-		mutated := mutateForProbe(name, call.content, call.frame)
+		frame, content, err := call.fresh()
+		if err != nil {
+			slog.Warn("bias probe frame failed", "probe", name, "err", err)
+			continue
+		}
+		mutated := mutateForProbe(name, content, frame)
 		req := &llm.CompletionRequest{
 			Model:        model,
-			SystemPrompt: call.frame.Prompt(rubric),
+			SystemPrompt: frame.Prompt(rubric),
 			Messages:     []llm.Message{{Role: "user", Content: mutated}},
 			Temperature:  0.0,
 			MaxTokens:    256,
@@ -153,7 +158,7 @@ func runBiasProbes(
 			slog.Warn("bias probe LLM call failed", "probe", name, "model", model, "err", err)
 			continue
 		}
-		sr, err := call.frame.ParseScoreResult(resp.Content)
+		sr, err := frame.ParseScoreResult(resp.Content)
 		if err != nil {
 			slog.Warn("bias probe response unparseable", "probe", name, "model", model, "err", err)
 			continue

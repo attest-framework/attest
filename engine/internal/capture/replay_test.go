@@ -653,3 +653,55 @@ func TestReplay_ModelChangedWithControlCharacters_QuotedInMissMessage(t *testing
 		t.Fatalf("miss message = %q", msg)
 	}
 }
+
+const (
+	nonceA = "0123456789abcdef0123456789abcdef"
+	nonceB = "fedcba9876543210fedcba9876543210"
+)
+
+func judgeSystem(nonce, rule string) string {
+	return fmt.Sprintf("Judge the answer. %s <<<AGENT_OUTPUT_START%s>>> to <<<AGENT_OUTPUT_END%s>>>.", rule, nonce, nonce)
+}
+
+func judgeUser(nonce, output string) string {
+	return fmt.Sprintf("<<<AGENT_OUTPUT_START%[1]s>>>\n%[2]s\n<<<AGENT_OUTPUT_END%[1]s>>>", nonce, output)
+}
+
+func TestReplay_JudgeRequestWithFreshNonce_MatchesRecording(t *testing.T) {
+	// A recording made with fixed delimiters and one made with a nonce both
+	// replay a request that carries a different nonce.
+	for name, recorded := range map[string]string{"fixed": "", "nonce": ":" + nonceA} {
+		t.Run(name, func(t *testing.T) {
+			f := handFixture(t, "judge", [2]string{chatReq(judgeSystem(recorded, "Score it."), judgeUser(recorded, "ok"), ""), `{"ok":1}`})
+			s := startReplay(t, f, ReplayStrict, nil, deadUpstreams())
+
+			status, _, body := post(t, chatURL(s), chatReq(judgeSystem(":"+nonceB, "Score it."), judgeUser(":"+nonceB, "ok"), ""))
+
+			if status != http.StatusOK || body != `{"ok":1}` {
+				t.Fatalf("status=%d body=%s, want the recorded reply", status, body)
+			}
+		})
+	}
+}
+
+func TestReplay_JudgeRequestWithChangedRubricOrOutput_StillMisses(t *testing.T) {
+	f := handFixture(t, "judge", [2]string{chatReq(judgeSystem("", "Score it."), judgeUser("", "ok"), ""), `{"ok":1}`})
+	cases := map[string]struct{ system, user, component string }{
+		"rubric changed": {judgeSystem(":"+nonceB, "Score it harshly."), judgeUser(":"+nonceB, "ok"), "system prompt"},
+		"output changed": {judgeSystem(":"+nonceB, "Score it."), judgeUser(":"+nonceB, "different"), "messages"},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			s := startReplay(t, f, ReplayStrict, nil, deadUpstreams())
+
+			status, _, body := post(t, chatURL(s), chatReq(c.system, c.user, ""))
+
+			if status != http.StatusUnprocessableEntity {
+				t.Fatalf("status = %d, want a replay miss", status)
+			}
+			if m := missPattern.FindStringSubmatch(missOf(t, body)); m == nil || m[1] != c.component {
+				t.Fatalf("miss = %q, want %q changed", body, c.component)
+			}
+		})
+	}
+}

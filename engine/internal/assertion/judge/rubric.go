@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"regexp"
 	"strings"
 )
 
@@ -136,6 +137,19 @@ func (f Frame) delimiter(fixed string) string {
 		return fixed
 	}
 	return strings.TrimSuffix(fixed, ">>>") + ":" + f.nonce + ">>>"
+}
+
+// nonceDelimiter matches exactly the delimiters Frame emits: the fixed
+// delimiter name, a colon and a nonce of nonceBytes random bytes in lowercase
+// hex.
+var nonceDelimiter = regexp.MustCompile(`<<<AGENT_OUTPUT_(START|END):[0-9a-f]{` + fmt.Sprint(2*nonceBytes) + `}>>>`)
+
+// CanonicalizeDelimiters rewrites every nonce delimiter in s to the fixed
+// delimiter, leaving all other text untouched. Record/replay matching uses it
+// so a judge request hashes the same on every call while a changed rubric or
+// changed agent output still differs.
+func CanonicalizeDelimiters(s string) string {
+	return nonceDelimiter.ReplaceAllString(s, "<<<AGENT_OUTPUT_${1}>>>")
 }
 
 // Wrap wraps agent output in this Frame's delimiters.
