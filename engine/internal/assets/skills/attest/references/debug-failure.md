@@ -47,8 +47,8 @@ Attest diagnostic — 1 of 4 assertions failed:
 | `missing_evidence` | the trace lacks the field: tool arguments for `per`/`arg`, `metadata.cost_usd`, tool errors on a v1 trace; or `world(None)` | `attest trace check <export or fixture> --json` lists coverage gaps; record the attributes, convert with the OTLP adapters (trace v2), or start the world |
 | `replay_miss` | `auto` mode, a request matched no recording, no key to go live | see replay misses below |
 | `provider_not_configured` | judge or embedding assertion, no provider configured | expected in CI with zero model calls; keep the policy's `not_evaluated: warn` or move the assertion to a deterministic check; `attest doctor --json` shows configuration |
-| `provider_unavailable` | provider call failed (outage, timeout, 408/429/5xx or network error after retries) | transient; do not convert to pass |
-| `provider_auth` | the provider answered 401 or 403; exactly one call was made | fix the judge or embedding API key or `ATTEST_JUDGE_BASE_URL`; `attest doctor --json` |
+| `provider_unavailable` | provider call failed (outage, timeout, 408/429/5xx or network error after retries), or any embedding provider error including a rejected key | transient for judges; for embeddings also check `OPENAI_API_KEY`; do not convert to pass |
+| `provider_auth` | the judge provider answered 401 or 403; exactly one call was made | fix the judge API key (`ATTEST_JUDGE_API_KEY` or the provider's standard key) or `ATTEST_JUDGE_BASE_URL`; `attest doctor --json` |
 | `simulation` | `ATTEST_SIMULATION=1` disables layers 5 and 6 | expected in simulation runs |
 | `short_circuited` | a layer 1–4 assertion in the same batch hard-failed | fix that failure first |
 | `budget_exhausted` | `ATTEST_MAX_JUDGE_CALLS`, `ATTEST_BUDGET_USD` or the test budget is used up | raise the budget only with the user's agreement |
