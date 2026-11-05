@@ -187,3 +187,55 @@ def test_subprocess_stream_limit_matches_the_engine_frame_cap() -> None:
     from attest.engine_manager import MAX_FRAME_BYTES
 
     assert MAX_FRAME_BYTES == 10 * 1024 * 1024
+
+
+def _line(**fields: object) -> bytes:
+    import json
+
+    return json.dumps({"jsonrpc": "2.0", **fields}).encode() + b"\n"
+
+
+def test_send_request_without_a_client_drops_id_less_lines() -> None:
+    async def _run() -> None:
+        manager = EngineManager.__new__(EngineManager)
+        manager._request_id = 0
+        manager._client = None
+        process = MagicMock()
+        process.stdin = MagicMock()
+        process.stdin.drain = AsyncMock()
+        process.stdout.readline = AsyncMock(
+            side_effect=[
+                _line(method="progress", params={}),
+                _line(id=1, result={"data": "mine"}),
+            ]
+        )
+        manager._process = process
+
+        assert await manager.send_request("evaluate_batch", {}) == {"data": "mine"}
+
+    asyncio.run(_run())
+
+
+def test_send_request_with_an_attached_client_delegates_to_it() -> None:
+    from attest.client import AttestClient
+
+    async def _run() -> None:
+        manager = EngineManager.__new__(EngineManager)
+        manager._request_id = 0
+        manager._client = None
+        process = MagicMock()
+        process.stdin = MagicMock()
+        process.stdin.drain = AsyncMock()
+        lines: asyncio.Queue[bytes] = asyncio.Queue()
+        process.stdout.readline = lines.get
+        manager._process = process
+        client = AttestClient(manager)  # attaches itself
+        lines.put_nowait(_line(method="progress", params={}))
+        lines.put_nowait(_line(id=1, result={"data": "mine"}))
+        manager._spawn_env = {}
+
+        assert await manager.send_request("evaluate_batch", {}) == {"data": "mine"}
+        assert process.stdin.write.call_count == 1  # one request, read by the client's reader
+        await client.stop_reader()
+
+    asyncio.run(_run())

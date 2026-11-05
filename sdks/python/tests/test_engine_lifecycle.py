@@ -26,6 +26,7 @@ def _make_manager() -> EngineManager:
     manager._initialized = False
     manager._request_id = 0
     manager._init_result = None
+    manager._client = None
     return manager
 
 

@@ -1,6 +1,6 @@
 """Responses are routed to their request by id, against the real engine.
 
-A verdict always comes from its own request: engine notifications, timeouts,
+A verdict always comes from its own request: timeouts,
 concurrent evaluations and responses over 64 KiB never attach a verdict to
 another test. Each case drives a real ``attest-engine`` built by ``make engine``.
 """
@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import secrets
 import threading
@@ -27,7 +28,12 @@ from attest._proto.types import (
     STATUS_HARD_FAIL,
     STATUS_NOT_EVALUATED,
     STATUS_PASS,
+    Assertion,
+    SimulatePersona,
+    Trace,
 )
+from attest.client import AttestClient
+from attest.engine_manager import EngineManager
 from attest.exceptions import EngineTimeoutError
 from attest.expect import ExpectChain
 from attest.plugin import AttestEngineFixture
@@ -92,7 +98,9 @@ def _statuses(result: AgentResult) -> list[str]:
     return [r.status for r in result.assertion_results]
 
 
-# ── F1: an engine notification must not shift later verdicts ──
+# ── F1: A hard-fails, B passes, C fails: each verdict stays with its own test ──
+# The engine carries drift data inside results, never as a separate stdout line;
+# id-less lines are covered by the unit tests in tests/test_client.py.
 
 _DRIFT_SUITE = """
 from attest import agent, expect
@@ -359,3 +367,49 @@ def test_timeout_outside_the_judge_keeps_the_remaining_call_budget(
     assert _statuses(second) == [STATUS_PASS]
     assert _reasons(third) == [(STATUS_NOT_EVALUATED, REASON_BUDGET_EXHAUSTED)]
     assert judge.calls == 2
+
+
+def test_unobserved_judge_spend_holds_the_whole_budget_at_restart(
+    engine_path: str, judge: _FakeJudge, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """generate_user_message returns no usage, so its calls are unknown spend."""
+    persona = SimulatePersona(name="p", system_prompt="s", style="terse", temperature=0.0)
+    fixture = AttestEngineFixture(engine_path=engine_path, log_level="warn")
+    fixture.start()
+    try:
+        for _ in range(2):
+            fixture._run_on_engine_loop(fixture.client.generate_user_message(persona, []))
+        monkeypatch.setenv("ATTEST_ENGINE_TIMEOUT", "0.0001")
+        with pytest.raises(EngineTimeoutError):
+            fixture.inspect(_verdict_chain("deterministic", passes=True))
+        monkeypatch.delenv("ATTEST_ENGINE_TIMEOUT")
+
+        after = fixture.inspect(_judged("judged output after the restart"))
+    finally:
+        fixture.stop()
+
+    assert _reasons(after) == [(STATUS_NOT_EVALUATED, REASON_BUDGET_EXHAUSTED)]
+    assert judge.calls == 2
+
+
+@pytest.mark.asyncio
+async def test_direct_engine_manager_and_client_shut_down_cleanly(
+    engine_path: str, caplog: pytest.LogCaptureFixture
+) -> None:
+    caplog.set_level(logging.WARNING, logger="attest.engine")
+    trace = Trace(trace_id="trc_clean", output={"message": "refund"})
+    assertion = Assertion(
+        assertion_id="a1",
+        type="content",
+        spec={"target": "output.message", "check": "contains", "value": "refund"},
+    )
+
+    async with EngineManager(engine_path) as manager:
+        client = AttestClient(manager)
+        result = await client.evaluate_batch(trace, [assertion])
+        process = manager._process
+
+    assert [r.status for r in result.results] == [STATUS_PASS]
+    assert process is not None
+    assert process.returncode == 0  # exited through shutdown, not SIGTERM (-15)
+    assert "Shutdown request failed" not in caplog.text

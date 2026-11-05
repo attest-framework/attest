@@ -8,6 +8,7 @@ import logging
 import os
 import time
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Any
 
 from attest._proto.codec import (
@@ -119,16 +120,25 @@ class AttestClient:
         self._pending: dict[int, asyncio.Future[Any]] = {}
         self._write_lock = asyncio.Lock()
         self._reader_task: asyncio.Task[None] | None = None
-        # request id -> (may call the judge provider, may spend USD) for requests
-        # that have been sent and not answered.
-        self._inflight: dict[int, tuple[bool, bool]] = {}
+        # request id -> budget exposure of requests that have been sent and not answered.
+        self._inflight: dict[int, _Exposure] = {}
         # ids whose caller gave up; a late response for one is dropped quietly.
         self._abandoned: set[int] = set()
         self._restart_lock = asyncio.Lock()
         self._generation = 0
         # Usage returned by evaluate_batch, summed over every engine of the session.
         self._spent = Usage()
-        # A timed-out request could have spent all the remaining budget of its
+        # Limits as configured when the first engine started. Later engines run with a
+        # reduced copy of them, so the restart arithmetic never reads engine.spawn_env again.
+        self._limits_captured = False
+        self._limit_calls: int | None = None
+        self._limit_usd: float | None = None
+        # Per-batch caps of requests lost in a restart: that much of the session budget
+        # may have been spent without the SDK seeing the usage.
+        self._held_calls = 0
+        self._held_usd = 0.0
+        # Spend the SDK cannot observe (a lost request without a per-batch cap, a reply
+        # without usage, an error reply) may have used all the remaining budget of its
         # engine; the limit is then exhausted for every later engine.
         self._judge_calls_exhausted = False
         self._usd_exhausted = False
@@ -141,6 +151,7 @@ class AttestClient:
         self._desync_threshold = desync_threshold
         self._desync_window_seconds = desync_window_seconds
         self._desynced = False
+        engine.attach_client(self)
 
     # ── Diagnostics API ──
 
@@ -218,6 +229,16 @@ class AttestClient:
                 pass
         self._reader_task = None
 
+    async def release_engine(self) -> None:
+        """Hand stdout back to the engine manager for its shutdown handshake.
+
+        Stops the reader and fails every pending request. ``EngineManager.stop``
+        calls this; the reader is blocked in ``readline`` and would otherwise
+        collide with the manager's own read of the shutdown reply.
+        """
+        await self.stop_reader()
+        self._fail_all(ConnectionError("Engine is shutting down; this request was lost."))
+
     async def _reader_loop(self) -> None:
         """Read responses from the engine and route them to pending callers."""
         process = self._engine._process
@@ -261,10 +282,14 @@ class AttestClient:
             return
 
         fut = self._pending.pop(req_id, None)
-        self._inflight.pop(req_id, None)
+        exposure = self._inflight.pop(req_id, None)
+        if exposure is not None and not exposure.reports_usage:
+            self._exhaust(exposure)  # a reply without usage: the spend is unknown
         if fut is None:
             if req_id in self._abandoned:
                 self._abandoned.discard(req_id)
+                if exposure is not None:
+                    self._exhaust(exposure)  # the dropped reply carried usage nobody read
                 logger.info("Dropped late response for abandoned request id=%d", req_id)
                 return
             self._record_diagnostic("unknown_id", f"no pending request for id={req_id}", text)
@@ -292,7 +317,10 @@ class AttestClient:
             req_id = -1
 
         fut = self._pending.pop(req_id, None)
-        self._inflight.pop(req_id, None)
+        exposure = self._inflight.pop(req_id, None)
+        if exposure is not None:
+            # The engine may have called a provider before it failed the request.
+            self._exhaust(exposure)
         if fut is not None and not fut.done():
             fut.set_exception(exc)
             return
@@ -332,30 +360,34 @@ class AttestClient:
                 self._diagnostic_buffer.snapshot(),
             )
 
-        async with self._restart_lock:  # wait out a restart in progress
-            self._ensure_reader()
-
         loop = asyncio.get_running_loop()
         fut: asyncio.Future[Any] = loop.create_future()
 
-        async with self._write_lock:
-            self._request_id += 1
-            req_id = self._request_id
-            generation = self._generation
+        while True:
+            async with self._restart_lock:  # wait out a restart in progress
+                self._ensure_reader()
+            seen = self._generation
+            async with self._write_lock:
+                if self._restart_lock.locked() or seen != self._generation:
+                    continue  # a restart began while queued: write to the new engine instead
+                self._request_id += 1
+                req_id = self._request_id
+                generation = self._generation
 
-            process = self._engine._process
-            if process is None or process.stdin is None:
-                raise RuntimeError("Engine process not started.")
+                process = self._engine._process
+                if process is None or process.stdin is None:
+                    raise RuntimeError("Engine process not started.")
 
-            self._pending[req_id] = fut
-            self._inflight[req_id] = _budget_exposure(method, params)
-            request_bytes = encode_request(req_id, method, params)
-            try:
-                process.stdin.write(request_bytes)
-                await process.stdin.drain()
-            except BaseException:
-                self._forget(req_id)
-                raise
+                self._pending[req_id] = fut
+                self._inflight[req_id] = _budget_exposure(method, params)
+                request_bytes = encode_request(req_id, method, params)
+                try:
+                    process.stdin.write(request_bytes)
+                    await process.stdin.drain()
+                except BaseException:
+                    self._forget(req_id)
+                    raise
+                break
 
         timeout = _engine_timeout()
         try:
@@ -371,6 +403,7 @@ class AttestClient:
         raise EngineTimeoutError(method=method, timeout=timeout)
 
     def _ensure_reader(self) -> None:
+        self._capture_limits()
         if self._reader_task is None:
             self.start_reader()
             return
@@ -397,9 +430,8 @@ class AttestClient:
             if generation != self._generation:
                 return  # another timed-out request already restarted the engine
             self._generation += 1
-            for judge, usd in self._inflight.values():
-                self._judge_calls_exhausted |= judge
-                self._usd_exhausted |= usd
+            for exposure in self._inflight.values():
+                self._hold(exposure)
             await self.stop_reader()
             self._fail_all(
                 ConnectionError(
@@ -412,6 +444,35 @@ class AttestClient:
             await self._engine.restart(self._remaining_budget_env())
             self.start_reader()
 
+    def _exhaust(self, exposure: _Exposure) -> None:
+        """Treat the budget ``exposure`` can spend as unknown: nothing of it remains."""
+        self._judge_calls_exhausted |= exposure.judge
+        self._usd_exhausted |= exposure.usd
+
+    def _hold(self, exposure: _Exposure) -> None:
+        """Reserve what a lost request may have spent: its per-batch cap, else everything."""
+        if exposure.judge:
+            if exposure.max_calls is None:
+                self._judge_calls_exhausted = True
+            else:
+                self._held_calls += exposure.max_calls
+        if exposure.usd:
+            if exposure.max_usd is None:
+                self._usd_exhausted = True
+            else:
+                self._held_usd += exposure.max_usd
+
+    def _capture_limits(self) -> None:
+        """Record the configured session limits once, from the first engine's environment."""
+        if self._limits_captured:
+            return
+        env = self._engine.spawn_env
+        raw_calls = env.get("ATTEST_MAX_JUDGE_CALLS", "")
+        raw_usd = env.get("ATTEST_BUDGET_USD", "")
+        self._limit_calls = int(raw_calls) if raw_calls else None
+        self._limit_usd = float(raw_usd) if raw_usd else None
+        self._limits_captured = True
+
     def _remaining_budget_env(self) -> dict[str, str]:
         """Budget variables for the replacement engine (contract C1).
 
@@ -421,15 +482,21 @@ class AttestClient:
         that could reach a model provider may have used all of it: that limit
         is exhausted (0) and the new engine answers ``budget_exhausted``.
         """
-        env = self._engine.spawn_env
+        self._capture_limits()
         out: dict[str, str] = {}
-        raw_calls = env.get("ATTEST_MAX_JUDGE_CALLS", "")
-        if raw_calls:
-            left = 0 if self._judge_calls_exhausted else int(raw_calls) - self._spent.judge_calls
+        if self._limit_calls is not None:
+            left = (
+                0
+                if self._judge_calls_exhausted
+                else self._limit_calls - self._spent.judge_calls - self._held_calls
+            )
             out["ATTEST_MAX_JUDGE_CALLS"] = str(max(0, left))
-        raw_usd = env.get("ATTEST_BUDGET_USD", "")
-        if raw_usd:
-            left_usd = 0.0 if self._usd_exhausted else float(raw_usd) - self._spent.cost_usd
+        if self._limit_usd is not None:
+            left_usd = (
+                0.0
+                if self._usd_exhausted
+                else self._limit_usd - self._spent.cost_usd - self._held_usd
+            )
             out["ATTEST_BUDGET_USD"] = repr(max(0.0, left_usd))
         return out
 
@@ -578,14 +645,32 @@ class AttestClient:
         return str(raw["message"])
 
 
-def _budget_exposure(method: str, params: dict[str, Any]) -> tuple[bool, bool]:
-    """Whether a request may call the judge provider, and whether it may spend USD."""
+@dataclass(frozen=True)
+class _Exposure:
+    """What one request can spend of the session budget."""
+
+    judge: bool = False  # may call the judge provider
+    usd: bool = False  # may spend USD
+    reports_usage: bool = False  # its reply returns ``usage``
+    max_calls: int | None = None  # per-batch ``budget.max_judge_calls``
+    max_usd: float | None = None  # per-batch ``budget.max_cost_usd``
+
+
+def _budget_exposure(method: str, params: dict[str, Any]) -> _Exposure:
+    """The session budget a request may spend, with the caps it carries."""
     if method == "generate_user_message":
-        return True, True
+        return _Exposure(judge=True, usd=True)
     if method != "evaluate_batch":
-        return False, False
+        return _Exposure()
     types = {a.get("type") for a in params.get("assertions", [])}
-    return TYPE_LLM_JUDGE in types, bool(types & {TYPE_LLM_JUDGE, TYPE_EMBEDDING})
+    budget = params.get("budget") or {}
+    return _Exposure(
+        judge=TYPE_LLM_JUDGE in types,
+        usd=bool(types & {TYPE_LLM_JUDGE, TYPE_EMBEDDING}),
+        reports_usage=True,
+        max_calls=budget.get("max_judge_calls"),
+        max_usd=budget.get("max_cost_usd"),
+    )
 
 
 def require_simulation_capability(init: InitializeResult | None) -> None:

@@ -9,7 +9,7 @@ import os
 import subprocess
 import time
 from collections.abc import Mapping
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from attest import ENGINE_VERSION, __version__
 from attest._proto.codec import (
@@ -23,6 +23,9 @@ from attest._proto.types import InitializeParams, InitializeResult
 from attest.engine_downloader import _binary_filename, cached_engine_path, download_engine
 from attest.exceptions import EngineTimeoutError, EngineVersionMismatchError
 
+if TYPE_CHECKING:
+    from attest.client import AttestClient
+
 logger = logging.getLogger("attest.engine")
 
 ENGINE_BINARY_NAME = "attest-engine"
@@ -31,9 +34,11 @@ _DEFAULT_ENGINE_TIMEOUT: float = 30.0
 
 _VERSION_PROBE_TIMEOUT: float = 10.0
 
-# Matches the engine's per-line cap (``MaxLineBytes`` in
-# engine/internal/server/server.go). asyncio's default 64 KiB stream limit
-# makes ``readline`` raise ValueError on a larger response line.
+# Equal to the engine's request line cap (``MaxLineBytes`` in
+# engine/internal/server/server.go), which bounds what the engine reads, not
+# what it writes. asyncio's default 64 KiB stream limit makes ``readline``
+# raise ValueError on a longer response line, so the SDK raises its own limit
+# to a size no realistic evaluate_batch response exceeds.
 MAX_FRAME_BYTES: int = 10 * 1024 * 1024
 
 
@@ -196,11 +201,27 @@ class EngineManager:
         self._request_id = 0
         self._init_result: InitializeResult | None = None
         self._spawn_env: dict[str, str] = dict(os.environ)
+        self._client: AttestClient | None = None
 
     @property
     def spawn_env(self) -> Mapping[str, str]:
         """The environment the current engine process was started with."""
         return self._spawn_env
+
+    def attach_client(self, client: AttestClient) -> None:
+        """Register the ``AttestClient`` whose reader owns stdout while it runs."""
+        self._client = client
+
+    async def send_request(self, method: str, params: dict[str, Any]) -> Any:
+        """Send a request and return the result of its own response.
+
+        With an attached ``AttestClient`` the request goes through it (id
+        correlation, timeout restart). Without one it uses the handshake read,
+        which drops every line that does not carry the request's id.
+        """
+        if self._client is not None:
+            return await self._client.send_request(method, params)
+        return await self._handshake(method, params)
 
     async def start(self, env_overrides: Mapping[str, str] | None = None) -> InitializeResult:
         """Start the engine subprocess and send initialize.
@@ -263,10 +284,12 @@ class EngineManager:
     async def stop(self) -> None:
         """Send shutdown and wait for process exit.
 
-        Stop any ``AttestClient`` reader first: the shutdown reply is read here.
+        An attached ``AttestClient`` releases stdout first: the shutdown reply is read here.
         """
         if self._process is None:
             return
+        if self._client is not None:
+            await self._client.release_engine()
         if self._initialized:
             try:
                 await self._handshake("shutdown", {})

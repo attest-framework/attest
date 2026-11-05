@@ -49,6 +49,9 @@ class _PipedEngine:
         self._init_result = None
         self.spawn_env: dict[str, str] = {}
 
+    def attach_client(self, client: AttestClient) -> None:
+        self.client = client
+
     def _write(self, data: bytes) -> None:
         request = json.loads(data)
         self.requests.append(request)
@@ -347,4 +350,192 @@ async def test_concurrent_timeouts_restart_the_engine_once(
     assert isinstance(first, EngineTimeoutError)
     assert isinstance(second, EngineTimeoutError)
     assert engine.restarts == [{"ATTEST_MAX_JUDGE_CALLS": "0"}]
+    await client.stop_reader()
+
+
+class _RestartingEngine(_PipedEngine):
+    """Records restarts and updates ``spawn_env`` the way the real EngineManager does."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.restarts: list[dict[str, str]] = []
+
+    async def restart(self, env_overrides: dict[str, str]) -> None:
+        self.restarts.append(env_overrides)
+        self.spawn_env = {**self.spawn_env, **env_overrides}
+
+
+@pytest.mark.asyncio
+async def test_second_restart_budget_is_computed_from_the_configured_limit() -> None:
+    engine = _RestartingEngine()
+    engine.spawn_env = {"ATTEST_MAX_JUDGE_CALLS": "10"}
+    client = AttestClient(engine)  # type: ignore[arg-type]
+    client._ensure_reader()
+
+    client._spent = Usage(judge_calls=3)
+    await client._restart_after_timeout(0, "evaluate_batch", 1.0)
+    client._spent = Usage(judge_calls=5)  # two more calls on the second engine
+    await client._restart_after_timeout(1, "evaluate_batch", 1.0)
+
+    assert engine.restarts == [
+        {"ATTEST_MAX_JUDGE_CALLS": "7"},
+        {"ATTEST_MAX_JUDGE_CALLS": "5"},
+    ]
+    await client.stop_reader()
+
+
+class _Silent(_RestartingEngine):
+    def respond(self, request: dict[str, Any]) -> list[bytes]:
+        return []
+
+
+@pytest.mark.asyncio
+async def test_timed_out_batch_with_a_per_batch_cap_holds_only_that_cap(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from attest.exceptions import EngineTimeoutError
+
+    engine = _Silent()
+    engine.spawn_env = {"ATTEST_MAX_JUDGE_CALLS": "5"}
+    monkeypatch.setenv("ATTEST_ENGINE_TIMEOUT", "0.05")
+    client = AttestClient(engine)  # type: ignore[arg-type]
+
+    with pytest.raises(EngineTimeoutError):
+        await client.send_request(
+            "evaluate_batch",
+            {"assertions": [{"type": "llm_judge"}], "budget": {"max_judge_calls": 2}},
+        )
+
+    assert engine.restarts == [{"ATTEST_MAX_JUDGE_CALLS": "3"}]
+    await client.stop_reader()
+
+
+@pytest.mark.asyncio
+async def test_generate_user_message_reply_makes_the_spend_unknown() -> None:
+    engine = _RestartingEngine()
+    engine.spawn_env = {"ATTEST_MAX_JUDGE_CALLS": "5"}
+    client = AttestClient(engine)  # type: ignore[arg-type]
+
+    await client.send_request("generate_user_message", {})
+
+    assert client._remaining_budget_env() == {"ATTEST_MAX_JUDGE_CALLS": "0"}
+    await client.stop_reader()
+
+
+@pytest.mark.asyncio
+async def test_engine_error_reply_to_a_judge_batch_makes_the_spend_unknown() -> None:
+    from attest._proto.codec import ProtocolError
+
+    class Failing(_RestartingEngine):
+        def respond(self, request: dict[str, Any]) -> list[bytes]:
+            error = {"code": -32000, "message": "boom"}
+            return [json.dumps({"jsonrpc": "2.0", "id": request["id"], "error": error}).encode()]
+
+    engine = Failing()
+    engine.spawn_env = {"ATTEST_MAX_JUDGE_CALLS": "5"}
+    client = AttestClient(engine)  # type: ignore[arg-type]
+
+    with pytest.raises(ProtocolError):
+        await client.send_request("evaluate_batch", {"assertions": [{"type": "llm_judge"}]})
+
+    assert client._remaining_budget_env() == {"ATTEST_MAX_JUDGE_CALLS": "0"}
+    await client.stop_reader()
+
+
+@pytest.mark.asyncio
+async def test_dropped_reply_of_a_cancelled_judge_batch_makes_the_spend_unknown() -> None:
+    engine = _Silent()
+    engine.spawn_env = {"ATTEST_MAX_JUDGE_CALLS": "5"}
+    client = AttestClient(engine)  # type: ignore[arg-type]
+    task = asyncio.ensure_future(
+        client.send_request("evaluate_batch", {"assertions": [{"type": "llm_judge"}]})
+    )
+    await asyncio.sleep(0.05)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    late = {"jsonrpc": "2.0", "id": 1, "result": {"results": [], "usage": {}}}
+    engine.lines.put_nowait(json.dumps(late).encode() + b"\n")
+    await asyncio.sleep(0.05)
+
+    assert client._remaining_budget_env() == {"ATTEST_MAX_JUDGE_CALLS": "0"}
+    await client.stop_reader()
+
+
+class _NotifyingEngine(_PipedEngine):
+    """Emits id-less JSON-RPC notification lines before each response."""
+
+    notifications = 0
+
+    def respond(self, request: dict[str, Any]) -> list[bytes]:
+        note = {"jsonrpc": "2.0", "method": "progress", "params": {"n": 1}}
+        lines = [json.dumps(note).encode() + b"\n"] * self.notifications
+        return [*lines, *super().respond(request)]
+
+
+@pytest.mark.asyncio
+async def test_id_less_notification_before_a_response_does_not_replace_it() -> None:
+    engine = _NotifyingEngine()
+    engine.notifications = 1
+    client = AttestClient(engine)  # type: ignore[arg-type]
+
+    result = await client.send_request("evaluate_batch", {})
+
+    assert result == {"data": "evaluate_batch"}
+    await client.stop_reader()
+
+
+@pytest.mark.asyncio
+async def test_id_less_lines_at_the_desync_threshold_do_not_latch_desync() -> None:
+    from attest._proto.diagnostics import DEFAULT_DESYNC_THRESHOLD
+
+    engine = _NotifyingEngine()
+    engine.notifications = DEFAULT_DESYNC_THRESHOLD + 2
+    client = AttestClient(engine)  # type: ignore[arg-type]
+
+    first = await client.send_request("evaluate_batch", {})
+    second = await client.send_request("evaluate_batch", {})
+
+    assert first == second == {"data": "evaluate_batch"}
+    assert client._desynced is False
+    assert client.protocol_diagnostics() == ()
+    await client.stop_reader()
+
+
+@pytest.mark.asyncio
+async def test_request_queued_behind_a_write_during_restart_goes_to_the_new_engine() -> None:
+    """A request queued behind a large drain is not written to the dying engine."""
+    new_engine = _PipedEngine()
+
+    class Swapping(_PipedEngine):
+        def __init__(self) -> None:
+            super().__init__()
+            self.restart_started = asyncio.Event()
+            self.proceed = asyncio.Event()
+
+        async def restart(self, env_overrides: dict[str, str]) -> None:
+            self.restart_started.set()
+            await self.proceed.wait()
+            self._process = new_engine._process
+
+    engine = Swapping()
+    client = AttestClient(engine)  # type: ignore[arg-type]
+    await client._write_lock.acquire()  # a drain in progress
+    queued = asyncio.ensure_future(client.send_request("evaluate_batch", {}))
+    await asyncio.sleep(0.01)
+    restart = asyncio.ensure_future(client._restart_after_timeout(0, "evaluate_batch", 1.0))
+    await engine.restart_started.wait()
+
+    client._write_lock.release()
+    await asyncio.sleep(0.05)
+    written_to_dying_engine = list(engine.requests)
+
+    engine.proceed.set()
+    await restart
+    result = await asyncio.wait_for(queued, timeout=2)
+
+    assert written_to_dying_engine == []
+    assert [r["method"] for r in new_engine.requests] == ["evaluate_batch"]
+    assert result == {"data": "evaluate_batch"}
     await client.stop_reader()
