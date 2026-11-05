@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"strconv"
 	"testing"
 	"time"
 
@@ -53,7 +54,7 @@ func sendRequest(t *testing.T, w io.Writer, id int64, method string, params any)
 	}
 	req := types.Request{
 		JSONRPC: "2.0",
-		ID:      id,
+		ID:      json.RawMessage(strconv.FormatInt(id, 10)),
 		Method:  method,
 		Params:  p,
 	}
@@ -104,8 +105,8 @@ func TestServer_Initialize(t *testing.T) {
 	if resp.JSONRPC != "2.0" {
 		t.Errorf("JSONRPC = %q, want %q", resp.JSONRPC, "2.0")
 	}
-	if resp.ID != 1 {
-		t.Errorf("ID = %d, want 1", resp.ID)
+	if string(resp.ID) != "1" {
+		t.Errorf("ID = %s, want 1", resp.ID)
 	}
 
 	var result types.InitializeResult
@@ -250,13 +251,13 @@ func TestServer_OversizeLine_ErrorsWithItsIDAndKeepsServing(t *testing.T) {
 		t.Fatal(err)
 	}
 	var over struct {
-		ID    *int64
+		ID    json.RawMessage
 		Error *types.RPCError
 	}
 	if err := json.Unmarshal(line, &over); err != nil {
 		t.Fatalf("oversize response %q: %v", line[:min(len(line), 200)], err)
 	}
-	if over.ID == nil || *over.ID != 7 || over.Error == nil || over.Error.Code != -32600 {
+	if string(over.ID) != "7" || over.Error == nil || over.Error.Code != -32600 {
 		t.Fatalf("oversize response: %s", line)
 	}
 
@@ -265,14 +266,14 @@ func TestServer_OversizeLine_ErrorsWithItsIDAndKeepsServing(t *testing.T) {
 		t.Fatal(err)
 	}
 	var resp types.Response
-	if err := json.Unmarshal(line, &resp); err != nil || resp.ID != 8 || resp.Error != nil {
+	if err := json.Unmarshal(line, &resp); err != nil || string(resp.ID) != "8" || resp.Error != nil {
 		t.Fatalf("request after the oversize line: %s (%v)", line, err)
 	}
 }
 
 func TestOversizeResponse_NoIDInPrefix_IsNull(t *testing.T) {
 	resp := oversizeResponse([]byte(`{"jsonrpc":"2.0","method":"x"`))
-	if resp["id"] != nil {
-		t.Fatalf("id = %v, want null", resp["id"])
+	if id, _ := resp["id"].(json.RawMessage); string(id) != "null" {
+		t.Fatalf("id = %s, want null", id)
 	}
 }

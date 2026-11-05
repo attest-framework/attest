@@ -10,53 +10,34 @@ import (
 	"io"
 	"log/slog"
 	"regexp"
-	"strconv"
 	"sync"
+	"time"
 
 	"github.com/attest-framework/attest/engine/pkg/types"
 )
 
 // Handler is the function signature for JSON-RPC method handlers.
-type Handler func(session *Session, params json.RawMessage) (any, *types.RPCError)
-
-// defaultMaxConcurrent is the default value for maxConcurrent (sequential behavior).
-const defaultMaxConcurrent = 1
+type Handler func(ctx context.Context, session *Session, params json.RawMessage) (any, *types.RPCError)
 
 // Server reads NDJSON requests from an io.Reader and writes NDJSON responses to an io.Writer.
+// Requests are handled one at a time, in arrival order.
 type Server struct {
-	reader        *bufio.Reader
-	writer        *bufio.Writer
-	mu            sync.Mutex // protects writer
-	session       *Session
-	handlers      map[string]Handler
-	logger        *slog.Logger
-	maxConcurrent int
-	semaphore     chan struct{}
+	reader   *bufio.Reader
+	writer   *bufio.Writer
+	mu       sync.Mutex // protects writer
+	session  *Session
+	handlers map[string]Handler
+	logger   *slog.Logger
 }
 
 // New creates a new Server reading from in and writing to out.
-// maxConcurrent controls request parallelism (0 or 1 → sequential; >1 → concurrent).
-// Use NewDefault for the standard sequential server.
 func New(in io.Reader, out io.Writer, logger *slog.Logger) *Server {
-	return NewWithConcurrency(in, out, logger, defaultMaxConcurrent)
-}
-
-// NewWithConcurrency creates a Server with a configurable concurrency limit.
-// When maxConcurrent <= 1, requests are processed sequentially (default behavior).
-// When maxConcurrent > 1, up to maxConcurrent requests are dispatched concurrently,
-// each holding a semaphore slot for the duration of handler execution.
-func NewWithConcurrency(in io.Reader, out io.Writer, logger *slog.Logger, maxConcurrent int) *Server {
-	if maxConcurrent < 1 {
-		maxConcurrent = 1
-	}
 	return &Server{
-		reader:        bufio.NewReader(in),
-		writer:        bufio.NewWriter(out),
-		session:       NewSession(),
-		handlers:      make(map[string]Handler),
-		logger:        logger,
-		maxConcurrent: maxConcurrent,
-		semaphore:     make(chan struct{}, maxConcurrent),
+		reader:   bufio.NewReader(in),
+		writer:   bufio.NewWriter(out),
+		session:  NewSession(),
+		handlers: make(map[string]Handler),
+		logger:   logger,
 	}
 }
 
@@ -85,31 +66,49 @@ func (s *Server) Run(ctx context.Context) error {
 		}
 	}()
 
-	// dispatchOne acquires a semaphore slot, dispatches the request, writes the
-	// response, then releases the slot. When maxConcurrent == 1 it is called
-	// synchronously so behavior is identical to the previous sequential loop.
+	// inflight tracks the handler goroutine so that shutdown on a signal can
+	// wait briefly for it to observe ctx.
+	var inflight sync.WaitGroup
+
+	// dispatchOne runs the handler on its own goroutine so the loop below keeps
+	// watching ctx while a handler is in flight, and returns when the handler
+	// has finished or ctx is cancelled.
 	dispatchOne := func(in inputLine) {
 		if in.oversize {
 			s.writeNotification(oversizeResponse(in.prefix))
 			return
 		}
-		line := in.data
-		s.semaphore <- struct{}{}
-		handle := func() {
-			defer func() { <-s.semaphore }()
-			resp := s.dispatch(line)
-			s.writeResponse(resp)
+		done := make(chan struct{})
+		inflight.Add(1)
+		go func() {
+			defer inflight.Done()
+			defer close(done)
+			if resp := s.dispatch(ctx, in.data); resp != nil {
+				s.writeResponse(resp)
+			}
+		}()
+		select {
+		case <-done:
+		case <-ctx.Done():
 		}
-		if s.maxConcurrent > 1 {
-			go handle()
-		} else {
-			handle()
+	}
+
+	// drain waits up to shutdownGrace for in-flight handlers, which receive the
+	// cancelled ctx, to return.
+	drain := func() {
+		finished := make(chan struct{})
+		go func() { inflight.Wait(); close(finished) }()
+		select {
+		case <-finished:
+		case <-time.After(shutdownGrace):
+			s.logger.Warn("in-flight requests did not stop before the shutdown grace period")
 		}
 	}
 
 	for {
 		select {
 		case <-ctx.Done():
+			drain()
 			return ctx.Err()
 		case err := <-scanErr:
 			return err
@@ -118,12 +117,20 @@ func (s *Server) Run(ctx context.Context) error {
 				return nil
 			}
 			dispatchOne(line)
+			if ctx.Err() != nil {
+				drain()
+				return ctx.Err()
+			}
 			if s.session.State() == StateShuttingDown {
 				return nil
 			}
 		}
 	}
 }
+
+// shutdownGrace bounds how long Run waits for in-flight handlers after its
+// context is cancelled; the engine must exit within 2 s of SIGTERM.
+const shutdownGrace = time.Second
 
 // MaxLineBytes bounds one request line. A longer line is answered with an
 // error and discarded; the engine keeps serving.
@@ -138,7 +145,7 @@ type inputLine struct {
 	oversize bool
 }
 
-var idPrefix = regexp.MustCompile(`"id"\s*:\s*(-?[0-9]{1,18})\b`)
+var idPrefix = regexp.MustCompile(`"id"\s*:\s*("(?:[^"\\]|\\.)*"|-?[0-9]{1,18})([\s,}]|$)`)
 
 // readLine reads one newline-terminated line. A line over MaxLineBytes is
 // consumed to its end and reported as oversize with its first bytes.
@@ -171,11 +178,9 @@ func readLine(r *bufio.Reader) (inputLine, error) {
 // request's id when it appears in the first bytes, otherwise null (JSON-RPC
 // 2.0, id unknown).
 func oversizeResponse(prefix []byte) map[string]any {
-	var id any
+	id := json.RawMessage("null")
 	if m := idPrefix.FindSubmatch(prefix); m != nil {
-		if n, err := strconv.ParseInt(string(m[1]), 10, 64); err == nil {
-			id = n
-		}
+		id = json.RawMessage(m[1])
 	}
 	return map[string]any{
 		"jsonrpc": "2.0",
@@ -193,11 +198,13 @@ func oversizeResponse(prefix []byte) map[string]any {
 }
 
 // dispatch parses a raw JSON line into a Request and routes it to the appropriate handler.
-func (s *Server) dispatch(line []byte) *types.Response {
+// It returns nil when the line is a notification (a request without an id),
+// which JSON-RPC 2.0 forbids answering, even with an error.
+func (s *Server) dispatch(ctx context.Context, line []byte) *types.Response {
 	var req types.Request
 	if err := json.Unmarshal(line, &req); err != nil {
 		s.logger.Error("parse error", "err", err)
-		return types.NewErrorResponse(0, &types.RPCError{
+		return types.NewErrorResponse(nil, &types.RPCError{
 			Code:    -32700,
 			Message: "parse error",
 			Data: &types.ErrorData{
@@ -208,9 +215,26 @@ func (s *Server) dispatch(line []byte) *types.Response {
 		})
 	}
 
+	notification := len(req.ID) == 0
+	// reply wraps a response so that notifications stay unanswered.
+	reply := func(resp *types.Response) *types.Response {
+		if notification {
+			return nil
+		}
+		return resp
+	}
+
+	if !validID(req.ID) {
+		s.logger.Error("invalid request id", "id", string(req.ID))
+		return types.NewErrorResponse(nil, types.NewRPCError(
+			-32600, "invalid request", "INVALID_REQUEST", false,
+			"id must be a string, a number or null",
+		))
+	}
+
 	if req.JSONRPC != "2.0" || req.Method == "" {
-		s.logger.Error("invalid request", "req", req)
-		return types.NewErrorResponse(req.ID, &types.RPCError{
+		s.logger.Error("invalid request", "jsonrpc", req.JSONRPC, "method", req.Method)
+		return reply(types.NewErrorResponse(req.ID, &types.RPCError{
 			Code:    -32600,
 			Message: "invalid request",
 			Data: &types.ErrorData{
@@ -218,13 +242,13 @@ func (s *Server) dispatch(line []byte) *types.Response {
 				Retryable: false,
 				Detail:    "jsonrpc must be \"2.0\" and method must be non-empty",
 			},
-		})
+		}))
 	}
 
 	h, ok := s.handlers[req.Method]
 	if !ok {
 		s.logger.Warn("method not found", "method", req.Method)
-		return types.NewErrorResponse(req.ID, &types.RPCError{
+		return reply(types.NewErrorResponse(req.ID, &types.RPCError{
 			Code:    -32601,
 			Message: "method not found",
 			Data: &types.ErrorData{
@@ -232,26 +256,38 @@ func (s *Server) dispatch(line []byte) *types.Response {
 				Retryable: false,
 				Detail:    "unknown method: " + req.Method,
 			},
-		})
+		}))
 	}
 
-	result, rpcErr := h(s.session, req.Params)
+	result, rpcErr := h(ctx, s.session, req.Params)
 	if rpcErr != nil {
-		return types.NewErrorResponse(req.ID, rpcErr)
+		return reply(types.NewErrorResponse(req.ID, rpcErr))
 	}
 
 	resp, err := types.NewSuccessResponse(req.ID, result)
 	if err != nil {
 		s.logger.Error("failed to marshal result", "method", req.Method, "err", err)
-		return types.NewErrorResponse(req.ID, types.NewRPCError(
+		return reply(types.NewErrorResponse(req.ID, types.NewRPCError(
 			types.ErrEngineError,
 			"failed to marshal result",
 			types.ErrTypeEngineError,
 			false,
 			err.Error(),
-		))
+		)))
 	}
-	return resp
+	return reply(resp)
+}
+
+// validID reports whether raw is absent or a JSON string, number or null.
+func validID(raw json.RawMessage) bool {
+	if len(raw) == 0 {
+		return true
+	}
+	switch raw[0] {
+	case '"', 'n', '-', '0', '1', '2', '3', '4', '5', '6', '7', '8', '9':
+		return true
+	}
+	return false
 }
 
 // writeResponse serializes a Response as compact JSON followed by a newline.

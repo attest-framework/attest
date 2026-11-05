@@ -1,0 +1,13 @@
+{
+  "name": "001-string-id-round-trip",
+  "description": "A string id is echoed verbatim in the reply.",
+  "lines": [
+    "{\"jsonrpc\":\"2.0\",\"id\":\"req-é-1\",\"method\":\"initialize\",\"params\":{\"sdk_name\":\"conformance\",\"sdk_version\":\"0\",\"protocol_version\":1,\"required_capabilities\":[\"layers_1_4\"],\"preferred_encoding\":\"json\"}}"
+  ],
+  "expected_replies": [
+    {
+      "id": "req-é-1",
+      "error_code": null
+    }
+  ]
+}

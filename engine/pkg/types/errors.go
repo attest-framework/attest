@@ -32,7 +32,7 @@ func NewRPCError(code int, message string, errorType string, retryable bool, det
 }
 
 // NewErrorResponse constructs a JSON-RPC error response.
-func NewErrorResponse(id int64, err *RPCError) *Response {
+func NewErrorResponse(id json.RawMessage, err *RPCError) *Response {
 	return &Response{
 		JSONRPC: "2.0",
 		ID:      id,
@@ -41,7 +41,7 @@ func NewErrorResponse(id int64, err *RPCError) *Response {
 }
 
 // NewSuccessResponse constructs a JSON-RPC success response from a result value.
-func NewSuccessResponse(id int64, result any) (*Response, error) {
+func NewSuccessResponse(id json.RawMessage, result any) (*Response, error) {
 	raw, err := json.Marshal(result)
 	if err != nil {
 		return nil, err

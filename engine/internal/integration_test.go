@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"strconv"
 	"testing"
 	"time"
 
@@ -49,7 +50,7 @@ func e2eSendRequest(t *testing.T, w io.Writer, id int64, method string, params a
 	}
 	req := types.Request{
 		JSONRPC: "2.0",
-		ID:      id,
+		ID:      json.RawMessage(strconv.FormatInt(id, 10)),
 		Method:  method,
 		Params:  p,
 	}
@@ -94,8 +95,8 @@ func TestE2E_RefundAgentFullFlow(t *testing.T) {
 	if initResp.Error != nil {
 		t.Fatalf("initialize error: %+v", initResp.Error)
 	}
-	if initResp.ID != 1 {
-		t.Errorf("initialize response ID = %d, want 1", initResp.ID)
+	if string(initResp.ID) != "1" {
+		t.Errorf("initialize response ID = %s, want 1", initResp.ID)
 	}
 
 	var initResult types.InitializeResult
@@ -187,8 +188,8 @@ func TestE2E_RefundAgentFullFlow(t *testing.T) {
 	if batchResp.Error != nil {
 		t.Fatalf("evaluate_batch error: %+v", batchResp.Error)
 	}
-	if batchResp.ID != 2 {
-		t.Errorf("evaluate_batch response ID = %d, want 2", batchResp.ID)
+	if string(batchResp.ID) != "2" {
+		t.Errorf("evaluate_batch response ID = %s, want 2", batchResp.ID)
 	}
 
 	var batchResult types.EvaluateBatchResult
@@ -240,8 +241,8 @@ func TestE2E_RefundAgentFullFlow(t *testing.T) {
 	if shutdownResp.Error != nil {
 		t.Fatalf("shutdown error: %+v", shutdownResp.Error)
 	}
-	if shutdownResp.ID != 99 {
-		t.Errorf("shutdown response ID = %d, want 99", shutdownResp.ID)
+	if string(shutdownResp.ID) != "99" {
+		t.Errorf("shutdown response ID = %s, want 99", shutdownResp.ID)
 	}
 
 	var shutdownResult types.ShutdownResult

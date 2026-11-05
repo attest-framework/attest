@@ -1,0 +1,13 @@
+{
+  "name": "002-parse-error-null-id",
+  "description": "A line that is not JSON gets a parse error with id null.",
+  "lines": [
+    "{not json"
+  ],
+  "expected_replies": [
+    {
+      "id": null,
+      "error_code": -32700
+    }
+  ]
+}

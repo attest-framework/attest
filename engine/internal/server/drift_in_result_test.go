@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"strconv"
 	"testing"
 	"time"
 
@@ -78,8 +79,8 @@ func TestEvaluateBatch_DriftTravelsInResult_NoUnsolicitedStdout(t *testing.T) {
 		if resp.Error != nil {
 			t.Fatalf("request %d: unexpected error: %+v", id, resp.Error)
 		}
-		if resp.ID != id {
-			t.Fatalf("request %d: response id = %d", id, resp.ID)
+		if string(resp.ID) != strconv.FormatInt(id, 10) {
+			t.Fatalf("request %d: response id = %s", id, resp.ID)
 		}
 		var res types.EvaluateBatchResult
 		if err := json.Unmarshal(resp.Result, &res); err != nil {
@@ -131,7 +132,7 @@ func TestEvaluateBatch_DriftTravelsInResult_NoUnsolicitedStdout(t *testing.T) {
 	}
 
 	// No further line may be pending: shutdown's response is the next one.
-	if _, resp := call(failID+1, "shutdown", struct{}{}); resp.ID != failID+1 {
-		t.Errorf("line after the failing batch has id %d, want %d", resp.ID, failID+1)
+	if _, resp := call(failID+1, "shutdown", struct{}{}); string(resp.ID) != strconv.FormatInt(failID+1, 10) {
+		t.Errorf("line after the failing batch has id %s, want %d", resp.ID, failID+1)
 	}
 }

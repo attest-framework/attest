@@ -1,0 +1,13 @@
+{
+  "name": "005-invalid-id-type",
+  "description": "An id that is not a string, number or null is an invalid request answered with id null.",
+  "lines": [
+    "{\"jsonrpc\":\"2.0\",\"id\":{\"a\":1},\"method\":\"no_such_method\"}"
+  ],
+  "expected_replies": [
+    {
+      "id": null,
+      "error_code": -32600
+    }
+  ]
+}

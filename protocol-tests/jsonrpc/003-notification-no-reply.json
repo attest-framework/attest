@@ -1,0 +1,14 @@
+{
+  "name": "003-notification-no-reply",
+  "description": "A request without an id gets no reply, even when its method is unknown; the next request is answered first.",
+  "lines": [
+    "{\"jsonrpc\":\"2.0\",\"method\":\"no_such_method\"}",
+    "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"initialize\",\"params\":{\"sdk_name\":\"conformance\",\"sdk_version\":\"0\",\"protocol_version\":1,\"required_capabilities\":[\"layers_1_4\"],\"preferred_encoding\":\"json\"}}"
+  ],
+  "expected_replies": [
+    {
+      "id": 2,
+      "error_code": null
+    }
+  ]
+}
