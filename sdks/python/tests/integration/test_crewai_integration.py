@@ -53,8 +53,8 @@ class TestCrewAIAdapterIntegration:
     matching the CrewAI interface without requiring API credentials.
     """
 
-    def test_real_agent_objects_become_steps(self) -> None:
-        """Agent objects with role attribute produce agent_call steps."""
+    def test_real_agent_objects_are_not_recorded_as_steps(self) -> None:
+        """A configured agent is not evidence it ran: no agent_call step."""
         agent = _make_agent("researcher")
         crew = _make_crew([agent])
 
@@ -65,9 +65,7 @@ class TestCrewAIAdapterIntegration:
         crew_output = _make_crew_output(raw="Research complete")
         trace = adapter.trace_from_crew_output(crew_output, crew)
 
-        agent_steps = [s for s in trace.steps if s.type == "agent_call"]
-        assert len(agent_steps) == 1
-        assert agent_steps[0].name == "researcher"
+        assert trace.steps == []
 
     def test_real_crew_output_extraction(self) -> None:
         """CrewOutput raw text and token usage flow to trace output/metadata."""
@@ -89,8 +87,8 @@ class TestCrewAIAdapterIntegration:
         assert trace.metadata is not None
         assert trace.metadata.total_tokens == 500
 
-    def test_real_task_output_in_trace(self) -> None:
-        """TaskOutput objects produce tool_call steps."""
+    def test_real_task_output_is_not_a_tool_call(self) -> None:
+        """TaskOutput objects do not become tool_call steps."""
         agent = _make_agent("analyst")
         crew = _make_crew([agent])
 
@@ -108,10 +106,7 @@ class TestCrewAIAdapterIntegration:
         )
         trace = adapter.trace_from_crew_output(crew_output, crew)
 
-        tool_steps = [s for s in trace.steps if s.type == "tool_call"]
-        assert len(tool_steps) == 1
-        assert tool_steps[0].result is not None
-        assert tool_steps[0].result["output"] == "Analysis complete: 95% accuracy"
+        assert trace.steps == []
 
     def test_crew_description_as_input(self) -> None:
         """Crew description flows to trace input."""

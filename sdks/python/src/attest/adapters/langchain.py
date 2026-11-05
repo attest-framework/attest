@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import time
 from collections.abc import Generator
 from contextlib import contextmanager
 from typing import TYPE_CHECKING, Any
@@ -22,6 +21,34 @@ def _require_langchain() -> None:
         import langchain_core  # noqa: F401
     except ImportError:
         raise ImportError("Install langchain extras: uv add 'attest-ai[langchain]'")
+
+
+def _duration(started_at_ms: int | None, ended_at_ms: int) -> dict[str, Any]:
+    """Step metadata: the span between the step's own start and end timestamps."""
+    return {} if started_at_ms is None else {"duration_ms": ended_at_ms - started_at_ms}
+
+
+def _usage_metadata(response: LLMResult) -> dict[str, Any] | None:
+    """``usage_metadata`` of the first generation's message, when the model reported it."""
+    for generations in response.generations:
+        for generation in generations:
+            usage = getattr(getattr(generation, "message", None), "usage_metadata", None)
+            if usage:
+                return dict(usage)
+    return None
+
+
+def _message_text(content: Any) -> str:
+    """Text of a message ``content``: a string, or a list of strings and content blocks."""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return "".join(
+            block if isinstance(block, str) else str(block.get("text", ""))
+            for block in content
+            if isinstance(block, str) or (isinstance(block, dict) and block.get("type") == "text")
+        )
+    return str(content)
 
 
 class LangChainCallbackHandler(BaseAdapter):
@@ -54,7 +81,8 @@ class LangChainCallbackHandler(BaseAdapter):
         self._llm_starts: dict[str, dict[str, Any]] = {}
         self._total_tokens: int = 0
         self._model: str | None = None
-        self._start_time: float | None = None
+        self._started_at_ms: int | None = None
+        self._ended_at_ms: int | None = None
         self._built = False
 
     # ------------------------------------------------------------------
@@ -71,7 +99,7 @@ class LangChainCallbackHandler(BaseAdapter):
         **kwargs: Any,
     ) -> None:
         if parent_run_id is None:
-            self._start_time = time.monotonic()
+            self._started_at_ms = self._now_ms()
             if isinstance(inputs, dict):
                 msg = inputs.get("input") or inputs.get("messages") or inputs.get("query", "")
                 if isinstance(msg, str):
@@ -91,20 +119,21 @@ class LangChainCallbackHandler(BaseAdapter):
         **kwargs: Any,
     ) -> None:
         if parent_run_id is None:
+            self._ended_at_ms = self._now_ms()
             if isinstance(outputs, dict):
                 # LangGraph returns {"messages": [BaseMessage, ...]} — extract last AI message
                 messages = outputs.get("messages")
                 if isinstance(messages, list) and messages:
                     last = messages[-1]
                     if hasattr(last, "content"):
-                        self._output = str(last.content)
+                        self._output = _message_text(last.content)
                         return
 
                 out = outputs.get("output") or outputs.get("result") or outputs.get("text", "")
                 if isinstance(out, str):
                     self._output = out
                 elif hasattr(out, "content"):
-                    self._output = str(out.content)
+                    self._output = _message_text(out.content)
                 else:
                     self._output = str(out) if out else ""
 
@@ -128,7 +157,6 @@ class LangChainCallbackHandler(BaseAdapter):
         self._llm_starts[str(run_id)] = {
             "model_name": model_name,
             "messages": messages,
-            "start_time": time.monotonic(),
             "started_at_ms": self._now_ms(),
         }
 
@@ -143,22 +171,28 @@ class LangChainCallbackHandler(BaseAdapter):
         run_key = str(run_id)
         start_info = self._llm_starts.pop(run_key, {})
         model_name = start_info.get("model_name")
-        start_time = start_info.get("start_time")
         started_at_ms: int | None = start_info.get("started_at_ms")
         ended_at_ms = self._now_ms()
 
-        # Extract token usage
+        # Token usage: the message's usage_metadata (current langchain-core), else the
+        # provider's llm_output["token_usage"] (older integrations).
         input_tokens = 0
         output_tokens = 0
-        token_usage: dict[str, Any] = {}
+        total = 0
+        usage = _usage_metadata(response)
+        if usage:
+            input_tokens = usage.get("input_tokens", 0) or 0
+            output_tokens = usage.get("output_tokens", 0) or 0
+            total = usage.get("total_tokens", 0) or input_tokens + output_tokens
         if response.llm_output:
-            token_usage = response.llm_output.get("token_usage", {})
-            input_tokens = token_usage.get("prompt_tokens", 0) or 0
-            output_tokens = token_usage.get("completion_tokens", 0) or 0
+            if not usage:
+                token_usage = response.llm_output.get("token_usage", {})
+                input_tokens = token_usage.get("prompt_tokens", 0) or 0
+                output_tokens = token_usage.get("completion_tokens", 0) or 0
+                total = input_tokens + output_tokens
             if model_name is None:
                 model_name = response.llm_output.get("model_name")
 
-        total = input_tokens + output_tokens
         self._total_tokens += total
 
         if model_name and self._model is None:
@@ -176,14 +210,14 @@ class LangChainCallbackHandler(BaseAdapter):
         result: dict[str, Any] = {}
         if completion:
             result["completion"] = completion
+        if total:
+            result["tokens"] = total
         if input_tokens:
             result["input_tokens"] = input_tokens
         if output_tokens:
             result["output_tokens"] = output_tokens
 
-        metadata: dict[str, Any] = {}
-        if start_time is not None:
-            metadata["duration_ms"] = int((time.monotonic() - start_time) * 1000)
+        metadata = _duration(started_at_ms, ended_at_ms)
 
         self._steps.append(
             {
@@ -208,13 +242,14 @@ class LangChainCallbackHandler(BaseAdapter):
         *,
         run_id: UUID,
         parent_run_id: UUID | None = None,
+        inputs: dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> None:
         tool_name = serialized.get("name", "unknown_tool")
+        # ``inputs`` is the tool's structured input; ``input_str`` is its Python repr.
         self._tool_starts[str(run_id)] = {
             "name": tool_name,
-            "input": input_str,
-            "start_time": time.monotonic(),
+            "input": inputs if isinstance(inputs, dict) else {"input": input_str},
             "started_at_ms": self._now_ms(),
         }
 
@@ -229,26 +264,20 @@ class LangChainCallbackHandler(BaseAdapter):
         run_key = str(run_id)
         start_info = self._tool_starts.pop(run_key, {})
         tool_name = start_info.get("name", "unknown_tool")
-        start_time = start_info.get("start_time")
-        tool_input = start_info.get("input", "")
+        tool_input = start_info.get("input", {})
         started_at_ms: int | None = start_info.get("started_at_ms")
         ended_at_ms = self._now_ms()
 
-        metadata: dict[str, Any] = {}
-        if start_time is not None:
-            metadata["duration_ms"] = int((time.monotonic() - start_time) * 1000)
+        metadata = _duration(started_at_ms, ended_at_ms)
 
-        # LangGraph passes ToolMessage objects; extract .content or coerce to str
-        if hasattr(output, "content"):
-            output_str = str(output.content)
-        else:
-            output_str = str(output)
+        # LangGraph passes ToolMessage objects; their content is text or content blocks.
+        output_str = _message_text(output.content) if hasattr(output, "content") else str(output)
 
         self._steps.append(
             {
                 "type": "tool_call",
                 "name": tool_name,
-                "args": {"input": tool_input},
+                "args": tool_input,
                 "result": {"output": output_str},
                 "metadata": metadata,
                 "started_at_ms": started_at_ms,
@@ -267,20 +296,17 @@ class LangChainCallbackHandler(BaseAdapter):
         run_key = str(run_id)
         start_info = self._tool_starts.pop(run_key, {})
         tool_name = start_info.get("name", "unknown_tool")
-        start_time = start_info.get("start_time")
-        tool_input = start_info.get("input", "")
+        tool_input = start_info.get("input", {})
         started_at_ms: int | None = start_info.get("started_at_ms")
         ended_at_ms = self._now_ms()
 
-        metadata: dict[str, Any] = {}
-        if start_time is not None:
-            metadata["duration_ms"] = int((time.monotonic() - start_time) * 1000)
+        metadata = _duration(started_at_ms, ended_at_ms)
 
         self._steps.append(
             {
                 "type": "tool_call",
                 "name": tool_name,
-                "args": {"input": tool_input},
+                "args": tool_input,
                 "result": {"error": str(error)},
                 "metadata": metadata,
                 "started_at_ms": started_at_ms,
@@ -329,8 +355,8 @@ class LangChainCallbackHandler(BaseAdapter):
                 )
 
         latency_ms: int | None = None
-        if self._start_time is not None:
-            latency_ms = int((time.monotonic() - self._start_time) * 1000)
+        if self._started_at_ms is not None and self._ended_at_ms is not None:
+            latency_ms = self._ended_at_ms - self._started_at_ms
 
         builder.set_output(message=self._output or "")
         builder.set_metadata(

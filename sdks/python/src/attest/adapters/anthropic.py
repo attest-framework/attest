@@ -25,10 +25,15 @@ class AnthropicAdapter(BaseProviderAdapter):
             return response.usage.input_tokens + response.usage.output_tokens  # type: ignore[no-any-return]
         return None
 
+    def _extract_token_split(self, response: Any) -> tuple[int | None, int | None]:
+        if hasattr(response, "usage"):
+            return response.usage.input_tokens, response.usage.output_tokens
+        return None, None
+
     def _extract_tool_calls(self, response: Any) -> list[dict[str, Any]]:
         calls: list[dict[str, Any]] = []
         for block in response.content:
-            if block.type == "tool_use":
+            if block.type in ("tool_use", "server_tool_use"):
                 calls.append(
                     {
                         "name": block.name,

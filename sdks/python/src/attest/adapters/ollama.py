@@ -22,6 +22,11 @@ class OllamaAdapter(BaseProviderAdapter):
             return response["eval_count"] + response["prompt_eval_count"]  # type: ignore[no-any-return]
         return None
 
+    def _extract_token_split(self, response: Any) -> tuple[int | None, int | None]:
+        if "eval_count" in response and "prompt_eval_count" in response:
+            return response["prompt_eval_count"], response["eval_count"]
+        return None, None
+
     def _extract_tool_calls(self, response: Any) -> list[dict[str, Any]]:
         message = response.get("message", {})
         tool_calls = message.get("tool_calls")

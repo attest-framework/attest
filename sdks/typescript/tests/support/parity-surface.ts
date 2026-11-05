@@ -37,6 +37,26 @@ export function compareSurface(committed: Surface, live: Surface): string[] {
   return messages;
 }
 
+/**
+ * Problems with the adapters a surface claims. A name match is not parity for an adapter:
+ * it counts only when the adapter has corpus cases under `sdks/parity/adapters` and all pass.
+ */
+export function adapterParityProblems(
+  adapters: readonly string[],
+  status: Readonly<Record<string, "passing" | "failing" | "none">>,
+): string[] {
+  const problems: string[] = [];
+  for (const name of adapters) {
+    const state = status[name] ?? "none";
+    if (state === "none") {
+      problems.push(`adapter ${name}: matches by name only; add conformance cases under sdks/parity/adapters`);
+    } else if (state === "failing") {
+      problems.push(`adapter ${name}: corpus cases fail; the trace differs from the golden`);
+    }
+  }
+  return problems;
+}
+
 export function serializeSurface(surface: Surface): string {
   const sorted = Object.fromEntries(
     SECTIONS.map((s) => [s, [...new Set(surface[s])].sort()]),

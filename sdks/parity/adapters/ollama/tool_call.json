@@ -1,0 +1,87 @@
+{
+  "adapter": "ollama",
+  "call": {
+    "ended_at_ms": 1250,
+    "input_messages": [
+      {
+        "content": "Where is order ORD-1?",
+        "role": "user"
+      }
+    ],
+    "kind": "trace_from_response",
+    "started_at_ms": 1000
+  },
+  "case": "tool_call",
+  "construct": {},
+  "description": "Native tool call with structured arguments.",
+  "golden": {
+    "input": {
+      "messages": [
+        {
+          "content": "Where is order ORD-1?",
+          "role": "user"
+        }
+      ]
+    },
+    "metadata": {
+      "latency_ms": 250,
+      "model": "llama3.2",
+      "total_tokens": 15
+    },
+    "output": {
+      "message": ""
+    },
+    "schema_version": 1,
+    "steps": [
+      {
+        "args": {
+          "model": "llama3.2"
+        },
+        "ended_at_ms": 1250,
+        "name": "completion",
+        "result": {
+          "completion": "",
+          "input_tokens": 9,
+          "output_tokens": 6,
+          "tokens": 15
+        },
+        "started_at_ms": 1000,
+        "type": "llm_call"
+      },
+      {
+        "args": {
+          "order_id": "ORD-1"
+        },
+        "name": "lookup_order",
+        "type": "tool_call"
+      }
+    ],
+    "trace_id": "trc_normalized"
+  },
+  "payload": {
+    "created_at": "2026-01-01T00:00:00Z",
+    "done": true,
+    "done_reason": "stop",
+    "eval_count": 6,
+    "message": {
+      "content": "",
+      "role": "assistant",
+      "tool_calls": [
+        {
+          "function": {
+            "arguments": {
+              "order_id": "ORD-1"
+            },
+            "name": "lookup_order"
+          }
+        }
+      ]
+    },
+    "model": "llama3.2",
+    "prompt_eval_count": 9
+  },
+  "sdk": {
+    "package": "ollama",
+    "type": "ollama.ChatResponse"
+  }
+}
