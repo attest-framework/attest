@@ -23,7 +23,7 @@ func init() {
 			{policy.ExitPass, "pass: every rule satisfied"},
 			{policy.ExitBlock, "block: a block-severity rule was violated"},
 			{policy.ExitWarn, "warn: only warn-severity rules were violated"},
-			{policy.ExitUsage, "usage error, or the policy, report, baseline or mutation report failed to load, or a rule lacks its input (block_on_regression or regression without --baseline, min_mutation_score without --mutation), or the report has 0 tests while tests_collected is above 0, or the baseline was pinned under id scheme 1 (re-pin it on 1.1)"},
+			{policy.ExitUsage, "usage error, or the policy, report, baseline or mutation report failed to load, or a rule lacks its input (block_on_regression or regression without --baseline, min_mutation_score without --mutation), or the report has 0 tests while tests_collected is above 0, or the baseline was pinned under id scheme 1 (re-pin it on 1.1), or the head report uses id scheme 1 (re-run with an SDK on 1.1)"},
 		},
 	})
 }

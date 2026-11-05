@@ -49,7 +49,7 @@ Reordering assertions keeps every id, so it passes. An id is a hash of the test 
 
 ## Id scheme
 
-Reports and baselines carry `id_scheme: 2`. A baseline pinned before 1.1 uses scheme 1 (ordinal ids); `attest policy evaluate --baseline` refuses to compare against it and exits 3 with `baseline uses id scheme 1; re-pin it on 1.1`, rather than reporting every assertion as removed. Re-pin the tag from a 1.1 report. Rolling back to 1.0 orphans baselines pinned on 1.1.
+Reports and baselines carry `id_scheme: 2`. A baseline pinned before 1.1 uses scheme 1 (ordinal ids); `attest policy evaluate --baseline` refuses to compare against it and exits 3 with `baseline uses id scheme 1; re-pin it on 1.1`, rather than reporting every assertion as removed. The check applies to the head report too: a report without `id_scheme: 2` (written by an SDK older than 1.1) exits 3 with `report uses id scheme 1; re-run with an SDK on 1.1`. Re-pin the tag from a 1.1 report. Rolling back to 1.0 orphans baselines pinned on 1.1.
 
 ## Trials and the regression rule
 

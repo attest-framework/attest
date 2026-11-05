@@ -197,3 +197,15 @@ func TestPolicyEvaluate_BudgetExceededReport_BlocksAlongsideHardFail(t *testing.
 		t.Errorf("violations = %+v, want budget_exceeded", r.out.Violations)
 	}
 }
+
+func TestPolicyEvaluate_SchemeOneHeadReport_ExitsThreeWithRerunMessage(t *testing.T) {
+	r := gateEvaluate(t, "severity: block\n", gateBase(t),
+		func(dir string) string { return writeGateReport(t, dir, "head.json", 0, false, gateRows(11)) })
+
+	if r.code != 3 {
+		t.Fatalf("exit = %d, want 3\nstdout: %s\nstderr: %s", r.code, r.stdout, r.stderr)
+	}
+	if !strings.Contains(r.stderr, "report uses id scheme 1; re-run with an SDK on 1.1") {
+		t.Errorf("stderr = %q, want the re-run message", r.stderr)
+	}
+}

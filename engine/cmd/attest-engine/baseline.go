@@ -310,6 +310,9 @@ func computeBaselineDelta(tag string, env *reportEnvelope) (*report.BaselineDelt
 	if got := entries[0].IDScheme; got != report.IDSchemeCurrent {
 		return nil, fmt.Errorf("baseline uses id scheme %d; re-pin it on 1.1", got)
 	}
+	if got := env.scheme(); got != report.IDSchemeCurrent {
+		return nil, fmt.Errorf("report uses id scheme %d; re-run with an SDK on 1.1", got)
+	}
 	d := report.ComputeBaselineDelta(tag, entries, env.Results)
 	return &d, nil
 }
