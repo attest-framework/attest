@@ -210,6 +210,8 @@ export function buildReport(
       usage: sessionUsage(tests, unattached),
       ...replaySummary(tests),
     },
+    // Every test Vitest collected across all projects and pools, skipped ones included.
+    tests_collected: tests.length,
     results: rows,
     tests: testRows,
     total_cost: totalCost,
