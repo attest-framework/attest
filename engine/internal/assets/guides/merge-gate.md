@@ -7,7 +7,7 @@ This guide takes a project from no tests to a GitHub Actions job that blocks mer
 Python:
 
 ```bash
-uv add "attest-ai>=1.0.0" pytest
+uv add "attest-ai>=1.0.1" pytest
 uv run attest init
 uv run pytest            # 1 passed
 ```
@@ -15,7 +15,7 @@ uv run pytest            # 1 passed
 TypeScript:
 
 ```bash
-npm install -D "@attest-ai/core@>=1.0.0" "@attest-ai/vitest@>=1.0.0" "vitest@^4"
+npm install -D "@attest-ai/core@>=1.0.1" "@attest-ai/vitest@>=1.0.1" "vitest@^4"
 npx attest init
 npx vitest run          # 1 passed
 ```

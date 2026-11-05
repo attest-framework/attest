@@ -17,7 +17,7 @@
 
 Attest is an open-source testing framework purpose-built for AI agents and LLM-powered systems. It treats deterministic assertions as first-class citizens alongside probabilistic evaluation — because 70% of your agent's testable surface is deterministic.
 
-> **Status:** v1.0.0 — capture → replay → merge gate on real agent runs, 8 assertion layers, 11 adapters (Python) + 7 adapters (TypeScript incl. LangChain.js), behavior contracts, mutation testing, HTML failure viewer, MCP server + agent skills, judges on four provider families, continuous eval with drift detection, pytest + vitest integrations.
+> **Status:** v1.0.1 — capture → replay → merge gate on real agent runs, 8 assertion layers, 11 adapters (Python) + 7 adapters (TypeScript incl. LangChain.js), behavior contracts, mutation testing, HTML failure viewer, MCP server + agent skills, judges on four provider families, continuous eval with drift detection, pytest + vitest integrations.
 
 ---
 
@@ -163,7 +163,7 @@ No API key, model or network access is needed: the sample test checks a recorded
 
 ```bash
 uv init --bare my-agent-tests && cd my-agent-tests
-uv add "attest-ai>=1.0.0" pytest
+uv add "attest-ai>=1.0.1" pytest
 uv run attest init
 uv run pytest
 ```
@@ -248,7 +248,7 @@ uv run attest init --ci github
 
 ```bash
 npm init -y && npm pkg set type=module
-npm install -D "@attest-ai/core@>=1.0.0" "@attest-ai/vitest@>=1.0.0" "vitest@^4"
+npm install -D "@attest-ai/core@>=1.0.1" "@attest-ai/vitest@>=1.0.1" "vitest@^4"
 npx attest init
 npx vitest run
 ```

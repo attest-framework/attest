@@ -45,7 +45,7 @@ DeepEval metrics where lower is better (`HallucinationMetric`, `BiasMetric`, `To
 ## Procedure
 
 1. **Inventory.** Find the suites: `git ls-files '*promptfooconfig*' '*.promptfoo*' 'promptfoo/*'` and `git grep -l -E 'from deepeval|import deepeval|assert_test\('`. Create `MIGRATION.md` from the template below with one row per test case (Promptfoo: each `tests[]` entry; DeepEval: each test function or golden).
-2. **Install and check.** `uv add --dev "attest-ai>=1.0.0"` (Python) or `npm install -D "@attest-ai/core@>=1.0.0" "@attest-ai/vitest@>=1.0.0" "vitest@^4"`; then `attest doctor --json`.
+2. **Install and check.** `uv add --dev "attest-ai>=1.0.1"` (Python) or `npm install -D "@attest-ai/core@>=1.0.1" "@attest-ai/vitest@>=1.0.1" "vitest@^4"`; then `attest doctor --json`.
 3. **Make the agent capturable.** It must read `OPENAI_BASE_URL` / `ANTHROPIC_BASE_URL` and export OTLP spans (`capture-incident.md`). A Promptfoo suite that tests a bare prompt (no agent) needs a small entry point that sends the prompt with the OpenAI or Anthropic SDK.
 4. **Capture each case once** with its `vars` / `input`: `attest capture --name <case> -- <command>`. This calls the model: get the user's approval and say how many captures it takes. Group cases that share one run.
 5. **Write the test per suite** with the assertion map, replaying each case's fixture. Run it with zero model calls (`write-contracts.md` step 4).

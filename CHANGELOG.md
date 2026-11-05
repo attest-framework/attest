@@ -4,6 +4,42 @@ All notable changes to Attest are documented in this file. The format follows [K
 
 ## [Unreleased]
 
+## [1.0.1] — 2026-11-05
+
+Hotfix themed "Red stays red". On 1.0.0 a failing assertion could be reported as green: an engine drift line, a request timeout or concurrent evaluations could hand one test another test's verdict, a pytest-xdist run wrote an empty report that the policy gate passed, and a regression policy without its baseline passed silently. 1.0.1 routes every engine response by request id in both SDKs, writes complete reports under parallel runners, and makes `attest policy evaluate` fail closed when an input is missing. Several fixes turn a silent pass into a failure; they are marked **Behavior change** below.
+
+### Fixed
+
+- **Behavior change:** Python and TypeScript SDKs route every engine response by request id. A test that previously passed on another request's response (after an engine `drift_alert` line, after an `ATTEST_ENGINE_TIMEOUT`, or under `it.concurrent`) now reports its own, possibly failing, verdict. Lines without an id are dropped and logged.
+- **Behavior change:** `evaluate_batch` raises `ProtocolDesyncError` (Python) or rejects with it (TypeScript) when the response's assertion ids differ from the ids sent.
+- **Behavior change:** a request timeout restarts the engine and fails every pending request (`EngineTimeoutError`), so a late reply never reaches another test. The new engine gets the remaining `ATTEST_MAX_JUDGE_CALLS` / `ATTEST_BUDGET_USD` session budget: the configured limit minus the usage already returned, minus a hold for each lost request that can call a model (its per-batch `budget` if it sent one, otherwise everything left). Spend the SDK cannot observe (simulated-user messages, engine error replies, replies dropped after cancellation) leaves the restarted engine no budget, so a restart can never refill the session budget.
+- **Behavior change:** `pytest -n N --attest-report=<path>` writes one report containing every worker's tests and assertions; before, the report was empty and `attest policy evaluate` passed. If a worker ends without sending its report, the run exits with an internal-error status and no report is written (an older file at the path is removed).
+- **Behavior change:** `attest policy evaluate` exits 3 instead of passing when the policy sets `block_on_regression` or `regression` without `--baseline`, or `min_mutation_score` without `--mutation`; the message names the missing input.
+- **Behavior change:** `attest policy evaluate` exits 3 when a report has no tests while its `tests_collected` is greater than 0 (a parallel run that lost its results).
+- The engine reports drift inside `evaluate_batch` results (`results[].drift`) instead of writing an id-less `drift_alert` line to stdout.
+- Python: responses over 64 KiB (for example 400+ assertions) no longer crash the session; the SDK's stream limit matches the engine's 10 MiB request line limit.
+- TypeScript: `EngineManager.start()` rejects when the engine exits or closes before it is ready, with the engine's stderr tail (also when the engine dies before the first write, which used to surface as a bare `write EPIPE`), and `initialize` times out instead of hanging. Write errors after startup carry the stderr tail.
+- TypeScript: request timers are cleared, so a standalone script exits when its work is done instead of 30 s later.
+- Python: `EngineManager.send_request` stays public and id-correct (it goes through an attached `AttestClient`, otherwise the id-matched handshake), and `EngineManager.stop()` shuts down cleanly when an `AttestClient` reader is attached. A second `AttestClient` on one engine raises `RuntimeError` instead of stealing the first one's responses.
+- Engine history and caches share one SQLite handle with WAL and `busy_timeout`, so parallel engine processes no longer lose history rows to `SQLITE_BUSY`; `attest baseline pin` and `attest calibrate` open the database the same way and wait instead of failing.
+- History pruning runs in the background in short batched deletes (age through a new `created_at` index, the row cap per recently recorded assertion id) instead of a whole-table delete inside `evaluate_batch`, removing the stall near 2,800 evaluations per assertion.
+- The `attest-ai` PyPI quick start is a runnable pytest test that evaluates its chains and fails on a wrong assertion; it used an undefined `trace` and built chains it never evaluated.
+- Guide examples in framework-adapters, multi-agent and simulation evaluate their chains and use existing methods (`required_tools()` replaces the nonexistent `tool_called()`).
+
+### Added
+
+- report-v2 files written by the pytest plugin and the Vitest reporter carry a top-level `tests_collected` (tests collected after deselection); `report-v2.schema.json` declares it.
+
+### Changed
+
+- The protocol spec states that the engine writes only responses to stdout and that SDKs route by request id; `docs/guides/configuration.md` documents `ATTEST_ENGINE_TIMEOUT` (seconds in Python, milliseconds in TypeScript) and what a timeout does to the session budget, and notes that budgets apply per pytest-xdist worker.
+- Install instructions use `attest-ai>=1.0.1` and `@attest-ai/core@>=1.0.1` / `@attest-ai/vitest@>=1.0.1`; `@attest-ai/vitest` declares the peer `@attest-ai/core >=1.0.1`. The annotations guide pins `pr-annotate@v1.0.1`.
+- Engine Go dependencies: `go.opentelemetry.io/proto/otlp` 1.11.1, `golang.org/x/text` 0.43.0, `modernc.org/sqlite` 1.61.1, `google.golang.org/protobuf` 1.36.12.
+
+### Removed
+
+- The `drift_alert` stdout notification (`types.DriftAlertNotification`).
+
 ## [1.0.0] — 2026-11-04
 
 First stable release. A real run or incident becomes a verified fixture with `attest capture`; pull-request CI replays the agent's real code against it with zero model calls and returns pass, fail or not evaluated (with a reason) to a policy gate, in Python and TypeScript. The release candidates added each piece: honest verdicts and install integrity (rc.1), trace checks, behavior contracts and judge budgets (rc.2), capture, replay, world fixtures and pull-request annotations (rc.3), agent-facing CLI, MCP server and mutation testing (rc.4), TypeScript parity, framework capture through OpenTelemetry and the offline failure viewer (rc.5). The [refund-desk](https://github.com/attest-framework/refund-desk) demo walks the whole workflow with `make walkthrough`. Changes since rc.5:
@@ -303,7 +339,8 @@ Tagged, not published to registries. No GitHub release was created.
 
 Versions 0.1.0 through 0.6.0 are described in their [GitHub releases](https://github.com/attest-framework/attest/releases); 0.6.1 exists only as a tag. 0.1.0–0.6.0 were published to PyPI; 0.3.0–0.6.0 were also published to npm.
 
-[Unreleased]: https://github.com/attest-framework/attest/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/attest-framework/attest/compare/v1.0.1...HEAD
+[1.0.1]: https://github.com/attest-framework/attest/releases/tag/v1.0.1
 [1.0.0]: https://github.com/attest-framework/attest/releases/tag/v1.0.0
 [1.0.0-rc.5]: https://github.com/attest-framework/attest/releases/tag/v1.0.0-rc.5
 [1.0.0-rc.4]: https://github.com/attest-framework/attest/releases/tag/v1.0.0-rc.4
