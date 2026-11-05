@@ -39,8 +39,9 @@ const SDK_USAGE =
   "\n" +
   "`attest capture` (engine) also drafts tests/attest/<name>.test.ts from a fixture that\n" +
   "is consistent with the recording, unless that file exists. For a command capture the\n" +
-  "test re-runs the command under strict replay (egress blocked) and evaluates the\n" +
-  "contracts on the new run.\n" +
+  "test re-runs the command written in it under strict replay (OpenAI- and Anthropic-\n" +
+  "compatible calls are served from the recording; other providers are not blocked) and\n" +
+  "evaluates the contracts on the new run.\n" +
   "\n" +
   "options:\n" +
   "  --version  print the SDK version and the engine version it requires\n" +
@@ -267,7 +268,7 @@ function captureAndEmit(engine: string, args: string[]): number {
   process.stderr.write(
     written === null
       ? `  test: ${testPathFor(fixture)} exists; left unchanged\n`
-      : `  test: drafted ${written}; for a command capture it re-runs the command under strict replay (egress blocked) and evaluates the contracts on the new run\n`,
+      : `  test: drafted ${written}; for a command capture it re-runs the command under strict replay (other providers are not blocked: run it without their credentials) and evaluates the contracts on the new run\n`,
   );
   return code;
 }

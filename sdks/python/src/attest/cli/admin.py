@@ -44,8 +44,9 @@ _SDK_USAGE = (
     "\n"
     "`attest capture` (engine) also drafts tests/attest/test_<name>.py (name lowercased,\n"
     "other characters as _) from a fixture that is consistent with the recording, unless\n"
-    "that file exists. For a command capture the test re-runs the command under strict\n"
-    "replay (egress blocked) and evaluates the contracts on the new run.\n"
+    "that file exists. For a command capture the test re-runs the command written in it\n"
+    "under strict replay (OpenAI- and Anthropic-compatible calls are served from the\n"
+    "recording; other providers are not blocked) and evaluates the contracts on the new run.\n"
     "\n"
     "options:\n"
     "  --version  print the SDK version and the engine version it requires\n"
@@ -277,7 +278,8 @@ def _capture_and_emit(engine: str, args: Sequence[str]) -> int:
     else:
         print(
             f"  test: drafted {written}; for a command capture it re-runs the command under "
-            "strict replay (egress blocked) and evaluates the contracts on the new run",
+            "strict replay (other providers are not blocked: run it without their credentials) "
+            "and evaluates the contracts on the new run",
             file=sys.stderr,
         )
     return code

@@ -22,7 +22,7 @@ import subprocess
 import sys
 import tempfile
 import threading
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -301,10 +301,14 @@ def _render_replay(
     lines = [
         f'"""Replay test drafted by `attest capture` from fixture {_py(fixture.name)}.',
         "",
-        "Re-runs the fixture's source command under strict replay with egress blocked (the",
-        "engine's `replay --mode strict --no-live`): the recorded model responses answer the",
-        "agent's calls, and a call that matches no recording fails the test. The drafted",
-        "contracts are evaluated on the NEW run's trace, not on the recording.",
+        "Re-runs COMMAND, the source command of the fixture, under strict replay (the engine's",
+        "`replay --mode strict --no-live`): OpenAI- and Anthropic-compatible calls are served",
+        "from the recording, and one that matches no recording fails the test. Other providers",
+        "are not blocked: run this test without their credentials. The drafted contracts are",
+        "evaluated on the NEW run's trace, not on the recording.",
+        "",
+        "COMMAND is what this test runs and is reviewed with the test: if the fixture's",
+        "source.command stops matching it, the test fails instead of running the fixture's.",
         *meaning,
         "",
         "A pass means the new run is consistent with the recording and satisfies the drafted",
@@ -326,6 +330,8 @@ def _render_replay(
         "# The directory `attest capture` ran in: the source command's relative paths start here.",
         f"RUN_DIR = {_rel_expr(rerun.cwd, test_path)}",
         f"WORLD = {world}",
+        "# Reviewed argv: the only command this test runs.",
+        f"COMMAND = {_py(list(fixture.source['command']))}",
         *_skipped_lines(skipped),
         "",
         "",
@@ -335,7 +341,7 @@ def _render_replay(
         "",
         "",
         f"def test_{ident}_new_run_consistent_with_recording(attest: AttestEngineFixture) -> None:",
-        "    trace = replay_run(FIXTURE, cwd=RUN_DIR, world=WORLD)",
+        "    trace = replay_run(FIXTURE, command=COMMAND, cwd=RUN_DIR, world=WORLD)",
         "",
         "    attest.evaluate(contracts(trace))",
     ]
@@ -451,6 +457,8 @@ def emit_pytest(fixture_path: str | os.PathLike[str], rerun: Rerun | None = None
 
 _OTHER_PROVIDER_KEYS = ("ANTHROPIC_API_KEY", "GOOGLE_API_KEY", "GEMINI_API_KEY")
 _REPLAY_TIMEOUT_S = 300.0
+_REDACTED_MARKER = "[redacted]"  # engine/internal/redact: Marker
+_PLACEHOLDER = re.compile(r"\{\{(id|email|timestamp)_(\d+)\}\}")  # capture.HasPlaceholder
 _STDERR_TAIL = 4000
 
 
@@ -485,6 +493,7 @@ def _check_replay(fp: Path, fixture: Fixture, proc: subprocess.CompletedProcess[
 def replay_run(
     fixture_path: str | os.PathLike[str],
     *,
+    command: Sequence[str],
     cwd: str | os.PathLike[str] | None = None,
     world: str | os.PathLike[str] | None = None,
     engine_path: str | None = None,
@@ -493,20 +502,31 @@ def replay_run(
     """Re-run a fixture's source command under strict replay and return the new run's trace.
 
     Runs ``attest-engine replay --mode strict --no-live --trace-out ... -- <command>``:
-    the command's model calls are answered from the fixture's recorded exchanges, a call
-    that matches no recording fails, and nothing reaches a provider (``--no-live``, the
-    other providers' keys removed, ``OPENAI_API_KEY`` a placeholder, ``ATTEST_EGRESS=block``
-    for any attest guard inside the command).
+    OpenAI- and Anthropic-compatible calls the command makes are answered from the
+    fixture's recorded exchanges, and a call that matches no recording fails. Other
+    providers are not blocked: the replay proxy redirects only ``OPENAI_BASE_URL`` and
+    ``ANTHROPIC_BASE_URL``, and ``ATTEST_EGRESS=block`` only affects processes that install
+    attest's guard. ``ANTHROPIC_API_KEY``, ``GOOGLE_API_KEY`` and ``GEMINI_API_KEY`` are
+    removed from the environment and ``OPENAI_API_KEY`` is a placeholder; run without other
+    providers' credentials. The new run's trace is written unredacted to a private
+    temporary directory removed afterwards.
+
+    The fixture file can be changed by a pull request, so its ``source.command`` is never
+    run: ``command`` is, and the call fails when the fixture's differs, or when it has
+    redacted or templated (``{{id_N}}``) arguments.
 
     Args:
         fixture_path: The fixture to replay; it must come from a command capture.
+        command: The argv to run, written in the (reviewed) test; must equal the fixture's
+            ``source.command``.
         cwd: Directory to run the command in (the one the capture ran in).
         world: World file the capture hosted, when the fixture has a ``world`` section.
         engine_path: Engine binary; default is the SDK's discovery order.
         timeout: Seconds before the run is abandoned.
 
     Raises:
-        CaptureError: The fixture has no replayable source command, the engine could not
+        CaptureError: The fixture has no replayable source command, its command differs from
+            ``command`` or has redacted or templated arguments, the engine could not
             start, a request matched no recording, the command exited differently than when
             recorded, or no trace came out.
     """
@@ -514,9 +534,21 @@ def replay_run(
 
     fp = Path(fixture_path)
     fixture = load_fixture(fp)
-    command = fixture.source.get("command")
-    if fixture.source["kind"] != "command" or not fixture.replay_capable or not command:
+    recorded_command = fixture.source.get("command")
+    if fixture.source["kind"] != "command" or not fixture.replay_capable or not recorded_command:
         raise CaptureError(f"{fp}: not a command capture with recorded exchanges; cannot replay")
+    command = list(command)
+    if command != recorded_command:
+        raise CaptureError(
+            f"{fp}: refusing to run: the fixture's source.command {recorded_command!r} differs "
+            f"from the test's COMMAND {command!r}; review the change, then update the test"
+        )
+    for arg in command:
+        if _REDACTED_MARKER in arg or _PLACEHOLDER.search(arg):
+            raise CaptureError(
+                f"{fp}: refusing to run: the recorded command has redacted or templated "
+                "arguments; re-run `attest capture` with the real command"
+            )
     if fixture.world is not None and world is None:
         raise CaptureError(f"{fp}: captured with a world; pass the world file the capture ran with")
     env = {k: v for k, v in os.environ.items() if k not in _OTHER_PROVIDER_KEYS}
