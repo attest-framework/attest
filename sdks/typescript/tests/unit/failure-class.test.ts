@@ -13,6 +13,7 @@ describe("FailureClass", () => {
     expect(FailureClass.BadRubric).toBe("bad_rubric");
     expect(FailureClass.MissingTraceData).toBe("missing_trace_data");
     expect(FailureClass.StochasticVariance).toBe("stochastic_variance");
+    expect(FailureClass.SpecError).toBe("spec_error");
   });
 
   it("renderAssertionFailure surfaces failure_class on its own line", () => {
