@@ -327,10 +327,14 @@ func appendNotEvaluated(out []types.AssertionResult, assertions []types.Assertio
 }
 
 // applyDynamicThreshold checks if the assertion spec contains "threshold":"dynamic"
-// and if so, overrides the result status using ClassifyDynamic against stored history.
+// and if so, tightens the result against the C6 drift baseline of stored
+// passing and soft scores. The bar is never below the static threshold, so
+// a result that already fails keeps its status; a passing score under the bar
+// becomes a failure (soft when the spec says soft). Either way the baseline
+// goes into the explanation.
 // Sets ThresholdSource to "static", "dynamic", or "dynamic_unavailable" so callers
 // can distinguish the three classification regimes. When the historyStore lookup
-// fails, the status keeps its static-fallback value, the source is marked
+// fails, the status keeps its static value, the source is marked
 // "dynamic_unavailable", a prefix is prepended to Explanation, and a warning is
 // logged. A not_evaluated result is never reclassified: nothing was measured,
 // so it keeps its status and reason and gets no ThresholdSource.
@@ -339,12 +343,11 @@ func (p *Pipeline) applyDynamicThreshold(ar *types.AssertionResult, a *types.Ass
 		return
 	}
 	var spec struct {
-		Threshold string `json:"threshold"`
+		Threshold thresholdSpec `json:"threshold"`
+		Soft      bool          `json:"soft"`
 	}
 	specErr := json.Unmarshal(a.Spec, &spec)
-	wantDynamic := specErr == nil && spec.Threshold == "dynamic"
-
-	if !wantDynamic {
+	if specErr != nil || !spec.Threshold.Dynamic {
 		ar.ThresholdSource = types.ThresholdSourceStatic
 		return
 	}
@@ -355,7 +358,7 @@ func (p *Pipeline) applyDynamicThreshold(ar *types.AssertionResult, a *types.Ass
 		return
 	}
 
-	history, err := p.historyStore.QueryWindow(a.AssertionID, DefaultDynamicConfig.WindowSize)
+	history, err := p.historyStore.QueryBaseline(a.AssertionID, DefaultDynamicConfig.WindowSize, false)
 	if err != nil {
 		slog.Warn("dynamic threshold unavailable",
 			"assertion_id", a.AssertionID,
@@ -365,6 +368,19 @@ func (p *Pipeline) applyDynamicThreshold(ar *types.AssertionResult, a *types.Ass
 		return
 	}
 
-	ar.Status = ClassifyDynamic(ar.Score, history, DefaultDynamicConfig)
 	ar.ThresholdSource = types.ThresholdSourceDynamic
+	baseline := ComputeBaseline(history, DefaultThresholds.Pass, DefaultDynamicConfig)
+	if !baseline.Active || ar.Score >= baseline.Bar {
+		return
+	}
+	if ar.Status == types.StatusPass {
+		ar.Status = types.StatusHardFail
+		if spec.Soft {
+			ar.Status = types.StatusSoftFail
+		}
+	}
+	ar.Explanation = fmt.Sprintf(
+		"dynamic threshold: score %.4f < bar %.4f (baseline of %d passing runs: mean %.4f, stddev %.4f; bar = max(static %.2f, mean - %.0f sigma, sigma floor %.2f)). %s",
+		ar.Score, baseline.Bar, baseline.Count, baseline.Mean, baseline.Stddev,
+		DefaultThresholds.Pass, DefaultDynamicConfig.SigmaScale, DefaultDynamicConfig.SigmaFloor, ar.Explanation)
 }

@@ -42,15 +42,15 @@ func NewJudgeEvaluator(provider llm.Provider, rubrics *judge.RubricRegistry, c *
 // Repeat=metaEvalRuns kept for backward compatibility — when both are set,
 // Repeat wins.
 type judgeSpec struct {
-	Target     string   `json:"target"`
-	Criteria   string   `json:"criteria"`
-	Rubric     string   `json:"rubric"`
-	Threshold  float64  `json:"threshold"`
-	Soft       bool     `json:"soft"`
-	Model      string   `json:"model"`
-	MetaEval   bool     `json:"meta_eval"`
-	Repeat     int      `json:"repeat"`
-	BiasProbes []string `json:"bias_probes"`
+	Target     string        `json:"target"`
+	Criteria   string        `json:"criteria"`
+	Rubric     string        `json:"rubric"`
+	Threshold  thresholdSpec `json:"threshold"`
+	Soft       bool          `json:"soft"`
+	Model      string        `json:"model"`
+	MetaEval   bool          `json:"meta_eval"`
+	Repeat     int           `json:"repeat"`
+	BiasProbes []string      `json:"bias_probes"`
 }
 
 const (
@@ -81,11 +81,11 @@ func (e *JudgeEvaluator) EvaluateContext(parent context.Context, trace *types.Tr
 	if rubricName == "" {
 		rubricName = "default"
 	}
-	if spec.Threshold <= 0 {
-		spec.Threshold = 0.8
+	if spec.Threshold.Value <= 0 {
+		spec.Threshold.Value = 0.8 // also the floor of a dynamic bar
 	}
-	if spec.Threshold > 1 {
-		return specErrorResult(assertion, start, fmt.Sprintf("judge spec: threshold=%v out of range (0, 1]", spec.Threshold))
+	if spec.Threshold.Value > 1 {
+		return specErrorResult(assertion, start, fmt.Sprintf("judge spec: threshold=%v out of range (0, 1]", spec.Threshold.Value))
 	}
 
 	rubric, err := e.rubrics.Get(rubricName)
@@ -127,7 +127,7 @@ func (e *JudgeEvaluator) EvaluateContext(parent context.Context, trace *types.Tr
 				SampleScores:  []float64{cached.Score},
 				ScoreMean:     cached.Score,
 			}
-			return e.buildResult(assertion, cached.Score, cached.Explanation, spec.Threshold, spec.Soft, durationMS, 0,
+			return e.buildResult(assertion, cached.Score, cached.Explanation, spec.Threshold.Value, spec.Soft, durationMS, 0,
 				judgeBuildArgs{target: spec.Target, model: model, rubric: rubricName, meta: meta})
 		}
 	}
@@ -383,7 +383,7 @@ func (e *JudgeEvaluator) evaluateSinglePass(
 		BiasProbes:    probeResults,
 	}
 	durationMS = time.Since(start).Milliseconds()
-	return e.buildResult(assertion, scoreResult.Score, scoreResult.Explanation, spec.Threshold, spec.Soft, durationMS, totalCost,
+	return e.buildResult(assertion, scoreResult.Score, scoreResult.Explanation, spec.Threshold.Value, spec.Soft, durationMS, totalCost,
 		judgeBuildArgs{target: spec.Target, model: model, rubric: rubricName, meta: meta})
 }
 
@@ -534,7 +534,7 @@ func (e *JudgeEvaluator) evaluateRepeated(
 		BiasProbes:       probeResults,
 	}
 	durationMS = time.Since(start).Milliseconds()
-	return e.buildResult(assertion, medianScore, combinedExplanation, spec.Threshold, spec.Soft, durationMS, totalCost,
+	return e.buildResult(assertion, medianScore, combinedExplanation, spec.Threshold.Value, spec.Soft, durationMS, totalCost,
 		judgeBuildArgs{target: spec.Target, model: model, rubric: rubricName, meta: meta})
 }
 

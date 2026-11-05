@@ -126,7 +126,7 @@ func TestEvaluateBatch_DriftTravelsInResult_NoUnsolicitedStdout(t *testing.T) {
 		t.Fatal("result.drift missing on hard-failed dynamic assertion")
 	}
 	if got.Drift.AssertionID != "dyn-content" || got.Drift.Status != "drift_detected" ||
-		got.Drift.Count != 11 || got.Drift.Mean <= 0.9 || got.Drift.LatestScore != 0 ||
+		got.Drift.Count != 10 || got.Drift.Mean <= 0.9 || got.Drift.LatestScore != 0 ||
 		got.Drift.Deviation != got.Drift.LatestScore-got.Drift.Mean {
 		t.Errorf("unexpected drift report: %+v", got.Drift)
 	}

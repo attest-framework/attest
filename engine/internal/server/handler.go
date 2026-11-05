@@ -516,6 +516,14 @@ func handleEvaluateBatch(pipeline *assertion.Pipeline, historyStore *cache.Histo
 			for i := range result.Results {
 				ar := &result.Results[i]
 				meta := assertionMap[ar.AssertionID]
+
+				// Read the drift baseline before this run is recorded, so the
+				// report describes the baseline the run was judged against.
+				var drift *types.DriftReport
+				if meta.dynamic && ar.Status == types.StatusHardFail {
+					drift = dynamicDriftReport(historyStore, ar)
+				}
+
 				// E3: Log history store record errors instead of silently discarding.
 				if recErr := historyStore.Record(p.Trace.TraceID, ar.AssertionID, meta.assertionType, ar.Score, ar.Status); recErr != nil {
 					slog.Error("history store record error", "assertion_id", ar.AssertionID, "err", recErr)
@@ -523,22 +531,7 @@ func handleEvaluateBatch(pipeline *assertion.Pipeline, historyStore *cache.Histo
 
 				// Report drift inside the response: stdout carries only
 				// responses to requests the SDK sent.
-				if meta.dynamic && ar.Status == types.StatusHardFail {
-					mean, stddev, count, statsErr := historyStore.Stats(ar.AssertionID)
-					if statsErr != nil {
-						slog.Error("history store stats error", "assertion_id", ar.AssertionID, "err", statsErr)
-						continue
-					}
-					ar.Drift = &types.DriftReport{
-						AssertionID: ar.AssertionID,
-						Mean:        mean,
-						Stddev:      stddev,
-						Count:       count,
-						LatestScore: ar.Score,
-						Deviation:   ar.Score - mean,
-						Status:      "drift_detected",
-					}
-				}
+				ar.Drift = drift
 			}
 		}
 
@@ -588,12 +581,20 @@ func handleQueryDrift(historyStore *cache.HistoryStore) Handler {
 			)
 		}
 
-		windowSize := p.WindowSize
-		if windowSize <= 0 {
-			windowSize = 50
+		// One estimator (C6): the window is fixed, so p.WindowSize does not
+		// change the baseline.
+		cfg := assertion.DefaultDynamicConfig
+		latest, err := historyStore.QueryWindow(p.AssertionID, 1)
+		if err != nil {
+			return nil, types.NewRPCError(
+				types.ErrEngineError,
+				fmt.Sprintf("query_drift failed: %v", err),
+				types.ErrTypeEngineError,
+				false,
+				"error querying assertion history",
+			)
 		}
-
-		scores, err := historyStore.QueryWindow(p.AssertionID, windowSize)
+		baselineScores, err := historyStore.QueryBaseline(p.AssertionID, cfg.WindowSize, true)
 		if err != nil {
 			return nil, types.NewRPCError(
 				types.ErrEngineError,
@@ -604,38 +605,51 @@ func handleQueryDrift(historyStore *cache.HistoryStore) Handler {
 			)
 		}
 
-		mean, stddev, count, err := historyStore.Stats(p.AssertionID)
-		if err != nil {
-			return nil, types.NewRPCError(
-				types.ErrEngineError,
-				fmt.Sprintf("query_drift stats failed: %v", err),
-				types.ErrTypeEngineError,
-				false,
-				"error computing assertion stats",
-			)
-		}
-
 		var latestScore float64
-		if len(scores) > 0 {
-			latestScore = scores[0]
+		if len(latest) > 0 {
+			latestScore = latest[0]
 		}
-
-		deviation := latestScore - mean
+		baseline := assertion.ComputeBaseline(baselineScores, assertion.DefaultThresholds.Pass, cfg)
 
 		report := types.DriftReport{
 			AssertionID: p.AssertionID,
-			Mean:        mean,
-			Stddev:      stddev,
-			Count:       count,
+			Mean:        baseline.Mean,
+			Stddev:      baseline.Stddev,
+			Count:       baseline.Count,
 			LatestScore: latestScore,
-			Deviation:   deviation,
+			Deviation:   latestScore - baseline.Mean,
 			Status:      "ok",
 		}
-		if count > 0 && stddev > 0 && latestScore < mean-stddev {
+		if len(latest) > 0 && baseline.Active && latestScore < baseline.Bar {
 			report.Status = "drift_detected"
 		}
 
 		return &types.QueryDriftResult{Report: report}, nil
+	}
+}
+
+// dynamicDriftReport describes how a hard-failed dynamic assertion departs from
+// its C6 baseline. It returns nil when no baseline is active yet or the read
+// fails: the failure is then against the static threshold, not drift.
+func dynamicDriftReport(historyStore *cache.HistoryStore, ar *types.AssertionResult) *types.DriftReport {
+	cfg := assertion.DefaultDynamicConfig
+	scores, err := historyStore.QueryBaseline(ar.AssertionID, cfg.WindowSize, false)
+	if err != nil {
+		slog.Error("history store baseline error", "assertion_id", ar.AssertionID, "err", err)
+		return nil
+	}
+	baseline := assertion.ComputeBaseline(scores, assertion.DefaultThresholds.Pass, cfg)
+	if !baseline.Active || ar.Score >= baseline.Bar {
+		return nil
+	}
+	return &types.DriftReport{
+		AssertionID: ar.AssertionID,
+		Mean:        baseline.Mean,
+		Stddev:      baseline.Stddev,
+		Count:       baseline.Count,
+		LatestScore: ar.Score,
+		Deviation:   ar.Score - baseline.Mean,
+		Status:      "drift_detected",
 	}
 }
 

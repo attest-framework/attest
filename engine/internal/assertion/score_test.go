@@ -62,70 +62,73 @@ func TestDefaultThresholds(t *testing.T) {
 	}
 }
 
-func TestClassifyDynamic_FallbackWhenBelowMinRuns(t *testing.T) {
-	cfg := assertion.DynamicConfig{WindowSize: 50, SigmaScale: 2.0, MinRuns: 10}
-	// Only 3 history entries — below MinRuns=10, so falls back to ClassifyScore.
+func uniform(n int, v float64) []float64 {
+	out := make([]float64, n)
+	for i := range out {
+		out[i] = v
+	}
+	return out
+}
+
+func TestClassifyDynamic_BelowMinRunsUsesStaticThreshold(t *testing.T) {
+	cfg := assertion.DefaultDynamicConfig
+	// Three entries are below MinRuns, so only the static threshold applies.
 	history := []float64{0.9, 0.85, 0.88}
 
-	cases := []struct {
-		score    float64
-		expected string
-	}{
-		{0.3, types.StatusHardFail}, // ClassifyScore: < 0.5
-		{0.6, types.StatusSoftFail}, // ClassifyScore: 0.5 <= x < 0.8
-		{0.85, types.StatusPass},    // ClassifyScore: >= 0.8
+	if got := assertion.ClassifyDynamic(0.85, history, 0.8, cfg); got != types.StatusPass {
+		t.Errorf("0.85 against static 0.8 = %q, want pass", got)
 	}
-
-	for _, tc := range cases {
-		got := assertion.ClassifyDynamic(tc.score, history, cfg)
-		if got != tc.expected {
-			t.Errorf("ClassifyDynamic(%f, history[3], fallback) = %q, want %q", tc.score, got, tc.expected)
-		}
+	if got := assertion.ClassifyDynamic(0.6, history, 0.8, cfg); got != types.StatusSoftFail {
+		t.Errorf("0.6 against static 0.8 = %q, want soft_fail", got)
+	}
+	if got := assertion.ClassifyDynamic(0.9, []float64{}, 0.8, cfg); got != types.StatusPass {
+		t.Errorf("0.9 with empty history = %q, want pass", got)
 	}
 }
 
-func TestClassifyDynamic_PassAboveThreshold(t *testing.T) {
-	cfg := assertion.DynamicConfig{WindowSize: 50, SigmaScale: 2.0, MinRuns: 5}
-	// mean=0.8, stddev=0 → threshold=0.8; score 0.85 >= 0.8 → pass
-	history := []float64{0.8, 0.8, 0.8, 0.8, 0.8}
+func TestClassifyDynamic_ScoreBelowBarHardFails(t *testing.T) {
+	// mean 0.9, sigma floor 0.02, k=2 -> bar 0.86
+	history := uniform(10, 0.9)
 
-	got := assertion.ClassifyDynamic(0.85, history, cfg)
-	if got != types.StatusPass {
-		t.Errorf("ClassifyDynamic(0.85, uniform-0.8 history) = %q, want %q", got, types.StatusPass)
+	if got := assertion.ClassifyDynamic(0.85, history, 0.8, assertion.DefaultDynamicConfig); got != types.StatusHardFail {
+		t.Errorf("0.85 against bar 0.86 = %q, want hard_fail", got)
+	}
+	if got := assertion.ClassifyDynamic(0.87, history, 0.8, assertion.DefaultDynamicConfig); got != types.StatusPass {
+		t.Errorf("0.87 against bar 0.86 = %q, want pass", got)
 	}
 }
 
-func TestClassifyDynamic_FailBelowThreshold(t *testing.T) {
-	cfg := assertion.DynamicConfig{WindowSize: 50, SigmaScale: 1.0, MinRuns: 5}
-	// mean=0.8, stddev=0 → threshold=0.8; score 0.75 < 0.8 → hard_fail
-	history := []float64{0.8, 0.8, 0.8, 0.8, 0.8}
+func TestClassifyDynamic_SigmaFloorToleratesSteadyHistory(t *testing.T) {
+	// Zero observed sigma: the 0.02 floor gives a 0.04 tolerance below 1.0.
+	history := uniform(10, 1.0)
 
-	got := assertion.ClassifyDynamic(0.75, history, cfg)
-	if got != types.StatusHardFail {
-		t.Errorf("ClassifyDynamic(0.75, uniform-0.8 history) = %q, want %q", got, types.StatusHardFail)
+	if got := assertion.ClassifyDynamic(0.99, history, 0.8, assertion.DefaultDynamicConfig); got != types.StatusPass {
+		t.Errorf("0.99 against steady 1.0 = %q, want pass", got)
+	}
+	if got := assertion.ClassifyDynamic(0.95, history, 0.8, assertion.DefaultDynamicConfig); got != types.StatusHardFail {
+		t.Errorf("0.95 against steady 1.0 = %q, want hard_fail", got)
 	}
 }
 
-func TestClassifyDynamic_ZeroStddevUniformHistory(t *testing.T) {
-	cfg := assertion.DynamicConfig{WindowSize: 50, SigmaScale: 2.0, MinRuns: 5}
-	// All same scores: mean=0.7, stddev=0, threshold=0.7-0=0.7
-	history := []float64{0.7, 0.7, 0.7, 0.7, 0.7}
+func TestClassifyDynamic_BarNeverBelowStaticThreshold(t *testing.T) {
+	// A weak baseline (mean 0.3) must not lower the bar under the static 0.8.
+	history := uniform(10, 0.3)
 
-	// Score exactly at mean: pass
-	if got := assertion.ClassifyDynamic(0.7, history, cfg); got != types.StatusPass {
-		t.Errorf("ClassifyDynamic(0.7, uniform-0.7) = %q, want pass", got)
+	if got := assertion.ClassifyDynamic(0.3, history, 0.8, assertion.DefaultDynamicConfig); got != types.StatusHardFail {
+		t.Errorf("0.3 against weak baseline = %q, want hard_fail", got)
 	}
-	// Score below mean: hard_fail
-	if got := assertion.ClassifyDynamic(0.69, history, cfg); got != types.StatusHardFail {
-		t.Errorf("ClassifyDynamic(0.69, uniform-0.7) = %q, want hard_fail", got)
+	if got := assertion.ClassifyDynamic(0.0, uniform(10, 0.0), 0.8, assertion.DefaultDynamicConfig); got != types.StatusHardFail {
+		t.Errorf("0.0 against all-zero baseline = %q, want hard_fail", got)
 	}
 }
 
-func TestClassifyDynamic_EmptyHistory(t *testing.T) {
-	cfg := assertion.DynamicConfig{WindowSize: 50, SigmaScale: 2.0, MinRuns: 5}
-	// Empty history — len(0) < MinRuns(5), falls back to ClassifyScore.
-	got := assertion.ClassifyDynamic(0.9, []float64{}, cfg)
-	if got != types.StatusPass {
-		t.Errorf("ClassifyDynamic(0.9, empty) = %q, want pass", got)
+func TestComputeBaseline_UsesOnlyTheNewestWindow(t *testing.T) {
+	// 50 newest scores at 1.0, then 20 older at 0.0: the window excludes the zeros.
+	history := append(uniform(50, 1.0), uniform(20, 0.0)...)
+
+	b := assertion.ComputeBaseline(history, 0.8, assertion.DefaultDynamicConfig)
+
+	if b.Count != 50 || b.Mean != 1.0 || !b.Active {
+		t.Errorf("baseline = %+v, want count 50 mean 1.0 active", b)
 	}
 }

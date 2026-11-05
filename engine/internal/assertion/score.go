@@ -48,26 +48,61 @@ func ClassifyScoreWithThreshold(score, passThreshold, softThreshold float64) str
 	}
 }
 
-// DynamicConfig holds parameters for dynamic threshold classification.
+// DynamicConfig holds the drift estimator parameters (contract C6): one
+// estimator serves classification, query_drift and result.drift.
 type DynamicConfig struct {
+	// WindowSize is the number of most recent passing or soft scores used.
 	WindowSize int
+	// SigmaScale is k in the bar mean − k·σ.
 	SigmaScale float64
-	MinRuns    int
+	// SigmaFloor is the smallest σ used, so a perfectly steady history does
+	// not turn measurement noise into a failure.
+	SigmaFloor float64
+	// MinRuns is the number of baseline scores required before the history
+	// replaces the static threshold.
+	MinRuns int
 }
 
-// DefaultDynamicConfig provides sensible defaults for dynamic classification.
-var DefaultDynamicConfig = DynamicConfig{WindowSize: 50, SigmaScale: 2.0, MinRuns: 10}
+// DefaultDynamicConfig is the C6 estimator: window 50, k=2, σ floor 0.02.
+var DefaultDynamicConfig = DynamicConfig{WindowSize: 50, SigmaScale: 2.0, SigmaFloor: 0.02, MinRuns: 10}
 
-// ClassifyDynamic classifies a score using a historical baseline.
-// When len(history) < cfg.MinRuns, falls back to ClassifyScore.
-// Otherwise: pass if score >= mean - sigmaScale*stddev, hard_fail otherwise.
-func ClassifyDynamic(score float64, history []float64, cfg DynamicConfig) string {
-	if len(history) < cfg.MinRuns {
-		return ClassifyScore(score)
+// DynamicBaseline is the estimator output for one assertion.
+type DynamicBaseline struct {
+	Mean   float64
+	Stddev float64 // raw population σ of the window, before the floor
+	Count  int     // baseline scores used
+	Bar    float64 // pass bar: max(static, mean − k·max(σ, floor))
+	Active bool    // Count >= MinRuns; otherwise only the static threshold applies
+}
+
+// ComputeBaseline applies the C6 estimator to history, newest score first.
+// The caller supplies passing and soft scores only: a failure must never
+// become the bar. The bar is never below the static threshold.
+func ComputeBaseline(history []float64, static float64, cfg DynamicConfig) DynamicBaseline {
+	if len(history) > cfg.WindowSize {
+		history = history[:cfg.WindowSize]
 	}
 	mean, stddev := computeStats(history)
-	threshold := mean - cfg.SigmaScale*stddev
-	if score >= threshold {
+	sigma := math.Max(stddev, cfg.SigmaFloor)
+	return DynamicBaseline{
+		Mean:   mean,
+		Stddev: stddev,
+		Count:  len(history),
+		Bar:    math.Max(static, mean-cfg.SigmaScale*sigma),
+		Active: len(history) >= cfg.MinRuns,
+	}
+}
+
+// ClassifyDynamic classifies a score against a historical baseline of passing
+// and soft scores (newest first). Below cfg.MinRuns it uses the static
+// threshold alone; otherwise a score below the bar is a hard_fail. The bar
+// never falls under static.
+func ClassifyDynamic(score float64, history []float64, static float64, cfg DynamicConfig) string {
+	b := ComputeBaseline(history, static, cfg)
+	if !b.Active {
+		return ClassifyScoreWithThreshold(score, static, DefaultThresholds.Soft)
+	}
+	if score >= b.Bar {
 		return types.StatusPass
 	}
 	return types.StatusHardFail

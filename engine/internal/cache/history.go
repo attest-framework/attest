@@ -299,6 +299,42 @@ func (h *HistoryStore) QueryWindow(assertionID string, windowSize int) ([]float6
 	return scores, nil
 }
 
+// QueryBaseline returns up to windowSize scores of passing and soft-failing
+// runs for assertionID, newest first. Hard failures never enter a baseline, so
+// a run of failures cannot become the bar. With excludeLatest the newest row
+// of any status is left out, which is the baseline the newest run was judged
+// against.
+func (h *HistoryStore) QueryBaseline(assertionID string, windowSize int, excludeLatest bool) ([]float64, error) {
+	query := `SELECT score FROM assertion_history
+		 WHERE assertion_id = ? AND status IN (?, ?)`
+	args := []any{assertionID, types.StatusPass, types.StatusSoftFail}
+	if excludeLatest {
+		query += ` AND id < (SELECT COALESCE(MAX(id), 0) FROM assertion_history WHERE assertion_id = ?)`
+		args = append(args, assertionID)
+	}
+	query += ` ORDER BY id DESC LIMIT ?`
+	args = append(args, windowSize)
+
+	rows, err := h.db.Query(query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("query baseline: %w", err)
+	}
+	defer rows.Close()
+
+	var scores []float64
+	for rows.Next() {
+		var s float64
+		if err := rows.Scan(&s); err != nil {
+			return nil, fmt.Errorf("scan baseline score: %w", err)
+		}
+		scores = append(scores, s)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("query baseline rows: %w", err)
+	}
+	return scores, nil
+}
+
 // Stats computes the mean, population standard deviation, and count of all scores
 // for the given assertionID. Returns zero values when no rows exist.
 // Uses a single query with the statistical identity: stddev = sqrt(avg(x^2) - avg(x)^2).
