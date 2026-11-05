@@ -1,6 +1,7 @@
 import { EventEmitter } from "node:events";
 import type { Assertion, EvaluateBatchResult, Trace } from "./proto/types.js";
 import type { AttestClient } from "./client.js";
+import { AssertionIdAssigner } from "./assertion-id.js";
 
 const DEFAULT_QUEUE_SIZE = 1000;
 
@@ -92,7 +93,9 @@ export class ContinuousEvalRunner {
   constructor(
     client: AttestClient,
     assertions: readonly Assertion[],
-    options?: {
+    options: {
+      /** Id scope of the assertions (C3): their ids derive from this name, so keep it stable. */
+      name: string;
       sampleRate?: number;
       alertWebhook?: string;
       alertSlackUrl?: string;
@@ -100,10 +103,18 @@ export class ContinuousEvalRunner {
     },
   ) {
     this.client = client;
-    this.assertions = assertions;
-    this.sampler = new Sampler(options?.sampleRate ?? 1.0);
-    this.dispatcher = new AlertDispatcher(options?.alertWebhook, options?.alertSlackUrl);
-    this.maxSize = options?.maxSize ?? resolveQueueSize();
+    if (typeof options?.name !== "string" || options.name === "") {
+      throw new Error("ContinuousEvalRunner requires options.name: it is the scope of the assertion ids");
+    }
+    const ids = new AssertionIdAssigner(options.name);
+    this.assertions = assertions.map((a) => ({
+      ...a,
+      assertion_id: ids.next(a.type, a.spec),
+      scope_id: options.name,
+    }));
+    this.sampler = new Sampler(options.sampleRate ?? 1.0);
+    this.dispatcher = new AlertDispatcher(options.alertWebhook, options.alertSlackUrl);
+    this.maxSize = options.maxSize ?? resolveQueueSize();
   }
 
   get alertEmitter(): AlertDispatcher {

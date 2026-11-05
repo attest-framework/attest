@@ -91,13 +91,38 @@ export class WorldChecks<C> {
   }
 }
 
+type ChainObserver = (chain: ExpectChain) => void;
+
+let chainObserver: ChainObserver | undefined;
+
+/**
+ * Register the function called with every new {@link ExpectChain}. The Vitest integration uses
+ * it to fail a test that builds a chain it never evaluates. One observer at a time; pass
+ * `undefined` to remove it.
+ */
+export function setChainObserver(observer: ChainObserver | undefined): void {
+  chainObserver = observer;
+}
+
 export class ExpectChain {
   private readonly _result: AgentResult;
   private readonly _assertions: Assertion[] = [];
   private _worldBytes = 0;
+  private _evaluated = false;
 
   constructor(result: AgentResult) {
     this._result = result;
+    chainObserver?.(this);
+  }
+
+  /** True once the chain was handed to an evaluation. */
+  get evaluated(): boolean {
+    return this._evaluated;
+  }
+
+  /** Record that the chain was handed to an evaluation. */
+  markEvaluated(): void {
+    this._evaluated = true;
   }
 
   get assertions(): Assertion[] {

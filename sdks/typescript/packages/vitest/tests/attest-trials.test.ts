@@ -10,7 +10,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { deterministicAssertionId } from "../src/test-state.js";
+import { attestExpect, TraceBuilder, assertionIdOf } from "@attest-ai/core";
 import { engine, reportV2Validator } from "./report-schema.js";
 
 const pkgDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -69,7 +69,11 @@ describe.skipIf(!existsSync(engine))("trials() (real engine)", () => {
     expect(refunds).toMatchObject({ outcome: "passed", trials: 4 });
     expect(refunds.test_id).toBe(`${fixture} > refund desk > refunds once`);
     expect([...refunds.assertion_ids].sort()).toEqual(
-      [deterministicAssertionId(refunds.test_id, 0), deterministicAssertionId(refunds.test_id, 1)].sort(),
+      attestExpect(new TraceBuilder("agent").setOutput({ message: "x" }).build())
+        .outputContains("refund")
+        .requiredTools(["lookup_order"])
+        .assertions.map((a) => assertionIdOf(refunds.test_id, a.type, a.spec, 0))
+        .sort(),
     );
 
     const rows = report.results.filter((r) => r.test_id === refunds.test_id);

@@ -1,6 +1,7 @@
 export { attestGlobalSetup } from "./plugin.js";
 export type { AttestGlobalSetupOptions } from "./plugin.js";
-export { AttestEngineFixture, useAttest, evaluate, inspect, enforceOutcome } from "./fixtures.js";
+import { installChainGuard } from "./chain-guard.js";
+export { attestPlugins, AttestEngineFixture, useAttest, evaluate, inspect, enforceOutcome } from "./fixtures.js";
 export type { EvaluateOptions, InspectOptions } from "./fixtures.js";
 export { trials, MIN_PASS_RATE_ENV } from "./trials.js";
 export type { TrialsOptions } from "./trials.js";
@@ -31,3 +32,6 @@ export {
   WorldError,
 } from "@attest-ai/core";
 export type { ReplaySession, ReplaySummary, WorldOptions, WorldSession, WorldSnapshot } from "@attest-ai/core";
+
+// Importing the package turns on the check that fails a test with an unevaluated expect() chain.
+installChainGuard();
