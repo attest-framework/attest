@@ -195,6 +195,19 @@ describe("downloadEngine against a local https release", () => {
     expect(Date.now() - started).toBeLessThan(5000);
   });
 
+  it("turns a malformed redirect Location into a download failure instead of crashing", async () => {
+    shipTable("engine");
+    routes.set(ASSET_PATH, (res) => {
+      res.writeHead(302, { Location: "http://a b" });
+      res.end();
+    });
+
+    await expect(downloadEngine(options())).rejects.toThrow(
+      /Failed to download engine from .*Invalid redirect Location "http:\/\/a b"/,
+    );
+    expect(cachedEnginePath()).toBeNull();
+  });
+
   it("names ATTEST_ENGINE_PATH and make engine when the install has no table, and never fetches", async () => {
     serve("engine");
 

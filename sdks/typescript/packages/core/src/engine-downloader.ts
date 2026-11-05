@@ -16,14 +16,14 @@ const SHA256_HEX = /^[0-9a-f]{64}$/;
 
 /**
  * Seams for tests. Production calls `downloadEngine()` with none of them. Every option keeps
- * https-only and certificate verification on; `ca` adds a trusted root, it never disables checks.
+ * https-only and certificate verification on; `ca` swaps the trusted roots, it never disables checks.
  */
 export interface DownloadOptions {
   /** Release asset base URL (default: GitHub Releases for `ENGINE_VERSION`). */
   releaseBase?: string;
   /** Path of the embedded hash table (default: the one shipped in this package). */
   tablePath?: string;
-  /** Extra trusted root certificate (PEM). */
+  /** Trusted root certificates (PEM). Node's `ca` replaces the default CA list rather than extending it. */
   ca?: string | Buffer;
   /** Connect timeout, and the longest silence tolerated mid-transfer. */
   connectTimeoutMs?: number;
@@ -80,7 +80,9 @@ export function cachedEnginePath(): string | null {
 }
 
 function packageRoot(): string {
-  let dir = path.dirname(fileURLToPath(import.meta.url));
+  // __dirname exists in the CJS build; deriving it from a file: URL there would cut the path at
+  // a '#' or '?' in the install directory.
+  let dir = typeof __dirname === "string" ? __dirname : path.dirname(fileURLToPath(import.meta.url));
   while (!fs.existsSync(path.join(dir, "package.json"))) {
     const parent = path.dirname(dir);
     if (parent === dir) return dir;
@@ -161,7 +163,14 @@ function httpsGet(url: string, o: Required<Pick<DownloadOptions, "connectTimeout
             finish(new Error(`Redirect ${status} without Location header from ${target}`));
             return;
           }
-          hop(new URL(location, parsed).toString(), redirects + 1);
+          let next: string;
+          try {
+            next = new URL(location, parsed).toString();
+          } catch {
+            finish(new Error(`Invalid redirect Location ${JSON.stringify(location)} from ${target}`));
+            return;
+          }
+          hop(next, redirects + 1);
           return;
         }
         if (status !== 200) {
