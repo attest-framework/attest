@@ -15,6 +15,7 @@ const pkgDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const fixture = "tests/e2e/reporter.fixture.ts";
 
 interface Report {
+  tests_collected: number;
   summary: Record<string, number>;
   results: Array<{ status: string; test_id: string; file: string; line: number }>;
   tests: Array<{ name: string; file: string; line: number; outcome: string; not_evaluated_reasons?: string[] }>;
@@ -66,7 +67,44 @@ describe.skipIf(!existsSync(engine))("AttestReporter (real engine)", () => {
     expect(failing).toEqual([
       expect.objectContaining({ test_id: `${fixture} > fails`, file: fixture, line: lineOf("fails") }),
     ]);
+    expect(report.tests_collected).toBe(6);
     // The retried test reports only its passing attempt.
     expect(report.summary).toMatchObject({ total: 5, passed: 3, hard_fail: 1, not_evaluated: 1 });
   }, 60_000);
+
+  it.each(["threads", "forks"])(
+    "aggregates every test and failing row across files under --pool=%s",
+    (pool) => {
+      const out = join(mkdtempSync(join(tmpdir(), "attest-reporter-pool-")), "r.json");
+      const proc = spawnSync(
+        join(pkgDir, "node_modules/.bin/vitest"),
+        ["run", "--config", "tests/e2e/vitest.pool.config.ts", `--pool=${pool}`, `--outputFile.attest=${out}`],
+        {
+          cwd: pkgDir,
+          encoding: "utf8",
+          env: {
+            PATH: process.env["PATH"] ?? "",
+            HOME: tmpdir(),
+            ATTEST_ENGINE_PATH: engine,
+            ATTEST_ENGINE_NO_DOWNLOAD: "1",
+          },
+        },
+      );
+      expect(proc.status, proc.stdout + proc.stderr).toBe(1);
+
+      const report = JSON.parse(readFileSync(out, "utf8")) as Report;
+      const validate = reportV2Validator();
+      expect(validate(report), JSON.stringify(validate.errors)).toBe(true);
+      // Three files: 3 passing, 6 failing, 1 skipped.
+      expect(report.tests_collected).toBe(10);
+      expect(report.tests).toHaveLength(10);
+      expect(new Set(report.tests.map((t) => t.file))).toEqual(
+        new Set(["a", "b", "c"].map((n) => `tests/e2e/pool/${n}.fixture.ts`)),
+      );
+      expect(report.tests.filter((t) => t.outcome === "failed")).toHaveLength(6);
+      expect(report.results.filter((r) => r.status === "hard_fail")).toHaveLength(6);
+      expect(report.summary).toMatchObject({ total: 9, passed: 3, hard_fail: 6, not_evaluated: 0 });
+    },
+    60_000,
+  );
 });
