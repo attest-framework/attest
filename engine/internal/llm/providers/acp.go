@@ -163,37 +163,40 @@ func (p *ACP) Complete(ctx context.Context, req *llm.CompletionRequest) (*llm.Co
 	}, nil
 }
 
-// AgentScrubbedVars are removed from the agent's environment, along with
-// every ATTEST_JUDGE_* variable: provider API keys and tokens, and the
-// endpoint and backend switches that would route the agent to API billing
-// (or another endpoint) instead of the developer's subscription.
-var AgentScrubbedVars = []string{
-	"OPENAI_API_KEY", "OPENAI_BASE_URL", "CODEX_API_KEY",
-	"ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL",
-	"CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX",
-	"GEMINI_API_KEY", "GOOGLE_API_KEY",
+// agentEnvNames are the only variables, besides the LC_* locale family, the
+// ACP agent inherits: process basics, the Windows system variables a child
+// cannot start without, proxy and CA settings for corporate networks, and the
+// three variables that carry the agent's own session login. The allowlist
+// takes precedence over the redact suffix rule, so CLAUDE_CODE_OAUTH_TOKEN
+// passes although its name ends in TOKEN. Everything else, including every
+// provider key and ATTEST_JUDGE_* switch, is dropped.
+var agentEnvNames = []string{
+	"PATH", "HOME", "USER", "LOGNAME", "SHELL", "TMPDIR", "TERM", "LANG",
+	"CLAUDE_CODE_OAUTH_TOKEN", "CLAUDE_CONFIG_DIR", "CODEX_HOME",
+	"USERPROFILE", "APPDATA", "LOCALAPPDATA", "SYSTEMROOT", "COMSPEC", "PATHEXT",
+	"TEMP", "TMP", "HOMEDRIVE", "HOMEPATH",
+	"HTTPS_PROXY", "HTTP_PROXY", "NO_PROXY", "https_proxy", "http_proxy", "no_proxy",
+	"SSL_CERT_FILE", "NODE_EXTRA_CA_CERTS",
 }
 
-// agentEnv is the engine's environment minus AgentScrubbedVars and every
-// ATTEST_JUDGE_* variable. The rest is inherited, because the agent needs
-// HOME, PATH and its own configuration to find the developer's login.
+// agentEnv is the engine's environment reduced to the allowlist.
 func agentEnv() []string {
-	return scrubAgentEnv(os.Environ(), runtime.GOOS == "windows")
+	return allowlistedAgentEnv(os.Environ(), runtime.GOOS == "windows")
 }
 
-// scrubAgentEnv filters env. Windows variable names are case-insensitive,
-// so there names are compared in upper case.
-func scrubAgentEnv(env []string, foldCase bool) []string {
+// allowlistedAgentEnv keeps the entries of env whose names are allowlisted.
+// Windows variable names are case-insensitive, so there both the name and the
+// allowlist are compared in upper case; elsewhere names match exactly.
+func allowlistedAgentEnv(env []string, foldCase bool) []string {
 	out := env[:0:0]
 	for _, kv := range env {
 		name, _, _ := strings.Cut(kv, "=")
 		if foldCase {
 			name = strings.ToUpper(name)
 		}
-		if strings.HasPrefix(name, "ATTEST_JUDGE_") || slices.Contains(AgentScrubbedVars, name) {
-			continue
+		if strings.HasPrefix(name, "LC_") || slices.Contains(agentEnvNames, name) {
+			out = append(out, kv)
 		}
-		out = append(out, kv)
 	}
 	return out
 }

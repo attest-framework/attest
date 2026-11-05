@@ -15,11 +15,11 @@ import (
 )
 
 // TestMain lets this test binary act as the stub ACP agent named by
-// ATTEST_JUDGE_ACP_COMMAND: with acptest.StubEnv set it serves the scenario
-// on stdio instead of running tests.
+// ATTEST_JUDGE_ACP_COMMAND: started with a scenario flag (acptest.Command) it
+// serves the scenario on stdio instead of running tests.
 func TestMain(m *testing.M) {
-	if scenario := os.Getenv(acptest.StubEnv); scenario != "" {
-		if err := acptest.Serve(os.Stdin, os.Stdout, scenario); err != nil {
+	if scenario, pidFile := acptest.ScenarioFromArgs(os.Args[1:]); scenario != "" {
+		if err := acptest.Serve(os.Stdin, os.Stdout, scenario, pidFile); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
 		}
@@ -36,8 +36,7 @@ func configureACPJudge(t *testing.T, scenario string) {
 		os.Unsetenv(k)
 	}
 	t.Setenv("ATTEST_JUDGE_PROVIDER", "acp")
-	t.Setenv("ATTEST_JUDGE_ACP_COMMAND", os.Args[0])
-	t.Setenv(acptest.StubEnv, scenario)
+	t.Setenv("ATTEST_JUDGE_ACP_COMMAND", acptest.Command(scenario, ""))
 }
 
 func TestHandler_ACPJudge_StubAgentEvaluatesL6(t *testing.T) {
