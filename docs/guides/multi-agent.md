@@ -266,7 +266,7 @@ def test_choreography(attest):
             ("orchestrator", "writer"),
             ("researcher", "writer"),
         ])
-        # Data flow — researcher findings reach writer (the writer's step input must carry `findings`)
+        # Data flow — researcher findings reach writer (the writer's input must carry `findings`)
         .cross_agent_data_flow(
             from_agent="researcher",
             to_agent="writer",
