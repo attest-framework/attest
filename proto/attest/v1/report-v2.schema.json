@@ -7,6 +7,14 @@
   "required": ["report_version", "timestamp", "summary", "results", "tests", "total_cost", "total_duration_ms"],
   "properties": {
     "report_version": { "const": 2 },
+    "id_scheme": {
+      "description": "Assertion id scheme of results[].assertion_id. 2 is contract C3: a stable hash of the scope id, assertion type, canonical spec and occurrence index. A report without the field uses scheme 1 (ordinal or random ids). `attest policy evaluate --baseline` exits 3 when the baseline is not scheme 2.",
+      "enum": [1, 2]
+    },
+    "budget_exceeded": {
+      "description": "True when any evaluate_batch of the run returned budget_exceeded, that is, the engine session passed ATTEST_MAX_SOFT_FAILURES. Every result is still present. `attest policy evaluate` blocks on it.",
+      "type": "boolean"
+    },
     "timestamp": { "type": "string", "format": "date-time" },
     "simulated": { "type": "boolean" },
     "summary": {
@@ -117,6 +125,8 @@
       "required": ["assertion_id", "status"],
       "properties": {
         "assertion_id": { "type": "string", "minLength": 1 },
+        "scope_id": { "description": "C3 scope of the assertion id: the test node id, or the ContinuousEvalRunner name outside tests. With type and spec_hash it lets a baseline comparison report a spec edit as changed instead of removed (C4).", "type": "string", "minLength": 1 },
+        "spec_hash": { "description": "Lowercase hex sha256 of the assertion spec in canonical JSON (object keys sorted, no insignificant whitespace). The engine computes it and echoes scope_id from the evaluate_batch assertion.", "type": "string", "pattern": "^[0-9a-f]{64}$" },
         "status": { "$ref": "#/$defs/status" },
         "reason": { "$ref": "#/$defs/reason" },
         "score": { "type": "number" },

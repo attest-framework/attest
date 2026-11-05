@@ -329,8 +329,9 @@ Capabilities are additive. New capabilities never remove or alter old ones, with
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `assertion_id` | string | yes | Unique identifier within this batch. Echoed in results. |
-| `type` | string | yes | Assertion layer type. One of: `schema`, `constraint`, `trace`, `content`, `embedding`, `llm_judge` |
-| `spec` | object | yes | Type-specific assertion parameters. See Section 4. |
+| `type` | string | yes | Assertion layer type. One of: `schema`, `constraint`, `trace`, `content`, `embedding`, `llm_judge`, `plugin` |
+| `spec` | object | yes | Type-specific assertion parameters. See Section 4. A `plugin` spec is `{"plugin_id": string, "soft": bool}`; `plugin_id` must equal the `plugin_name` of the submitted result (see 2.4). |
+| `scope_id` | string | no | The scope the SDK computed the assertion id in (the test node id, or the `ContinuousEvalRunner` name outside tests). The engine echoes it on the result row. SDKs send it on every assertion; a baseline comparison cannot tell a spec edit from a removal without it. |
 | `request_id` | string | no | Idempotency key. If the same `request_id` is submitted twice, the engine returns the cached result. |
 
 **Optional `budget` param:** `params.budget` limits the attest-initiated model calls of this batch on top of the session budget (`ATTEST_MAX_JUDGE_CALLS`, `ATTEST_BUDGET_USD`). SDKs send the remainder of a test's budget marker here.
@@ -433,6 +434,10 @@ Every model call reserves one call and its worst-case cost (price × prompt byte
 }
 ```
 
+**`budget_exceeded`** is `true` (and omitted otherwise) when this batch pushed the engine session past `ATTEST_MAX_SOFT_FAILURES`. The batch still evaluates every assertion and returns every row, hard failures included; the flag is batch-level and is not a `not_evaluated` reason. SDKs OR it across the batches of a run into the report's top-level `budget_exceeded`, and `attest policy evaluate` blocks on it. A soft-fail budget breach is never an `ENGINE_ERROR`.
+
+**Result row additions:** every row also carries `scope_id` (echo of the assertion's `scope_id`, when sent) and `spec_hash` (lowercase hex sha256 of the assertion `spec` in canonical JSON: object keys sorted, no insignificant whitespace). The engine computes `spec_hash`; SDKs copy rows into the report unchanged. `assertion_id` is opaque to the engine; the SDKs compute it under id scheme 2 (reports and baselines carry `id_scheme: 2`).
+
 **`usage`** counts the batch's attest-initiated model calls: `model_calls` sent (failed requests included) and `judge_calls`, the judge-provider part of them that `max_judge_calls` limits, `input_tokens` / `output_tokens` / `cached_tokens` (provider prompt-cache reads, included in `input_tokens`), `cost_usd` reconciled from the reported tokens at the configured price, `retry_cost_usd` (the part of `cost_usd` spent on retried requests), `unpriced_calls` (calls whose model has no price, so `cost_usd` excludes them) and `budget_refused` (calls not sent because no budget remained). Judge-cache hits make no call. `generate_user_message` calls count against the session budget (a refusal is a non-retryable engine error) but are not part of any batch's `usage`.
 
 **Result object fields:**
@@ -524,9 +529,20 @@ The engine drains in-flight evaluations for up to 30 seconds, then exits regardl
 
 ### 2.4 `submit_plugin_result`
 
-Enables SDK-side custom assertions. The SDK executes custom assertion logic in its own language runtime (Python, TypeScript, Go) and submits the pre-computed result to the engine for recording, aggregation, and reporting.
+Enables SDK-side custom assertions (`.plugin()`). The SDK executes the plugin in its own runtime and submits the pre-computed result; the engine never runs plugin code.
 
-This design avoids embedding a Python or JavaScript runtime inside the Go engine binary. The engine treats plugin results identically to natively evaluated assertions for reporting purposes.
+**Flow.** For each plugin assertion of a batch the SDK (1) runs the plugin, (2) sends `submit_plugin_result` with the batch's `trace_id` and the assertion's `assertion_id`, and only then (3) sends `evaluate_batch` containing an assertion of `type: "plugin"` with that `assertion_id` and `spec.plugin_id` equal to the submitted `plugin_name`. The engine stores the result in memory per `(trace_id, assertion_id)` (a later submission replaces an earlier one) and the `plugin` evaluator reports it:
+
+| State at `evaluate_batch` | Row |
+|---|---|
+| Result submitted, `plugin_name` equals `spec.plugin_id` | `status`, `score` and `explanation` of the submitted result |
+| No result submitted | `not_evaluated`, reason `missing_evidence` |
+| Result submitted by a different plugin name | `hard_fail` naming both plugins |
+| `spec.plugin_id` missing | `hard_fail` |
+
+A plugin row never short-circuits other assertions: it is evaluated in every batch (also in simulation mode and after an L1-4 hard failure, since the result is already computed) and its failure does not gate L5/L6, which still run. Plugin rows count against the soft-fail budget like any other row. The engine records the row in the history store at `evaluate_batch`, not at submit.
+
+The engine rejects a submission whose `result.status` is not `pass`, `soft_fail` or `hard_fail`, or whose `result.score` is outside [0, 1], with `ASSERTION_ERROR` (`invalid submit_plugin_result params`).
 
 #### Request
 

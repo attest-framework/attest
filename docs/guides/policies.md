@@ -40,6 +40,11 @@ failure_classes:
 # Needs --baseline: block assertions that passed in the baseline and do not now.
 block_on_regression: true
 
+# Needs --baseline: block baselined assertion ids missing from the report.
+# On by default when --baseline is given; list the ids whose removal is accepted.
+block_on_removal: true
+allow_removed: []
+
 # Needs --baseline and fixed-N trials: statistical comparison of pass rates.
 regression: { confidence: 0.95, tolerance: 0.05 }
 
@@ -67,9 +72,13 @@ uv run attest policy evaluate --policy attest.policy.yaml --report attest-report
 
 A score below `score` is a violation named `min_mutation_score` with the rule's severity, so it exits 1 (`block`) or 2 (`warn`). A report with no score (no mutant could be scored) cannot meet a threshold and is also a violation. `score` must be between 0 and 1 and is required; a policy that sets the rule without `--mutation` is a load error (exit 3), so the gate cannot be skipped by forgetting the file. `--mutation` without the rule changes nothing.
 
+## Budget exceeded
+
+A run whose engine session passed `ATTEST_MAX_SOFT_FAILURES` still reports every assertion, hard failures included, and the report carries `budget_exceeded: true`. `attest policy evaluate` adds a `budget_exceeded` violation with the policy severity (default `block`), so a breach never hides a failure and never passes silently.
+
 ## Baselines
 
-`--baseline <tag>` adds the comparison described in [baselines](baselines.md) and activates `block_on_regression` and `regression`. A policy that sets either rule without `--baseline` is a load error: `attest policy evaluate` exits 3 and names `--baseline` on stderr, so the gate cannot be skipped by forgetting the flag. `block_on_regression: false` needs no baseline. `--baseline` always computes the baseline delta, with or without either rule, and a tag with no pinned baseline exits 3 (`no baseline pinned with tag ...`).
+`--baseline <tag>` adds the comparison described in [baselines](baselines.md) and activates `block_on_regression` and `regression`, and turns on `block_on_removal` (see [removed and changed assertions](baselines.md#removed-and-changed-assertions)). A policy that sets either rule without `--baseline` is a load error: `attest policy evaluate` exits 3 and names `--baseline` on stderr, so the gate cannot be skipped by forgetting the flag. `block_on_regression: false` needs no baseline. `--baseline` always computes the baseline delta, with or without either rule, and a tag with no pinned baseline exits 3 (`no baseline pinned with tag ...`).
 
 ## Report completeness
 
