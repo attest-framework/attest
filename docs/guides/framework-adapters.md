@@ -50,6 +50,7 @@ def test_explains_recursion(attest):
     trace = adapter.trace_from_response(
         response,
         input_messages=[{"role": "user", "content": "Explain recursion"}],
+        cost_usd=0.002,
     )
 
     result = AgentResult(trace=trace)

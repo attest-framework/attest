@@ -243,14 +243,14 @@ attest.evaluate(
 
 ## Choreography Validation
 
-Choreography validation ensures agents interact according to a defined protocol. Combine `follows_transitions` with other assertions to fully validate multi-agent workflows:
+Choreography validation ensures agents interact according to a defined protocol. Combine `follows_transitions` with other assertions to fully validate multi-agent workflows. `run_my_pipeline` stands for your own agent; for `cross_agent_data_flow` the trace must record the receiving agent's input with the field (`writer.set_input(findings=...)` on a `delegate()` sub-trace):
 
 ```python
 from attest import expect
 
 
-def test_research_pipeline(attest):
-    result = run_research_pipeline("AI testing frameworks")  # your agent's AgentResult
+def test_choreography(attest):
+    result = run_my_pipeline("AI testing frameworks")  # your agent's AgentResult
     tree = result.trace_tree()
 
     attest.evaluate(
@@ -266,7 +266,7 @@ def test_research_pipeline(attest):
             ("orchestrator", "writer"),
             ("researcher", "writer"),
         ])
-        # Data flow — researcher findings reach writer
+        # Data flow — researcher findings reach writer (the writer's step input must carry `findings`)
         .cross_agent_data_flow(
             from_agent="researcher",
             to_agent="writer",
@@ -441,18 +441,47 @@ This combines ordering and overlap assertions in a single call:
 
 ### Temporal Assertion Example
 
-End-to-end test combining structural, choreography, and temporal assertions, on a `run_research_pipeline` like the one in the complete example extended with a `context-loader` agent that runs in parallel with `researcher`:
+End-to-end test combining structural, choreography, and temporal assertions. Temporal assertions read `started_at_ms` and `ended_at_ms` from the steps of each agent, and match steps by `agent_id`, so the trace must carry all three on every agent's steps, the orchestrator's own included. `delegate()` alone does not set them; pass them to each `add_*_call`, as `run_timed_pipeline` does with a `context-loader` agent that runs in parallel with `researcher`:
 
 ```python
-from attest import expect
+from attest import AgentResult, TraceBuilder, expect
+from attest.delegate import delegate
 from attest.simulation import scenario, repeat, FRIENDLY_USER
+from attest.simulation._context import _active_builder
+
+
+def run_timed_pipeline(query: str) -> AgentResult:
+    parent = TraceBuilder(agent_id="orchestrator")
+    parent.set_input(query=query)
+    token = _active_builder.set(parent)
+    try:
+        parent.add_llm_call(
+            "plan", agent_id="orchestrator", result={"plan": "fan out, then write"},
+            started_at_ms=0, ended_at_ms=50,
+        )
+        for name, start, end in [
+            ("researcher", 100, 1000),
+            ("context-loader", 100, 900),
+            ("writer", 1100, 1800),
+        ]:
+            with delegate(name) as agent:
+                agent.add_tool_call(
+                    f"{name}_step", agent_id=name, args={}, result={"findings": "f"},
+                    started_at_ms=start, ended_at_ms=end,
+                )
+                agent.set_output(message=f"{name} done. Report", findings="f")
+        parent.set_output(message="Pipeline complete. Report ready.")
+        parent.set_metadata(total_tokens=1500, cost_usd=0.015, latency_ms=2000)
+    finally:
+        _active_builder.reset(token)
+    return AgentResult(trace=parent.build())
 
 
 def test_pipeline_timing(attest):
     @repeat(n=3)
     @scenario(persona=FRIENDLY_USER, seed=42)
     def trial(persona):
-        result = run_research_pipeline("AI testing frameworks")
+        result = run_timed_pipeline("AI testing frameworks")
 
         return attest.inspect(
             expect(result)
