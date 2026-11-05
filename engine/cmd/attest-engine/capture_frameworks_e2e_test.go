@@ -34,7 +34,7 @@ func TestCaptureFrom_FrameworkRoutes_Verified(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			dir := t.TempDir()
 			stdout, stderr, code := runEngine(t, bin, t.TempDir(), "capture", "--name", name, "--from", frameworkFixture(t, "otlp/"+name+".otlp.json"), "--out-dir", dir)
-			if code != 0 || !strings.Contains(stdout, want) || !strings.Contains(stdout, "verified: every drafted contract passes") {
+			if code != 0 || !strings.Contains(stdout, want) || !strings.Contains(stdout, "consistent with the recording: every drafted contract passes") {
 				t.Fatalf("exit %d, want %q\n%s%s", code, want, stdout, stderr)
 			}
 		})

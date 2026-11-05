@@ -232,7 +232,7 @@ func TestCaptureCommand_IncidentWithoutExpectFail_DraftsObservedMaxAndVerifies(t
 
 	r := runCaptureCommand(t, bin, fakeModel(t), t.TempDir())
 
-	if r.code != 0 || !strings.Contains(r.stderr, "verified: every drafted contract passes") {
+	if r.code != 0 || !strings.Contains(r.stderr, "consistent with the recording: every drafted contract passes") {
 		t.Fatalf("exit %d\n%s", r.code, r.stderr)
 	}
 	if !bytes.Contains(r.fixture, []byte(`"description": "issue_refund at most 2× per order_id (observed maximum)"`)) {
