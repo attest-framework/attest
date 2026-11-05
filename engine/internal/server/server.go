@@ -234,7 +234,9 @@ func (s *Server) dispatch(ctx context.Context, line []byte) *types.Response {
 
 	if req.JSONRPC != "2.0" || req.Method == "" {
 		s.logger.Error("invalid request", "jsonrpc", req.JSONRPC, "method", req.Method)
-		return reply(types.NewErrorResponse(req.ID, &types.RPCError{
+		// An invalid request is never a notification: it is always answered,
+		// with the request id when it carried a valid one and null otherwise.
+		return types.NewErrorResponse(req.ID, &types.RPCError{
 			Code:    -32600,
 			Message: "invalid request",
 			Data: &types.ErrorData{
@@ -242,7 +244,7 @@ func (s *Server) dispatch(ctx context.Context, line []byte) *types.Response {
 				Retryable: false,
 				Detail:    "jsonrpc must be \"2.0\" and method must be non-empty",
 			},
-		}))
+		})
 	}
 
 	h, ok := s.handlers[req.Method]

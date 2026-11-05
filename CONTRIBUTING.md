@@ -113,9 +113,7 @@ make engine-lint
 - `internal/simulation/` — Simulation runtime
 - `internal/llm/` — LLM client and provider integrations
 - `internal/report/` — Report generation (JUnit, JSON, Markdown)
-- `internal/config/` — Engine configuration
-- `pkg/types/` — Exported types for Go SDK
-- `pkg/engine/` — Embeddable engine for Go SDK
+- `pkg/types/` — Exported protocol types
 
 ## Python SDK Development
 

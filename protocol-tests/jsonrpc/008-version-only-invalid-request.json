@@ -1,0 +1,13 @@
+{
+  "name": "008-version-only-invalid-request",
+  "description": "An object with only jsonrpc 2.0 (no method, no id) is an invalid request answered with -32600 and id null.",
+  "lines": [
+    "{\"jsonrpc\":\"2.0\"}"
+  ],
+  "expected_replies": [
+    {
+      "id": null,
+      "error_code": -32600
+    }
+  ]
+}
