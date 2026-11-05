@@ -552,7 +552,7 @@ export class AttestClient {
   async queryDrift(
     assertionId: string,
     windowSize = 50,
-    options?: { timeout?: number },
+    options?: { timeout?: number; staticThreshold?: number },
   ): Promise<DriftReport> {
     if (isSimulationMode()) {
       return {
@@ -568,7 +568,11 @@ export class AttestClient {
 
     const raw = await this.sendRequest(
       "query_drift",
-      { assertion_id: assertionId, window_size: windowSize },
+      {
+        assertion_id: assertionId,
+        window_size: windowSize,
+        ...(options?.staticThreshold !== undefined ? { static_threshold: options.staticThreshold } : {}),
+      },
       options?.timeout,
     );
     return (raw as { report: DriftReport }).report;
