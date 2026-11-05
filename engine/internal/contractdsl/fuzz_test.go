@@ -6,7 +6,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/attest-ai/attest/engine/internal/contractdsl"
+	"github.com/attest-framework/attest/engine/internal/contractdsl"
 )
 
 var rejectedSeeds = []string{

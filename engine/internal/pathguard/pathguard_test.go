@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/attest-ai/attest/engine/internal/pathguard"
+	"github.com/attest-framework/attest/engine/internal/pathguard"
 )
 
 func tree(t *testing.T) (*pathguard.Root, string, string) {

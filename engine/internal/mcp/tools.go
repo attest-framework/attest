@@ -7,12 +7,12 @@ import (
 	"fmt"
 	"sort"
 
-	"github.com/attest-ai/attest/engine/internal/capture"
-	"github.com/attest-ai/attest/engine/internal/contractdsl"
-	"github.com/attest-ai/attest/engine/internal/redact"
-	"github.com/attest-ai/attest/engine/internal/report"
-	"github.com/attest-ai/attest/engine/internal/world"
-	"github.com/attest-ai/attest/engine/pkg/types"
+	"github.com/attest-framework/attest/engine/internal/capture"
+	"github.com/attest-framework/attest/engine/internal/contractdsl"
+	"github.com/attest-framework/attest/engine/internal/redact"
+	"github.com/attest-framework/attest/engine/internal/report"
+	"github.com/attest-framework/attest/engine/internal/world"
+	"github.com/attest-framework/attest/engine/pkg/types"
 )
 
 // summary counts results by status. Error counts statements the grammar

@@ -9,18 +9,16 @@ import (
 	"io"
 	"os"
 	"os/exec"
-	"os/signal"
 	"path/filepath"
 	"sort"
 	"strings"
-	"syscall"
 	"text/tabwriter"
 
 	"github.com/mattn/go-isatty"
 
-	"github.com/attest-ai/attest/engine/internal/capture"
-	"github.com/attest-ai/attest/engine/internal/redact"
-	"github.com/attest-ai/attest/engine/internal/trace"
+	"github.com/attest-framework/attest/engine/internal/capture"
+	"github.com/attest-framework/attest/engine/internal/redact"
+	"github.com/attest-framework/attest/engine/internal/trace"
 )
 
 func init() {
@@ -239,29 +237,16 @@ func captureCommand(argv []string, environ []string, in *capture.BuildInput, chi
 	cmd := exec.Command(argv[0], argv[1:]...)
 	cmd.Env = withEnv(environ, s.Env())
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, childOut, os.Stderr
-	if err := cmd.Start(); err != nil {
-		s.Close()
-		return fmt.Errorf("running %s: %w", argv[0], err)
-	}
 	// Interrupts and terminations go to the child, which decides how to
 	// stop; the capture finishes after it exits. A terminal interrupt
 	// reaches the child directly as well, which is harmless.
-	signals := make(chan os.Signal, 2)
-	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
-	stopForward := make(chan struct{})
-	go func() {
-		for {
-			select {
-			case sig := <-signals:
-				_ = cmd.Process.Signal(sig)
-			case <-stopForward:
-				return
-			}
-		}
-	}()
+	stopForward, err := startForwardingSignals(cmd)
+	if err != nil {
+		s.Close()
+		return fmt.Errorf("running %s: %w", argv[0], err)
+	}
 	runErr := cmd.Wait()
-	signal.Stop(signals)
-	close(stopForward)
+	stopForward()
 	closeErr := s.Close()
 	code := 0
 	var exitErr *exec.ExitError

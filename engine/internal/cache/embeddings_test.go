@@ -4,7 +4,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/attest-ai/attest/engine/internal/cache"
+	"github.com/attest-framework/attest/engine/internal/cache"
 )
 
 func newTestCache(t *testing.T, maxMB int) *cache.EmbeddingCache {

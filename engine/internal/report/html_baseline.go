@@ -5,7 +5,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/attest-ai/attest/engine/pkg/types"
+	"github.com/attest-framework/attest/engine/pkg/types"
 )
 
 // baseline compares head with base report to report: pass rate, cost, latency

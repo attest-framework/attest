@@ -6,7 +6,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/attest-ai/attest/engine/pkg/types"
+	"github.com/attest-framework/attest/engine/pkg/types"
 )
 
 // stepFilterRegex matches patterns like steps[?name=='lookup_order'].result

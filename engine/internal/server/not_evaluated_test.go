@@ -5,7 +5,7 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/attest-ai/attest/engine/pkg/types"
+	"github.com/attest-framework/attest/engine/pkg/types"
 )
 
 // withoutProviders clears every env var that could enable an L5/L6

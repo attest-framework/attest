@@ -1,6 +1,6 @@
 package trace
 
-import "github.com/attest-ai/attest/engine/pkg/types"
+import "github.com/attest-framework/attest/engine/pkg/types"
 
 // StepsByType returns all steps with the given type.
 func StepsByType(t *types.Trace, stepType string) []types.Step {
