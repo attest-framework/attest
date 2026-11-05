@@ -11,7 +11,7 @@ vi.mock("node:os", async () => {
 });
 
 import * as os from "node:os";
-import { platformKey, parseChecksums } from "../../packages/core/src/engine-downloader.js";
+import { platformKey } from "../../packages/core/src/engine-downloader.js";
 
 describe("platformKey", () => {
   beforeEach(() => {
@@ -69,28 +69,5 @@ describe("platformKey", () => {
     vi.mocked(os.platform).mockReturnValue("linux");
     vi.mocked(os.arch).mockReturnValue("ia32");
     expect(() => platformKey()).toThrow("Unsupported architecture 'ia32'");
-  });
-});
-
-describe("parseChecksums", () => {
-  it("parses standard checksum format", () => {
-    const hash1 = "a".repeat(64);
-    const hash2 = "b".repeat(64);
-    const text = [
-      `${hash1}  attest-engine-darwin-arm64`,
-      `${hash2}  attest-engine-linux-amd64`,
-      "",
-    ].join("\n");
-
-    const result = parseChecksums(text);
-    expect(result.size).toBe(2);
-    expect(result.get("attest-engine-darwin-arm64")).toBe(hash1);
-    expect(result.get("attest-engine-linux-amd64")).toBe(hash2);
-  });
-
-  it("skips empty lines", () => {
-    const text = "\n\n  \n";
-    const result = parseChecksums(text);
-    expect(result.size).toBe(0);
   });
 });

@@ -1,9 +1,12 @@
 import type { Trace } from "../proto/types.js";
-import { TraceBuilder } from "../trace.js";
+import { buildProviderTrace, type ProviderCallOptions } from "./provider-trace.js";
 
 interface OllamaResponse {
   model?: string;
-  message?: { content?: string };
+  message?: {
+    content?: string;
+    tool_calls?: { function?: { name?: string; arguments?: Record<string, unknown> } }[];
+  };
   eval_count?: number;
   prompt_eval_count?: number;
 }
@@ -17,37 +20,27 @@ export class OllamaAdapter {
 
   traceFromResponse(
     response: OllamaResponse,
-    options?: {
-      inputMessages?: Record<string, unknown>[];
-      latencyMs?: number;
-    },
+    options?: Omit<ProviderCallOptions, "costUsd">,
   ): Trace {
-    const builder = new TraceBuilder(this.agentId);
-
-    if (options?.inputMessages) {
-      builder.setInput({ messages: options.inputMessages });
-    }
-
-    const completionText = response.message?.content ?? "";
-
-    builder.addLlmCall("completion", {
-      args: { model: response.model ?? "" },
-      result: { completion: completionText },
-    });
-
-    builder.setOutput({ message: completionText });
-
-    let totalTokens: number | undefined;
-    if (response.eval_count !== undefined && response.prompt_eval_count !== undefined) {
-      totalTokens = response.eval_count + response.prompt_eval_count;
-    }
-
-    builder.setMetadata({
-      total_tokens: totalTokens,
-      latency_ms: options?.latencyMs,
-      model: response.model,
-    });
-
-    return builder.build();
+    const completion = response.message?.content ?? "";
+    const counted = response.eval_count !== undefined && response.prompt_eval_count !== undefined;
+    const input = options?.inputMessages ? { messages: options.inputMessages } : undefined;
+    return buildProviderTrace(
+      this.agentId,
+      {
+        model: response.model,
+        completion,
+        totalTokens: counted ? response.eval_count! + response.prompt_eval_count! : undefined,
+        inputTokens: counted ? response.prompt_eval_count : undefined,
+        outputTokens: counted ? response.eval_count : undefined,
+        toolCalls: (response.message?.tool_calls ?? []).map((tc) => ({
+          name: tc.function?.name ?? "",
+          args: tc.function?.arguments ?? {},
+        })),
+      },
+      options,
+      input,
+      { message: completion },
+    );
   }
 }
