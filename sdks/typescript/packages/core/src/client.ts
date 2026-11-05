@@ -582,11 +582,18 @@ export class AttestClient {
     if (faultConfig !== undefined) {
       params.fault_config = faultConfig;
     }
-    const raw = await this.sendRequest(
-      "generate_user_message",
-      params,
-      options?.timeout,
-    );
+    let raw: unknown;
+    try {
+      raw = await this.sendRequest(
+        "generate_user_message",
+        params,
+        options?.timeout,
+      );
+    } catch (err) {
+      // An engine error can follow the simulated user's model call; that call keeps its reservation.
+      if (err instanceof ProtocolError) this.engine.markUnknownSpend?.();
+      throw err;
+    }
     // The reply carries no usage: the simulated user's model call is spend the SDK cannot see.
     this.engine.markUnknownSpend?.();
     return String((raw as { message: string }).message);

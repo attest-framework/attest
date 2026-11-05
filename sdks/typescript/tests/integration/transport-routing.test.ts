@@ -184,4 +184,63 @@ describe.skipIf(!existsSync(enginePath))("id-routed transport (real engine)", ()
 
     expect(calls.length).toBeLessThanOrEqual(5);
   }, 60_000);
+
+  it("ATTEST_MAX_JUDGE_CALLS=5: a failed simulated-user turn makes spend unknown, so a timeout restart gets no budget", async () => {
+    const calls: number[] = [];
+    judge = createServer((req, res) => {
+      req.resume();
+      req.on("end", () => {
+        calls.push(Date.now());
+        const n = calls.length;
+        // The simulated-user turn fails after reaching the provider (the engine retries 5xx);
+        // the first judge batch call then outlives the request timeout.
+        if (n <= 4) {
+          res.statusCode = 500;
+          res.end("upstream down");
+          return;
+        }
+        const reply = (): void => {
+          res.setHeader("content-type", "application/json");
+          res.end(
+            JSON.stringify({
+              model: "fake-model",
+              choices: [{ message: { content: '{"score": 0.9, "explanation": "fine"}' } }],
+              usage: { prompt_tokens: 10, completion_tokens: 5 },
+            }),
+          );
+        };
+        if (n === 5) setTimeout(reply, 2_000);
+        else reply();
+      });
+    });
+    await new Promise<void>((done) => judge!.listen(0, "127.0.0.1", done));
+    const port = (judge.address() as AddressInfo).port;
+    process.env["ATTEST_JUDGE_PROVIDER"] = "openai";
+    process.env["ATTEST_JUDGE_BASE_URL"] = `http://127.0.0.1:${port}/v1`;
+    process.env["ATTEST_JUDGE_API_KEY"] = "fake";
+    process.env["ATTEST_JUDGE_MODEL"] = "fake-model";
+    process.env["ATTEST_MAX_JUDGE_CALLS"] = "5";
+    process.env["ATTEST_CACHE_DIR"] = mkdtempSync(resolve(tmpdir(), "attest-judge-cache-"));
+
+    engine = new EngineManager({ enginePath });
+    await engine.start();
+    const client = new AttestClient(engine);
+    const persona = { name: "p", system_prompt: "be a user", style: "terse", temperature: 0.2 };
+    await expect(client.generateUserMessage(persona, [{ role: "user", content: "hi" }])).rejects.toThrow();
+    const failedTurnCalls = calls.length;
+    const trace = new TraceBuilder("agent").setOutput({ message: "ok" }).build();
+
+    await expect(
+      client.evaluateBatch(trace, attestExpect(trace).passesJudge("Is it ok?").assertions, {
+        timeout: 400,
+        budget: { max_judge_calls: 1 },
+      }),
+    ).rejects.toBeInstanceOf(EngineTimeoutError);
+    for (const question of ["Is it fine?", "Is it good?", "Is it right?"]) {
+      await client.evaluateBatch(trace, attestExpect(trace).passesJudge(question).assertions);
+    }
+
+    expect(failedTurnCalls).toBeGreaterThan(0);
+    expect(calls.length).toBeLessThanOrEqual(5);
+  }, 60_000);
 });
