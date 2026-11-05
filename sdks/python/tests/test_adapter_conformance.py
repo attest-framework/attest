@@ -33,7 +33,7 @@ ENGINE = Path(__file__).resolve().parents[3] / "bin" / "attest-engine"
 def _framework_missing(case: dict[str, object]) -> str | None:
     package = {"crewai": "crewai"}.get(str(case["adapter"]))
     if package and importlib.util.find_spec(package) is None:
-        return f"{package} is not installed (the Python SDK CI job installs it on its 3.12 leg)"
+        return f"{package} is not installed (installed by the framework CI job, extra 'crewai')"
     return None
 
 
