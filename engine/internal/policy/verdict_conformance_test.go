@@ -6,8 +6,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/attest-ai/attest/engine/internal/policy"
-	"github.com/attest-ai/attest/engine/pkg/types"
+	"github.com/attest-framework/attest/engine/internal/policy"
+	"github.com/attest-framework/attest/engine/pkg/types"
 )
 
 const verdictFixtureDir = "../../../protocol-tests/verdicts"

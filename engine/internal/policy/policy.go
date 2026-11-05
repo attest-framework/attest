@@ -19,8 +19,8 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/attest-ai/attest/engine/internal/report"
-	"github.com/attest-ai/attest/engine/pkg/types"
+	"github.com/attest-framework/attest/engine/internal/report"
+	"github.com/attest-framework/attest/engine/pkg/types"
 )
 
 // Exit codes returned by Result.ExitCode. The engine and CLI map these

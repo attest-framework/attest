@@ -1,6 +1,6 @@
 package mcp
 
-import "github.com/attest-ai/attest/engine/pkg/types"
+import "github.com/attest-framework/attest/engine/pkg/types"
 
 // guideStep is where to send an agent for one kind of finding: a topic of
 // `attest guide` and a one-line next step.

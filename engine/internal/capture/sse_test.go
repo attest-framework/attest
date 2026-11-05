@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/attest-ai/attest/engine/internal/redact"
+	"github.com/attest-framework/attest/engine/internal/redact"
 )
 
 // chunks splits s into n nearly equal pieces.

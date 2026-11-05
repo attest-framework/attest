@@ -12,7 +12,7 @@ Thank you for your interest in contributing to Attest, the test framework for AI
 
 ```bash
 # Clone the repository
-git clone https://github.com/attest-ai/attest.git
+git clone https://github.com/attest-framework/attest.git
 cd attest
 
 # Build the engine and install the Python SDK

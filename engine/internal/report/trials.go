@@ -5,7 +5,7 @@ import (
 	"math"
 	"sort"
 
-	"github.com/attest-ai/attest/engine/pkg/types"
+	"github.com/attest-framework/attest/engine/pkg/types"
 )
 
 // Trial verdicts compare an assertion's pass rate over fixed-N trials with

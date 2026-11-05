@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/attest-ai/attest/engine/internal/llm/providers/acptest"
+	"github.com/attest-framework/attest/engine/internal/llm/providers/acptest"
 )
 
 // completeHangingAgent runs p against the Hang stub, whose agent starts a

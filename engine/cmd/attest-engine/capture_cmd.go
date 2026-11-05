@@ -18,9 +18,9 @@ import (
 
 	"github.com/mattn/go-isatty"
 
-	"github.com/attest-ai/attest/engine/internal/capture"
-	"github.com/attest-ai/attest/engine/internal/redact"
-	"github.com/attest-ai/attest/engine/internal/trace"
+	"github.com/attest-framework/attest/engine/internal/capture"
+	"github.com/attest-framework/attest/engine/internal/redact"
+	"github.com/attest-framework/attest/engine/internal/trace"
 )
 
 func init() {

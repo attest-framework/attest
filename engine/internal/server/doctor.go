@@ -3,8 +3,8 @@ package server
 import (
 	"log/slog"
 
-	"github.com/attest-ai/attest/engine/internal/assertion"
-	"github.com/attest-ai/attest/engine/internal/buildinfo"
+	"github.com/attest-framework/attest/engine/internal/assertion"
+	"github.com/attest-framework/attest/engine/internal/buildinfo"
 )
 
 // DoctorSchemaVersion is the version of the `attest-engine doctor --json`

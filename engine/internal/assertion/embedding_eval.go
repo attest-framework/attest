@@ -8,10 +8,10 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/attest-ai/attest/engine/internal/assertion/embedding"
-	"github.com/attest-ai/attest/engine/internal/cache"
-	"github.com/attest-ai/attest/engine/internal/llm"
-	"github.com/attest-ai/attest/engine/pkg/types"
+	"github.com/attest-framework/attest/engine/internal/assertion/embedding"
+	"github.com/attest-framework/attest/engine/internal/cache"
+	"github.com/attest-framework/attest/engine/internal/llm"
+	"github.com/attest-framework/attest/engine/pkg/types"
 )
 
 // EmbeddingEvaluator implements Layer 5: semantic similarity assertions.

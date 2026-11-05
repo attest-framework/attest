@@ -6,10 +6,10 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/attest-ai/attest/engine/internal/cache"
-	"github.com/attest-ai/attest/engine/internal/policy"
-	"github.com/attest-ai/attest/engine/internal/report"
-	"github.com/attest-ai/attest/engine/pkg/types"
+	"github.com/attest-framework/attest/engine/internal/cache"
+	"github.com/attest-framework/attest/engine/internal/policy"
+	"github.com/attest-framework/attest/engine/internal/report"
+	"github.com/attest-framework/attest/engine/pkg/types"
 )
 
 func ptr[T any](v T) *T { return &v }

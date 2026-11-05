@@ -7,8 +7,8 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/attest-ai/attest/engine/internal/policy"
-	"github.com/attest-ai/attest/engine/internal/report"
+	"github.com/attest-framework/attest/engine/internal/policy"
+	"github.com/attest-framework/attest/engine/internal/report"
 )
 
 func init() {

@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/attest-ai/attest/engine/internal/redact"
+	"github.com/attest-framework/attest/engine/internal/redact"
 )
 
 func redactorFor(secrets ...string) *redact.Redactor {

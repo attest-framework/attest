@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/attest-ai/attest/engine/internal/llm"
+	"github.com/attest-framework/attest/engine/internal/llm"
 )
 
 // stubProvider is a minimal llm.Provider for fault injection tests.

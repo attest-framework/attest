@@ -12,8 +12,8 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/attest-ai/attest/engine/internal/capture"
-	"github.com/attest-ai/attest/engine/internal/world"
+	"github.com/attest-framework/attest/engine/internal/capture"
+	"github.com/attest-framework/attest/engine/internal/world"
 )
 
 func init() {

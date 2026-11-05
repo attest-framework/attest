@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/attest-ai/attest/engine/internal/assertion/embedding"
-	"github.com/attest-ai/attest/engine/internal/llm"
-	"github.com/attest-ai/attest/engine/pkg/types"
+	"github.com/attest-framework/attest/engine/internal/assertion/embedding"
+	"github.com/attest-framework/attest/engine/internal/llm"
+	"github.com/attest-framework/attest/engine/pkg/types"
 )
 
 // BudgetExceededError is returned when the soft-fail budget is exhausted.

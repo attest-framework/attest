@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/attest-ai/attest/engine/internal/contractlog"
-	"github.com/attest-ai/attest/engine/pkg/types"
+	"github.com/attest-framework/attest/engine/internal/contractlog"
+	"github.com/attest-framework/attest/engine/pkg/types"
 )
 
 func assertions(ids ...string) []types.Assertion {

@@ -14,8 +14,8 @@ import (
 	"runtime"
 	"strings"
 
-	"github.com/attest-ai/attest/engine/internal/llm/providers"
-	"github.com/attest-ai/attest/engine/internal/report"
+	"github.com/attest-framework/attest/engine/internal/llm/providers"
+	"github.com/attest-framework/attest/engine/internal/report"
 )
 
 func init() {

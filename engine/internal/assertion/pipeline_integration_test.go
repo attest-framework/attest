@@ -6,9 +6,9 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/attest-ai/attest/engine/internal/assertion/judge"
-	"github.com/attest-ai/attest/engine/internal/llm"
-	"github.com/attest-ai/attest/engine/pkg/types"
+	"github.com/attest-framework/attest/engine/internal/assertion/judge"
+	"github.com/attest-framework/attest/engine/internal/llm"
+	"github.com/attest-framework/attest/engine/pkg/types"
 )
 
 // --- E19: Full pipeline integration tests with mock LLM ---

@@ -18,8 +18,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/attest-ai/attest/engine/internal/buildinfo"
-	"github.com/attest-ai/attest/engine/internal/llm"
+	"github.com/attest-framework/attest/engine/internal/buildinfo"
+	"github.com/attest-framework/attest/engine/internal/llm"
 )
 
 // acpProtocolVersion is the Agent Client Protocol major version this client

@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/attest-ai/attest/engine/internal/llm"
+	"github.com/attest-framework/attest/engine/internal/llm"
 )
 
 // GeminiDefaultBaseURL is the Gemini API root; the provider appends

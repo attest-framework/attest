@@ -6,7 +6,7 @@ import (
 	"os"
 	"sort"
 
-	"github.com/attest-ai/attest/engine/pkg/types"
+	"github.com/attest-framework/attest/engine/pkg/types"
 )
 
 // Test outcomes in report-v2 `tests[].outcome`.

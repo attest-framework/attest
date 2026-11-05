@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	attestmcp "github.com/attest-ai/attest/engine/internal/mcp"
+	attestmcp "github.com/attest-framework/attest/engine/internal/mcp"
 )
 
 var launch = []string{"uv", "run", "attest", "mcp"}

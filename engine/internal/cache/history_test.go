@@ -5,7 +5,7 @@ import (
 	"math"
 	"testing"
 
-	"github.com/attest-ai/attest/engine/internal/cache"
+	"github.com/attest-framework/attest/engine/internal/cache"
 	_ "modernc.org/sqlite"
 )
 

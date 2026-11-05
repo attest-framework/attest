@@ -9,7 +9,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/attest-ai/attest/engine/pkg/types"
+	"github.com/attest-framework/attest/engine/pkg/types"
 )
 
 const injectedErrorMessage = "injected tool failure"

@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/attest-ai/attest/engine/internal/contractdsl"
+	"github.com/attest-framework/attest/engine/internal/contractdsl"
 )
 
 const contractsDir = "../../../protocol-tests/contracts/"
