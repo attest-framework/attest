@@ -200,6 +200,7 @@ def test_send_request_without_a_client_drops_id_less_lines() -> None:
         manager = EngineManager.__new__(EngineManager)
         manager._request_id = 0
         manager._client = None
+        manager._initialized = True
         process = MagicMock()
         process.stdin = MagicMock()
         process.stdin.drain = AsyncMock()
@@ -239,3 +240,24 @@ def test_send_request_with_an_attached_client_delegates_to_it() -> None:
         await client.stop_reader()
 
     asyncio.run(_run())
+
+
+def test_send_request_before_start_raises_runtime_error() -> None:
+    manager = EngineManager.__new__(EngineManager)
+    manager._client = None
+    manager._initialized = False
+
+    with pytest.raises(RuntimeError, match=r"Call start\(\) first"):
+        asyncio.run(manager.send_request("evaluate_batch", {}))
+
+
+def test_a_second_client_on_one_engine_is_refused() -> None:
+    from attest.client import AttestClient
+
+    manager = EngineManager.__new__(EngineManager)
+    manager._client = None
+    first = AttestClient(manager)
+
+    with pytest.raises(RuntimeError, match="already has an AttestClient"):
+        AttestClient(manager)
+    assert manager._client is first

@@ -209,7 +209,16 @@ class EngineManager:
         return self._spawn_env
 
     def attach_client(self, client: AttestClient) -> None:
-        """Register the ``AttestClient`` whose reader owns stdout while it runs."""
+        """Register the ``AttestClient`` whose reader owns stdout while it runs.
+
+        One engine serves one client: two readers on the same stdout would
+        steal each other's responses.
+        """
+        if self._client is not None and self._client is not client:
+            raise RuntimeError(
+                "This EngineManager already has an AttestClient; "
+                "create one AttestClient per engine and share it."
+            )
         self._client = client
 
     async def send_request(self, method: str, params: dict[str, Any]) -> Any:
@@ -221,6 +230,8 @@ class EngineManager:
         """
         if self._client is not None:
             return await self._client.send_request(method, params)
+        if not self._initialized and method != "initialize":
+            raise RuntimeError("Engine not initialized. Call start() first.")
         return await self._handshake(method, params)
 
     async def start(self, env_overrides: Mapping[str, str] | None = None) -> InitializeResult:
