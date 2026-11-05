@@ -16,7 +16,10 @@ const (
 	writerDBEnv   = "ATTEST_TEST_HISTORY_WRITER_DB"
 	writerIDEnv   = "ATTEST_TEST_HISTORY_WRITER_ID"
 	writerProcs   = 8
-	writerRecords = 100
+	writerRecords = 300
+	// The table is pre-seeded so each writer's background prune has a large
+	// table to work through while the other seven keep inserting.
+	seedIDs = 100
 )
 
 // TestHistoryWriterProcess is the child half of
@@ -46,11 +49,23 @@ func TestHistoryWriterProcess(t *testing.T) {
 	store.WaitForPrune()
 }
 
-// Eight engine processes writing one attest.db must lose no rows: F9 saw
-// 752 of 800 writes fail with SQLITE_BUSY.
+// Eight engine processes writing one pre-seeded attest.db, each pruning in
+// the background, must lose no rows: F9 saw 752 of 800 writes fail with
+// SQLITE_BUSY.
 func TestHistoryStore_ParallelEngineProcesses_LoseNoRows(t *testing.T) {
 	// Arrange
 	path := filepath.Join(t.TempDir(), "attest.db")
+	seedDB, seedRelease, err := cache.Open(path)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	if _, err := cache.NewHistoryStore(seedDB); err != nil {
+		t.Fatalf("NewHistoryStore: %v", err)
+	}
+	seedHistory(t, seedDB, seedIDs, seedPerID)
+	if err := seedRelease(); err != nil {
+		t.Fatalf("release seed handle: %v", err)
+	}
 
 	// Act
 	var wg sync.WaitGroup
@@ -80,7 +95,7 @@ func TestHistoryStore_ParallelEngineProcesses_LoseNoRows(t *testing.T) {
 	}
 	defer release()
 	var got int
-	if err := db.QueryRow(`SELECT COUNT(*) FROM assertion_history`).Scan(&got); err != nil {
+	if err := db.QueryRow(`SELECT COUNT(*) FROM assertion_history WHERE assertion_id = 'shared-assertion'`).Scan(&got); err != nil {
 		t.Fatalf("count rows: %v", err)
 	}
 	if want := writerProcs * writerRecords; got != want {
