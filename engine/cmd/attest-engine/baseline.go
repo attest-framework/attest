@@ -111,6 +111,17 @@ type reportEnvelope struct {
 	Results         []types.AssertionResult `json:"results"`
 	TotalCost       float64                 `json:"total_cost"`
 	TotalDurationMS int64                   `json:"total_duration_ms"`
+	// IDScheme is the report's assertion-id scheme; absent (0) means 1.
+	IDScheme       int  `json:"id_scheme"`
+	BudgetExceeded bool `json:"budget_exceeded"`
+}
+
+// scheme returns the assertion-id scheme, reading an absent field as 1.
+func (e *reportEnvelope) scheme() int {
+	if e.IDScheme == 0 {
+		return 1
+	}
+	return e.IDScheme
 }
 
 func loadReport(path string) (*reportEnvelope, error) {
@@ -149,6 +160,9 @@ func baselinePin(args []string) {
 	}
 
 	entries := report.BaselineEntries(env.Results)
+	for i := range entries {
+		entries[i].IDScheme = env.scheme()
+	}
 
 	store, closer, err := openBaselineStore()
 	if err != nil {
@@ -292,6 +306,9 @@ func computeBaselineDelta(tag string, env *reportEnvelope) (*report.BaselineDelt
 	}
 	if len(entries) == 0 {
 		return nil, fmt.Errorf("no baseline pinned with tag %q", tag)
+	}
+	if got := entries[0].IDScheme; got != report.IDSchemeCurrent {
+		return nil, fmt.Errorf("baseline uses id scheme %d; re-pin it on 1.1", got)
 	}
 	d := report.ComputeBaselineDelta(tag, entries, env.Results)
 	return &d, nil

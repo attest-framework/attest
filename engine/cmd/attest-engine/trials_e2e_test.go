@@ -26,6 +26,7 @@ func trialsReport(t *testing.T, dir, name string, passes, trials int) string {
 	}
 	doc := map[string]any{
 		"report_version":    2,
+		"id_scheme":         2,
 		"timestamp":         "2026-11-02T00:00:00Z",
 		"summary":           map[string]int{"total": trials, "passed": passes, "soft_fail": 0, "hard_fail": trials - passes, "not_evaluated": 0},
 		"results":           rows,

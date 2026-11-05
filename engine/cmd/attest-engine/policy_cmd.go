@@ -23,7 +23,7 @@ func init() {
 			{policy.ExitPass, "pass: every rule satisfied"},
 			{policy.ExitBlock, "block: a block-severity rule was violated"},
 			{policy.ExitWarn, "warn: only warn-severity rules were violated"},
-			{policy.ExitUsage, "usage error, or the policy, report, baseline or mutation report failed to load, or a rule lacks its input (block_on_regression or regression without --baseline, min_mutation_score without --mutation), or the report has 0 tests while tests_collected is above 0"},
+			{policy.ExitUsage, "usage error, or the policy, report, baseline or mutation report failed to load, or a rule lacks its input (block_on_regression or regression without --baseline, min_mutation_score without --mutation), or the report has 0 tests while tests_collected is above 0, or the baseline was pinned under id scheme 1 (re-pin it on 1.1)"},
 		},
 	})
 }
@@ -115,11 +115,17 @@ func policyEvaluate(args []string) {
 	if v, ok := policy.MutationViolation(pol, mutationScore); ok {
 		result.Violations = append(result.Violations, v)
 	}
+	if v, ok := policy.BudgetViolation(pol, env.BudgetExceeded); ok {
+		result.Violations = append(result.Violations, v)
+	}
 
 	out := map[string]any{
 		"violations": result.Violations,
 		"exit_code":  result.ExitCode(),
 		"passed":     result.Passed(),
+	}
+	if delta != nil && len(delta.AssertionsChanged) > 0 {
+		out["changed"] = delta.AssertionsChanged
 	}
 	if result.Verdict != "" {
 		out["verdict"] = result.Verdict

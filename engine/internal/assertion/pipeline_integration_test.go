@@ -357,22 +357,15 @@ func TestPipeline_Integration_BudgetEnforcement(t *testing.T) {
 		},
 	}
 
-	_, err := pipeline.EvaluateBatchWithBudget(context.Background(), testTrace(), assertions, budget)
-	if err == nil {
-		t.Fatal("expected BudgetExceededError, got nil")
+	result, err := pipeline.EvaluateBatchWithBudget(context.Background(), testTrace(), assertions, budget)
+	if err != nil {
+		t.Fatalf("a budget breach is a flag, not an error: %v", err)
 	}
-
-	var budgetErr *BudgetExceededError
-	isBudgetErr := false
-	if be, ok := err.(*BudgetExceededError); ok {
-		budgetErr = be
-		isBudgetErr = true
+	if !result.BudgetExceeded {
+		t.Error("BudgetExceeded = false, want true")
 	}
-	if !isBudgetErr {
-		t.Fatalf("expected *BudgetExceededError, got %T: %v", err, err)
-	}
-	if budgetErr.Limit != 0 {
-		t.Errorf("BudgetExceededError.Limit = %d, want 0", budgetErr.Limit)
+	if len(result.Results) != 1 || result.Results[0].Status != types.StatusSoftFail {
+		t.Errorf("results = %+v, want the soft_fail row kept", result.Results)
 	}
 }
 

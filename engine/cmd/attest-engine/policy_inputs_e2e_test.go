@@ -8,7 +8,7 @@ import (
 
 // reportWithStatuses is a report-v2 body with assertions a and b at the given statuses.
 func reportWithStatuses(a, b string) string {
-	return `{"report_version":2,"results":[` +
+	return `{"report_version":2,"id_scheme":2,"results":[` +
 		`{"assertion_id":"a","status":"` + a + `","score":1,"layer":1,"type":"schema"},` +
 		`{"assertion_id":"b","status":"` + b + `","score":1,"layer":1,"type":"schema"}]}`
 }

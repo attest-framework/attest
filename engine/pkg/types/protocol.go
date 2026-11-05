@@ -133,6 +133,10 @@ type EvaluateBatchResult struct {
 	Simulated       bool              `json:"simulated"`
 	// Usage is the model usage of this batch.
 	Usage Usage `json:"usage"`
+	// BudgetExceeded is true when this batch pushed the engine session past
+	// ATTEST_MAX_SOFT_FAILURES. Every row is still returned; the flag is
+	// batch-level, not a not_evaluated reason, and the policy blocks on it.
+	BudgetExceeded bool `json:"budget_exceeded,omitempty"`
 }
 
 // ShutdownResult holds the result of the shutdown method.

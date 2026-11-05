@@ -94,6 +94,11 @@ type Assertion struct {
 	Type        string          `json:"type"`
 	Spec        json.RawMessage `json:"spec"`
 	RequestID   string          `json:"request_id,omitempty"`
+	// ScopeID is the C3 scope the SDK computed the assertion id in: the test
+	// node id, or the ContinuousEvalRunner name outside tests. The engine
+	// echoes it onto the result row so baselines can tell a spec edit from a
+	// removal.
+	ScopeID string `json:"scope_id,omitempty"`
 }
 
 // JudgeMetadata captures the audit trail for an LLM-judge evaluation so
@@ -149,6 +154,13 @@ type AssertionResult struct {
 	Cost        float64 `json:"cost"`
 	DurationMS  int64   `json:"duration_ms"`
 	RequestID   string  `json:"request_id,omitempty"`
+	// ScopeID echoes Assertion.ScopeID (C3).
+	ScopeID string `json:"scope_id,omitempty"`
+	// SpecHash is the sha256 (hex) of the assertion spec in canonical JSON
+	// (object keys sorted, no insignificant whitespace). Together with Type
+	// and ScopeID it lets a baseline comparison report a spec edit as
+	// changed instead of removed (C4).
+	SpecHash string `json:"spec_hash,omitempty"`
 	// ThresholdSource records how Status was decided: "static" (default
 	// fixed thresholds), "dynamic" (classified against historical
 	// baseline), or "dynamic_unavailable" (dynamic classification was
