@@ -1,0 +1,300 @@
+{
+  "description": "Golden vectors for assertion id scheme 2 (contract C3). Every SDK and the engine must reproduce canonical_spec, canonical_input and id exactly from scope_id, assertion_type, spec_json (raw JSON text, kept as a string so 1.0, -0 and 1e21 survive parsing) and occurrence_index.",
+  "recipe": [
+    "canonical_spec = RFC 8785 (JCS) serialization of spec_json: object keys sorted by UTF-16 code units, ES6 Number::toString numbers (1.0 -\u003e 1, -0 -\u003e 0, 1e21 -\u003e 1e+21), minimal string escaping (only quote, backslash and control characters below U+0020), no whitespace, UTF-8 output.",
+    "canonical_input = JCS array [scope_id, assertion_type, canonical_spec_value, occurrence_index]; scope_id is the raw scope identifier string (test node id or ContinuousEvalRunner name), never a hash; occurrence_index is a 0-based integer.",
+    "id = \"a2_\" + first 32 lowercase hex characters of SHA-256 over the UTF-8 bytes of canonical_input."
+  ],
+  "vectors": [
+    {
+      "assertion_type": "output_contains",
+      "canonical_input": "[\"tests/test_a.py::test_x\",\"output_contains\",{},0]",
+      "canonical_spec": "{}",
+      "id": "a2_79d16e2aa1e249ea8c60d19b7bb6207d",
+      "name": "empty_spec",
+      "occurrence_index": 0,
+      "scope_id": "tests/test_a.py::test_x",
+      "spec_json": "{}"
+    },
+    {
+      "assertion_type": "output_contains",
+      "canonical_input": "[\"tests/test_a.py::test_x\",\"output_contains\",{\"a\":2,\"b\":1},0]",
+      "canonical_spec": "{\"a\":2,\"b\":1}",
+      "id": "a2_453b6b2c2559181e512080dda49c608b",
+      "name": "flat_keys_sorted",
+      "occurrence_index": 0,
+      "scope_id": "tests/test_a.py::test_x",
+      "spec_json": "{\"b\":1,\"a\":2}"
+    },
+    {
+      "assertion_type": "output_contains",
+      "canonical_input": "[\"tests/test_a.py::test_x\",\"output_contains\",{\"a\":2,\"b\":1},0]",
+      "canonical_spec": "{\"a\":2,\"b\":1}",
+      "id": "a2_453b6b2c2559181e512080dda49c608b",
+      "name": "key_order_irrelevant",
+      "occurrence_index": 0,
+      "scope_id": "tests/test_a.py::test_x",
+      "spec_json": "{\"a\":2,\"b\":1}"
+    },
+    {
+      "assertion_type": "output_contains",
+      "canonical_input": "[\"tests/test_a.py::test_x\",\"output_contains\",{\"a\":2,\"b\":1},0]",
+      "canonical_spec": "{\"a\":2,\"b\":1}",
+      "id": "a2_453b6b2c2559181e512080dda49c608b",
+      "name": "whitespace_irrelevant",
+      "occurrence_index": 0,
+      "scope_id": "tests/test_a.py::test_x",
+      "spec_json": " {\n \"a\" : 2 ,\t\"b\":1 } "
+    },
+    {
+      "assertion_type": "tool_args",
+      "canonical_input": "[\"tests/test_a.py::test_x\",\"tool_args\",{\"a\":true,\"z\":{\"x\":null,\"y\":[{\"a\":2,\"b\":1},3]}},0]",
+      "canonical_spec": "{\"a\":true,\"z\":{\"x\":null,\"y\":[{\"a\":2,\"b\":1},3]}}",
+      "id": "a2_15d6413b63c426646dbb6d7a8cffd589",
+      "name": "nested_keys",
+      "occurrence_index": 0,
+      "scope_id": "tests/test_a.py::test_x",
+      "spec_json": "{\"z\":{\"y\":[{\"b\":1,\"a\":2},3],\"x\":null},\"a\":true}"
+    },
+    {
+      "assertion_type": "output_contains",
+      "canonical_input": "[\"tests/ü.py::test_é\",\"output_contains\",{\"text\":\"é\u003c\u0026\"},0]",
+      "canonical_spec": "{\"text\":\"é\u003c\u0026\"}",
+      "id": "a2_cbfd8bba36b96f607209c0545c1c78f3",
+      "name": "unicode_bmp",
+      "occurrence_index": 0,
+      "scope_id": "tests/ü.py::test_é",
+      "spec_json": "{\"text\":\"\\u00e9\u003c\u0026\"}"
+    },
+    {
+      "assertion_type": "output_contains",
+      "canonical_input": "[\"tests/ü.py::test_é\",\"output_contains\",{\"text\":\"é\u003c\u0026\"},0]",
+      "canonical_spec": "{\"text\":\"é\u003c\u0026\"}",
+      "id": "a2_cbfd8bba36b96f607209c0545c1c78f3",
+      "name": "unicode_raw_equals_escaped",
+      "occurrence_index": 0,
+      "scope_id": "tests/ü.py::test_é",
+      "spec_json": "{\"text\":\"é\u003c\u0026\"}"
+    },
+    {
+      "assertion_type": "output_contains",
+      "canonical_input": "[\"tests/test_a.py::test_x\",\"output_contains\",{\"text\":\"\u003cscript\u003e\u0026amp;\u003e\"},0]",
+      "canonical_spec": "{\"text\":\"\u003cscript\u003e\u0026amp;\u003e\"}",
+      "id": "a2_42aa809af5fb1567e7b19fd88c312506",
+      "name": "html_chars",
+      "occurrence_index": 0,
+      "scope_id": "tests/test_a.py::test_x",
+      "spec_json": "{\"text\":\"\u003cscript\u003e\u0026amp;\u003e\"}"
+    },
+    {
+      "assertion_type": "output_contains",
+      "canonical_input": "[\"tests/test_a.py::test_x\",\"output_contains\",{\"text\":\"😀 😀\"},0]",
+      "canonical_spec": "{\"text\":\"😀 😀\"}",
+      "id": "a2_83d6ac878cb082551e17151a1c4979fd",
+      "name": "non_bmp_emoji",
+      "occurrence_index": 0,
+      "scope_id": "tests/test_a.py::test_x",
+      "spec_json": "{\"text\":\"\\ud83d\\ude00 😀\"}"
+    },
+    {
+      "assertion_type": "output_contains",
+      "canonical_input": "[\"tests/test_a.py::test_x\",\"output_contains\",{\"a\":4,\"𐀀\":2,\"\":3,\"￿\":1},0]",
+      "canonical_spec": "{\"a\":4,\"𐀀\":2,\"\":3,\"￿\":1}",
+      "id": "a2_1cde778b9385eb9f0713446226156e4b",
+      "name": "utf16_key_order_non_bmp_vs_bmp_high",
+      "occurrence_index": 0,
+      "scope_id": "tests/test_a.py::test_x",
+      "spec_json": "{\"\\uffff\":1,\"𐀀\":2,\"\\ue000\":3,\"a\":4}"
+    },
+    {
+      "assertion_type": "output_contains",
+      "canonical_input": "[\"tests/test_a.py::test_x\",\"output_contains\",{\"t\":\"a\\\"b\\\\c\\n\\t\\r\\b\\f\\u0001\\u001f\u2028/\"},0]",
+      "canonical_spec": "{\"t\":\"a\\\"b\\\\c\\n\\t\\r\\b\\f\\u0001\\u001f\u2028/\"}",
+      "id": "a2_a2b4b3129f9b446ba59e8da32a25a464",
+      "name": "control_and_quote_escapes",
+      "occurrence_index": 0,
+      "scope_id": "tests/test_a.py::test_x",
+      "spec_json": "{\"t\":\"a\\\"b\\\\c\\n\\t\\r\\b\\f\\u0001\\u001f\\u007f\\u2028\\/\"}"
+    },
+    {
+      "assertion_type": "cost_below",
+      "canonical_input": "[\"tests/test_a.py::test_x\",\"cost_below\",{\"max\":1},0]",
+      "canonical_spec": "{\"max\":1}",
+      "id": "a2_83851cdd36d849c1ba553e5f937da58b",
+      "name": "int_float_equiv_int",
+      "occurrence_index": 0,
+      "scope_id": "tests/test_a.py::test_x",
+      "spec_json": "{\"max\":1}"
+    },
+    {
+      "assertion_type": "cost_below",
+      "canonical_input": "[\"tests/test_a.py::test_x\",\"cost_below\",{\"max\":1},0]",
+      "canonical_spec": "{\"max\":1}",
+      "id": "a2_83851cdd36d849c1ba553e5f937da58b",
+      "name": "int_float_equiv_float",
+      "occurrence_index": 0,
+      "scope_id": "tests/test_a.py::test_x",
+      "spec_json": "{\"max\":1.0}"
+    },
+    {
+      "assertion_type": "cost_below",
+      "canonical_input": "[\"tests/test_a.py::test_x\",\"cost_below\",{\"max\":1e+21},0]",
+      "canonical_spec": "{\"max\":1e+21}",
+      "id": "a2_b7eaf679587acfd35563f901dc7ae0dd",
+      "name": "exponent_1e21",
+      "occurrence_index": 0,
+      "scope_id": "tests/test_a.py::test_x",
+      "spec_json": "{\"max\":1e21}"
+    },
+    {
+      "assertion_type": "cost_below",
+      "canonical_input": "[\"tests/test_a.py::test_x\",\"cost_below\",{\"max\":100000000000000000000},0]",
+      "canonical_spec": "{\"max\":100000000000000000000}",
+      "id": "a2_7e303063adccbcc87e7ac99eff059177",
+      "name": "exponent_1e20_plain",
+      "occurrence_index": 0,
+      "scope_id": "tests/test_a.py::test_x",
+      "spec_json": "{\"max\":100000000000000000000}"
+    },
+    {
+      "assertion_type": "cost_below",
+      "canonical_input": "[\"tests/test_a.py::test_x\",\"cost_below\",{\"max\":1e-7,\"min\":0.000001},0]",
+      "canonical_spec": "{\"max\":1e-7,\"min\":0.000001}",
+      "id": "a2_a0c74f8ad2e55d1f0ca341ba30d5b0a5",
+      "name": "exponent_small",
+      "occurrence_index": 0,
+      "scope_id": "tests/test_a.py::test_x",
+      "spec_json": "{\"max\":1E-7,\"min\":0.000001}"
+    },
+    {
+      "assertion_type": "cost_below",
+      "canonical_input": "[\"tests/test_a.py::test_x\",\"cost_below\",{\"max\":0},0]",
+      "canonical_spec": "{\"max\":0}",
+      "id": "a2_d258dee11373efff167426ecde625841",
+      "name": "negative_zero",
+      "occurrence_index": 0,
+      "scope_id": "tests/test_a.py::test_x",
+      "spec_json": "{\"max\":-0}"
+    },
+    {
+      "assertion_type": "cost_below",
+      "canonical_input": "[\"tests/test_a.py::test_x\",\"cost_below\",{\"max\":0},0]",
+      "canonical_spec": "{\"max\":0}",
+      "id": "a2_d258dee11373efff167426ecde625841",
+      "name": "negative_zero_float",
+      "occurrence_index": 0,
+      "scope_id": "tests/test_a.py::test_x",
+      "spec_json": "{\"max\":-0.0}"
+    },
+    {
+      "assertion_type": "cost_below",
+      "canonical_input": "[\"tests/test_a.py::test_x\",\"cost_below\",{\"big\":123456789012345680,\"max\":0.1,\"min\":150},0]",
+      "canonical_spec": "{\"big\":123456789012345680,\"max\":0.1,\"min\":150}",
+      "id": "a2_a7e4ac26a21e6a4e82295368123a66dc",
+      "name": "fraction_shortest",
+      "occurrence_index": 0,
+      "scope_id": "tests/test_a.py::test_x",
+      "spec_json": "{\"max\":0.1,\"min\":1.5e2,\"big\":123456789012345678}"
+    },
+    {
+      "assertion_type": "output_contains",
+      "canonical_input": "[\"tests/test_a.py::test_x\",\"output_contains\",{\"text\":\"refund\"},0]",
+      "canonical_spec": "{\"text\":\"refund\"}",
+      "id": "a2_6e6c0005fb486a1aa570012c3774f551",
+      "name": "occurrence_0",
+      "occurrence_index": 0,
+      "scope_id": "tests/test_a.py::test_x",
+      "spec_json": "{\"text\":\"refund\"}"
+    },
+    {
+      "assertion_type": "output_contains",
+      "canonical_input": "[\"tests/test_a.py::test_x\",\"output_contains\",{\"text\":\"refund\"},1]",
+      "canonical_spec": "{\"text\":\"refund\"}",
+      "id": "a2_e0728e4c71de31acb1016c90199c5cf3",
+      "name": "occurrence_1",
+      "occurrence_index": 1,
+      "scope_id": "tests/test_a.py::test_x",
+      "spec_json": "{\"text\":\"refund\"}"
+    },
+    {
+      "assertion_type": "output_contains",
+      "canonical_input": "[\"tests/test_a.py::test_x\",\"output_contains\",{\"text\":\"refund\"},2]",
+      "canonical_spec": "{\"text\":\"refund\"}",
+      "id": "a2_05f13f732e2ade837a79b2dbb443fc10",
+      "name": "occurrence_2",
+      "occurrence_index": 2,
+      "scope_id": "tests/test_a.py::test_x",
+      "spec_json": "{\"text\":\"refund\"}"
+    },
+    {
+      "assertion_type": "output_contains",
+      "canonical_input": "[\"tests/test_a.py::TestX::test_y[case-1::a]\",\"output_contains\",{\"text\":\"r\"},0]",
+      "canonical_spec": "{\"text\":\"r\"}",
+      "id": "a2_85774c90eeba56284b70615b1ce90c18",
+      "name": "scope_with_double_colon_and_brackets",
+      "occurrence_index": 0,
+      "scope_id": "tests/test_a.py::TestX::test_y[case-1::a]",
+      "spec_json": "{\"text\":\"r\"}"
+    },
+    {
+      "assertion_type": "output_contains",
+      "canonical_input": "[\"tests\\\\win.py::test_\\\"q\\\"\",\"output_contains\",{\"text\":\"r\"},0]",
+      "canonical_spec": "{\"text\":\"r\"}",
+      "id": "a2_fe13adfe1a9217011d9c4a8f23598cc4",
+      "name": "scope_with_quote_and_backslash",
+      "occurrence_index": 0,
+      "scope_id": "tests\\win.py::test_\"q\"",
+      "spec_json": "{\"text\":\"r\"}"
+    },
+    {
+      "assertion_type": "output_contains",
+      "canonical_input": "[\"nightly-eval\",\"output_contains\",{\"text\":\"r\"},0]",
+      "canonical_spec": "{\"text\":\"r\"}",
+      "id": "a2_b9c2f1215417b7ab308b2044b215f5b7",
+      "name": "scope_continuous_runner_name",
+      "occurrence_index": 0,
+      "scope_id": "nightly-eval",
+      "spec_json": "{\"text\":\"r\"}"
+    },
+    {
+      "assertion_type": "tool_sequence",
+      "canonical_input": "[\"tests/test_a.py::test_x\",\"tool_sequence\",{\"tools\":[\"b\",\"a\"]},0]",
+      "canonical_spec": "{\"tools\":[\"b\",\"a\"]}",
+      "id": "a2_09a329097ff255b0cd66de4dc53b6df1",
+      "name": "array_order_significant",
+      "occurrence_index": 0,
+      "scope_id": "tests/test_a.py::test_x",
+      "spec_json": "{\"tools\":[\"b\",\"a\"]}"
+    },
+    {
+      "assertion_type": "tool_sequence",
+      "canonical_input": "[\"tests/test_a.py::test_x\",\"tool_sequence\",{\"tools\":[\"a\",\"b\"]},0]",
+      "canonical_spec": "{\"tools\":[\"a\",\"b\"]}",
+      "id": "a2_5026559ba6151eab1b97bc116492e2ba",
+      "name": "array_order_significant_2",
+      "occurrence_index": 0,
+      "scope_id": "tests/test_a.py::test_x",
+      "spec_json": "{\"tools\":[\"a\",\"b\"]}"
+    },
+    {
+      "assertion_type": "schema",
+      "canonical_input": "[\"tests/test_a.py::test_x\",\"schema\",{\"a\":null,\"b\":false,\"c\":true,\"d\":\"\"},0]",
+      "canonical_spec": "{\"a\":null,\"b\":false,\"c\":true,\"d\":\"\"}",
+      "id": "a2_bb605e9aa23053a19b764e3f1cbf202d",
+      "name": "null_and_bool_values",
+      "occurrence_index": 0,
+      "scope_id": "tests/test_a.py::test_x",
+      "spec_json": "{\"a\":null,\"b\":false,\"c\":true,\"d\":\"\"}"
+    },
+    {
+      "assertion_type": "schema",
+      "canonical_input": "[\"tests/test_a.py::test_x\",\"schema\",{\"a\":[],\"b\":{}},0]",
+      "canonical_spec": "{\"a\":[],\"b\":{}}",
+      "id": "a2_37f501090ace6a19ae9c9350fbffe21c",
+      "name": "empty_array_and_object",
+      "occurrence_index": 0,
+      "scope_id": "tests/test_a.py::test_x",
+      "spec_json": "{\"a\":[],\"b\":{}}"
+    }
+  ]
+}
