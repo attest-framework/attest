@@ -464,6 +464,8 @@ export interface DriftReport {
 export interface QueryDriftParams {
   readonly assertion_id: string;
   readonly window_size: number;
+  /** Floor of the drift bar (engine default 0.8 when omitted). */
+  readonly static_threshold?: number;
 }
 
 export interface QueryDriftResult {
