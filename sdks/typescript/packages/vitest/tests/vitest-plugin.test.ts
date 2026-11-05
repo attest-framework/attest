@@ -30,15 +30,6 @@ let _mockResults: unknown[] = [PASS_ROW];
 vi.mock("@attest-ai/core", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@attest-ai/core")>();
 
-  class MockEngineManager {
-    start = vi.fn(async () => ({
-      compatible: true,
-      engine_version: "1.0.0",
-      capabilities: _mockCapabilities,
-    }));
-    stop = vi.fn().mockResolvedValue(undefined);
-  }
-
   class MockAttestClient {
     evaluateBatch = vi.fn(async () => ({
       results: _mockResults,
@@ -46,6 +37,17 @@ vi.mock("@attest-ai/core", async (importOriginal) => {
       total_duration_ms: 10,
     }));
     sendRequest = vi.fn();
+  }
+
+  class MockEngineManager {
+    start = vi.fn(async () => ({
+      compatible: true,
+      engine_version: "1.0.0",
+      capabilities: _mockCapabilities,
+    }));
+    // The real manager owns the id-routed client its fixtures and plugin use.
+    client = new MockAttestClient();
+    stop = vi.fn().mockResolvedValue(undefined);
   }
 
   return {

@@ -30,9 +30,16 @@ import {
   type ProtocolDiagnosticKind,
   type ProtocolLogger,
 } from "./proto/diagnostics.js";
+import type { Interface as ReadlineInterface } from "node:readline";
 import type { EngineManager } from "./engine-manager.js";
 import { isSimulationMode } from "./config.js";
 import { parseUsage } from "./usage.js";
+
+/** Budget a timed-out request may have consumed; null means the whole remaining budget. */
+export interface BudgetReservation {
+  readonly judgeCalls: number | null;
+  readonly usd: number | null;
+}
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 const DEFAULT_DIAGNOSTIC_BUFFER = 32;
@@ -54,17 +61,10 @@ function resolveTimeoutMs(override?: number): number {
   return DEFAULT_TIMEOUT_MS;
 }
 
-function makeTimeoutPromise(method: string, timeoutMs: number): Promise<never> {
-  return new Promise<never>((_, reject) => {
-    setTimeout(() => {
-      reject(new EngineTimeoutError(method, timeoutMs));
-    }, timeoutMs);
-  });
-}
-
 interface PendingRequest {
   resolve: (value: unknown) => void;
   reject: (reason: unknown) => void;
+  reservation: BudgetReservation;
 }
 
 export interface AttestClientOptions {
@@ -119,6 +119,7 @@ export class AttestClient {
   private writeChain: Promise<void> = Promise.resolve();
   private readerActive = false;
   private lineHandler: ((line: string) => void) | null = null;
+  private attachedReader: ReadlineInterface | null = null;
 
   private readonly logger: ProtocolLogger;
   private readonly diagnosticBuffer: ProtocolDiagnosticBuffer;
@@ -157,6 +158,10 @@ export class AttestClient {
     return this.diagnosticBuffer.snapshot();
   }
 
+  /**
+   * Attach the id-routed reader to the engine's stdout. Idempotent; `sendRequest` starts it
+   * on first use, so calling it is optional.
+   */
   startReader(): void {
     if (this.readerActive) return;
 
@@ -166,31 +171,40 @@ export class AttestClient {
     }
 
     this.readerActive = true;
+    this.attachedReader = rl;
     this.lineHandler = (line: string) => this.handleLine(line);
     rl.on("line", this.lineHandler);
 
     rl.on("close", () => {
-      this.failAll(new Error("Engine closed stdout."));
+      // A restarted engine has a new readline; the old one closing is not a failure.
+      if (this.attachedReader !== rl) return;
+      const tail = this.engine.stderrTail ?? "";
+      this.failAll(
+        new Error(tail === "" ? "Engine closed stdout." : `Engine closed stdout. stderr:\n${tail}`),
+      );
       this.readerActive = false;
+      this.attachedReader = null;
     });
   }
 
   stopReader(): void {
     if (!this.readerActive) return;
 
-    const rl = this.engine.readlineInterface;
+    const rl = this.attachedReader;
     if (rl !== null && this.lineHandler !== null) {
       rl.removeListener("line", this.lineHandler);
     }
 
     this.lineHandler = null;
     this.readerActive = false;
+    this.attachedReader = null;
   }
 
   private recordDiagnostic(
     kind: ProtocolDiagnosticKind,
     message: string,
     rawLine: string,
+    countsTowardDesync = true,
   ): void {
     const diagnostic: ProtocolDiagnostic = {
       kind,
@@ -210,7 +224,7 @@ export class AttestClient {
         );
       }
     }
-    this.maybeTriggerDesync(diagnostic.timestampMs);
+    if (countsTowardDesync) this.maybeTriggerDesync(diagnostic.timestampMs);
   }
 
   private maybeTriggerDesync(nowMs: number): void {
@@ -242,7 +256,9 @@ export class AttestClient {
       reqId = extractId(response);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      this.recordDiagnostic("missing_id", message, line);
+      // An id-less line (a notification) answers no request: drop it. It is logged but never
+      // counts toward desync, since the engine may legitimately write one.
+      this.recordDiagnostic("missing_id", message, line, false);
       return;
     }
 
@@ -297,6 +313,11 @@ export class AttestClient {
     this.recordDiagnostic(kind, message, line);
   }
 
+  /** Reject every request still waiting for a response. */
+  rejectPending(err: Error): void {
+    this.failAll(err);
+  }
+
   private failAll(err: Error): void {
     for (const pending of this.pending.values()) {
       pending.reject(err);
@@ -304,11 +325,46 @@ export class AttestClient {
     this.pending.clear();
   }
 
+  /**
+   * Send one request and resolve with the result of the response that carries its id.
+   *
+   * After a timeout the engine is restarted (its late response can no longer be matched),
+   * every other pending request is rejected, and the new engine gets the remaining session
+   * budget.
+   */
   async sendRequest(
     method: string,
     params: Record<string, unknown>,
     timeoutMs?: number,
   ): Promise<unknown> {
+    return this.send(method, params, timeoutMs, true);
+  }
+
+  /** `sendRequest` without the restart-on-timeout step, for the engine's own handshake. */
+  async sendWithoutRestart(
+    method: string,
+    params: Record<string, unknown>,
+    timeoutMs: number,
+  ): Promise<unknown> {
+    return this.send(method, params, timeoutMs, false);
+  }
+
+  private async send(
+    method: string,
+    params: Record<string, unknown>,
+    timeoutMs: number | undefined,
+    restartOnTimeout: boolean,
+  ): Promise<unknown> {
+    // The engine's own handshake runs inside a restart and must not wait for it.
+    if (restartOnTimeout) await this.engine.whenReady?.();
+    // Every client over one EngineManager shares that engine's id space and reader.
+    const shared = this.engine.client;
+    if (shared !== undefined && shared !== this) {
+      return restartOnTimeout
+        ? shared.sendRequest(method, params, timeoutMs)
+        : shared.sendWithoutRestart(method, params, resolveTimeoutMs(timeoutMs));
+    }
+
     if (this.desynced) {
       throw new ProtocolDesyncError(
         "Engine protocol is desynced; AttestClient will not send further requests.",
@@ -317,21 +373,19 @@ export class AttestClient {
     }
 
     const resolvedTimeout = resolveTimeoutMs(timeoutMs);
-
-    if (!this.readerActive) {
-      // Delegate to engine sequential mode with timeout
-      return Promise.race([
-        this.engine.sendRequest(method, params),
-        makeTimeoutPromise(method, resolvedTimeout),
-      ]);
+    if (this.engine.isRunning === false) {
+      const tail = this.engine.stderrTail ?? "";
+      throw new Error(`Engine process is not running.${tail === "" ? "" : ` stderr:\n${tail}`}`);
     }
-
     const cp = this.engine.childProcess;
     if (cp === null || cp.stdin === null) {
       throw new Error("Engine process not started.");
     }
+    this.startReader();
 
+    const reservation = worstCaseReservation(method, params);
     let capturedReqId: number | undefined;
+    let timer: NodeJS.Timeout | undefined;
 
     const requestPromise = new Promise<unknown>((resolve, reject) => {
       // Serialize writes through promise chain
@@ -339,26 +393,65 @@ export class AttestClient {
         this.requestId += 1;
         const reqId = this.requestId;
         capturedReqId = reqId;
-        this.pending.set(reqId, { resolve, reject });
+        this.pending.set(reqId, { resolve, reject, reservation });
 
         const requestStr = encodeRequest(reqId, method, params);
         cp.stdin!.write(requestStr, (err: Error | null | undefined) => {
           if (err) {
             this.pending.delete(reqId);
-            reject(err);
+            reject(this.describeWriteError(err));
           }
         });
       });
     });
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new EngineTimeoutError(method, resolvedTimeout)), resolvedTimeout);
+    });
 
-    const timeoutPromise = makeTimeoutPromise(method, resolvedTimeout);
-
-    return Promise.race([requestPromise, timeoutPromise]).catch((err: unknown) => {
-      if (err instanceof EngineTimeoutError && capturedReqId !== undefined) {
-        this.pending.delete(capturedReqId);
+    try {
+      return await Promise.race([requestPromise, timeoutPromise]);
+    } catch (err) {
+      if (err instanceof EngineTimeoutError) {
+        if (capturedReqId !== undefined) this.pending.delete(capturedReqId);
+        if (restartOnTimeout) await this.recoverFromTimeout(method, params, err);
       }
       throw err;
-    });
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  /** A failed pipe write names the engine's stderr tail; the original error stays as `cause` and `code`. */
+  private describeWriteError(err: Error): Error {
+    const tail = this.engine.stderrTail ?? "";
+    const wrapped = new Error(
+      `Failed to write to the engine: ${err.message}.${tail === "" ? "" : ` stderr:\n${tail}`}`,
+      { cause: err },
+    );
+    return Object.assign(wrapped, { code: (err as NodeJS.ErrnoException).code });
+  }
+
+  private async recoverFromTimeout(
+    method: string,
+    params: Record<string, unknown>,
+    timeout: EngineTimeoutError,
+  ): Promise<void> {
+    // A client replaced by an engine restart no longer owns the engine.
+    if (this.engine.restartAfterTimeout === undefined || this.engine.client !== this) return;
+    const abandoned = [
+      worstCaseReservation(method, params),
+      ...[...this.pending.values()].map((p) => p.reservation),
+    ];
+    this.failAll(new Error(`Engine restarted after '${method}' timed out; request abandoned.`));
+    try {
+      await this.engine.restartAfterTimeout(abandoned);
+    } catch (err) {
+      throw new Error(
+        `Engine request '${method}' timed out and the engine could not be restarted: ` +
+          (err instanceof Error ? err.message : String(err)),
+        { cause: timeout },
+      );
+    }
   }
 
   async evaluateBatch(
@@ -380,12 +473,40 @@ export class AttestClient {
       ...(options?.budget !== undefined ? { budget: options.budget } : {}),
       ...(options?.context !== undefined ? { context: options.context } : {}),
     };
-    const raw = (await this.sendRequest(
-      "evaluate_batch",
-      params as unknown as Record<string, unknown>,
-      options?.timeout,
-    )) as Record<string, unknown>;
-    return { ...(raw as unknown as EvaluateBatchResult), usage: parseUsage(raw["usage"]) };
+    let raw: Record<string, unknown>;
+    try {
+      raw = (await this.sendRequest(
+        "evaluate_batch",
+        params as unknown as Record<string, unknown>,
+        options?.timeout,
+      )) as Record<string, unknown>;
+    } catch (err) {
+      // An RPC error carries no usage, yet the engine may have called the judge first.
+      if (err instanceof ProtocolError) this.engine.markUnknownSpend?.();
+      throw err;
+    }
+    const usage = parseUsage(raw["usage"]);
+    this.engine.recordUsage?.(usage);
+    const result = raw as unknown as EvaluateBatchResult;
+    this.requireSentAssertionIds(assertions, result);
+    return { ...result, usage };
+  }
+
+  /** Reject a response whose assertion ids differ from the ids that were sent. */
+  private requireSentAssertionIds(
+    assertions: readonly Assertion[],
+    result: EvaluateBatchResult,
+  ): void {
+    const sent = new Set(assertions.map((a) => a.assertion_id));
+    const returned = new Set((result.results ?? []).map((r) => r.assertion_id));
+    const missing = [...sent].filter((id) => !returned.has(id));
+    const unexpected = [...returned].filter((id) => !sent.has(id));
+    if (missing.length === 0 && unexpected.length === 0) return;
+    throw new ProtocolDesyncError(
+      "evaluate_batch response does not match the request: " +
+        `missing assertion ids [${missing.join(", ")}], unexpected [${unexpected.join(", ")}].`,
+      this.diagnosticBuffer.snapshot(),
+    );
   }
 
   async submitPluginResult(
@@ -461,13 +582,40 @@ export class AttestClient {
     if (faultConfig !== undefined) {
       params.fault_config = faultConfig;
     }
-    const raw = await this.sendRequest(
-      "generate_user_message",
-      params,
-      options?.timeout,
-    );
+    let raw: unknown;
+    try {
+      raw = await this.sendRequest(
+        "generate_user_message",
+        params,
+        options?.timeout,
+      );
+    } catch (err) {
+      // An engine error can follow the simulated user's model call; that call keeps its reservation.
+      if (err instanceof ProtocolError) this.engine.markUnknownSpend?.();
+      throw err;
+    }
+    // The reply carries no usage: the simulated user's model call is spend the SDK cannot see.
+    this.engine.markUnknownSpend?.();
     return String((raw as { message: string }).message);
   }
+}
+
+/**
+ * What the engine may have spent on a request that timed out: its per-batch limits when it
+ * sent any, otherwise (null) the whole remaining session budget. Methods that cannot call a
+ * model reserve nothing.
+ */
+function worstCaseReservation(method: string, params: Record<string, unknown>): BudgetReservation {
+  if (method === "generate_user_message") return { judgeCalls: null, usd: null };
+  if (method !== "evaluate_batch") return { judgeCalls: 0, usd: 0 };
+  const assertions = (params["assertions"] ?? []) as readonly Assertion[];
+  const judges = assertions.some((a) => a.type === "llm_judge");
+  const paid = judges || assertions.some((a) => a.type === "embedding");
+  const budget = params["budget"] as BatchBudget | undefined;
+  return {
+    judgeCalls: judges ? (budget?.max_judge_calls ?? null) : 0,
+    usd: paid ? (budget?.max_cost_usd ?? null) : 0,
+  };
 }
 
 function classifyDecodeError(message: string): ProtocolDiagnosticKind {
