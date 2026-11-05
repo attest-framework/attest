@@ -3,7 +3,6 @@ package llm
 import (
 	"context"
 	"errors"
-	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -84,10 +83,10 @@ func TestRateLimiter_ReturnsTypedErrorOnExhaustion(t *testing.T) {
 	mock := NewMockProvider(
 		nil,
 		[]error{
-			fmt.Errorf("transient 1"),
-			fmt.Errorf("transient 2"),
-			fmt.Errorf("transient 3"),
-			fmt.Errorf("transient 4"),
+			&StatusError{Provider: "mock", StatusCode: 503, Message: "transient 1"},
+			&StatusError{Provider: "mock", StatusCode: 503, Message: "transient 2"},
+			&StatusError{Provider: "mock", StatusCode: 503, Message: "transient 3"},
+			&StatusError{Provider: "mock", StatusCode: 503, Message: "transient 4"},
 		},
 	)
 
@@ -140,8 +139,8 @@ func TestRateLimiter_RetryOnError(t *testing.T) {
 	mock := NewMockProvider(
 		[]*CompletionResponse{successResp},
 		[]error{
-			fmt.Errorf("transient error 1"),
-			fmt.Errorf("transient error 2"),
+			&StatusError{Provider: "mock", StatusCode: 503, Message: "transient error 1"},
+			&StatusError{Provider: "mock", StatusCode: 503, Message: "transient error 2"},
 			nil, // 3rd call succeeds — falls through to Responses
 		},
 	)

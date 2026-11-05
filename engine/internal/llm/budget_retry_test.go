@@ -45,7 +45,7 @@ func TestJudgePriceFromEnv_BothSet_ReturnsPrice(t *testing.T) {
 }
 
 func TestRateLimiter_RefusedRetry_KeepsPreviousError(t *testing.T) {
-	mock := NewMockProvider(nil, []error{errors.New("HTTP 500"), fmt.Errorf("session budget: %w", ErrBudgetExhausted)})
+	mock := NewMockProvider(nil, []error{&StatusError{Provider: "mock", StatusCode: 500, Message: "boom"}, fmt.Errorf("session budget: %w", ErrBudgetExhausted)})
 	rl, err := NewRateLimitedProvider(mock, RateLimiterConfig{
 		RequestsPerMinute: 6000, Burst: 10, MaxRetries: 3,
 		InitialBackoff: time.Millisecond, MaxBackoff: time.Millisecond,
