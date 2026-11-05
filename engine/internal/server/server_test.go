@@ -9,7 +9,6 @@ import (
 	"os"
 	"strconv"
 	"testing"
-	"time"
 
 	"github.com/attest-framework/attest/engine/internal/buildinfo"
 	"github.com/attest-framework/attest/engine/pkg/types"
@@ -30,7 +29,9 @@ func newTestServer(t *testing.T) (io.WriteCloser, io.ReadCloser, *Server) {
 		t.Fatalf("RegisterBuiltinHandlers: %v", err)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	// Handlers inherit this context, so it must not carry a deadline shorter
+	// than the slowest handler under test.
+	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(func() {
 		cancel()
 		stdinW.Close()
