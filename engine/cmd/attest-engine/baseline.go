@@ -97,10 +97,14 @@ func openBaselineStore() (*cache.BaselineStore, func(), error) {
 	}
 	store, err := cache.NewBaselineStore(db)
 	if err != nil {
-		release()
+		_ = release() // the failure being returned takes precedence over a close error
 		return nil, nil, fmt.Errorf("baseline store: %w", err)
 	}
-	return store, func() { release() }, nil
+	return store, func() {
+		if err := release(); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: close cache db: %v\n", err)
+		}
+	}, nil
 }
 
 // reportEnvelope is the subset of JSONReportV2 needed to build baseline

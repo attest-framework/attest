@@ -356,9 +356,9 @@ func TestBudgetedProvider_NegativeTokens_ClampedToZero(t *testing.T) {
 }
 
 func TestAbstainExplanation_StripsControlAndTruncates(t *testing.T) {
-	got := abstainExplanation("\x1b[31mevil‮ " + strings.Repeat("x", 5000))
+	got := abstainExplanation("\x1b[31mevil\u202e " + strings.Repeat("x", 5000))
 
-	if strings.ContainsAny(got, "\x1b‮") || len(got) > maxDiagnosticBytes {
+	if strings.ContainsAny(got, "\x1b\u202e") || len(got) > maxDiagnosticBytes {
 		t.Errorf("explanation not sanitized: len %d, %q...", len(got), got[:40])
 	}
 }
