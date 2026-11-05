@@ -1,27 +1,28 @@
 import type { Trace } from "../proto/types.js";
-import { TraceBuilder } from "../trace.js";
+import { buildProviderTrace, type ProviderCallOptions } from "./provider-trace.js";
 
 interface AnthropicTextBlock {
   type: "text";
   text: string;
 }
 
+/** A client-executed (`tool_use`) or Anthropic-executed (`server_tool_use`) tool call. */
 interface AnthropicToolUseBlock {
-  type: "tool_use";
+  type: "tool_use" | "server_tool_use";
   name: string;
   input: Record<string, unknown>;
 }
 
-type AnthropicContentBlock = AnthropicTextBlock | AnthropicToolUseBlock;
-
-interface AnthropicUsage {
-  input_tokens: number;
-  output_tokens: number;
+/** Any other block (tool results, thinking, ...): carries no text or call of its own. */
+interface AnthropicOtherBlock {
+  type: string;
 }
+
+type AnthropicContentBlock = AnthropicTextBlock | AnthropicToolUseBlock | AnthropicOtherBlock;
 
 interface AnthropicMessage {
   model?: string;
-  usage?: AnthropicUsage;
+  usage?: { input_tokens: number; output_tokens: number };
   content: AnthropicContentBlock[];
 }
 
@@ -32,51 +33,33 @@ export class AnthropicAdapter {
     this.agentId = agentId;
   }
 
-  traceFromResponse(
-    response: AnthropicMessage,
-    options?: {
-      inputMessages?: Record<string, unknown>[];
-      costUsd?: number;
-      latencyMs?: number;
-    },
-  ): Trace {
-    const builder = new TraceBuilder(this.agentId);
-
-    if (options?.inputMessages) {
-      builder.setInput({ messages: options.inputMessages });
-    }
-
-    const completionParts: string[] = [];
+  traceFromResponse(response: AnthropicMessage, options?: ProviderCallOptions): Trace {
+    const texts: string[] = [];
+    const toolCalls: { name: string; args: Record<string, unknown> }[] = [];
     for (const block of response.content) {
       if (block.type === "text") {
-        completionParts.push(block.text);
-      } else if (block.type === "tool_use") {
-        builder.addToolCall(block.name, {
-          args: block.input,
-        });
+        texts.push((block as AnthropicTextBlock).text);
+      } else if (block.type === "tool_use" || block.type === "server_tool_use") {
+        const use = block as AnthropicToolUseBlock;
+        toolCalls.push({ name: use.name, args: use.input });
       }
     }
-
-    const completionText = completionParts.join("\n");
-
-    const stepArgs: Record<string, unknown> = {};
-    if (response.model !== undefined) stepArgs.model = response.model;
-
-    builder.addLlmCall("completion", { args: stepArgs, result: { completion: completionText } });
-    builder.setOutput({ message: completionText });
-
-    let totalTokens: number | undefined;
-    if (response.usage) {
-      totalTokens = response.usage.input_tokens + response.usage.output_tokens;
-    }
-
-    builder.setMetadata({
-      total_tokens: totalTokens,
-      cost_usd: options?.costUsd,
-      latency_ms: options?.latencyMs,
-      model: response.model,
-    });
-
-    return builder.build();
+    const completion = texts.join("\n");
+    const usage = response.usage;
+    const input = options?.inputMessages ? { messages: options.inputMessages } : undefined;
+    return buildProviderTrace(
+      this.agentId,
+      {
+        model: response.model,
+        completion,
+        totalTokens: usage ? usage.input_tokens + usage.output_tokens : undefined,
+        inputTokens: usage?.input_tokens,
+        outputTokens: usage?.output_tokens,
+        toolCalls,
+      },
+      options,
+      input,
+      { message: completion },
+    );
   }
 }

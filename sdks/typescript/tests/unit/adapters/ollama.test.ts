@@ -76,11 +76,11 @@ describe("OllamaAdapter", () => {
     expect(trace.metadata?.total_tokens).toBeUndefined();
   });
 
-  it("uses empty string for model when missing from response", () => {
+  it("omits the model arg when the response has none", () => {
     const response = { message: { content: "hi" }, eval_count: 10, prompt_eval_count: 5 };
     const trace = adapter.traceFromResponse(response);
     const llmStep = trace.steps.find((s) => s.type === STEP_LLM_CALL);
-    expect(llmStep?.args?.model).toBe("");
+    expect(llmStep?.args).toEqual({});
   });
 
   it("works without agentId", () => {
