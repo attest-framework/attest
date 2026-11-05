@@ -96,11 +96,17 @@ class TestRecord:
 
 
 def build_report(
-    tests: list[TestRecord], *, simulated: bool, usage: Usage, include_traces: bool = False
+    tests: list[TestRecord],
+    *,
+    simulated: bool,
+    usage: Usage,
+    include_traces: bool = False,
+    tests_collected: int | None = None,
 ) -> dict[str, Any]:
     """Return the report-v2 document for ``tests``; ``usage`` is the session's
     attest model usage (``summary.usage``). ``include_traces`` adds the ``traces`` map and
-    a ``trace_id`` on every row evaluated against a trace."""
+    a ``trace_id`` on every row evaluated against a trace. ``tests_collected`` is the
+    session's collected-test count; a xdist worker leaves it ``None`` (the controller sets it)."""
     table = _TraceTable() if include_traces else None
     rows: list[dict[str, Any]] = []
     test_rows: list[dict[str, Any]] = []
@@ -179,9 +185,83 @@ def build_report(
         "total_cost": total_cost,
         "total_duration_ms": total_duration_ms,
     }
+    if tests_collected is not None:
+        document["tests_collected"] = tests_collected
     if table is not None:
         document["traces"] = table.traces
     return document
+
+
+def merge_reports(
+    documents: list[dict[str, Any]], *, tests_collected: int, usage: Usage
+) -> dict[str, Any]:
+    """Merge the per-worker report documents of a pytest-xdist run into one.
+
+    Rows and tests are concatenated in the order given; the summary counts are recomputed
+    from the merged rows, ``usage`` is the controller's sum of every worker's usage, and
+    the replay block, total cost and duration are summed. Trace ids that collide across
+    workers with different traces are renumbered, and the rows that reference them follow.
+    """
+    if not documents:
+        raise ValueError("merge_reports needs at least one worker report")
+    simulated = {bool(doc["simulated"]) for doc in documents}
+    if len(simulated) != 1:
+        raise ValueError("worker reports disagree on simulated")
+    results: list[dict[str, Any]] = []
+    test_rows: list[dict[str, Any]] = []
+    traces: dict[str, dict[str, Any]] = {}
+    replay_blocks: list[dict[str, Any]] = []
+    for doc in documents:
+        remap = _merge_traces(traces, doc.get("traces", {}))
+        for row in doc["results"]:
+            if "trace_id" in row:
+                row = {**row, "trace_id": remap[row["trace_id"]]}
+            results.append(row)
+        test_rows.extend(doc["tests"])
+        if "replay" in doc["summary"]:
+            replay_blocks.append(doc["summary"]["replay"])
+    statuses = [row["status"] for row in results]
+    summary_block: dict[str, Any] = {
+        "total": len(results),
+        "passed": statuses.count(STATUS_PASS),
+        "soft_fail": statuses.count(STATUS_SOFT_FAIL),
+        "hard_fail": statuses.count(STATUS_HARD_FAIL),
+        "not_evaluated": statuses.count(STATUS_NOT_EVALUATED),
+        "usage": usage.to_dict(),
+    }
+    if replay_blocks:
+        summary_block["replay"] = {
+            key: sum(block[key] for block in replay_blocks) for key in replay_blocks[0]
+        }
+    merged: dict[str, Any] = {
+        "report_version": REPORT_VERSION,
+        "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "simulated": simulated.pop(),
+        "summary": summary_block,
+        "results": results,
+        "tests": test_rows,
+        "total_cost": sum(doc["total_cost"] for doc in documents),
+        "total_duration_ms": sum(doc["total_duration_ms"] for doc in documents),
+        "tests_collected": tests_collected,
+    }
+    if traces:
+        merged["traces"] = traces
+    return merged
+
+
+def _merge_traces(
+    into: dict[str, dict[str, Any]], incoming: dict[str, dict[str, Any]]
+) -> dict[str, str]:
+    """Add ``incoming`` traces to ``into``; return each incoming key's key in ``into``."""
+    remap: dict[str, str] = {}
+    for key, doc in incoming.items():
+        base, n, merged_key = key.split("#", 1)[0], 1, key
+        while merged_key in into and into[merged_key] != doc:
+            n += 1
+            merged_key = f"{base}#{n}"
+        into[merged_key] = doc
+        remap[key] = merged_key
+    return remap
 
 
 def _replay_miss_result(summary: ReplaySummary) -> AssertionResult:
@@ -214,13 +294,31 @@ def _test_replay(summaries: list[ReplaySummary]) -> dict[str, Any]:
     return row
 
 
-def write_report(path: Path, tests: list[TestRecord], *, simulated: bool, usage: Usage) -> None:
+def write_report(
+    path: Path,
+    tests: list[TestRecord],
+    *,
+    simulated: bool,
+    usage: Usage,
+    tests_collected: int,
+) -> None:
     """Write the report-v2 document for ``tests`` to ``path``, creating parent directories.
 
     Embeds the traces when ``ATTEST_REPORT_TRACES=1``.
     """
-    path.parent.mkdir(parents=True, exist_ok=True)
-    report = build_report(
-        tests, simulated=simulated, usage=usage, include_traces=report_traces_enabled()
+    write_document(
+        path,
+        build_report(
+            tests,
+            simulated=simulated,
+            usage=usage,
+            include_traces=report_traces_enabled(),
+            tests_collected=tests_collected,
+        ),
     )
+
+
+def write_document(path: Path, report: dict[str, Any]) -> None:
+    """Write an already built report document to ``path``, creating parent directories."""
+    path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(report, indent=2) + "\n")

@@ -328,7 +328,7 @@ def test_write_report_embeds_traces_only_when_env_is_1(
     record = _traced_record(Trace(trace_id="trc_1", output={"message": "ok"}))
     path = tmp_path / "r.json"
 
-    write_report(path, [record], simulated=False, usage=Usage())
+    write_report(path, [record], simulated=False, usage=Usage(), tests_collected=1)
 
     report = json.loads(path.read_text())
     assert ("traces" in report) is embedded
