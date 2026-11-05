@@ -1,8 +1,8 @@
 package report
 
 import (
-	"github.com/attest-ai/attest/engine/internal/cache"
-	"github.com/attest-ai/attest/engine/pkg/types"
+	"github.com/attest-framework/attest/engine/internal/cache"
+	"github.com/attest-framework/attest/engine/pkg/types"
 )
 
 // BaselineDelta summarises how a current evaluation compares to a stored

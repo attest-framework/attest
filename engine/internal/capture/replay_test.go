@@ -13,7 +13,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/attest-ai/attest/engine/internal/redact"
+	"github.com/attest-framework/attest/engine/internal/redact"
 )
 
 // deadUpstreams point at a closed port: any request the replay proxy forwards

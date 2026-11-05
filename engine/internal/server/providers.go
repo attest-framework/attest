@@ -9,10 +9,10 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/attest-ai/attest/engine/internal/assertion"
-	"github.com/attest-ai/attest/engine/internal/assertion/embedding"
-	"github.com/attest-ai/attest/engine/internal/llm"
-	llmproviders "github.com/attest-ai/attest/engine/internal/llm/providers"
+	"github.com/attest-framework/attest/engine/internal/assertion"
+	"github.com/attest-framework/attest/engine/internal/assertion/embedding"
+	"github.com/attest-framework/attest/engine/internal/llm"
+	llmproviders "github.com/attest-framework/attest/engine/internal/llm/providers"
 )
 
 // judgeConfig is the Layer 6 judge configuration resolved from the environment.

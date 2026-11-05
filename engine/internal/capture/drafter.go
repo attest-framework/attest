@@ -7,8 +7,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/attest-ai/attest/engine/internal/assertion"
-	"github.com/attest-ai/attest/engine/pkg/types"
+	"github.com/attest-framework/attest/engine/internal/assertion"
+	"github.com/attest-framework/attest/engine/pkg/types"
 )
 
 // Contract kinds.

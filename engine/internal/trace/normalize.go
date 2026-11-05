@@ -3,7 +3,7 @@ package trace
 import (
 	"strings"
 
-	"github.com/attest-ai/attest/engine/pkg/types"
+	"github.com/attest-framework/attest/engine/pkg/types"
 )
 
 const defaultSchemaVersion = 1

@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/attest-ai/attest/engine/internal/server"
-	"github.com/attest-ai/attest/engine/pkg/types"
+	"github.com/attest-framework/attest/engine/internal/server"
+	"github.com/attest-framework/attest/engine/pkg/types"
 )
 
 func newE2EServer(t *testing.T) (io.WriteCloser, io.ReadCloser) {

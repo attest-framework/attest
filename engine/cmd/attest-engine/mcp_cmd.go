@@ -13,9 +13,9 @@ import (
 	"syscall"
 	"text/tabwriter"
 
-	"github.com/attest-ai/attest/engine/internal/buildinfo"
-	attestmcp "github.com/attest-ai/attest/engine/internal/mcp"
-	"github.com/attest-ai/attest/engine/internal/pathguard"
+	"github.com/attest-framework/attest/engine/internal/buildinfo"
+	attestmcp "github.com/attest-framework/attest/engine/internal/mcp"
+	"github.com/attest-framework/attest/engine/internal/pathguard"
 )
 
 func init() {

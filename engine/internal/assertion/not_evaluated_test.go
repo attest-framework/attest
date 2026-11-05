@@ -7,10 +7,10 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/attest-ai/attest/engine/internal/assertion/judge"
-	"github.com/attest-ai/attest/engine/internal/cache"
-	"github.com/attest-ai/attest/engine/internal/llm"
-	"github.com/attest-ai/attest/engine/pkg/types"
+	"github.com/attest-framework/attest/engine/internal/assertion/judge"
+	"github.com/attest-framework/attest/engine/internal/cache"
+	"github.com/attest-framework/attest/engine/internal/llm"
+	"github.com/attest-framework/attest/engine/pkg/types"
 )
 
 // failingEmbedder simulates an embedding provider outage.

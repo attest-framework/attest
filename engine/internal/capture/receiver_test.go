@@ -13,7 +13,7 @@ import (
 	"google.golang.org/protobuf/encoding/protowire"
 	"google.golang.org/protobuf/proto"
 
-	"github.com/attest-ai/attest/engine/internal/trace"
+	"github.com/attest-framework/attest/engine/internal/trace"
 )
 
 func receiverServer(t *testing.T) (*Receiver, string) {

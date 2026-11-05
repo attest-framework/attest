@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/attest-ai/attest/engine/internal/policy"
+	"github.com/attest-framework/attest/engine/internal/policy"
 )
 
 func TestMissingInputs_ConfiguredRulesNeedTheirInput(t *testing.T) {

@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/attest-ai/attest/engine/pkg/types"
+	"github.com/attest-framework/attest/engine/pkg/types"
 )
 
 // MaxRegexPatternLength is the maximum allowed length for regex patterns to prevent ReDoS.

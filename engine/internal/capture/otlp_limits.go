@@ -6,7 +6,7 @@ import (
 
 	"google.golang.org/protobuf/encoding/protowire"
 
-	"github.com/attest-ai/attest/engine/internal/trace"
+	"github.com/attest-framework/attest/engine/internal/trace"
 )
 
 // errOverLimit marks an OTLP body that exceeds the receiver's caps.

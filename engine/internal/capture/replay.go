@@ -11,7 +11,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/attest-ai/attest/engine/internal/redact"
+	"github.com/attest-framework/attest/engine/internal/redact"
 )
 
 // Replay modes. Strict fails a request that matches no recording; auto

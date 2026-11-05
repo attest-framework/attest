@@ -7,7 +7,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/attest-ai/attest/engine/pkg/types"
+	"github.com/attest-framework/attest/engine/pkg/types"
 	"github.com/santhosh-tekuri/jsonschema/v6"
 	"github.com/segmentio/encoding/json"
 )

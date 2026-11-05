@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/attest-ai/attest/engine/internal/llm"
+	"github.com/attest-framework/attest/engine/internal/llm"
 )
 
 func TestSimulatedUserGenerateMessage(t *testing.T) {

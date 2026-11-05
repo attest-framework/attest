@@ -8,9 +8,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/attest-ai/attest/engine/internal/llm"
-	"github.com/attest-ai/attest/engine/internal/world"
-	"github.com/attest-ai/attest/engine/pkg/types"
+	"github.com/attest-framework/attest/engine/internal/llm"
+	"github.com/attest-framework/attest/engine/internal/world"
+	"github.com/attest-framework/attest/engine/pkg/types"
 )
 
 // EffectEvaluator evaluates effect assertions, Layer 3: deterministic checks

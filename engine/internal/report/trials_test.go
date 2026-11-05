@@ -4,8 +4,8 @@ import (
 	"math"
 	"testing"
 
-	"github.com/attest-ai/attest/engine/internal/report"
-	"github.com/attest-ai/attest/engine/pkg/types"
+	"github.com/attest-framework/attest/engine/internal/report"
+	"github.com/attest-framework/attest/engine/pkg/types"
 )
 
 func near(a, b float64) bool { return math.Abs(a-b) < 5e-4 }

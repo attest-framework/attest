@@ -12,8 +12,8 @@ import (
 	"sort"
 	"text/tabwriter"
 
-	"github.com/attest-ai/attest/engine/internal/assets"
-	"github.com/attest-ai/attest/engine/internal/pathguard"
+	"github.com/attest-framework/attest/engine/internal/assets"
+	"github.com/attest-framework/attest/engine/internal/pathguard"
 )
 
 func init() {
