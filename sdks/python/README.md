@@ -5,7 +5,7 @@ Test framework for AI agents. Deterministic assertions (schema validation, cost 
 ## Install
 
 ```bash
-uv add "attest-ai>=1.0.0"
+uv add "attest-ai>=1.0.0" pytest
 ```
 
 With LLM provider support:

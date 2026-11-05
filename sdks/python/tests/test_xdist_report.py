@@ -44,7 +44,8 @@ _POLICY = "layers:\n  4:\n    max_hard_fails: 0\n"
 
 @pytest.fixture
 def engine(monkeypatch: pytest.MonkeyPatch) -> Path:
-    assert _ENGINE.is_file(), f"build the engine first: make engine ({_ENGINE})"
+    if not _ENGINE.is_file():
+        pytest.skip("attest-engine binary not found; build with 'make engine'")
     monkeypatch.setenv("ATTEST_ENGINE_PATH", str(_ENGINE))
     return _ENGINE
 
@@ -129,10 +130,13 @@ def test_xdist_report_worker_crash_writes_no_report(pytester: pytest.Pytester) -
         test_sample="import os\n\ndef test_crash():\n    os._exit(1)\n\ndef test_ok():\n    pass\n"
     )
 
+    stale = pytester.path / "r.json"
+    stale.write_text('{"report_version": 2, "tests": []}')  # an earlier run's report
+
     result = pytester.runpytest("-n", "2", "--attest-report=r.json")
 
     assert result.ret == pytest.ExitCode.INTERNAL_ERROR
-    assert not (pytester.path / "r.json").exists()
+    assert not stale.exists()
     result.stdout.fnmatch_lines(
         ["*ERROR: --attest-report not written*ended without sending their report*"]
     )

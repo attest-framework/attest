@@ -759,11 +759,10 @@ def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> Generator[
         begin_run(saved.run)
 
 
-# pytest-xdist: each worker's report document, by worker id, and the collected-test count
-# a worker reported, kept on the controller's config.
+# pytest-xdist: each worker's report document, by worker id, kept on the controller's config.
+# The collected-test count needs no stash: xdist sets the controller's session.testscollected.
 _XDIST_WORKER_REPORTS = pytest.StashKey[dict[str, dict[str, Any]]]()
 _XDIST_MISSING_WORKERS = pytest.StashKey[list[str]]()
-_XDIST_COLLECTED = pytest.StashKey[int]()
 _WORKER_REPORT_KEY = "attest_report"
 
 
@@ -773,14 +772,6 @@ def _is_xdist_worker(config: pytest.Config) -> bool:
 
 def _is_xdist_controller(config: pytest.Config) -> bool:
     return not _is_xdist_worker(config) and config.pluginmanager.has_plugin("dsession")
-
-
-@pytest.hookimpl(optionalhook=True)
-def pytest_xdist_node_collection_finished(node: Any, ids: list[str]) -> None:
-    """Record the collected-test count (every worker collects the same list)."""
-    config: pytest.Config = node.config
-    if _XDIST_COLLECTED not in config.stash:
-        config.stash[_XDIST_COLLECTED] = len(ids)
 
 
 @pytest.hookimpl(optionalhook=True)
@@ -830,9 +821,11 @@ def _write_session_report(session: pytest.Session) -> None:
         return
     if _is_xdist_controller(config):
         try:
-            document = _merge_worker_reports(config)
+            document = _merge_worker_reports(config, session.testscollected)
         except _IncompleteReportError as exc:
             # Raising here would be an uncaught traceback after the run; fail the run instead.
+            # An older report at the same path must not survive to be graded as this run's.
+            path.unlink(missing_ok=True)
             config.get_terminal_writer().line(f"ERROR: {exc}", red=True)
             session.exitstatus = pytest.ExitCode.INTERNAL_ERROR
             return
@@ -851,7 +844,7 @@ class _IncompleteReportError(RuntimeError):
     """The controller cannot build a complete report: a worker's rows are missing."""
 
 
-def _merge_worker_reports(config: pytest.Config) -> dict[str, Any]:
+def _merge_worker_reports(config: pytest.Config, tests_collected: int) -> dict[str, Any]:
     """The controller's report: every worker's rows, or a loud error when one is missing."""
     missing = config.stash.get(_XDIST_MISSING_WORKERS, [])
     if missing:
@@ -866,9 +859,7 @@ def _merge_worker_reports(config: pytest.Config) -> dict[str, Any]:
         )
     ordered = [reports[w] for w in sorted(reports, key=_worker_order)]
     usage = Usage.total(Usage.from_dict(doc["summary"]["usage"]) for doc in ordered)
-    return merge_reports(
-        ordered, tests_collected=config.stash.get(_XDIST_COLLECTED, 0), usage=usage
-    )
+    return merge_reports(ordered, tests_collected=tests_collected, usage=usage)
 
 
 def _worker_order(worker_id: str) -> tuple[int, str]:
