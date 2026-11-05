@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# test-release-scripts.sh — behaviour tests for check-release-tag.sh,
-# release-notes.sh and engine-checksums.sh, plus the release.yml wiring that embeds
-# and verifies the engine hash table. Runs on every release.yml pull request.
+# test-release-scripts.sh — behaviour tests for check-release-tag.sh, release-notes.sh,
+# engine-checksums.sh and npm-publish-dry-run.sh, plus the release workflow layout and the engine hash
+# table wiring. Exits non-zero on the first failed case.
 set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -186,13 +186,18 @@ else
     fail "generate names the missing binary"
 fi
 
-# release.yml wiring -----------------------------------------------------------
+# release workflow wiring -----------------------------------------------------
 
-workflow="$here/../.github/workflows/release.yml"
-job_needs() { awk -v job="  $1:" '$0 == job {f=1; next} f && /^    needs:/ {print; exit} f && /^  [a-z]/ {exit}' "$workflow"; }
+root="$(cd "$here/.." && pwd)"
+wf="$root/.github/workflows"
+build_wf="$wf/release-build.yml"
+workflow="$wf/release.yml"
+job_needs() { # <file> <job>
+    awk -v job="  $2:" '$0 == job {f=1; next} f && /^    needs:/ {print; exit} f && /^  [a-z]/ {exit}' "$1"
+}
 
 for job in build-python build-npm verify-python verify-npm; do
-    if job_needs "$job" | grep -q 'build-engine'; then
+    if job_needs "$build_wf" "$job" | grep -q 'build-engine'; then
         pass "$job depends on build-engine"
     else
         fail "$job depends on build-engine"
@@ -212,18 +217,18 @@ else
     fail "attestation permissions are granted to one job only"
 fi
 
-# build-engine runs on pull requests and dry runs with a floating toolchain and the binary it
-# built; it must never be able to mint an OIDC token.
-if awk '/^  [a-z0-9-]+:$/ {job=$1} /id-token: write/ {print job}' "$workflow" | grep -qx 'build-engine:'; then
-    fail "build-engine holds no id-token permission"
+# release-build.yml runs on pull requests and dry runs with a floating toolchain and the binary it
+# built; no job in it may be able to mint an OIDC token or write attestations.
+if grep -Eq '^\s+(id-token|attestations): write' "$build_wf" "$wf/ci.yml"; then
+    fail "release-build.yml and ci.yml hold no id-token or attestations permission"
 else
-    pass "build-engine holds no id-token permission"
+    pass "release-build.yml and ci.yml hold no id-token or attestations permission"
 fi
 
-if job_needs attest-engine | grep -q 'build-engine' && job_needs publish-github | grep -q 'attest-engine'; then
-    pass "attest-engine follows build-engine and gates publish-github"
+if job_needs "$workflow" attest-engine | grep -q 'build' && job_needs "$workflow" publish-github | grep -q 'attest-engine'; then
+    pass "attest-engine follows the build and gates publish-github"
 else
-    fail "attest-engine follows build-engine and gates publish-github"
+    fail "attest-engine follows the build and gates publish-github"
 fi
 
 if awk '$0 == "  attest-engine:" {f=1; next} f && /^  [a-z]/ {exit} f && /^    if:/ {print}' "$workflow" \
@@ -238,6 +243,134 @@ if [[ -z "$unpinned" ]]; then
     pass "every attest-engine step is SHA-pinned"
 else
     fail "every attest-engine step is SHA-pinned: $unpinned"
+fi
+
+# npm-publish-dry-run.sh ----------------------------------------------------
+
+# A stand-in `npm` on PATH: `view` answers per NPM_VIEW (published, absent,
+# broken); `publish` is recorded in $work/npm-calls.
+mkdir -p "$work/bin" "$work/dist"
+cat > "$work/bin/npm" <<'STUB'
+#!/usr/bin/env bash
+echo "$*" >> "$NPM_CALLS"
+case "$1" in
+    view)
+        case "$NPM_VIEW" in
+            published) echo "${2##*@}" ;;
+            absent) echo "npm error code E404" >&2; exit 1 ;;
+            *) echo "npm error code EAI_AGAIN" >&2; exit 1 ;;
+        esac
+        ;;
+    publish) ;;
+    *) exit 2 ;;
+esac
+STUB
+chmod +x "$work/bin/npm"
+for pkg in core vitest; do
+    mkdir -p "$work/pack/package"
+    printf '{"name":"@attest-ai/%s","version":"1.0.1"}\n' "$pkg" > "$work/pack/package/package.json"
+    tar -czf "$work/dist/attest-ai-$pkg-1.0.1.tgz" -C "$work/pack" package
+done
+
+dry() { # <mode> <NPM_VIEW> [version]
+    : > "$work/npm-calls"
+    PATH="$work/bin:$PATH" NPM_CALLS="$work/npm-calls" NPM_VIEW="$2" \
+        "$here/npm-publish-dry-run.sh" "$1" "${3:-1.0.1}" latest "$work/dist"
+}
+
+if dry dry-run published 2>"$work/err" >"$work/out" \
+    && grep -q 'skipping npm publish --dry-run' "$work/out" \
+    && ! grep -q '^publish' "$work/npm-calls"; then
+    pass "dry-run skips npm publish --dry-run for a version already on npm"
+else
+    fail "dry-run skips npm publish --dry-run for a version already on npm"
+fi
+
+if dry dry-run absent >/dev/null 2>&1 \
+    && [[ "$(grep -c '^publish .*--dry-run' "$work/npm-calls")" == 2 ]]; then
+    pass "dry-run runs npm publish --dry-run for both packages when the version is new"
+else
+    fail "dry-run runs npm publish --dry-run for both packages when the version is new"
+fi
+
+if dry publish published >/dev/null 2>&1 \
+    && [[ "$(grep -c '^publish .*--dry-run' "$work/npm-calls")" == 2 ]] \
+    && ! grep -q '^view' "$work/npm-calls"; then
+    pass "publish mode never consults the registry and always runs the dry run"
+else
+    fail "publish mode never consults the registry and always runs the dry run"
+fi
+
+if dry dry-run broken >/dev/null 2>"$work/err"; then
+    fail "dry-run fails on a registry lookup error other than E404"
+elif grep -q 'EAI_AGAIN' "$work/err"; then
+    pass "dry-run fails on a registry lookup error other than E404"
+else
+    fail "dry-run reports the registry lookup error"
+fi
+
+# A 1.0.2-named tarball that holds 1.0.1: the name/version check must reject it.
+for pkg in core vitest; do
+    cp "$work/dist/attest-ai-$pkg-1.0.1.tgz" "$work/dist/attest-ai-$pkg-1.0.2.tgz"
+done
+if dry dry-run published 1.0.2 >/dev/null 2>"$work/err"; then
+    fail "a tarball whose version differs from the expected one is rejected"
+elif grep -q "holds '@attest-ai/core@1.0.1', expected '@attest-ai/core@1.0.2'" "$work/err"; then
+    pass "a tarball whose version differs from the expected one is rejected"
+else
+    fail "a tarball whose version differs is rejected by the name/version check"
+fi
+rm -f "$work/dist/"attest-ai-*-1.0.2.tgz
+
+# release-build.yml passes a relative dist dir; npm must get ./dist/..., which it reads as a file.
+: > "$work/npm-calls"
+if (cd "$work" && PATH="$work/bin:$PATH" NPM_CALLS="$work/npm-calls" NPM_VIEW=absent \
+    "$here/npm-publish-dry-run.sh" dry-run 1.0.1 latest dist >/dev/null 2>&1) \
+    && grep -q '^publish \./dist/attest-ai-core-1\.0\.1\.tgz --dry-run' "$work/npm-calls" \
+    && ! grep -q '^publish dist/' "$work/npm-calls"; then
+    pass "a relative dist dir reaches npm as ./dist/..., not a GitHub spec"
+else
+    fail "a relative dist dir reaches npm as ./dist/..., not a GitHub spec"
+fi
+
+# Workflow layout ------------------------------------------------------------
+
+if grep -Eq '^permissions:$' "$wf/release-build.yml" \
+    && [[ "$(awk '/^permissions:/{getline; print}' "$wf/release-build.yml")" == "  contents: read" ]] \
+    && ! grep -Eq '^\s+(contents: write|id-token: write)' "$wf/release-build.yml"; then
+    pass "release-build.yml is read-only"
+else
+    fail "release-build.yml is read-only"
+fi
+
+missing=""
+for job in check-tag release-scripts-test build-engine build-python build-npm \
+    verify-engine verify-python verify-npm; do
+    grep -Eq "^  $job:\$" "$wf/release-build.yml" || missing="$missing $job(build)"
+    ! grep -Eq "^  $job:\$" "$wf/release.yml" || missing="$missing $job(release)"
+done
+for job in publish-github publish-pypi publish-npm finalize-release; do
+    grep -Eq "^  $job:\$" "$wf/release.yml" || missing="$missing $job(release)"
+done
+if [[ -z "$missing" ]]; then
+    pass "build and verify jobs live in release-build.yml, publish jobs in release.yml"
+else
+    fail "job layout wrong:$missing"
+fi
+
+if grep -Eq '^\s+uses: \./\.github/workflows/release-build\.yml$' "$wf/release.yml" \
+    && grep -Eq '^\s+uses: \./\.github/workflows/release-build\.yml$' "$wf/ci.yml" \
+    && ! grep -Eq '^\s+uses: \./\.github/workflows/release\.yml$' "$wf/ci.yml"; then
+    pass "release.yml and ci.yml both call release-build.yml; ci.yml never calls release.yml"
+else
+    fail "release.yml and ci.yml both call release-build.yml; ci.yml never calls release.yml"
+fi
+
+if awk '/^  release-dry-run:/{f=1;next} f&&/^  [a-z]/{f=0} f' "$wf/ci.yml" \
+    | grep -q "github.event_name == 'pull_request'"; then
+    pass "ci.yml calls the release dry run only on pull_request"
+else
+    fail "ci.yml calls the release dry run only on pull_request"
 fi
 
 if [[ $failures -gt 0 ]]; then

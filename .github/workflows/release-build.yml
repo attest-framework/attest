@@ -1,0 +1,478 @@
+name: Release build
+
+# Builds and verifies every release artifact and publishes nothing. Called by
+# release.yml (tag push, workflow_dispatch), which publishes from the stored
+# artifacts, and by the release-dry-run job of ci.yml on pull requests. It
+# needs and requests read access only, so a pull-request run holds no
+# publishing or OIDC grant and a fork pull request can start it.
+
+on:
+  workflow_call:
+    inputs:
+      dry_run:
+        description: "workflow_dispatch dry_run input of the caller (empty otherwise)"
+        type: string
+        default: ""
+      tag:
+        description: "workflow_dispatch tag input of the caller (empty otherwise)"
+        type: string
+        default: ""
+    outputs:
+      publish:
+        description: "true when the caller may publish (tag push, or dispatch on a tag with dry_run=false)"
+        value: ${{ jobs.check-tag.outputs.publish }}
+      version:
+        value: ${{ jobs.check-tag.outputs.version }}
+      tag:
+        value: ${{ jobs.check-tag.outputs.tag }}
+      prerelease:
+        value: ${{ jobs.check-tag.outputs.prerelease }}
+      npm_dist_tag:
+        value: ${{ jobs.check-tag.outputs.npm_dist_tag }}
+      pep440:
+        value: ${{ jobs.build-python.outputs.pep440 }}
+
+permissions:
+  contents: read
+
+jobs:
+  check-tag:
+    name: Check tag against VERSION
+    runs-on: ubuntu-latest
+    outputs:
+      publish: ${{ steps.mode.outputs.publish }}
+      version: ${{ steps.check.outputs.version }}
+      tag: ${{ steps.check.outputs.tag }}
+      prerelease: ${{ steps.check.outputs.prerelease }}
+      npm_dist_tag: ${{ steps.check.outputs.npm_dist_tag }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Resolve mode and tag
+        id: mode
+        env:
+          EVENT: ${{ github.event_name }}
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+          INPUT_DRY_RUN: ${{ inputs.dry_run }}
+          INPUT_TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          version_tag="v$(tr -d '[:space:]' < VERSION)"
+          case "$EVENT" in
+            push)
+              publish=true
+              tag="$REF_NAME"
+              ;;
+            workflow_dispatch)
+              if [[ "$INPUT_DRY_RUN" == "true" ]]; then
+                publish=false
+              elif [[ "$REF_TYPE" == "tag" ]]; then
+                publish=true
+              else
+                echo "::error::dry_run=false publishes and must be dispatched on a v* tag ref, not '$REF_NAME'"
+                exit 1
+              fi
+              if [[ -n "$INPUT_TAG" ]]; then
+                tag="$INPUT_TAG"
+              elif [[ "$REF_TYPE" == "tag" ]]; then
+                tag="$REF_NAME"
+              else
+                tag="$version_tag"
+              fi
+              if [[ "$publish" == "true" && "$tag" != "$REF_NAME" ]]; then
+                echo "::error::the tag input differs from the dispatched tag ref"
+                exit 1
+              fi
+              ;;
+            pull_request)
+              publish=false
+              tag="$version_tag"
+              ;;
+            *)
+              echo "::error::unsupported event '$EVENT'"
+              exit 1
+              ;;
+          esac
+          # Validate before the value reaches $GITHUB_OUTPUT or the log; the
+          # class excludes newlines, so no output injection is possible.
+          if [[ ! "$tag" =~ ^v[0-9A-Za-z.+-]+$ ]]; then
+            echo "::error::tag must match ^v[0-9A-Za-z.+-]+\$ (value not shown)"
+            exit 1
+          fi
+          echo "publish=$publish" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "mode: $([[ $publish == true ]] && echo publish || echo dry run), tag: $tag"
+      - name: Check tag against VERSION
+        id: check
+        env:
+          TAG: ${{ steps.mode.outputs.tag }}
+        run: |
+          set -euo pipefail
+          scripts/check-release-tag.sh "$TAG" | tee -a "$GITHUB_OUTPUT"
+      - name: Require the tagged commit on main
+        if: steps.mode.outputs.publish == 'true'
+        run: |
+          set -euo pipefail
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "::error::tagged commit $GITHUB_SHA is not on main; release only reviewed commits"
+            exit 1
+          fi
+      - name: Extract release notes
+        env:
+          PUBLISH: ${{ steps.mode.outputs.publish }}
+          VERSION: ${{ steps.check.outputs.version }}
+        run: |
+          set -euo pipefail
+          mkdir -p notes
+          if [[ "$PUBLISH" == "true" ]]; then
+            scripts/release-notes.sh "$VERSION" > notes/release-notes.md
+            { echo "### Release notes: [$VERSION]"; echo; cat notes/release-notes.md; } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          # Dry run: show Unreleased and, when release prep already moved it,
+          # the [VERSION] section the tag push will publish. One must exist.
+          found=0
+          for section in Unreleased "$VERSION"; do
+            if scripts/release-notes.sh "$section" > "notes/$section.md" 2> notes/error.txt; then
+              found=1
+              { echo "### Release notes: [$section]"; echo; cat "notes/$section.md"; echo; } >> "$GITHUB_STEP_SUMMARY"
+            else
+              rm -f "notes/$section.md"
+              echo "### Release notes: [$section] — $(cat notes/error.txt)" >> "$GITHUB_STEP_SUMMARY"
+            fi
+          done
+          rm -f notes/error.txt
+          if [[ $found == 0 ]]; then
+            echo "::error::CHANGELOG.md has neither Unreleased entries nor a [$VERSION] section"
+            exit 1
+          fi
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release-notes
+          path: notes/
+          if-no-files-found: error
+
+  release-scripts-test:
+    name: Release script tests (dry run)
+    needs: check-tag
+    if: needs.check-tag.outputs.publish == 'false'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Run release script tests
+        run: bash scripts/test-release-scripts.sh
+      - name: Assert a mismatched tag is rejected
+        run: |
+          set -euo pipefail
+          if scripts/check-release-tag.sh v0.0.0-mismatch 2> mismatch.err; then
+            echo "::error::check-release-tag.sh accepted a tag that differs from VERSION"
+            exit 1
+          fi
+          echo "Mismatched tag rejected as expected: $(cat mismatch.err)" | tee -a "$GITHUB_STEP_SUMMARY"
+
+  build-engine:
+    name: Build engine binaries
+    needs: check-tag
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      artifact_id: ${{ steps.upload.outputs.artifact-id }}
+      artifact_digest: ${{ steps.upload.outputs.artifact-digest }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v7
+        with:
+          go-version: "1.27"
+          cache: false
+      - name: Cross-compile six targets
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          for target in darwin/amd64 darwin/arm64 linux/amd64 linux/arm64 windows/amd64 windows/arm64; do
+            os="${target%/*}"
+            arch="${target#*/}"
+            ext=""
+            if [[ "$os" == "windows" ]]; then ext=".exe"; fi
+            (cd engine && CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" \
+              go build -trimpath -ldflags="-s -w" \
+              -o "../dist/attest-engine-$os-$arch$ext" ./cmd/attest-engine/)
+          done
+          (cd dist && sha256sum attest-engine-* > checksums-sha256.txt)
+          cat dist/checksums-sha256.txt
+      - name: Check embedded engine version
+        env:
+          VERSION: ${{ needs.check-tag.outputs.version }}
+        run: |
+          set -euo pipefail
+          actual="$(./dist/attest-engine-linux-amd64 version)"
+          if [[ "$actual" != "attest-engine $VERSION" ]]; then
+            echo "::error::engine reports '$actual', expected 'attest-engine $VERSION'"
+            exit 1
+          fi
+          echo "$actual"
+      - uses: actions/upload-artifact@v7
+        id: upload
+        with:
+          name: engine-binaries
+          path: dist/
+          if-no-files-found: error
+
+  build-python:
+    name: Build Python distributions
+    needs: [check-tag, build-engine]
+    runs-on: ubuntu-latest
+    outputs:
+      pep440: ${{ steps.version.outputs.pep440 }}
+      artifact_id: ${{ steps.upload.outputs.artifact-id }}
+      artifact_digest: ${{ steps.upload.outputs.artifact-digest }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
+        with:
+          enable-cache: false
+      - uses: actions/download-artifact@v8
+        with:
+          name: engine-binaries
+          path: engine-dist
+      - name: Embed engine hash table from this run's binaries
+        env:
+          VERSION: ${{ needs.check-tag.outputs.version }}
+        run: |
+          set -euo pipefail
+          scripts/engine-checksums.sh generate "$VERSION" engine-dist > sdks/python/src/attest/engine-checksums.json
+          cat sdks/python/src/attest/engine-checksums.json
+      - name: Build sdist and wheel
+        run: cd sdks/python && uv build --out-dir "$GITHUB_WORKSPACE/dist"
+      - name: Check normalized version
+        id: version
+        env:
+          VERSION: ${{ needs.check-tag.outputs.version }}
+        run: |
+          set -euo pipefail
+          pep440="$(uv run --no-project --with packaging python -c \
+            'import sys; from packaging.version import Version; print(Version(sys.argv[1]))' "$VERSION")"
+          for f in "dist/attest_ai-$pep440-py3-none-any.whl" "dist/attest_ai-$pep440.tar.gz"; do
+            if [[ ! -f "$f" ]]; then
+              echo "::error::expected $f for VERSION $VERSION; built: $(ls dist)"
+              exit 1
+            fi
+          done
+          echo "pep440=$pep440" >> "$GITHUB_OUTPUT"
+          ls -l dist
+      - uses: actions/upload-artifact@v7
+        id: upload
+        with:
+          name: python-dist
+          path: dist/
+          if-no-files-found: error
+
+  build-npm:
+    name: Build npm tarballs
+    needs: [check-tag, build-engine]
+    runs-on: ubuntu-latest
+    outputs:
+      artifact_id: ${{ steps.upload.outputs.artifact-id }}
+      artifact_digest: ${{ steps.upload.outputs.artifact-digest }}
+    defaults:
+      run:
+        working-directory: sdks/typescript
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+        with:
+          package_json_file: sdks/typescript/package.json
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Build
+        run: pnpm -r build
+      - uses: actions/download-artifact@v8
+        with:
+          name: engine-binaries
+          path: engine-dist
+      - name: Embed engine hash table from this run's binaries
+        env:
+          VERSION: ${{ needs.check-tag.outputs.version }}
+        run: |
+          set -euo pipefail
+          # Only @attest-ai/core downloads an engine; @attest-ai/vitest resolves it through core.
+          "$GITHUB_WORKSPACE/scripts/engine-checksums.sh" generate "$VERSION" "$GITHUB_WORKSPACE/engine-dist" \
+            > packages/core/engine-checksums.json
+          cat packages/core/engine-checksums.json
+      - name: Pack tarballs
+        env:
+          VERSION: ${{ needs.check-tag.outputs.version }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$GITHUB_WORKSPACE/dist"
+          for pkg in core vitest; do
+            (cd "packages/$pkg" && pnpm pack --pack-destination "$GITHUB_WORKSPACE/dist")
+            tgz="$GITHUB_WORKSPACE/dist/attest-ai-$pkg-$VERSION.tgz"
+            packed="$(tar -xOzf "$tgz" package/package.json | jq -r .version)"
+            if [[ "$packed" != "$VERSION" ]]; then
+              echo "::error::$tgz has version '$packed', expected '$VERSION'"
+              exit 1
+            fi
+          done
+          ls -l "$GITHUB_WORKSPACE/dist"
+      - uses: actions/upload-artifact@v7
+        id: upload
+        with:
+          name: npm-tarballs
+          path: dist/
+          if-no-files-found: error
+
+  verify-engine:
+    name: Verify engine artifacts
+    needs: [check-tag, build-engine]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: engine-binaries
+          path: dist
+      - name: Verify names and checksums
+        env:
+          ARTIFACT_ID: ${{ needs.build-engine.outputs.artifact_id }}
+          ARTIFACT_DIGEST: ${{ needs.build-engine.outputs.artifact_digest }}
+        run: |
+          set -euo pipefail
+          cd dist
+          expected="$(printf '%s\n' \
+            attest-engine-darwin-amd64 attest-engine-darwin-arm64 \
+            attest-engine-linux-amd64 attest-engine-linux-arm64 \
+            attest-engine-windows-amd64.exe attest-engine-windows-arm64.exe \
+            checksums-sha256.txt)"
+          actual="$(find . -maxdepth 1 -type f -printf '%f\n' | LC_ALL=C sort)"
+          if [[ "$actual" != "$expected" ]]; then
+            echo "::error::release assets differ from the names the SDK downloaders expect:"
+            echo "$actual"
+            exit 1
+          fi
+          sha256sum -c checksums-sha256.txt
+          {
+            echo "### engine-binaries (artifact $ARTIFACT_ID, $ARTIFACT_DIGEST, run attempt $GITHUB_RUN_ATTEMPT)"
+            echo
+            echo '| File | Bytes | sha256 |'
+            echo '|---|---:|---|'
+            for f in *; do echo "| $f | $(stat -c %s "$f") | $(sha256sum "$f" | cut -d' ' -f1) |"; done
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
+  verify-python:
+    name: Verify Python distributions
+    needs: [check-tag, build-python, build-engine]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v8
+        with:
+          name: python-dist
+          path: dist
+      - uses: actions/download-artifact@v8
+        with:
+          name: engine-binaries
+          path: engine-dist
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
+        with:
+          enable-cache: false
+      - name: twine check
+        run: uvx --from 'twine>=6' twine check --strict dist/*
+      - name: Embedded engine table equals the engine binaries
+        env:
+          VERSION: ${{ needs.check-tag.outputs.version }}
+          PEP440: ${{ needs.build-python.outputs.pep440 }}
+        run: |
+          set -euo pipefail
+          unzip -p "dist/attest_ai-$PEP440-py3-none-any.whl" attest/engine-checksums.json > wheel-table.json
+          tar -xOzf "dist/attest_ai-$PEP440.tar.gz" "attest_ai-$PEP440/src/attest/engine-checksums.json" > sdist-table.json
+          scripts/engine-checksums.sh verify "$VERSION" engine-dist wheel-table.json
+          scripts/engine-checksums.sh verify "$VERSION" engine-dist sdist-table.json
+          echo "wheel and sdist tables equal the engine binaries" >> "$GITHUB_STEP_SUMMARY"
+      - name: Record artifact digests
+        env:
+          ARTIFACT_ID: ${{ needs.build-python.outputs.artifact_id }}
+          ARTIFACT_DIGEST: ${{ needs.build-python.outputs.artifact_digest }}
+        run: |
+          set -euo pipefail
+          {
+            echo "### python-dist (artifact $ARTIFACT_ID, $ARTIFACT_DIGEST, run attempt $GITHUB_RUN_ATTEMPT)"
+            echo
+            echo '| File | Bytes | sha256 |'
+            echo '|---|---:|---|'
+            for f in dist/*; do echo "| ${f#dist/} | $(stat -c %s "$f") | $(sha256sum "$f" | cut -d' ' -f1) |"; done
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
+  verify-npm:
+    name: Verify npm tarballs
+    needs: [check-tag, build-npm, build-engine]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v8
+        with:
+          name: npm-tarballs
+          path: dist
+      - uses: actions/download-artifact@v8
+        with:
+          name: engine-binaries
+          path: engine-dist
+      - name: Embedded engine table equals the engine binaries
+        env:
+          VERSION: ${{ needs.check-tag.outputs.version }}
+        run: |
+          set -euo pipefail
+          tar -xOzf "dist/attest-ai-core-$VERSION.tgz" package/engine-checksums.json > core-table.json
+          scripts/engine-checksums.sh verify "$VERSION" engine-dist core-table.json
+          if tar -tzf "dist/attest-ai-vitest-$VERSION.tgz" | grep -q 'engine-checksums.json'; then
+            echo "::error::@attest-ai/vitest ships an engine hash table; it has no downloader"
+            exit 1
+          fi
+          echo "core table equals the engine binaries; vitest ships none" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+      - name: Install npm with trusted publishing support
+        run: |
+          npm install -g npm@11.21.1
+          npm --version
+      - name: npm publish --dry-run
+        env:
+          PUBLISH: ${{ needs.check-tag.outputs.publish }}
+          VERSION: ${{ needs.check-tag.outputs.version }}
+          DIST_TAG: ${{ needs.check-tag.outputs.npm_dist_tag }}
+        run: |
+          set -euo pipefail
+          mode=dry-run
+          if [[ "$PUBLISH" == "true" ]]; then mode=publish; fi
+          scripts/npm-publish-dry-run.sh "$mode" "$VERSION" "$DIST_TAG" dist
+      - name: Record artifact digests
+        env:
+          ARTIFACT_ID: ${{ needs.build-npm.outputs.artifact_id }}
+          ARTIFACT_DIGEST: ${{ needs.build-npm.outputs.artifact_digest }}
+        run: |
+          set -euo pipefail
+          {
+            echo "### npm-tarballs (artifact $ARTIFACT_ID, $ARTIFACT_DIGEST, run attempt $GITHUB_RUN_ATTEMPT)"
+            echo
+            echo '| File | Bytes | sha256 |'
+            echo '|---|---:|---|'
+            for f in dist/*; do echo "| ${f#dist/} | $(stat -c %s "$f") | $(sha256sum "$f" | cut -d' ' -f1) |"; done
+          } | tee -a "$GITHUB_STEP_SUMMARY"
