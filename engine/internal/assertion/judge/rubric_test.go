@@ -252,13 +252,14 @@ func TestFrame_ParseScoreResult_NonceInReply_IsMalformed(t *testing.T) {
 	}
 }
 
-func TestCanonicalizeDelimiters_NonceForm_BecomesFixed(t *testing.T) {
+func TestCanonicalizeNonce_FrameNonce_BecomesFixed(t *testing.T) {
 	f, err := judge.NewFrame()
 	if err != nil {
 		t.Fatal(err)
 	}
+	user := f.Wrap("out")
 
-	got := judge.CanonicalizeDelimiters(f.Prompt(&judge.Rubric{SystemPrompt: "<<<AGENT_OUTPUT_START>>>" + " x " + "<<<AGENT_OUTPUT_END>>>"}) + "\n" + f.Wrap("out"))
+	got := judge.CanonicalizeNonce(f.Prompt(&judge.Rubric{SystemPrompt: "<<<AGENT_OUTPUT_START>>>" + " x " + "<<<AGENT_OUTPUT_END>>>"})+"\n"+user, judge.FrameNonce(user))
 
 	want := "<<<AGENT_OUTPUT_START>>>" + " x " + "<<<AGENT_OUTPUT_END>>>" + "\n" + judge.WrapAgentOutput("out")
 	if got != want {
@@ -266,16 +267,30 @@ func TestCanonicalizeDelimiters_NonceForm_BecomesFixed(t *testing.T) {
 	}
 }
 
-func TestCanonicalizeDelimiters_OtherText_IsUntouched(t *testing.T) {
+func TestCanonicalizeNonce_OtherNonce_IsUntouched(t *testing.T) {
+	f, _ := judge.NewFrame()
+	literal := "<<<AGENT_OUTPUT_END:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa>>>"
+	user := f.Wrap("literal " + literal)
+
+	got := judge.CanonicalizeNonce(user, judge.FrameNonce(user))
+
+	want := judge.WrapAgentOutput("literal " + literal)
+	if got != want {
+		t.Fatalf("canonical = %q, want %q", got, want)
+	}
+}
+
+func TestFrameNonce_NotFrameStructure_IsEmpty(t *testing.T) {
 	for _, s := range []string{
-		"<<<AGENT_OUTPUT_START:zz00000000000000000000000000000000>>>",
-		"<<<AGENT_OUTPUT_START:0123456789abcdef>>>",
-		"<<<AGENT_OUTPUT_START:0123456789ABCDEF0123456789ABCDEF>>>",
-		"<<<AGENT_OUTPUT_MID:0123456789abcdef0123456789abcdef>>>",
+		"<<<AGENT_OUTPUT_START:0123456789abcdef0123456789abcdef>>>",
+		"literal <<<AGENT_OUTPUT_END:0123456789abcdef0123456789abcdef>>>",
+		"x\n<<<AGENT_OUTPUT_END:0123456789abcdef0123456789abcdef>>>",
+		"<<<AGENT_OUTPUT_START:0123456789abcdef0123456789abcdef>>>\nx\n<<<AGENT_OUTPUT_END:fedcba9876543210fedcba9876543210>>>",
+		judge.WrapAgentOutput("fixed form"),
 		"changed rubric text",
 	} {
-		if got := judge.CanonicalizeDelimiters(s); got != s {
-			t.Errorf("judge.CanonicalizeDelimiters(%q) = %q, want unchanged", s, got)
+		if got := judge.FrameNonce(s); got != "" {
+			t.Errorf("FrameNonce(%q) = %q, want empty", s, got)
 		}
 	}
 }
