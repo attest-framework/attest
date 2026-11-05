@@ -10,4 +10,7 @@ import "time"
 const seedPerID = 500
 
 // maxRecordWait bounds a Record that collides with a prune; the busy timeout is 5 s.
-const maxRecordWait = 2 * time.Second
+// Under the race detector one prune batch can hold the lock for 1-2.4 s on a
+// shared CI runner, so this build only rules out a writer that waits close to
+// the busy timeout. The 500 ms bound of the non-race build is the tight check.
+const maxRecordWait = 4 * time.Second

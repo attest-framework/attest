@@ -58,7 +58,7 @@
   "$defs": {
     "status": { "enum": ["pass", "soft_fail", "hard_fail", "not_evaluated"] },
     "reason": {
-      "enum": ["provider_unavailable", "provider_not_configured", "simulation", "missing_evidence", "short_circuited", "budget_exhausted", "judge_abstained", "replay_miss"]
+      "enum": ["provider_unavailable", "provider_not_configured", "simulation", "missing_evidence", "short_circuited", "budget_exhausted", "judge_abstained", "judge_malformed", "provider_auth", "replay_miss"]
     },
     "usage": {
       "type": "object",

@@ -96,7 +96,7 @@ func TestPipeline_UnparseableJudgeResponse_ReturnsJudgeMalformed(t *testing.T) {
 
 	got := evalOne(t, p, testTrace(), judgeAssertion("judge"))
 
-	assertNotEvaluated(t, got["judge"], judge.ReasonJudgeMalformed)
+	assertNotEvaluated(t, got["judge"], types.ReasonJudgeMalformed)
 	if got["judge"].Cost != 0.002 {
 		t.Errorf("cost = %v, want 0.002 (billed call must be reported)", got["judge"].Cost)
 	}

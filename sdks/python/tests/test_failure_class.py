@@ -9,7 +9,10 @@ from attest._proto.types import (
     FAILURE_CLASS_BROKEN_CODE,
     FAILURE_CLASS_FLAKY_JUDGE,
     FAILURE_CLASS_MISSING_TRACE_DATA,
+    FAILURE_CLASS_SPEC_ERROR,
     FAILURE_CLASS_STOCHASTIC_VARIANCE,
+    REASON_JUDGE_MALFORMED,
+    REASON_PROVIDER_AUTH,
     STATUS_HARD_FAIL,
     AssertionResult,
 )
@@ -22,6 +25,9 @@ def test_failure_class_constants_match_engine() -> None:
     assert FAILURE_CLASS_BAD_RUBRIC == "bad_rubric"
     assert FAILURE_CLASS_MISSING_TRACE_DATA == "missing_trace_data"
     assert FAILURE_CLASS_STOCHASTIC_VARIANCE == "stochastic_variance"
+    assert FAILURE_CLASS_SPEC_ERROR == "spec_error"
+    assert REASON_JUDGE_MALFORMED == "judge_malformed"
+    assert REASON_PROVIDER_AUTH == "provider_auth"
 
 
 def test_assertion_result_roundtrip_preserves_failure_class() -> None:

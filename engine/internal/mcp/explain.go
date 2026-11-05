@@ -27,6 +27,8 @@ var guideRules = []guideRule{
 	{reason: types.ReasonProviderUnavailable, guideStep: guideStep{"judges", "The provider could not be reached; retry, or check the provider configuration."}},
 	{reason: types.ReasonBudgetExhausted, guideStep: guideStep{"judges", "The session budget ran out before this call; raise the budget or reduce judge assertions."}},
 	{reason: types.ReasonJudgeAbstained, guideStep: guideStep{"judges", "The judge had too little evidence to score; add the missing evidence to the trace or rewrite the rubric."}},
+	{reason: types.ReasonJudgeMalformed, guideStep: guideStep{"judges", "The judge reply was not a score between 0 and 1 or an abstain; check the custom rubric's response format, or the judge model."}},
+	{reason: types.ReasonProviderAuth, guideStep: guideStep{"judges", "The judge provider rejected the credentials after one call; fix the API key or the judge base URL."}},
 	{typ: types.TypeEffect, status: types.StatusHardFail, guideStep: guideStep{"world-fixtures", "The agent's effect on the world broke the contract; fix the agent's code (for example send an idempotency key), then replay the fixture."}},
 	{typ: types.TypeTrace, guideStep: guideStep{"behavior-contracts", "The agent's tool calls broke a behavior contract; fix the agent's code, or relax the contract if the behavior is intended."}},
 	{typ: types.TypeSchema, guideStep: guideStep{"verdicts", "The output or a tool's arguments do not match the schema; fix the agent's output or update the schema."}},
