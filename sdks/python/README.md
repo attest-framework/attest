@@ -20,30 +20,48 @@ uv add "attest-ai[all]>=1.0.0"         # All providers
 
 ## Quick start
 
+Save as `test_refund_agent.py`. The `attest` fixture starts the engine, and `attest.evaluate(chain)` runs every assertion in the chain and fails the test on a hard failure. A chain that is never passed to `evaluate()` checks nothing.
+
 ```python
-import attest
-from attest import expect
+from attest import AgentResult, TraceBuilder, expect
 
-result = attest.AgentResult(
-    trace=trace,  # captured from your agent
-    assertion_results=[],
-)
 
-# Layer 1: Schema validation
-expect(result).output_matches_schema({"type": "object", "required": ["refund_id"]})
+def refund_agent_result() -> AgentResult:
+    """Stand-in for your agent: build the trace it produced."""
+    trace = (
+        TraceBuilder("refund-agent")
+        .add_tool_call("lookup_order", args={"order_id": "ORD-123"}, result={"status": "paid"})
+        .add_tool_call("process_refund", args={"order_id": "ORD-123"}, result={"refund_id": "R-1"})
+        .set_output(message="Your refund R-1 is on its way.", structured={"refund_id": "R-1"})
+        .set_metadata(cost_usd=0.01, latency_ms=800)
+        .build()
+    )
+    return AgentResult(trace=trace)
 
-# Layer 2: Cost & performance constraints
-expect(result).cost_under(0.05)
-expect(result).latency_under(5000)
 
-# Layer 3: Trace structure
-expect(result).tools_called_in_order(["lookup_order", "process_refund"])
-expect(result).no_tool_loops(max_iterations=3)
-
-# Layer 4: Content assertions
-expect(result).output_contains("refund")
-expect(result).output_not_contains("sorry")
+def test_refund_agent(attest):
+    result = refund_agent_result()
+    attest.evaluate(
+        expect(result)
+        # Layer 1: schema validation
+        .output_matches_schema({"type": "object", "required": ["refund_id"]})
+        # Layer 2: cost and latency constraints
+        .cost_under(0.05)
+        .latency_under(5000)
+        # Layer 3: trace structure
+        .tools_called_in_order(["lookup_order", "process_refund"])
+        .no_tool_loops("lookup_order", max_repetitions=3)
+        # Layer 4: content
+        .output_contains("refund")
+        .output_not_contains("sorry")
+    )
 ```
+
+```bash
+pytest test_refund_agent.py --attest-report=report.json
+```
+
+Change one assertion, for example `.output_contains("refund")` to `.output_contains("chargeback")`, and the test fails with a diagnostic for that assertion.
 
 ## Pytest integration
 
