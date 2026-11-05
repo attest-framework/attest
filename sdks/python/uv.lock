@@ -321,6 +321,11 @@ otel = [
     { name = "opentelemetry-sdk" },
 ]
 
+[package.dev-dependencies]
+dev = [
+    { name = "attest-ai", extra = ["dev"] },
+]
+
 [package.metadata]
 requires-dist = [
     { name = "anthropic", marker = "extra == 'anthropic'", specifier = ">=0.30" },
@@ -349,6 +354,9 @@ requires-dist = [
     { name = "twine", marker = "extra == 'dev'", specifier = ">=6.0" },
 ]
 provides-extras = ["dev", "openai", "anthropic", "gemini", "ollama", "otel", "langchain", "google-adk", "llamaindex", "crewai", "integration-test", "all"]
+
+[package.metadata.requires-dev]
+dev = [{ name = "attest-ai", extras = ["dev"] }]
 
 [[package]]
 name = "attrs"

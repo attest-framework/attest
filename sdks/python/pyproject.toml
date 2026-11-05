@@ -53,6 +53,11 @@ integration-test = [
 ]
 all = ["attest-ai[openai,anthropic,gemini,ollama,otel,langchain,google-adk,llamaindex,crewai]"]
 
+[dependency-groups]
+# Installed by default by `uv sync` / `uv run`, so a fresh clone runs pytest.
+# The dev extra stays for CI and `pip install -e ".[dev]"`.
+dev = ["attest-ai[dev]"]
+
 [project.urls]
 Homepage = "https://github.com/attest-framework/attest"
 Repository = "https://github.com/attest-framework/attest"
