@@ -43,4 +43,3 @@ A baseline pinned from a fixed-N run (`pytest --attest-trials=N`, Vitest `trials
 ## Refresh a baseline
 
 Re-pin the tag from a report you trust when behavior changes on purpose: a new prompt, a re-recorded [fixture](capture.md) or an intentional contract change. Review the regressions first: with `block_on_regression: true`, `attest policy evaluate --baseline <tag>` names them. Then pin.
-
