@@ -179,6 +179,8 @@ jobs:
     name: Build engine binaries
     needs: check-tag
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     outputs:
       artifact_id: ${{ steps.upload.outputs.artifact-id }}
       artifact_digest: ${{ steps.upload.outputs.artifact-digest }}
@@ -225,7 +227,7 @@ jobs:
 
   build-python:
     name: Build Python distributions
-    needs: check-tag
+    needs: [check-tag, build-engine]
     runs-on: ubuntu-latest
     outputs:
       pep440: ${{ steps.version.outputs.pep440 }}
@@ -238,6 +240,17 @@ jobs:
       - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
         with:
           enable-cache: false
+      - uses: actions/download-artifact@v8
+        with:
+          name: engine-binaries
+          path: engine-dist
+      - name: Embed engine hash table from this run's binaries
+        env:
+          VERSION: ${{ needs.check-tag.outputs.version }}
+        run: |
+          set -euo pipefail
+          scripts/engine-checksums.sh generate "$VERSION" engine-dist > sdks/python/src/attest/engine-checksums.json
+          cat sdks/python/src/attest/engine-checksums.json
       - name: Build sdist and wheel
         run: cd sdks/python && uv build --out-dir "$GITHUB_WORKSPACE/dist"
       - name: Check normalized version
@@ -265,7 +278,7 @@ jobs:
 
   build-npm:
     name: Build npm tarballs
-    needs: check-tag
+    needs: [check-tag, build-engine]
     runs-on: ubuntu-latest
     outputs:
       artifact_id: ${{ steps.upload.outputs.artifact-id }}
@@ -287,6 +300,19 @@ jobs:
         run: pnpm install --frozen-lockfile
       - name: Build
         run: pnpm -r build
+      - uses: actions/download-artifact@v8
+        with:
+          name: engine-binaries
+          path: engine-dist
+      - name: Embed engine hash table from this run's binaries
+        env:
+          VERSION: ${{ needs.check-tag.outputs.version }}
+        run: |
+          set -euo pipefail
+          # Only @attest-ai/core downloads an engine; @attest-ai/vitest resolves it through core.
+          "$GITHUB_WORKSPACE/scripts/engine-checksums.sh" generate "$VERSION" "$GITHUB_WORKSPACE/engine-dist" \
+            > packages/core/engine-checksums.json
+          cat packages/core/engine-checksums.json
       - name: Pack tarballs
         env:
           VERSION: ${{ needs.check-tag.outputs.version }}
@@ -348,18 +374,36 @@ jobs:
 
   verify-python:
     name: Verify Python distributions
-    needs: [check-tag, build-python]
+    needs: [check-tag, build-python, build-engine]
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
       - uses: actions/download-artifact@v8
         with:
           name: python-dist
           path: dist
+      - uses: actions/download-artifact@v8
+        with:
+          name: engine-binaries
+          path: engine-dist
       - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
         with:
           enable-cache: false
       - name: twine check
         run: uvx --from 'twine>=6' twine check --strict dist/*
+      - name: Embedded engine table equals the engine binaries
+        env:
+          VERSION: ${{ needs.check-tag.outputs.version }}
+          PEP440: ${{ needs.build-python.outputs.pep440 }}
+        run: |
+          set -euo pipefail
+          unzip -p "dist/attest_ai-$PEP440-py3-none-any.whl" attest/engine-checksums.json > wheel-table.json
+          tar -xOzf "dist/attest_ai-$PEP440.tar.gz" "attest_ai-$PEP440/src/attest/engine-checksums.json" > sdist-table.json
+          scripts/engine-checksums.sh verify "$VERSION" engine-dist wheel-table.json
+          scripts/engine-checksums.sh verify "$VERSION" engine-dist sdist-table.json
+          echo "wheel and sdist tables equal the engine binaries" >> "$GITHUB_STEP_SUMMARY"
       - name: Record artifact digests
         env:
           ARTIFACT_ID: ${{ needs.build-python.outputs.artifact_id }}
@@ -376,7 +420,7 @@ jobs:
 
   verify-npm:
     name: Verify npm tarballs
-    needs: [check-tag, build-npm]
+    needs: [check-tag, build-npm, build-engine]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -386,6 +430,22 @@ jobs:
         with:
           name: npm-tarballs
           path: dist
+      - uses: actions/download-artifact@v8
+        with:
+          name: engine-binaries
+          path: engine-dist
+      - name: Embedded engine table equals the engine binaries
+        env:
+          VERSION: ${{ needs.check-tag.outputs.version }}
+        run: |
+          set -euo pipefail
+          tar -xOzf "dist/attest-ai-core-$VERSION.tgz" package/engine-checksums.json > core-table.json
+          scripts/engine-checksums.sh verify "$VERSION" engine-dist core-table.json
+          if tar -tzf "dist/attest-ai-vitest-$VERSION.tgz" | grep -q 'engine-checksums.json'; then
+            echo "::error::@attest-ai/vitest ships an engine hash table; it has no downloader"
+            exit 1
+          fi
+          echo "core table equals the engine binaries; vitest ships none" >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/setup-node@v6
         with:
           node-version: "24"

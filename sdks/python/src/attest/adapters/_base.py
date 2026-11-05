@@ -95,6 +95,8 @@ class BaseProviderAdapter(BaseAdapter, metaclass=ABCMeta):
         completion_text = self._extract_completion(response)
         model = self._extract_model(response, **metadata)
         total_tokens = self._extract_total_tokens(response)
+        input_tokens, output_tokens = self._extract_token_split(response)
+        refusal = self._extract_refusal(response)
 
         # LLM call step
         step_args: dict[str, Any] = {}
@@ -102,8 +104,14 @@ class BaseProviderAdapter(BaseAdapter, metaclass=ABCMeta):
             step_args["model"] = model
 
         step_result: dict[str, Any] = {"completion": completion_text}
+        if refusal:
+            step_result["refusal"] = refusal
         if total_tokens is not None:
             step_result["tokens"] = total_tokens
+        if input_tokens is not None:
+            step_result["input_tokens"] = input_tokens
+        if output_tokens is not None:
+            step_result["output_tokens"] = output_tokens
 
         builder.add_llm_call(
             "completion",
@@ -125,7 +133,7 @@ class BaseProviderAdapter(BaseAdapter, metaclass=ABCMeta):
         builder.set_metadata(
             total_tokens=total_tokens,
             cost_usd=metadata.get("cost_usd"),
-            latency_ms=metadata.get("latency_ms"),
+            latency_ms=self._latency_ms(started_at_ms, ended_at_ms, metadata),
             model=model,
         )
 
@@ -155,6 +163,26 @@ class BaseProviderAdapter(BaseAdapter, metaclass=ABCMeta):
     def _extract_total_tokens(self, response: Any) -> int | None:
         """Extract total token count from the provider response."""
         ...
+
+    def _extract_token_split(self, response: Any) -> tuple[int | None, int | None]:
+        """Extract ``(input_tokens, output_tokens)``; ``None`` where the provider omits them."""
+        return None, None
+
+    def _extract_refusal(self, response: Any) -> str | None:
+        """Extract the model's refusal text, if the provider reports one."""
+        return None
+
+    @staticmethod
+    def _latency_ms(
+        started_at_ms: int | None, ended_at_ms: int | None, metadata: dict[str, Any]
+    ) -> int | None:
+        """The caller's ``latency_ms``, else the span between the caller's timestamps."""
+        explicit = metadata.get("latency_ms")
+        if explicit is not None:
+            return explicit  # type: ignore[no-any-return]
+        if started_at_ms is not None and ended_at_ms is not None:
+            return ended_at_ms - started_at_ms
+        return None
 
     @abstractmethod
     def _extract_tool_calls(self, response: Any) -> list[dict[str, Any]]:

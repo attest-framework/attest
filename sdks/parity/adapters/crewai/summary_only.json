@@ -1,0 +1,92 @@
+{
+  "adapter": "crewai",
+  "call": {
+    "kind": "crew_output"
+  },
+  "case": "summary_only",
+  "construct": {
+    "agent_id": "corpus-crew"
+  },
+  "description": "Three agents are configured but only two tasks produced output. The trace is a run summary: no agent_call or tool_call steps are invented from configuration.",
+  "golden": {
+    "agent_id": "corpus-crew",
+    "metadata": {
+      "total_tokens": 420
+    },
+    "output": {
+      "message": "Final report"
+    },
+    "schema_version": 1,
+    "steps": [],
+    "trace_id": "trc_normalized"
+  },
+  "payload": {
+    "crew": {
+      "agents": [
+        {
+          "backstory": "b",
+          "goal": "g",
+          "role": "Researcher"
+        },
+        {
+          "backstory": "b",
+          "goal": "g",
+          "role": "Writer"
+        },
+        {
+          "backstory": "b",
+          "goal": "g",
+          "role": "Reviewer"
+        }
+      ],
+      "tasks": [
+        {
+          "description": "Research the topic",
+          "expected_output": "notes"
+        }
+      ]
+    },
+    "crew_output": {
+      "json_dict": null,
+      "pydantic": null,
+      "raw": "Final report",
+      "tasks_output": [
+        {
+          "agent": "Researcher",
+          "description": "Research the topic",
+          "expected_output": null,
+          "json_dict": null,
+          "messages": [],
+          "name": null,
+          "output_format": "raw",
+          "pydantic": null,
+          "raw": "notes",
+          "summary": "Research the topic..."
+        },
+        {
+          "agent": "Writer",
+          "description": "Write the report",
+          "expected_output": null,
+          "json_dict": null,
+          "messages": [],
+          "name": null,
+          "output_format": "raw",
+          "pydantic": null,
+          "raw": "Final report",
+          "summary": "Write the report..."
+        }
+      ],
+      "token_usage": {
+        "cached_prompt_tokens": 0,
+        "completion_tokens": 120,
+        "prompt_tokens": 300,
+        "successful_requests": 3,
+        "total_tokens": 420
+      }
+    }
+  },
+  "sdk": {
+    "package": "crewai",
+    "type": "crewai.crews.crew_output.CrewOutput"
+  }
+}

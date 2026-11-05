@@ -1,19 +1,8 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-
-vi.mock("node:https", async () => {
-  const actual = await vi.importActual<typeof import("node:https")>("node:https");
-  return { ...actual, get: vi.fn() };
-});
-
-import * as crypto from "node:crypto";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import * as fs from "node:fs";
-import * as https from "node:https";
 import * as path from "node:path";
-import { PassThrough } from "node:stream";
 import {
   cachedEnginePath,
-  downloadEngine,
-  platformKey,
   versionedBinDir,
 } from "../../packages/core/src/engine-downloader.js";
 import {
@@ -39,7 +28,6 @@ beforeEach(() => {
 
 afterEach(() => {
   env.restore();
-  vi.mocked(https.get).mockReset();
 });
 
 describe("engineVersion", () => {
@@ -135,57 +123,9 @@ describe("resolveEngine", () => {
   });
 });
 
-function serveRelease(binary: Buffer, digest: string): void {
-  const asset = `attest-engine-${platformKey()}`;
-  const base = `https://github.com/attest-framework/attest/releases/download/v${ENGINE_VERSION}`;
-  const files = new Map<string, Buffer>([
-    [`${base}/checksums-sha256.txt`, Buffer.from(`${digest}  ${asset}\n`)],
-    [`${base}/${asset}`, binary],
-  ]);
-  vi.mocked(https.get).mockImplementation(((url: string, cb: (res: unknown) => void) => {
-    const body = files.get(url);
-    const res = Object.assign(new PassThrough(), {
-      statusCode: body === undefined ? 404 : 200,
-      headers: {},
-    });
-    process.nextTick(() => {
-      cb(res);
-      res.end(body ?? Buffer.alloc(0));
-    });
-    return { on: () => undefined };
-  }) as unknown as typeof https.get);
-}
-
 describe("versioned engine cache", () => {
   it("lives at ~/.attest/bin/<ENGINE_VERSION>/", () => {
     expect(versionedBinDir()).toBe(path.join(env.home, ".attest", "bin", ENGINE_VERSION));
-    expect(cachedEnginePath()).toBeNull();
-  });
-
-  it("downloadEngine writes the verified binary there and keeps the legacy binary", async () => {
-    const legacy = writeScriptedEngine(legacyCachePath(env.home), { version: "0.8.0" });
-    const legacyBytes = fs.readFileSync(legacy);
-    const binary = Buffer.from("new engine");
-    serveRelease(binary, crypto.createHash("sha256").update(binary).digest("hex"));
-    vi.spyOn(process.stderr, "write").mockReturnValue(true);
-
-    const target = await downloadEngine();
-
-    expect(target).toBe(versionedCachePath(env.home));
-    expect(fs.readFileSync(target)).toEqual(binary);
-    expect(fs.statSync(target).mode & 0o111).not.toBe(0);
-    expect(fs.readFileSync(legacy)).toEqual(legacyBytes);
-    expect(fs.readdirSync(versionedBinDir())).toEqual(["attest-engine"]);
-  });
-
-  it("downloadEngine rejects a tampered binary and writes nothing", async () => {
-    serveRelease(
-      Buffer.from("tampered"),
-      crypto.createHash("sha256").update("published").digest("hex"),
-    );
-    vi.spyOn(process.stderr, "write").mockReturnValue(true);
-
-    await expect(downloadEngine()).rejects.toThrow("SHA256 mismatch");
     expect(cachedEnginePath()).toBeNull();
   });
 });

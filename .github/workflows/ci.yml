@@ -85,11 +85,15 @@ jobs:
               - ".github/workflows/release.yml"
               - ".github/workflows/release-build.yml"
               - "scripts/check-release-tag.sh"
+              - "scripts/engine-checksums.sh"
               - "scripts/npm-publish-dry-run.sh"
               - "scripts/release-notes.sh"
               - "scripts/test-release-scripts.sh"
               - "CHANGELOG.md"
               - "VERSION"
+              - "sdks/python/pyproject.toml"
+              - "sdks/typescript/packages/core/package.json"
+              - "sdks/typescript/packages/vitest/package.json"
 
   engine-test:
     name: Engine tests

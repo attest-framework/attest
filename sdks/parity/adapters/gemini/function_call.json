@@ -1,0 +1,86 @@
+{
+  "adapter": "gemini",
+  "call": {
+    "ended_at_ms": 1250,
+    "input_messages": [
+      {
+        "content": "Where is order ORD-1?",
+        "role": "user"
+      }
+    ],
+    "kind": "trace_from_response",
+    "started_at_ms": 1000
+  },
+  "case": "function_call",
+  "construct": {},
+  "description": "function_call part with usage metadata.",
+  "golden": {
+    "input": {
+      "text": "Where is order ORD-1?"
+    },
+    "metadata": {
+      "latency_ms": 250,
+      "model": "gemini-2.0-flash-001",
+      "total_tokens": 18
+    },
+    "output": {
+      "message": ""
+    },
+    "schema_version": 1,
+    "steps": [
+      {
+        "args": {
+          "model": "gemini-2.0-flash-001"
+        },
+        "ended_at_ms": 1250,
+        "name": "completion",
+        "result": {
+          "completion": "",
+          "input_tokens": 11,
+          "output_tokens": 7,
+          "tokens": 18
+        },
+        "started_at_ms": 1000,
+        "type": "llm_call"
+      },
+      {
+        "args": {
+          "order_id": "ORD-1"
+        },
+        "name": "lookup_order",
+        "type": "tool_call"
+      }
+    ],
+    "trace_id": "trc_normalized"
+  },
+  "payload": {
+    "candidates": [
+      {
+        "content": {
+          "parts": [
+            {
+              "functionCall": {
+                "args": {
+                  "order_id": "ORD-1"
+                },
+                "name": "lookup_order"
+              }
+            }
+          ],
+          "role": "model"
+        },
+        "finishReason": "STOP"
+      }
+    ],
+    "modelVersion": "gemini-2.0-flash-001",
+    "usageMetadata": {
+      "candidatesTokenCount": 7,
+      "promptTokenCount": 11,
+      "totalTokenCount": 18
+    }
+  },
+  "sdk": {
+    "package": "google-genai",
+    "type": "google.genai.types.GenerateContentResponse"
+  }
+}

@@ -14,6 +14,7 @@ import attest.simulation as simulation_module
 from attest.cli import admin
 from attest.expect import ExpectChain
 from attest.plugin import AttestEngineFixture
+from tests.adapter_conformance import matrix_adapters_with_cases
 from tests.parity_matrix import (
     SECTIONS,
     UPDATE_ENV,
@@ -104,7 +105,12 @@ def _load_surfaces() -> tuple[Surface, Surface]:
 
 def _real_matrix() -> Matrix:
     python, typescript = _load_surfaces()
-    return build_matrix(python, typescript, load_json(PARITY / "exceptions.json"))
+    return build_matrix(
+        python,
+        typescript,
+        load_json(PARITY / "exceptions.json"),
+        corpus_adapters=matrix_adapters_with_cases(),
+    )
 
 
 def test_snake_to_camel_maps_names() -> None:
@@ -140,6 +146,20 @@ def test_parity_has_no_undocumented_gaps_or_stale_exceptions() -> None:
     matrix = _real_matrix()
 
     assert not matrix.problems, "\n".join(matrix.problems)
+
+
+def test_parity_checker_flags_adapter_matched_by_name_only() -> None:
+    surface: Surface = {s: [] for s in SECTIONS}
+    surface["adapters"] = ["FooAdapter", "BarAdapter"]
+
+    matrix = build_matrix(
+        surface, surface, {"aliases": {}, "exceptions": []}, corpus_adapters={"FooAdapter"}
+    )
+
+    assert matrix.problems == [
+        "adapter BarAdapter: matches BarAdapter by name only; "
+        "add conformance cases under sdks/parity/adapters"
+    ]
 
 
 def test_parity_guide_matches_generated_matrix() -> None:
