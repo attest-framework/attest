@@ -1,0 +1,250 @@
+"""A test passes only when something was evaluated: unevaluated and empty ``expect()`` chains
+fail, identical assertions get distinct ids, and the report carries id scheme 2 and the
+batch-level ``budget_exceeded`` flag. Runs real pytest sessions against the built engine."""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+from typing import Any
+
+import jsonschema
+import pytest
+
+from attest._proto.types import AssertionResult, EvaluateBatchResult, Usage
+from attest.assertion_id import compute_assertion_id
+from attest.expect import expect
+from attest.report_v2 import TestRecord, build_report, merge_reports
+from attest.result import AgentResult
+from attest.trace import TraceBuilder
+
+pytest_plugins = ["pytester"]
+
+_ROOT = Path(__file__).resolve().parents[3]
+_ENGINE = _ROOT / "bin" / "attest-engine"
+_SCHEMA: dict[str, Any] = json.loads(
+    (_ROOT / "proto" / "attest" / "v1" / "report-v2.schema.json").read_text()
+)
+
+_PRELUDE = """
+from attest import expect
+from attest.result import AgentResult
+from attest.trace import TraceBuilder
+
+def _result(message="ok", cost=None):
+    builder = TraceBuilder("agent").set_output(message=message)
+    if cost is not None:
+        builder.set_metadata(cost_usd=cost)
+    return AgentResult(trace=builder.build())
+"""
+
+_CHAIN_TESTS = (
+    _PRELUDE
+    + """
+def test_unevaluated_chain(attest):
+    expect(_result()).output_contains("x")
+
+def test_two_unevaluated_chains(attest):
+    expect(_result()).output_contains("x")
+    expect(_result()).output_contains("y")
+
+def test_unevaluated_empty_chain(attest):
+    expect(_result())
+
+def test_evaluated_empty_chain(attest):
+    attest.evaluate(expect(_result()))
+
+def test_evaluated_chain(attest):
+    attest.evaluate(expect(_result()).output_contains("ok"))
+
+def test_failure_before_evaluation_is_not_masked(attest):
+    expect(_result()).output_contains("x")
+    assert False, "the test's own failure"
+
+def test_one_evaluated_one_forgotten(attest):
+    attest.evaluate(expect(_result()).output_contains("ok"))
+    expect(_result()).output_contains("forgotten")
+
+def test_identical_assertions(attest):
+    attest.evaluate(expect(_result()).output_contains("ok").output_contains("ok"))
+"""
+)
+
+
+@pytest.fixture
+def scratch(pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch) -> pytest.Pytester:
+    if not _ENGINE.is_file():
+        pytest.skip("attest-engine binary not found; build with 'make engine'")
+    monkeypatch.setenv("ATTEST_ENGINE_PATH", str(_ENGINE))
+    monkeypatch.setenv("ATTEST_ENGINE_NO_DOWNLOAD", "1")
+    monkeypatch.delenv("ATTEST_SIMULATION", raising=False)
+    monkeypatch.delenv("ATTEST_MAX_SOFT_FAILURES", raising=False)
+    monkeypatch.setenv("COLUMNS", "200")
+    return pytester
+
+
+def _report(pytester: pytest.Pytester) -> dict[str, Any]:
+    document: dict[str, Any] = json.loads((pytester.path / "r.json").read_text())
+    jsonschema.validate(document, _SCHEMA, format_checker=jsonschema.FormatChecker())
+    return document
+
+
+def _outcomes(report: dict[str, Any]) -> dict[str, str]:
+    return {t["name"]: t["outcome"] for t in report["tests"]}
+
+
+def test_chain_teardown_fails_unevaluated_and_empty_chains(scratch: pytest.Pytester) -> None:
+    scratch.makepyfile(test_chains=_CHAIN_TESTS)
+
+    result = scratch.runpytest_subprocess("--attest-report=r.json", "-p", "no:cacheprovider")
+
+    report = _report(scratch)
+    assert _outcomes(report) == {
+        "test_unevaluated_chain": "failed",
+        "test_two_unevaluated_chains": "failed",
+        "test_unevaluated_empty_chain": "failed",
+        "test_evaluated_empty_chain": "failed",
+        "test_evaluated_chain": "passed",
+        "test_failure_before_evaluation_is_not_masked": "failed",
+        "test_one_evaluated_one_forgotten": "failed",
+        "test_identical_assertions": "passed",
+    }
+    result.assert_outcomes(passed=2, failed=6)
+    output = result.stdout.str()
+    result.stdout.fnmatch_lines(
+        [
+            "FAILED *::test_unevaluated_chain - Failed: 1 expect() chain built but never evaluated",
+            "FAILED *::test_two_unevaluated_chains - Failed: 2 expect() chains built but never "
+            "evaluated",
+            "FAILED *::test_unevaluated_empty_chain - Failed: 1 expect() chain built but never "
+            "evaluated",
+            "FAILED *::test_one_evaluated_one_forgotten - Failed: 1 expect() chain built but "
+            "never evaluated",
+        ]
+    )
+    assert "expect() chain has no assertions" in output
+    assert "the test's own failure" in output
+
+
+def test_identical_assertions_in_one_test_get_distinct_ids_and_both_report(
+    scratch: pytest.Pytester,
+) -> None:
+    scratch.makepyfile(test_chains=_CHAIN_TESTS)
+
+    scratch.runpytest_subprocess(
+        "--attest-report=r.json", "-p", "no:cacheprovider", "-k", "test_identical_assertions"
+    )
+
+    report = _report(scratch)
+    assert report["id_scheme"] == 2
+    assert report["budget_exceeded"] is False
+    rows = report["results"]
+    assert len(rows) == 2
+    first, second = (r["assertion_id"] for r in rows)
+    assert first != second
+    (test,) = report["tests"]
+    assert test["assertion_ids"] == [first, second]
+    node_id = test["test_id"]
+    spec = (
+        expect(AgentResult(trace=TraceBuilder("a").set_output(message="ok").build()))
+        .output_contains("ok")
+        .assertions[0]
+    )
+    assert [first, second] == [
+        compute_assertion_id(node_id, spec.type, spec.spec, 0),
+        compute_assertion_id(node_id, spec.type, spec.spec, 1),
+    ]
+    for row in rows:
+        assert row["scope_id"] == node_id
+        assert len(row["spec_hash"]) == 64
+    assert rows[0]["spec_hash"] == rows[1]["spec_hash"]
+
+
+def test_ids_are_stable_across_runs_and_survive_reordering(scratch: pytest.Pytester) -> None:
+    body = (
+        _PRELUDE
+        + """
+def test_two_checks(attest):
+    attest.evaluate(expect(_result()).{first}.{second})
+"""
+    )
+    ids: list[dict[str, str]] = []
+    for first, second in (
+        ('output_contains("ok")', 'output_not_contains("zzz")'),
+        ('output_not_contains("zzz")', 'output_contains("ok")'),
+    ):
+        scratch.makepyfile(test_order=body.format(first=first, second=second))
+        scratch.runpytest_subprocess("--attest-report=r.json", "-p", "no:cacheprovider")
+        report = _report(scratch)
+        ids.append({r["type"] + r["spec_hash"][:8]: r["assertion_id"] for r in report["results"]})
+
+    assert ids[0] == ids[1]
+    assert len(ids[0]) == 2
+
+
+def test_budget_exceeded_flag_is_in_the_report_and_keeps_the_hard_fail(
+    scratch: pytest.Pytester, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("ATTEST_MAX_SOFT_FAILURES", "1")
+    scratch.makepyfile(
+        test_budget=_PRELUDE
+        + """
+def test_breach_with_hard_fail(attest):
+    attest.evaluate(
+        expect(_result(cost=5.0))
+        .cost_under(0.01, soft=True)
+        .output_contains("also-missing", soft=True)
+        .output_contains("not-in-output")
+    )
+"""
+    )
+
+    result = scratch.runpytest_subprocess("--attest-report=r.json", "-p", "no:cacheprovider")
+
+    report = _report(scratch)
+    result.assert_outcomes(failed=1)
+    assert report["budget_exceeded"] is True
+    statuses = sorted(r["status"] for r in report["results"])
+    assert statuses == ["hard_fail", "soft_fail", "soft_fail"]
+
+
+def _agent_result(*, budget_exceeded: bool) -> AgentResult:
+    row = AssertionResult(assertion_id="a2_" + "0" * 32, status="pass", score=1.0, explanation="")
+    return AgentResult(
+        trace=TraceBuilder("a").set_output(message="ok").build(),
+        assertion_results=[row],
+        budget_exceeded=budget_exceeded,
+    )
+
+
+def test_evaluate_batch_result_carries_budget_exceeded() -> None:
+    raw: dict[str, Any] = {"results": [], "usage": Usage().to_dict(), "budget_exceeded": True}
+
+    assert EvaluateBatchResult.from_dict(raw).budget_exceeded is True
+    assert EvaluateBatchResult.from_dict({**raw, "budget_exceeded": False}).budget_exceeded is False
+    assert EvaluateBatchResult.from_dict({k: v for k, v in raw.items() if k != "budget_exceeded"})
+
+
+def test_build_report_ors_budget_exceeded_across_batches() -> None:
+    def record(name: str, *, exceeded: bool) -> TestRecord:
+        return TestRecord(
+            test_id=f"t.py::{name}",
+            name=name,
+            file="t.py",
+            line=1,
+            agent_results=[_agent_result(budget_exceeded=exceeded)],
+        )
+
+    quiet = build_report([record("a", exceeded=False)], simulated=False, usage=Usage())
+    loud = build_report(
+        [record("a", exceeded=False), record("b", exceeded=True)],
+        simulated=False,
+        usage=Usage(),
+    )
+
+    assert quiet["budget_exceeded"] is False
+    assert loud["budget_exceeded"] is True
+    assert loud["id_scheme"] == 2
+    merged = merge_reports([quiet, loud], tests_collected=3, usage=Usage())
+    assert merged["budget_exceeded"] is True
+    assert merged["id_scheme"] == 2

@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from attest._proto.types import Assertion, AssertionResult, EvaluateBatchResult, Trace, Usage
+from attest.assertion_id import compute_assertion_id
 from attest.continuous import AlertDispatcher, ContinuousEvalRunner, Sampler
 
 # ---------------------------------------------------------------------------
@@ -152,6 +153,7 @@ class TestContinuousEvalRunner:
         runner = ContinuousEvalRunner(
             client=client,
             assertions=[_make_assertion()],
+            name="test-runner",
             sample_rate=sample_rate,
         )
         return runner, client
@@ -221,6 +223,7 @@ class TestContinuousEvalRunner:
         runner = ContinuousEvalRunner(
             client=client,
             assertions=[_make_assertion()],
+            name="test-runner",
             maxsize=50,
         )
         assert runner._queue.maxsize == 50
@@ -235,6 +238,7 @@ class TestContinuousEvalRunner:
             runner = ContinuousEvalRunner(
                 client=client,
                 assertions=[_make_assertion()],
+                name="test-runner",
             )
         assert runner._queue.maxsize == 200
 
@@ -245,6 +249,7 @@ class TestContinuousEvalRunner:
         runner = ContinuousEvalRunner(
             client=client,
             assertions=[_make_assertion()],
+            name="test-runner",
             maxsize=2,
         )
 
@@ -260,3 +265,53 @@ class TestContinuousEvalRunner:
             assert runner._queue.qsize() == 2
 
         asyncio.run(_run())
+
+
+class TestContinuousEvalRunnerIds:
+    """Outside tests the id scope is the runner name (contract C3)."""
+
+    @staticmethod
+    def _runner(name: str, assertions: list[Assertion]) -> ContinuousEvalRunner:
+        return ContinuousEvalRunner(client=MagicMock(), assertions=assertions, name=name)
+
+    def test_ids_are_scoped_to_the_runner_name(self) -> None:
+        runner = self._runner("refund-monitor", [_make_assertion()])
+        (assertion,) = runner._assertions
+
+        assert assertion.scope_id == "refund-monitor"
+        assert assertion.assertion_id == compute_assertion_id(
+            "refund-monitor", "constraint", _make_assertion().spec, 0
+        )
+
+    def test_same_assertions_under_another_name_get_other_ids(self) -> None:
+        first = self._runner("monitor-a", [_make_assertion()])._assertions[0].assertion_id
+        second = self._runner("monitor-b", [_make_assertion()])._assertions[0].assertion_id
+
+        assert first != second
+
+    def test_identical_assertions_get_distinct_ids(self) -> None:
+        runner = self._runner("monitor", [_make_assertion(), _make_assertion()])
+
+        first, second = (a.assertion_id for a in runner._assertions)
+
+        assert first != second
+
+    def test_caller_assertions_are_not_mutated(self) -> None:
+        original = _make_assertion()
+
+        self._runner("monitor", [original])
+
+        assert original.assertion_id == "a-001"
+        assert original.scope_id is None
+
+    def test_evaluate_trace_sends_the_scoped_assertions(self) -> None:
+        client = MagicMock()
+        client.evaluate_batch = AsyncMock(return_value=_make_batch_result())
+        runner = ContinuousEvalRunner(client=client, assertions=[_make_assertion()], name="m")
+
+        asyncio.run(runner.evaluate_trace(_make_trace("t-1")))
+
+        sent = client.evaluate_batch.call_args.args[1]
+        assert [(a.scope_id, a.assertion_id) for a in sent] == [
+            (a.scope_id, a.assertion_id) for a in runner._assertions
+        ]

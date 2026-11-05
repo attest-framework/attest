@@ -528,6 +528,12 @@ class AttestClient:
         """
         from attest.config import is_simulation_mode
 
+        unidentified = [a.type for a in assertions if not a.assertion_id]
+        if unidentified:
+            raise ValueError(
+                f"assertions without an assertion_id ({', '.join(unidentified)}): ids are "
+                "assigned when an expect() chain is evaluated through the attest fixture"
+            )
         if is_simulation_mode():
             # EngineManager keeps the initialize result privately; read it
             # here rather than trusting this process's environment.

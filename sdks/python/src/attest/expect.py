@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import uuid
 from typing import Any, Literal
 
 from attest._proto.types import (
@@ -142,6 +141,12 @@ class ExpectChain:
         self._result = result
         self._assertions: list[Assertion] = []
         self._world_bytes = 0
+        #: Set when the chain was sent for evaluation; teardown fails a test with a chain
+        #: that never was.
+        self.evaluated = False
+        run = current_run()
+        if run is not None:
+            run.track_chain(self)
 
     @property
     def assertions(self) -> list[Assertion]:
@@ -156,17 +161,13 @@ class ExpectChain:
     def _add(self, assertion_type: str, spec: dict[str, Any]) -> ExpectChain:
         """Add an assertion to the collection.
 
-        Inside a test using the ``attest`` fixture the ID is deterministic
-        (``attest.trials.assertion_id_for``), so trials and baselines match
-        rows by ``assertion_id``; elsewhere it is random.
+        The assertion has no id yet: ``assertion_id`` is set when the chain is evaluated
+        (``attest.assertion_id``), from the scope, type, spec and the occurrence among
+        identical assertions in evaluation order.
         """
-        run = current_run()
-        assertion_id = (
-            run.next_assertion_id() if run is not None else f"assert_{uuid.uuid4().hex[:8]}"
-        )
         self._assertions.append(
             Assertion(
-                assertion_id=assertion_id,
+                assertion_id="",
                 type=assertion_type,
                 spec=spec,
             )

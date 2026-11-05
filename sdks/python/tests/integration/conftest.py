@@ -8,6 +8,7 @@ from collections.abc import Generator
 import pytest
 
 from attest.plugin import AttestEngineFixture
+from attest.trials import TestRun, begin_run, end_run
 
 
 def _engine_binary_path() -> str:
@@ -32,3 +33,12 @@ def engine(request: pytest.FixtureRequest) -> Generator[AttestEngineFixture, Non
         fixture.start()
         yield fixture
         fixture.stop()
+
+
+@pytest.fixture(autouse=True)
+def _assertion_id_scope(request: pytest.FixtureRequest) -> Generator[None, None, None]:
+    """Integration tests use the ``engine`` fixture, which the plugin does not track as a
+    test run; scope their assertion ids to the node id the way the plugin does."""
+    begin_run(TestRun(test_id=request.node.nodeid))
+    yield
+    end_run()
