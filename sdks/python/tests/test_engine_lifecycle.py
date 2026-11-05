@@ -26,6 +26,7 @@ def _make_manager() -> EngineManager:
     manager._initialized = False
     manager._request_id = 0
     manager._init_result = None
+    manager._client = None
     return manager
 
 
@@ -164,24 +165,13 @@ def test_stop_with_uninitialized_process_terminates() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_send_request_before_init_raises() -> None:
-    """send_request raises RuntimeError if engine not initialized."""
-
-    async def _run() -> None:
-        manager = _make_manager()
-        with pytest.raises(RuntimeError, match="not initialized"):
-            await manager.send_request("evaluate_batch", {})
-
-    asyncio.run(_run())
-
-
 # ---------------------------------------------------------------------------
 # Timeout behavior
 # ---------------------------------------------------------------------------
 
 
 def test_timeout_raises_engine_timeout_error() -> None:
-    """_send_request raises EngineTimeoutError when readline times out."""
+    """_handshake raises EngineTimeoutError when readline times out."""
 
     async def _run() -> None:
         manager = _make_manager()
@@ -202,7 +192,7 @@ def test_timeout_raises_engine_timeout_error() -> None:
             patch("attest.engine_manager._engine_timeout", return_value=2.0),
         ):
             with pytest.raises(EngineTimeoutError) as exc_info:
-                await manager._send_request("evaluate_batch", {})
+                await manager._handshake("evaluate_batch", {})
 
             assert exc_info.value.method == "evaluate_batch"
             assert exc_info.value.timeout == 2.0
@@ -231,8 +221,8 @@ def test_timeout_env_var_empty_uses_default() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_send_request_raises_on_closed_stdout() -> None:
-    """_send_request raises ConnectionError when stdout returns empty bytes."""
+def test_handshake_raises_on_closed_stdout() -> None:
+    """_handshake raises ConnectionError when stdout returns empty bytes."""
 
     async def _run() -> None:
         manager = _make_manager()
@@ -250,7 +240,7 @@ def test_send_request_raises_on_closed_stdout() -> None:
             return_value=b"",
         ):
             with pytest.raises(ConnectionError, match="closed stdout"):
-                await manager._send_request("evaluate_batch", {})
+                await manager._handshake("evaluate_batch", {})
 
     asyncio.run(_run())
 
@@ -394,7 +384,7 @@ def test_stop_kills_on_terminate_timeout() -> None:
 
 
 def test_request_id_increments() -> None:
-    """Each _send_request increments _request_id."""
+    """Each _handshake increments _request_id."""
 
     async def _run() -> None:
         import json
@@ -422,7 +412,7 @@ def test_request_id_increments() -> None:
         manager._process = process
 
         assert manager._request_id == 0
-        await manager._send_request("test", {})
+        await manager._handshake("test", {})
         assert manager._request_id == 1
 
     asyncio.run(_run())

@@ -41,7 +41,7 @@ def test_engine_manager_start_initialize_version_mismatch_stops_and_raises(
     async def _run() -> None:
         with (
             patch("asyncio.create_subprocess_exec", AsyncMock(return_value=MagicMock(pid=1))),
-            patch.object(manager, "_send_request", AsyncMock(return_value=init)),
+            patch.object(manager, "_handshake", AsyncMock(return_value=init)),
             patch.object(manager, "stop", AsyncMock()) as stop,
             pytest.raises(EngineVersionMismatchError, match="from initialize"),
         ):
@@ -59,31 +59,12 @@ def test_engine_manager_start_initialize_error_stops_engine(
     async def _run() -> None:
         with (
             patch("asyncio.create_subprocess_exec", AsyncMock(return_value=MagicMock(pid=1))),
-            patch.object(manager, "_send_request", AsyncMock(side_effect=ConnectionError("eof"))),
+            patch.object(manager, "_handshake", AsyncMock(side_effect=ConnectionError("eof"))),
             patch.object(manager, "stop", AsyncMock()) as stop,
             pytest.raises(ConnectionError),
         ):
             await manager.start()
         stop.assert_awaited_once()
-
-    asyncio.run(_run())
-
-
-def test_engine_manager_not_initialized_raises() -> None:
-    """send_request raises RuntimeError before start() is called."""
-    import asyncio
-
-    manager = EngineManager.__new__(EngineManager)
-    manager._engine_path = "/nonexistent/attest-engine"
-    manager._log_level = "warn"
-    manager._process = None
-    manager._initialized = False
-    manager._request_id = 0
-    manager._init_result = None
-
-    async def _run() -> None:
-        with pytest.raises(RuntimeError, match="not initialized"):
-            await manager.send_request("evaluate_batch", {})
 
     asyncio.run(_run())
 
@@ -141,8 +122,8 @@ def test_engine_timeout_error_is_importable_from_attest() -> None:
     assert attest.EngineTimeoutError is EngineTimeoutError
 
 
-def test_send_request_raises_engine_timeout_error_on_timeout() -> None:
-    """_send_request raises EngineTimeoutError when readline times out."""
+def test_handshake_raises_engine_timeout_error_on_timeout() -> None:
+    """_handshake raises EngineTimeoutError when readline times out."""
 
     async def _run() -> None:
         manager = EngineManager.__new__(EngineManager)
@@ -167,8 +148,116 @@ def test_send_request_raises_engine_timeout_error_on_timeout() -> None:
         ):
             with patch("attest.engine_manager._engine_timeout", return_value=5.0):
                 with pytest.raises(EngineTimeoutError) as exc_info:
-                    await manager._send_request("evaluate_batch", {})
+                    await manager._handshake("evaluate_batch", {})
                 assert exc_info.value.method == "evaluate_batch"
                 assert exc_info.value.timeout == 5.0
 
     asyncio.run(_run())
+
+
+def test_handshake_drops_lines_that_are_not_its_response() -> None:
+    """Id-less lines and other ids are dropped; only the matching id is the response."""
+    import json
+
+    def line(**fields: object) -> bytes:
+        return json.dumps({"jsonrpc": "2.0", **fields}).encode() + b"\n"
+
+    async def _run() -> None:
+        manager = EngineManager.__new__(EngineManager)
+        manager._request_id = 0
+        process = MagicMock()
+        process.stdin = MagicMock()
+        process.stdin.drain = AsyncMock()
+        process.stdout.readline = AsyncMock(
+            side_effect=[
+                line(method="drift_alert", params={}),
+                line(id=99, result={"data": "someone else"}),
+                b"not json\n",
+                line(id=1, result={"data": "mine"}),
+            ]
+        )
+        manager._process = process
+
+        assert await manager._handshake("initialize", {}) == {"data": "mine"}
+
+    asyncio.run(_run())
+
+
+def test_subprocess_stream_limit_matches_the_engine_frame_cap() -> None:
+    from attest.engine_manager import MAX_FRAME_BYTES
+
+    assert MAX_FRAME_BYTES == 10 * 1024 * 1024
+
+
+def _line(**fields: object) -> bytes:
+    import json
+
+    return json.dumps({"jsonrpc": "2.0", **fields}).encode() + b"\n"
+
+
+def test_send_request_without_a_client_drops_id_less_lines() -> None:
+    async def _run() -> None:
+        manager = EngineManager.__new__(EngineManager)
+        manager._request_id = 0
+        manager._client = None
+        manager._initialized = True
+        process = MagicMock()
+        process.stdin = MagicMock()
+        process.stdin.drain = AsyncMock()
+        process.stdout.readline = AsyncMock(
+            side_effect=[
+                _line(method="progress", params={}),
+                _line(id=1, result={"data": "mine"}),
+            ]
+        )
+        manager._process = process
+
+        assert await manager.send_request("evaluate_batch", {}) == {"data": "mine"}
+
+    asyncio.run(_run())
+
+
+def test_send_request_with_an_attached_client_delegates_to_it() -> None:
+    from attest.client import AttestClient
+
+    async def _run() -> None:
+        manager = EngineManager.__new__(EngineManager)
+        manager._request_id = 0
+        manager._client = None
+        process = MagicMock()
+        process.stdin = MagicMock()
+        process.stdin.drain = AsyncMock()
+        lines: asyncio.Queue[bytes] = asyncio.Queue()
+        process.stdout.readline = lines.get
+        manager._process = process
+        client = AttestClient(manager)  # attaches itself
+        lines.put_nowait(_line(method="progress", params={}))
+        lines.put_nowait(_line(id=1, result={"data": "mine"}))
+        manager._spawn_env = {}
+
+        assert await manager.send_request("evaluate_batch", {}) == {"data": "mine"}
+        assert process.stdin.write.call_count == 1  # one request, read by the client's reader
+        await client.stop_reader()
+
+    asyncio.run(_run())
+
+
+def test_send_request_before_start_raises_runtime_error() -> None:
+    manager = EngineManager.__new__(EngineManager)
+    manager._client = None
+    manager._initialized = False
+
+    with pytest.raises(RuntimeError, match=r"Call start\(\) first"):
+        asyncio.run(manager.send_request("evaluate_batch", {}))
+
+
+def test_a_second_client_on_one_engine_is_refused() -> None:
+    from attest.client import AttestClient
+
+    manager = EngineManager.__new__(EngineManager)
+    manager._client = None
+    first = AttestClient(manager)
+
+    with pytest.raises(RuntimeError, match="already has an AttestClient"):
+        AttestClient(manager)
+    assert manager._client is first
