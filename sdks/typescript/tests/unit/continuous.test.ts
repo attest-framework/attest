@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { Sampler, ContinuousEvalRunner, AlertDispatcher } from "../../packages/core/src/continuous.js";
+import { assertionIdOf } from "../../packages/core/src/assertion-id.js";
 import type { AttestClient } from "../../packages/core/src/client.js";
 import type { Assertion, Trace, EvaluateBatchResult } from "../../packages/core/src/proto/types.js";
 
@@ -74,7 +75,7 @@ describe("ContinuousEvalRunner", () => {
 
   it("submits traces to the queue", () => {
     const client = makeMockClient();
-    const runner = new ContinuousEvalRunner(client, []);
+    const runner = new ContinuousEvalRunner(client, [], { name: "prod-monitor" });
 
     expect(runner.submit(makeTrace("trc_1"))).toBe(true);
     expect(runner.queueLength).toBe(1);
@@ -82,7 +83,7 @@ describe("ContinuousEvalRunner", () => {
 
   it("rejects when queue is full", () => {
     const client = makeMockClient();
-    const runner = new ContinuousEvalRunner(client, [], { maxSize: 2 });
+    const runner = new ContinuousEvalRunner(client, [], { name: "prod-monitor", maxSize: 2 });
 
     expect(runner.submit(makeTrace("trc_1"))).toBe(true);
     expect(runner.submit(makeTrace("trc_2"))).toBe(true);
@@ -91,7 +92,7 @@ describe("ContinuousEvalRunner", () => {
 
   it("start and stop toggle isRunning", () => {
     const client = makeMockClient();
-    const runner = new ContinuousEvalRunner(client, []);
+    const runner = new ContinuousEvalRunner(client, [], { name: "prod-monitor" });
 
     expect(runner.isRunning).toBe(false);
     runner.start();
@@ -102,7 +103,7 @@ describe("ContinuousEvalRunner", () => {
 
   it("evaluateTrace returns null when not sampled", async () => {
     const client = makeMockClient();
-    const runner = new ContinuousEvalRunner(client, [], { sampleRate: 0.0 });
+    const runner = new ContinuousEvalRunner(client, [], { name: "prod-monitor", sampleRate: 0.0 });
 
     const result = await runner.evaluateTrace(makeTrace("trc_1"));
     expect(result).toBeNull();
@@ -110,10 +111,26 @@ describe("ContinuousEvalRunner", () => {
 
   it("evaluateTrace calls client when sampled", async () => {
     const client = makeMockClient();
-    const runner = new ContinuousEvalRunner(client, [], { sampleRate: 1.0 });
+    const runner = new ContinuousEvalRunner(client, [], { name: "prod-monitor", sampleRate: 1.0 });
 
     const result = await runner.evaluateTrace(makeTrace("trc_1"));
     expect(result).not.toBeNull();
     expect(client.evaluateBatch).toHaveBeenCalledTimes(1);
+  });
+
+  it("scopes assertion ids to the runner name and sends scope_id", async () => {
+    const client = makeMockClient();
+    const ok = { assertion_id: "x", type: "content", spec: { target: "output.message", check: "contains", value: "ok" } };
+    const runner = new ContinuousEvalRunner(client, [ok, ok], { name: "prod-monitor" });
+    await runner.evaluateTrace(makeTrace("trc_1"));
+    const sent = vi.mocked(client.evaluateBatch).mock.calls[0]![1];
+    expect(sent.map((a) => a.scope_id)).toEqual(["prod-monitor", "prod-monitor"]);
+    expect(sent[0]!.assertion_id).toBe(assertionIdOf("prod-monitor", "content", ok.spec, 0));
+    expect(sent[1]!.assertion_id).toBe(assertionIdOf("prod-monitor", "content", ok.spec, 1));
+  });
+
+  it("requires a runner name", () => {
+    const client = makeMockClient();
+    expect(() => new ContinuousEvalRunner(client, [], {} as { name: string })).toThrow(/options\.name/);
   });
 });

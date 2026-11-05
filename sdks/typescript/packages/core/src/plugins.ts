@@ -3,6 +3,7 @@ import { dirname, join, relative, resolve, isAbsolute, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 import type { Trace } from "./proto/types.js";
 import type { AttestClient } from "./client.js";
+import { TYPE_PLUGIN } from "./proto/constants.js";
 
 export interface PluginResult {
   readonly status: string;
@@ -85,6 +86,34 @@ export async function executePluginAssertion(
   );
 
   return result;
+}
+
+/**
+ * Run the registered plugin of every `plugin` assertion and submit its result to the engine
+ * (`submit_plugin_result`) so the following `evaluate_batch` finds it. Order matters: submit
+ * before evaluate. A plugin assertion whose plugin is not registered is left without a
+ * submission, so the engine reports it `not_evaluated` (`missing_evidence`) instead of a failure.
+ */
+export async function submitPluginResults(
+  registry: PluginRegistry,
+  client: AttestClient,
+  trace: Trace,
+  assertions: readonly { assertion_id: string; type: string; spec: Record<string, unknown> }[],
+): Promise<void> {
+  for (const assertion of assertions) {
+    if (assertion.type !== TYPE_PLUGIN) continue;
+    const pluginId = assertion.spec["plugin_id"];
+    if (typeof pluginId !== "string" || pluginId === "") continue;
+    const plugin = registry.get("assertion", pluginId);
+    if (plugin === undefined) continue;
+    if (plugin.name !== pluginId) {
+      throw new Error(
+        `Plugin registered for "${pluginId}" is named "${plugin.name}"; the engine matches ` +
+          "submitted results by plugin name, so the two must be equal",
+      );
+    }
+    await executePluginAssertion(plugin, trace, assertion.spec, client, trace.trace_id, assertion.assertion_id);
+  }
 }
 
 /** Explicitly register a plugin instance into the registry. */

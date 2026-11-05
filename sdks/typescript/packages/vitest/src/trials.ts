@@ -14,6 +14,7 @@ import {
   attemptMeta,
   attemptState,
   costBudgetSpent,
+  restartAssertionIds,
   runningTest,
   strictFromEnv,
   trialScope,
@@ -196,7 +197,7 @@ export async function trials(
       stoppedByBudget = true;
       break;
     }
-    state.ordinal = 0;
+    restartAssertionIds(test);
     const record: TrialRecord = { index, results: [], error: undefined };
     records.push(record);
     try {

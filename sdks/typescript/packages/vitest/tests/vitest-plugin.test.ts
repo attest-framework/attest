@@ -108,6 +108,7 @@ describe("AttestEngineFixture", () => {
     const chain = {
       trace: { trace_id: "trc_1", output: {}, steps: [] },
       assertions: [{ assertion_id: "a1", type: "schema", spec: {} }],
+      markEvaluated: () => {},
     };
 
     const result = await fixture.evaluate(chain as never);
@@ -126,6 +127,7 @@ describe("AttestEngineFixture", () => {
     const chain = {
       trace: { trace_id: "trc_1", output: {}, steps: [] },
       assertions: [{ assertion_id: "a1", type: "schema", spec: {} }],
+      markEvaluated: () => {},
     };
 
     await expect(fixture.evaluate(chain as never, { budget: 0.5 })).rejects.toThrow(
@@ -142,6 +144,7 @@ describe("AttestEngineFixture", () => {
     const chain = {
       trace: { trace_id: "trc_1", output: {}, steps: [] },
       assertions: [{ assertion_id: "a1", type: "schema", spec: {} }],
+      markEvaluated: () => {},
     };
 
     await expect(fixture.evaluate(chain as never, { testBudget: { maxCostUsd: -1 } })).rejects.toThrow(
@@ -279,6 +282,7 @@ describe("evaluate() / inspect() enforcement", () => {
   const chain = {
     trace: { trace_id: "trc_v", output: {}, steps: [] },
     assertions: [{ assertion_id: "a1", type: "trace", spec: {} }],
+    markEvaluated: () => {},
   };
   const row = (id: string, status: string, reason?: string) => ({
     assertion_id: id,

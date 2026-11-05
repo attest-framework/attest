@@ -14,6 +14,8 @@ import {
   OUTCOME_SKIP,
   zeroUsage,
   type BatchBudget,
+  PluginRegistry,
+  submitPluginResults,
 } from "@attest-ai/core";
 import {
   assignAssertionIds,
@@ -21,6 +23,7 @@ import {
   attemptState,
   inTrial,
   recordAgentSpend,
+  recordBudgetExceeded,
   recordOnTest,
   recordUnattachedUsage,
   remainingBudget,
@@ -30,6 +33,13 @@ import {
   validateBudget,
   type TestBudget,
 } from "./test-state.js";
+
+/**
+ * Plugins that back `.plugin(id)` assertions. Register under the plugin's own name with
+ * `pluginType` "assertion": `attestPlugins.register(plugin.name, plugin)`. The SDK runs the
+ * plugin and submits its result to the engine before the batch that holds the assertion.
+ */
+export const attestPlugins = new PluginRegistry();
 
 export interface InspectOptions {
   /** Throw when the cumulative session cost exceeds this USD amount. */
@@ -167,10 +177,15 @@ export class AttestEngineFixture {
 
   /** Evaluate collected assertions without enforcing the test outcome. */
   async inspect(chain: ExpectChain, options?: InspectOptions): Promise<AgentResult> {
+    chain.markEvaluated();
+    if (chain.assertions.length === 0) {
+      throw new Error("expect() chain has no assertions: add at least one assertion before evaluating it");
+    }
     await this.ensureStarted();
-    // Inside a test, assertion IDs are deterministic (the test's report test_id
-    // and the assertion's ordinal in the test, restarting each trial) so trials
-    // and baselines match rows by ID. Outside a test they stay random.
+    // Inside a test, assertion IDs are scheme 2 (C3): a hash of the test's report test_id, the
+    // assertion type and spec, and its occurrence among identical assertions of the test
+    // (restarting each trial), so trials and baselines match rows by ID. Outside a test they
+    // stay random.
     const test = await resolveTest(options?.context);
     const scope = trialScope.getStore();
     const trial = scope !== undefined && scope.test === test ? scope.trial : undefined;
@@ -193,6 +208,7 @@ export class AttestEngineFixture {
       // Outside a test the budget covers this one evaluation.
       batchBudget = remainingBudget(budget, zeroUsage(), chain.trace.metadata?.cost_usd ?? 0);
     }
+    await submitPluginResults(attestPlugins, this.client, chain.trace, assertions);
     const result = await this.client.evaluateBatch(chain.trace, assertions, {
       ...(batchBudget === undefined ? {} : { budget: batchBudget }),
       ...(test === undefined ? {} : { context: batchContextOf(test) }),
@@ -200,6 +216,8 @@ export class AttestEngineFixture {
 
     globalThis.__attest_session_cost__ =
       (globalThis.__attest_session_cost__ ?? 0) + (result.total_cost ?? 0);
+
+    if (result.budget_exceeded === true) recordBudgetExceeded(test);
 
     const softFailCount = (result.results ?? []).filter(
       (r) => r.status === STATUS_SOFT_FAIL,

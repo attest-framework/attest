@@ -7,6 +7,7 @@
  * places inline comments with `file` and `line`.
  */
 import {
+  ID_SCHEME,
   REASON_REPLAY_MISS,
   STATUS_HARD_FAIL,
   STATUS_NOT_EVALUATED,
@@ -90,6 +91,8 @@ export interface AttestTaskMeta {
   /** Attest model usage of every attempt of the test, including retried ones. */
   usage: Usage;
   trials?: TrialsMeta;
+  /** True when an evaluation of the test returned `budget_exceeded`. */
+  budgetExceeded?: boolean;
   /** Traces the results were evaluated against, by `trace_id` (only with `ATTEST_REPORT_TRACES=1`). */
   traces?: Record<string, Trace>;
 }
@@ -123,7 +126,10 @@ export function buildReport(
   simulated: boolean,
   unattached: Usage = zeroUsage(),
   includeTraces = false,
+  unattachedBudgetExceeded = false,
 ): Record<string, unknown> {
+  const budgetExceeded =
+    unattachedBudgetExceeded || tests.some((t) => t.attest?.budgetExceeded === true);
   const table = includeTraces ? new TraceTable() : undefined;
   const rows: Record<string, unknown>[] = [];
   const testRows: Record<string, unknown>[] = [];
@@ -199,6 +205,8 @@ export function buildReport(
   const count = (status: string) => rows.filter((r) => r["status"] === status).length;
   return {
     report_version: REPORT_VERSION,
+    id_scheme: ID_SCHEME,
+    budget_exceeded: budgetExceeded,
     timestamp: new Date().toISOString().replace(/\.\d{3}Z$/, "Z"),
     simulated,
     summary: {

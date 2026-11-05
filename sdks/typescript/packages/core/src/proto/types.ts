@@ -197,6 +197,8 @@ export interface Assertion {
   readonly type: string;
   readonly spec: Record<string, unknown>;
   readonly request_id?: string;
+  /** Id scope (C3): the test node id, or the ContinuousEvalRunner name outside tests. The engine echoes it on the result row. */
+  readonly scope_id?: string;
 }
 
 /**
@@ -256,6 +258,10 @@ export interface AssertionResult {
   readonly threshold_source?: string;
   readonly layer?: number;
   readonly type?: string;
+  /** Echo of the assertion's `scope_id` (C3). */
+  readonly scope_id?: string;
+  /** Engine-computed lowercase hex SHA-256 of the canonical spec (C3); copied into reports unchanged. */
+  readonly spec_hash?: string;
   readonly trace_node_path?: string;
   readonly expected?: string;
   readonly actual?: string;
@@ -421,6 +427,11 @@ export interface EvaluateBatchResult {
    * against the simulator by checking this flag.
    */
   readonly simulated?: boolean;
+  /**
+   * True when this batch pushed the engine session past `ATTEST_MAX_SOFT_FAILURES`. Every
+   * result is still present; the flag is not a `not_evaluated` reason. Absent when false.
+   */
+  readonly budget_exceeded?: boolean;
 }
 
 export interface ShutdownResult {
