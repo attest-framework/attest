@@ -113,6 +113,7 @@ class FakeRelease:
         self.hits: list[str] = []
         self.http_hits: list[str] = []
         self.release = threading.Event()
+        self.trickle_delay = 0.0
         outer = self
 
         class Handler(BaseHTTPRequestHandler):
@@ -130,6 +131,12 @@ class FakeRelease:
                     self.send_header(name, value)
                 self.send_header("Content-Length", str(len(body)))
                 self.end_headers()
+                if outer.trickle_delay:
+                    for i in range(len(body)):
+                        self.wfile.write(body[i : i + 1])
+                        self.wfile.flush()
+                        time.sleep(outer.trickle_delay)
+                    return
                 self.wfile.write(body)
 
             def log_message(self, format: str, *args: object) -> None:
@@ -368,3 +375,28 @@ def test_download_engine_unusable_table_raises_without_fetching(
         download_engine()
 
     assert fake_release.hits == []
+
+
+def test_download_engine_trickling_server_fails_within_total_timeout(
+    isolated_engine_env: Path,
+    fake_release: FakeRelease,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _ship_table(tmp_path / "table.json", monkeypatch, b"engine")
+    monkeypatch.setattr(downloader, "_CONNECT_TIMEOUT_S", 0.5)
+    monkeypatch.setattr(downloader, "_TOTAL_TIMEOUT_S", 1.0)
+
+    def trickle() -> Response:
+        # Headers promise 6 bytes; the body is sent one byte per 0.4s by the handler below.
+        return 200, {"X-Trickle": "1"}, b"engine"
+
+    fake_release.routes[fake_release.asset_path] = trickle
+    fake_release.trickle_delay = 0.4
+    started = time.monotonic()
+
+    with pytest.raises(RuntimeError, match="Failed to download engine"):
+        download_engine()
+
+    assert time.monotonic() - started < 3
+    assert cached_engine_path() is None

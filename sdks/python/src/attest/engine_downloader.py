@@ -8,10 +8,12 @@ import json
 import os
 import platform
 import re
+import socket
 import ssl
 import stat
 import sys
 import tempfile
+import threading
 import time
 import urllib.parse
 from pathlib import Path
@@ -80,6 +82,13 @@ def _ssl_context() -> ssl.SSLContext:
     return ssl.create_default_context()
 
 
+def _shutdown_quietly(sock: socket.socket) -> None:
+    try:
+        sock.shutdown(socket.SHUT_RDWR)
+    except OSError:
+        pass
+
+
 def _fetch(url: str) -> bytes:
     """GET ``url`` over https, following redirects that stay on https.
 
@@ -109,12 +118,18 @@ def _fetch(url: str) -> bytes:
             timeout=min(_CONNECT_TIMEOUT_S, remaining()),
             context=_ssl_context(),
         )
+        watchdog: threading.Timer | None = None
         try:
             conn.connect()
             sock = conn.sock
             if sock is None:
                 raise RuntimeError(f"Connection to {parts.hostname} closed before the request")
             sock.settimeout(remaining())
+            # A server that drips bytes resets the per-recv timeout; the watchdog enforces
+            # the total deadline by shutting the socket down.
+            watchdog = threading.Timer(remaining(), _shutdown_quietly, args=(sock,))
+            watchdog.daemon = True
+            watchdog.start()
             conn.request("GET", target, headers={"User-Agent": "attest-sdk"})
             resp = conn.getresponse()
             if resp.status in _REDIRECT_STATUSES:
@@ -131,6 +146,8 @@ def _fetch(url: str) -> bytes:
                 chunks.append(resp.read(65536))
             return b"".join(chunks)
         finally:
+            if watchdog is not None:
+                watchdog.cancel()
             conn.close()
     raise RuntimeError(f"Too many redirects (>{_MAX_REDIRECTS}) following {url}")
 
