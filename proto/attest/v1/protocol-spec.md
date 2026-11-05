@@ -470,7 +470,7 @@ The golden vectors in `protocol-tests/ids/assertion-ids.json` (the `invalid` lis
 | `duration_ms` | int | Wall-clock time to evaluate this assertion |
 | `request_id` | string | Echoed from the request if provided |
 | `failure_class` | string | Set only on `soft_fail` / `hard_fail` rows; never on `pass` or `not_evaluated`. One of `broken_code`, `flaky_judge`, `bad_rubric`, `missing_trace_data`, `stochastic_variance` (a judge or embedding score within 0.05 of the assertion's own threshold) or `spec_error` (the assertion spec is invalid: unknown rubric, `repeat` outside 1–16, unknown bias probe, missing `target`). `spec_error` is a failure class only, never a `reason`. |
-| `drift` | object | Set when a `threshold: "dynamic"` assertion hard-fails and its history can be read: `assertion_id`, `mean`, `stddev`, `count` (history rows, this run included), `latest_score`, `deviation` (`latest_score − mean`) and `status` (`drift_detected`). Omitted otherwise. |
+| `drift` | object | Set when a `threshold: "dynamic"` assertion hard-fails and its history can be read: `assertion_id`, `mean`, `stddev`, `count` (baseline rows: the passing and soft-failing runs before this one), `latest_score`, `deviation` (`latest_score − mean`) and `status` (`drift_detected`). Omitted otherwise. |
 
 Every requested assertion appears exactly once in `results`, including assertions the engine did not run.
 

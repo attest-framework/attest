@@ -8,7 +8,7 @@ Attest reports one of four statuses for every assertion you request, and turns t
 | --- | --- |
 | `pass` | The assertion held. |
 | `soft_fail` | The assertion missed a `soft` threshold. |
-| `hard_fail` | The assertion failed. |
+| `hard_fail` | The assertion failed. A `threshold="dynamic"` score below its history bar is a `hard_fail` too ([dynamic thresholds](judges.md#dynamic-thresholds)). |
 | `not_evaluated` | The engine produced no verdict. `reason` says why. |
 
 | Reason | When |

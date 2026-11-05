@@ -104,6 +104,8 @@ Plain `http` to a host other than `localhost` or a loopback address is allowed f
 | `ATTEST_ONNX_MODEL_DIR` | Directory for the all-MiniLM-L6-v2 model. The model is downloaded on first use from a pinned revision and rejected unless its sha256 matches; a cached file that does not match is replaced. | `~/.attest/models` |
 | `ATTEST_ONNX_RUNTIME_LIB` | Path to the ONNX Runtime 1.26 shared library. When unset, the engine looks in the model directory and standard system library paths. It never downloads the runtime. | unset |
 
+A `similar_to` / `output_similar_to` assertion with `threshold="dynamic"` compares each score with the history of that assertion; see [dynamic thresholds](judges.md#dynamic-thresholds).
+
 ## Evaluation
 
 | Variable | Purpose | Default |
@@ -127,6 +129,8 @@ Under pytest-xdist each worker is a separate pytest process with its own engine 
 | `ATTEST_CACHE_DIR` | Cache, baseline and history database directory. | `~/.attest/cache` |
 | `ATTEST_HISTORY_MAX_ROWS` | Result history row limit (enables pruning). Pruning runs in the background in short batches, so a write never waits for it to finish. | `10000` when pruning is enabled |
 | `ATTEST_HISTORY_MAX_AGE_DAYS` | Result history age limit in days (enables pruning). | `30` when pruning is enabled |
+
+The history is what `threshold="dynamic"` and the [continuous eval runner](continuous-eval.md) read: one row per evaluated assertion id, with `not_evaluated` rows left out. Rows recorded before 1.1 are keyed by ordinal ids and match no assertion, so each assertion rebuilds its baseline (10 passing or soft runs) after the upgrade.
 
 ## Removed variables
 

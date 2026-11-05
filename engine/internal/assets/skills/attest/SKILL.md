@@ -43,7 +43,7 @@ A request often spans two rows: an incident with no fixture yet is `capture-inci
    uv run attest guide behavior-contracts
    ```
 
-   Topics: `agents`, `annotations`, `baselines`, `behavior-contracts`, `capture`, `cli`, `configuration`, `framework-adapters`, `judges`, `merge-gate`, `multi-agent`, `policies`, `replay`, `selection`, `simulation`, `statistical-verdicts`, `trace-check`, `verdicts`, `world-fixtures`.
+   Topics: `agents`, `annotations`, `baselines`, `behavior-contracts`, `capture`, `cli`, `configuration`, `continuous-eval`, `framework-adapters`, `judges`, `merge-gate`, `multi-agent`, `policies`, `replay`, `selection`, `simulation`, `statistical-verdicts`, `trace-check`, `verdicts`, `world-fixtures`.
 
 5. Look for existing attest material before creating any:
 

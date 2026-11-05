@@ -71,6 +71,29 @@ The spec is validated before the cache is consulted, and `repeat` and the bias p
 
 Built-in rubrics (version `v2`) tell the judge to answer `{"abstain": true, "reason": "<the evidence that is missing>"}` instead of guessing a score when the agent output lacks what the rubric needs. The engine reads only that structured field, never phrases in an explanation: the assertion is `not_evaluated` with reason `judge_abstained` and the judge's reason in its explanation, and the answer is not cached. With `repeat: N`, abstaining runs are left out of the median (the mean of the two middle scores for an even count); the assertion is `judge_abstained` only when no run scored. A bias probe whose judge abstains is skipped. Custom rubrics opt in by asking for the same object.
 
+## Dynamic thresholds
+
+`threshold` on `passes_judge` / `passesJudge` and `output_similar_to` / `outputSimilarTo` (Layer 5) is a number or `"dynamic"`. A missing threshold, or one at or below 0, is `0.8`. A judge threshold above 1 is a `spec_error`; any string other than `"dynamic"` is an invalid spec.
+
+`"dynamic"` judges a score against the assertion's own history. The engine keeps one row per evaluation under the assertion id (ids are stable per test, see [baselines](baselines.md#removed-and-changed-assertions)), and reads the newest 50 rows that passed or soft-failed. Hard failures never enter that baseline, so a run of failures cannot lower the bar. With at least 10 such rows the pass bar is
+
+```text
+max(0.8, mean − 2·max(σ, 0.02))
+```
+
+and a score below it is a `hard_fail` (a `soft_fail` when the assertion is `soft`), even when the score is above 0.8. The explanation names the score, the bar, the baseline size, mean and σ, and the result carries `threshold_source: "dynamic"`. A `hard_fail` below the bar also carries `drift` (`assertion_id`, `mean`, `stddev`, `count` of baseline rows, `latest_score`, `deviation`, `status: "drift_detected"`). The floor of 0.8 means a dynamic assertion is never easier than the default static one; the σ floor of 0.02 keeps a history of identical scores from failing on noise. The window, the factor and both floors are fixed.
+
+| History (newest score last) | Score | Result |
+|---|---|---|
+| ten runs at 0.9 | 0.5 | `hard_fail` with `drift` |
+| ten runs at 1.0 | 0.99 | `pass` (bar 0.96) |
+| ten runs at 0.0 | 0.0 | `hard_fail`: the zeros are not in the baseline, and 0.0 is below the static 0.8 |
+| fewer than 10 passing or soft rows | any | the static threshold alone, no `drift` |
+
+Evaluations that are `not_evaluated`, including simulation runs, are not recorded and never move a baseline. If the engine has no history store, or reading it fails, the assertion is judged by the static threshold, `threshold_source` is `dynamic_unavailable` and the explanation says so; a failing row then has failure class `missing_trace_data`.
+
+History lives under `ATTEST_CACHE_DIR`. A CI job that starts with an empty cache is always in the cold start (fewer than 10 rows), so `"dynamic"` behaves as the static `0.8` there until the directory is restored between runs ([configuration](configuration.md#cache-and-history)). To get an alert instead of a failure, use the [continuous eval runner](continuous-eval.md).
+
 ## Budgets
 
 `ATTEST_MAX_JUDGE_CALLS` caps judge requests per engine session and `ATTEST_BUDGET_USD` caps the spend of judge and embedding calls. Every call reserves one request and its worst-case cost before it is sent, so concurrent assertions, `repeat` runs, bias probes and retries cannot exceed the budget. The `acp` judge reports no token usage, so any USD limit, including a test's, refuses its calls; limit it by calls (a call that fails after it was sent keeps its reservation, and a request without an output limit is capped at 1024 tokens); a call that cannot reserve is not sent and its assertion is `not_evaluated: budget_exhausted`. Costs come from a built-in price table (`gpt-4.1`, `gpt-4.1-mini`, `gpt-4.1-nano`, `text-embedding-3-small`, `text-embedding-3-large`) or `ATTEST_JUDGE_PRICE_IN` / `ATTEST_JUDGE_PRICE_OUT` (USD per 1M tokens), and are reconciled to the token usage each provider reports. See [configuration](configuration.md#evaluation).
