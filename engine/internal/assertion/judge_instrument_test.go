@@ -90,7 +90,7 @@ func TestJudge_ScoreOutOfRange_IsJudgeMalformed(t *testing.T) {
 
 			r := evaluatorFor(t, fj.URL, nil).Evaluate(tr, a)
 
-			if r.Status != types.StatusNotEvaluated || r.Reason != judge.ReasonJudgeMalformed {
+			if r.Status != types.StatusNotEvaluated || r.Reason != types.ReasonJudgeMalformed {
 				t.Fatalf("status=%s reason=%q score=%v, want not_evaluated(judge_malformed)", r.Status, r.Reason, r.Score)
 			}
 		})
@@ -103,7 +103,7 @@ func TestJudge_ScoreOutOfRange_Repeated_IsJudgeMalformed(t *testing.T) {
 
 	r := evaluatorFor(t, fj.URL, nil).Evaluate(tr, a)
 
-	if r.Status != types.StatusNotEvaluated || r.Reason != judge.ReasonJudgeMalformed {
+	if r.Status != types.StatusNotEvaluated || r.Reason != types.ReasonJudgeMalformed {
 		t.Fatalf("status=%s reason=%q, want not_evaluated(judge_malformed)", r.Status, r.Reason)
 	}
 }
@@ -123,7 +123,7 @@ func TestJudge_Unauthorized_CostsOneCallAndReportsProviderAuth(t *testing.T) {
 	if got := calls.Load(); got != 1 {
 		t.Errorf("judge calls = %d, want exactly 1", got)
 	}
-	if r.Status != types.StatusNotEvaluated || r.Reason != judge.ReasonProviderAuth {
+	if r.Status != types.StatusNotEvaluated || r.Reason != types.ReasonProviderAuth {
 		t.Errorf("status=%s reason=%q, want not_evaluated(provider_auth)", r.Status, r.Reason)
 	}
 	if strings.Contains(r.Explanation, "test-key") {
@@ -142,7 +142,7 @@ func TestJudge_Unauthorized_Repeated_StopsUnsentRuns(t *testing.T) {
 
 	r := evaluatorFor(t, srv.URL, nil).Evaluate(tr, a)
 
-	if r.Reason != judge.ReasonProviderAuth {
+	if r.Reason != types.ReasonProviderAuth {
 		t.Errorf("reason = %q, want provider_auth", r.Reason)
 	}
 	if got := calls.Load(); got > 4 {
@@ -224,7 +224,7 @@ func TestJudge_ReplyContainingNonce_IsJudgeMalformed(t *testing.T) {
 
 	r := evaluatorFor(t, fj.URL, nil).Evaluate(tr, a)
 
-	if r.Status != types.StatusNotEvaluated || r.Reason != judge.ReasonJudgeMalformed {
+	if r.Status != types.StatusNotEvaluated || r.Reason != types.ReasonJudgeMalformed {
 		t.Fatalf("status=%s reason=%q, want not_evaluated(judge_malformed)", r.Status, r.Reason)
 	}
 }

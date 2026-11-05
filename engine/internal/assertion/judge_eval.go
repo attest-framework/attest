@@ -342,7 +342,7 @@ func (e *JudgeEvaluator) evaluateSinglePass(
 	scoreResult, err := frame.ParseScoreResult(resp.Content)
 	if err != nil {
 		// The call was billed even though its output is unusable.
-		ar := notEvaluatedResult(assertion, start, judge.ReasonJudgeMalformed, fmt.Sprintf("judge response unusable: %v", err))
+		ar := notEvaluatedResult(assertion, start, types.ReasonJudgeMalformed, fmt.Sprintf("judge response unusable: %v", err))
 		ar.Cost = resp.Cost
 		return ar
 	}
@@ -545,7 +545,7 @@ func judgeCallFailed(assertion *types.Assertion, start time.Time, err error) *ty
 		return notEvaluatedResult(assertion, start, types.ReasonBudgetExhausted, fmt.Sprintf("judge call not sent: %v", err))
 	}
 	if errors.Is(err, llm.ErrAuth) {
-		return notEvaluatedResult(assertion, start, judge.ReasonProviderAuth, fmt.Sprintf("judge provider rejected the credentials: %v", err))
+		return notEvaluatedResult(assertion, start, types.ReasonProviderAuth, fmt.Sprintf("judge provider rejected the credentials: %v", err))
 	}
 	return notEvaluatedResult(assertion, start, types.ReasonProviderUnavailable, fmt.Sprintf("judge provider call failed: %v", err))
 }
@@ -608,11 +608,11 @@ func (u *unscoredRuns) total() int {
 func (u *unscoredRuns) reason() string {
 	switch {
 	case u.authFailed > 0:
-		return judge.ReasonProviderAuth
+		return types.ReasonProviderAuth
 	case u.failed > 0:
 		return types.ReasonProviderUnavailable
 	case u.malformed > 0:
-		return judge.ReasonJudgeMalformed
+		return types.ReasonJudgeMalformed
 	case u.abstained > 0:
 		return types.ReasonJudgeAbstained
 	default:

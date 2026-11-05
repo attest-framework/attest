@@ -39,7 +39,7 @@ To add a new scenario:
 
 ## Verdict fixtures
 
-`verdicts/` holds verdict fixtures: an engine `evaluate_batch` result list and the outcome every implementation must derive from it. They cover `pass`, `soft_fail`, `hard_fail` and `not_evaluated` with each reason (`provider_unavailable`, `provider_not_configured`, `simulation`, `missing_evidence`, `short_circuited`, `budget_exhausted`, `judge_abstained`). Each fixture matches `verdicts/verdict.schema.json`:
+`verdicts/` holds verdict fixtures: an engine `evaluate_batch` result list and the outcome every implementation must derive from it. They cover `pass`, `soft_fail`, `hard_fail` and `not_evaluated` with each reason (`provider_unavailable`, `provider_not_configured`, `simulation`, `missing_evidence`, `short_circuited`, `budget_exhausted`, `judge_abstained`, `judge_malformed`, `provider_auth`). Each fixture matches `verdicts/verdict.schema.json`:
 
 | Field | Description |
 |---|---|

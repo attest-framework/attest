@@ -65,8 +65,10 @@ Log levels controlled by `--log-level` flag on engine startup: `debug`, `info`, 
 - **Every line the engine writes to stdout is the response to a request id the SDK sent.**
   The engine sends no notifications; data that used to travel as one (drift) is part of
   the response (`results[].drift`). The only replies whose `id` the SDK did not send are
-  error replies to a line that does not parse as a request (`id` 0) or is over the line limit with
-  no `id` in its first 4 KiB (`id` null).
+  error replies to a line that does not parse as a request or is not a valid request, or is over the
+  line limit with no `id` in its first 4 KiB (`id` null; before 1.1.0 an unparsable line got `id` 0).
+  Since 1.1.0 `id` is echoed exactly as sent, so a string id round-trips, and a valid request
+  without an `id` member is a notification: it is executed and never answered.
 - SDKs route each response to its request by `id` and never by arrival order. A line
   without an `id` is logged and dropped, never taken as a response. An `evaluate_batch`
   response whose assertion ids differ from the ids sent is a protocol desync
@@ -168,6 +170,8 @@ Capabilities are additive. New capabilities never remove or alter old ones, with
 | `plugins` | v0.4+ | Custom assertions and judges via plugin interface |
 | `embedding` | v0.2+ | `embedding` assertions accepted. Since v1.0 always advertised; without a provider they return `not_evaluated(provider_not_configured)` |
 | `llm_judge` | v0.2+ | `llm_judge` assertions accepted. Since v1.0 always advertised; without a provider they return `not_evaluated(provider_not_configured)` |
+| `judge_configured` | v1.1+ | A judge provider is configured. `llm_judge` only says the assertion type is accepted |
+| `embedding_configured` | v1.1+ | An embedding provider is configured. `embedding` only says the assertion type is accepted |
 | `simulation_mode` | v1.0+ | The engine started with `ATTEST_SIMULATION` set: L5/L6 assertions return `not_evaluated(simulation)` |
 
 #### Error: Incompatible Protocol Version
@@ -459,13 +463,13 @@ The golden vectors in `protocol-tests/ids/assertion-ids.json` (the `invalid` lis
 |-------|------|-------------|
 | `assertion_id` | string | Matches the assertion from the request |
 | `status` | string | `pass`, `soft_fail`, `hard_fail`, or `not_evaluated` (see [Assertion Status and Aggregation](#assertion-status-and-aggregation)) |
-| `reason` | string | Present only when `status` is `not_evaluated`: `provider_unavailable`, `provider_not_configured`, `simulation`, `missing_evidence`, `short_circuited`, `budget_exhausted`, `judge_abstained` or `replay_miss` |
+| `reason` | string | Present only when `status` is `not_evaluated`: `provider_unavailable`, `provider_not_configured`, `simulation`, `missing_evidence`, `short_circuited`, `budget_exhausted`, `judge_abstained`, `judge_malformed`, `provider_auth` or `replay_miss` |
 | `score` | float | 0.0 to 1.0. For boolean checks: 0.0 or 1.0. For scored checks: continuous value. `0.0` when `not_evaluated`. |
 | `explanation` | string | Human-readable explanation of the result, including relevant values |
 | `cost` | float | USD cost for this assertion (non-zero for LLM-backed assertions) |
 | `duration_ms` | int | Wall-clock time to evaluate this assertion |
 | `request_id` | string | Echoed from the request if provided |
-| `failure_class` | string | Set only on `soft_fail` / `hard_fail` rows; never on `pass` or `not_evaluated` |
+| `failure_class` | string | Set only on `soft_fail` / `hard_fail` rows; never on `pass` or `not_evaluated`. One of `broken_code`, `flaky_judge`, `bad_rubric`, `missing_trace_data`, `stochastic_variance` (a judge or embedding score within 0.05 of the assertion's own threshold) or `spec_error` (the assertion spec is invalid: unknown rubric, `repeat` outside 1–16, unknown bias probe, missing `target`). `spec_error` is a failure class only, never a `reason`. |
 | `drift` | object | Set when a `threshold: "dynamic"` assertion hard-fails and its history can be read: `assertion_id`, `mean`, `stddev`, `count` (history rows, this run included), `latest_score`, `deviation` (`latest_score − mean`) and `status` (`drift_detected`). Omitted otherwise. |
 
 Every requested assertion appears exactly once in `results`, including assertions the engine did not run.
@@ -481,13 +485,15 @@ Every requested assertion appears exactly once in `results`, including assertion
 
 | `reason` | When |
 |----------|------|
-| `provider_unavailable` | The embedding (L5) or judge (L6) provider is configured but the call failed: outage, timeout, or unusable response. |
+| `provider_unavailable` | The embedding (L5) or judge (L6) provider is configured but the call failed: outage, timeout, or a transient error (HTTP 408, 429, 5xx, network) that outlasted the retries. A judge reply that is not a valid score is `judge_malformed`. |
 | `provider_not_configured` | No embedding or judge provider is configured. L5/L6 assertions are always accepted and return this reason instead of an error. |
 | `simulation` | The engine runs with `ATTEST_SIMULATION` set (capability `simulation_mode`). L1–L4 run normally; no provider is called. |
 | `missing_evidence` | The trace does not record the field the assertion checks (for example `metadata.cost_usd` unset). |
 | `short_circuited` | An L5/L6 assertion was not run because an L1–L4 assertion in the same batch returned `hard_fail`. |
 | `budget_exhausted` | An L5/L6 model call could not reserve its call count or cost against the session or batch budget, so it was not sent. |
 | `judge_abstained` | The judge answered `{"abstain": true, "reason": "..."}`: the output lacks the evidence the rubric needs. |
+| `judge_malformed` | The judge replied, but not with a numeric `score` in [0,1] or an explicit abstain: no JSON object, no `score`, a non-numeric or out-of-range score, or a reply that contains the per-call output delimiter nonce. Never cached, never retried, never read as a score. |
+| `provider_auth` | The provider rejected the credentials (HTTP 401 or 403). Reported after exactly one call. |
 | `replay_miss` | Set by the SDK, never by the engine: a fixture-bound test ran in replay mode and a model request matched no recording while the mode allowed no live call (`auto` mode without a provider key). |
 
 SDKs aggregate a test's results after its whole batch:
@@ -1296,7 +1302,7 @@ Custom judge prompt:
 }
 ```
 
-Built-in rubrics end with the response format: `{"score": <0.0–1.0>, "explanation": "..."}`, or `{"abstain": true, "reason": "<the evidence that is missing>"}` when the output does not contain enough information to apply the rubric. The engine reads the `abstain` field only (no phrase matching) and returns `not_evaluated` with reason `judge_abstained`. With `repeat: N`, runs that abstain or could not reserve budget are left out of the median and noted in the explanation; the assertion is not evaluated only when no run scored (reason precedence: `provider_unavailable`, then `judge_abstained`, then `budget_exhausted`).
+Built-in rubrics end with the response format: `{"score": <0.0–1.0>, "explanation": "..."}`, or `{"abstain": true, "reason": "<the evidence that is missing>"}` when the output does not contain enough information to apply the rubric. A reply is valid only with a numeric `score` in [0,1] or an explicit abstain; anything else (no `score`, `{"score": 7}`) is `not_evaluated` with reason `judge_malformed`. The engine delimits the agent output with `<<<AGENT_OUTPUT_START:<nonce>>>` / `<<<AGENT_OUTPUT_END:<nonce>>>`, a fresh random nonce per call. Only transient failures (HTTP 408, 429, 5xx, network) are retried, with jitter and `Retry-After`; HTTP 401/403 is one call and `provider_auth`. The engine reads the `abstain` field only (no phrase matching) and returns `not_evaluated` with reason `judge_abstained`. With `repeat: N`, runs that abstain or could not reserve budget are left out of the median and noted in the explanation; the assertion is not evaluated only when no run scored (reason precedence: `provider_auth`, `provider_unavailable`, `judge_malformed`, `judge_abstained`, then `budget_exhausted`).
 
 **Pass result:**
 ```json

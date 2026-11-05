@@ -57,7 +57,7 @@ Every field is optional. An empty policy has no rules to block on, but the `not_
 
 ## Not evaluated is not pass
 
-An assertion the engine could not judge (`provider_unavailable`, `provider_not_configured`, `simulation`, `missing_evidence`, `short_circuited`, `budget_exhausted`, `judge_abstained`, `replay_miss`) has status `not_evaluated` and a reason. It is never counted as a pass, and it is excluded from pass rates. The policy's `not_evaluated` severity decides what it costs: the default `warn` exits 2 so an outage or a missing key does not block merges; `not_evaluated: block` makes it exit 1.
+An assertion the engine could not judge (`provider_unavailable`, `provider_not_configured`, `simulation`, `missing_evidence`, `short_circuited`, `budget_exhausted`, `judge_abstained`, `judge_malformed`, `provider_auth`, `replay_miss`) has status `not_evaluated` and a reason. It is never counted as a pass, and it is excluded from pass rates. The policy's `not_evaluated` severity decides what it costs: the default `warn` exits 2 so an outage or a missing key does not block merges; `not_evaluated: block` makes it exit 1.
 
 A [replay miss](replay.md#what-a-miss-says) is `not_evaluated` with reason `replay_miss` when the test could not go live, and a failed test when the replay is strict.
 

@@ -288,6 +288,7 @@ export const FailureClass = {
   BadRubric: "bad_rubric",
   MissingTraceData: "missing_trace_data",
   StochasticVariance: "stochastic_variance",
+  SpecError: "spec_error",
 } as const;
 export type FailureClass = (typeof FailureClass)[keyof typeof FailureClass];
 
