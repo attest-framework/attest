@@ -1,116 +1,148 @@
 import { describe, it, expect } from "vitest";
+import { RunnableLambda } from "@langchain/core/runnables";
+import { DynamicTool } from "@langchain/core/tools";
+import { FakeListChatModel } from "@langchain/core/utils/testing";
 import { LangChainAdapter } from "../../../packages/core/src/adapters/langchain.js";
+import { STEP_LLM_CALL, STEP_TOOL_CALL } from "../../../packages/core/src/proto/constants.js";
+
+const RUN = "00000000-0000-4000-8000-000000000001";
+const CHILD = "00000000-0000-4000-8000-000000000002";
+const OTHER = "00000000-0000-4000-8000-000000000003";
 
 describe("LangChainAdapter", () => {
-  it("builds a trace from accumulated LLM events", () => {
-    const adapter = new LangChainAdapter("test-agent");
-
-    adapter.handleChainStart();
-
-    adapter.handleLLMEnd({
-      generations: [[{ text: "Hello world" }]],
-      llmOutput: {
-        modelName: "gpt-4",
-        tokenUsage: { totalTokens: 150 },
-      },
+  it("captures a real langchainjs run passed in callbacks", async () => {
+    const adapter = new LangChainAdapter("lc-agent");
+    const lookup = new DynamicTool({
+      name: "lookup_order",
+      description: "Look up an order.",
+      func: async () => "shipped",
+    });
+    const model = new FakeListChatModel({ responses: ["ORD-1 has shipped."] });
+    const chain = RunnableLambda.from(async (question: string, config) => {
+      const status = await lookup.invoke("ORD-1", config);
+      const answer = await model.invoke(`${question} ${status}`, config);
+      return { output: String(answer.content) };
     });
 
-    adapter.handleChainEnd({ output: "Hello world" });
-
+    await chain.invoke("Where is ORD-1?", { callbacks: [adapter] });
     const trace = adapter.buildTrace();
 
-    expect(trace.agent_id).toBe("test-agent");
-    expect(trace.output.message).toBe("Hello world");
-    expect(trace.metadata?.model).toBe("gpt-4");
+    expect(trace.agent_id).toBe("lc-agent");
+    expect(trace.input).toEqual({ message: "Where is ORD-1?" });
+    expect(trace.output.message).toBe("ORD-1 has shipped.");
+    expect(trace.steps.map((s) => [s.type, s.name])).toEqual([
+      [STEP_TOOL_CALL, "lookup_order"],
+      [STEP_LLM_CALL, "llm"],
+    ]);
+    expect(trace.steps[0].args).toEqual({ input: "ORD-1" });
+    expect(trace.steps[0].result).toEqual({ output: "shipped" });
+    expect(trace.steps[1].result?.completion).toBe("ORD-1 has shipped.");
+  });
+
+  it("keys interleaved tool runs by runId", () => {
+    const adapter = new LangChainAdapter();
+
+    adapter.handleToolStart({}, '{"a":1}', CHILD, RUN, undefined, undefined, "first");
+    adapter.handleToolStart({}, '{"b":2}', OTHER, RUN, undefined, undefined, "second");
+    adapter.handleToolEnd("two", OTHER);
+    adapter.handleToolEnd("one", CHILD);
+    const steps = adapter.buildTrace().steps;
+
+    expect(steps.map((s) => [s.name, s.args, s.result])).toEqual([
+      ["second", { b: 2 }, { output: "two" }],
+      ["first", { a: 1 }, { output: "one" }],
+    ]);
+  });
+
+  it("reads a tool's name from the serialized id when the run has no name", () => {
+    const adapter = new LangChainAdapter();
+
+    adapter.handleToolStart({ id: ["langchain", "tools", "Calculator"] }, "2+2", CHILD, RUN);
+    adapter.handleToolEnd("4", CHILD);
+    const step = adapter.buildTrace().steps[0];
+
+    expect(step.name).toBe("Calculator");
+    expect(step.args).toEqual({ input: "2+2" });
+  });
+
+  it("records a tool error as the step result", () => {
+    const adapter = new LangChainAdapter();
+
+    adapter.handleToolStart({}, "{}", CHILD, RUN, undefined, undefined, "lookup");
+    adapter.handleToolError(new Error("not found"), CHILD);
+
+    expect(adapter.buildTrace().steps[0].result).toEqual({ error: "not found" });
+  });
+
+  it("reads token usage from the message and totals it", () => {
+    const adapter = new LangChainAdapter();
+    const message = { usage_metadata: { input_tokens: 100, output_tokens: 50, total_tokens: 150 } };
+
+    adapter.handleChatModelStart({}, [[]], CHILD, RUN, { invocation_params: { model: "gpt-4.1" } });
+    adapter.handleLLMEnd({ generations: [[{ text: "Hello", message }]] }, CHILD);
+    const trace = adapter.buildTrace();
+
     expect(trace.metadata?.total_tokens).toBe(150);
-    expect(trace.steps).toHaveLength(1);
-    expect(trace.steps[0].type).toBe("llm_call");
-  });
-
-  it("captures tool calls", () => {
-    const adapter = new LangChainAdapter();
-
-    adapter.handleChainStart();
-    adapter.handleLLMEnd({ generations: [[{ text: "searching..." }]] });
-    adapter.handleToolEnd("42", { name: "calculator", output: "42" });
-    adapter.handleChainEnd({ output: "The answer is 42" });
-
-    const trace = adapter.buildTrace();
-
-    expect(trace.steps).toHaveLength(2);
-    expect(trace.steps[0].type).toBe("llm_call");
-    expect(trace.steps[1].type).toBe("tool_call");
-    expect(trace.steps[1].name).toBe("calculator");
-    expect(trace.output.message).toBe("The answer is 42");
-  });
-
-  it("falls back to last LLM text when no chain output", () => {
-    const adapter = new LangChainAdapter();
-
-    adapter.handleLLMEnd({ generations: [[{ text: "fallback text" }]] });
-
-    const trace = adapter.buildTrace();
-    expect(trace.output.message).toBe("fallback text");
-  });
-
-  it("handles empty generations", () => {
-    const adapter = new LangChainAdapter();
-
-    adapter.handleLLMEnd({ generations: [[]] });
-
-    const trace = adapter.buildTrace();
-    expect(trace.output.message).toBe("");
-  });
-
-  it("accepts cost and model overrides", () => {
-    const adapter = new LangChainAdapter();
-
-    adapter.handleLLMEnd({ generations: [[{ text: "hi" }]] });
-
-    const trace = adapter.buildTrace({ costUsd: 0.01, model: "gpt-4.1" });
-    expect(trace.metadata?.cost_usd).toBe(0.01);
     expect(trace.metadata?.model).toBe("gpt-4.1");
+    expect(trace.steps[0].result).toEqual({
+      completion: "Hello",
+      tokens: 150,
+      input_tokens: 100,
+      output_tokens: 50,
+    });
   });
 
-  it("reset clears accumulated state", () => {
+  it("falls back to the provider's llmOutput token usage", () => {
     const adapter = new LangChainAdapter();
 
-    adapter.handleChainStart();
-    adapter.handleLLMEnd({ generations: [[{ text: "first" }]] });
+    adapter.handleLLMEnd(
+      {
+        generations: [[{ text: "Hi" }]],
+        llmOutput: { tokenUsage: { promptTokens: 7, completionTokens: 3 }, model_name: "m" },
+      },
+      CHILD,
+    );
+
+    expect(adapter.buildTrace().metadata).toMatchObject({ total_tokens: 10, model: "m" });
+  });
+
+  it("takes the answer from the last LangGraph message", () => {
+    const adapter = new LangChainAdapter();
+
+    adapter.handleChainStart({}, { messages: [{ content: "hi" }] }, RUN);
+    adapter.handleChainEnd({ messages: [{ content: "first" }, { content: [{ type: "text", text: "last" }] }] }, RUN);
+    const trace = adapter.buildTrace();
+
+    expect(trace.input).toEqual({ message: "hi" });
+    expect(trace.output.message).toBe("last");
+  });
+
+  it("ignores nested chain starts and ends", () => {
+    const adapter = new LangChainAdapter();
+
+    adapter.handleChainStart({}, { input: "outer" }, RUN);
+    adapter.handleChainStart({}, { input: "inner" }, CHILD, RUN);
+    adapter.handleChainEnd({ output: "inner out" }, CHILD, RUN);
+    adapter.handleChainEnd({ output: "outer out" }, RUN);
+    const trace = adapter.buildTrace();
+
+    expect(trace.input).toEqual({ message: "outer" });
+    expect(trace.output.message).toBe("outer out");
+  });
+
+  it("clears the capture on reset", () => {
+    const adapter = new LangChainAdapter();
+    adapter.handleLLMEnd({ generations: [[{ text: "x" }]] }, CHILD);
 
     adapter.reset();
 
-    adapter.handleLLMEnd({ generations: [[{ text: "second" }]] });
-    const trace = adapter.buildTrace();
-
-    expect(trace.steps).toHaveLength(1);
-    expect(trace.output.message).toBe("second");
+    expect(adapter.buildTrace().steps).toEqual([]);
   });
 
-  it("records latency from chain start to build", () => {
+  it("is shared, not cloned, by the callback manager", () => {
     const adapter = new LangChainAdapter();
 
-    adapter.handleChainStart();
-    adapter.handleLLMEnd({ generations: [[{ text: "hi" }]] });
-
-    const trace = adapter.buildTrace();
-    expect(trace.metadata?.latency_ms).toBeGreaterThanOrEqual(0);
-  });
-
-  it("accumulates tokens across multiple LLM calls", () => {
-    const adapter = new LangChainAdapter();
-
-    adapter.handleLLMEnd({
-      generations: [[{ text: "a" }]],
-      llmOutput: { tokenUsage: { totalTokens: 100 } },
-    });
-    adapter.handleLLMEnd({
-      generations: [[{ text: "b" }]],
-      llmOutput: { tokenUsage: { totalTokens: 200 } },
-    });
-
-    const trace = adapter.buildTrace();
-    expect(trace.metadata?.total_tokens).toBe(300);
-    expect(trace.steps).toHaveLength(2);
+    expect(adapter.copy()).toBe(adapter);
+    expect(adapter.awaitHandlers).toBe(true);
   });
 });
