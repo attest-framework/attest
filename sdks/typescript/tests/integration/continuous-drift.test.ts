@@ -26,6 +26,18 @@ const ENV_KEYS = [
   "OPENAI_API_KEY",
 ] as const;
 
+const ALERT_KEYS = [
+  "assertion_id",
+  "baseline_count",
+  "baseline_mean",
+  "result_status",
+  "runner",
+  "score",
+  "static_threshold",
+  "status",
+  "trace_id",
+];
+
 interface Receiver {
   readonly url: string;
   readonly bodies: Record<string, unknown>[];
@@ -134,7 +146,9 @@ describe.skipIf(!existsSync(enginePath))("continuous-eval drift alerts (real eng
       name: "drift-monitor",
       alertWebhook: receiver.url,
     });
-    for (let i = 1; i <= 11; i++) expect(runner.submit(makeTrace(i))).toBe(true);
+    for (let i = 1; i <= 10; i++) expect(runner.submit(makeTrace(i))).toBe(true);
+    const trace11 = makeTrace(11);
+    expect(runner.submit(trace11)).toBe(true);
 
     const started = Date.now();
     runner.start();
@@ -145,13 +159,15 @@ describe.skipIf(!existsSync(enginePath))("continuous-eval drift alerts (real eng
     expect(Date.now() - started).toBeLessThan(5_000);
     expect(receiver.bodies).toHaveLength(1);
     const alert = receiver.bodies[0]!;
+    expect(Object.keys(alert).sort()).toEqual(ALERT_KEYS);
     expect(alert).toMatchObject({
-      drift_type: "drift_detected",
       runner: "drift-monitor",
-      status: "pass",
+      status: "drift_detected",
+      result_status: "pass",
       score: 0.7,
       baseline_count: 10,
       static_threshold: 0.6,
+      trace_id: trace11.trace_id,
     });
     expect(alert["assertion_id"]).toMatch(/^a2_[0-9a-f]{32}$/);
     expect(alert["baseline_mean"]).toBeCloseTo(0.9, 5);
@@ -159,17 +175,37 @@ describe.skipIf(!existsSync(enginePath))("continuous-eval drift alerts (real eng
 
   it("posts a Slack-shaped alert and a hard-fail alert for a failing score", async () => {
     const slack = await startReceiver(200);
-    receivers.push(slack);
+    const webhook = await startReceiver(200);
+    receivers.push(slack, webhook);
     scores = [0.4];
     const runner = new ContinuousEvalRunner(new AttestClient(engine!), judged(0.8), {
       name: "slack-monitor",
       alertSlackUrl: slack.url,
+      alertWebhook: webhook.url,
     });
-    await runner.evaluateTrace(makeTrace(1));
+    const trace = makeTrace(1);
+    await runner.evaluateTrace(trace);
 
+    expect(webhook.bodies).toHaveLength(1);
+    const alert = webhook.bodies[0]!;
+    expect(Object.keys(alert).sort()).toEqual(ALERT_KEYS);
+    expect(alert).toMatchObject({
+      runner: "slack-monitor",
+      status: "hard_fail",
+      result_status: "hard_fail",
+      score: 0.4,
+      static_threshold: 0.8,
+      trace_id: trace.trace_id,
+    });
+    expect(alert["assertion_id"]).toMatch(/^a2_[0-9a-f]{32}$/);
+    expect(typeof alert["baseline_count"] === "number" || alert["baseline_count"] === null).toBe(true);
     expect(slack.bodies).toHaveLength(1);
     expect(Object.keys(slack.bodies[0]!)).toEqual(["text"]);
-    expect(slack.bodies[0]!["text"]).toMatch(/type=hard_fail .*runner=slack-monitor .*status=hard_fail .*score=0\.4/);
+    expect(slack.bodies[0]!["text"]).toBe(
+      `[attest] drift alert \u2014 runner=slack-monitor assertion=${String(alert["assertion_id"])} status=hard_fail ` +
+        `score=0.4 baseline_mean=${String(alert["baseline_mean"])} baseline_count=${String(alert["baseline_count"])} ` +
+        `static_threshold=0.8 trace_id=${trace.trace_id}`,
+    );
   }, 30_000);
 
   it("sends no alert while scores are stable", async () => {

@@ -35,34 +35,32 @@ export class Sampler {
   }
 }
 
+export type AlertStatus = "drift_detected" | "hard_fail";
+
+/** Webhook JSON body shared by both SDK runners. Every key is always present. */
 export interface AlertPayload {
-  /** Why the alert fired: `drift_detected` or `hard_fail`. */
-  drift_type: string;
-  score: number | string;
-  trace_id: string;
-  /** Runner name (the assertion id scope). */
-  runner?: string;
-  assertion_id?: string;
+  runner: string;
+  assertion_id: string;
+  /** Alert trigger: `hard_fail` wins over `drift_detected` when both hold. */
+  status: AlertStatus;
   /** Status of the evaluated assertion result. */
-  status?: string;
-  baseline_mean?: number;
-  baseline_count?: number;
-  static_threshold?: number;
-  [key: string]: unknown;
+  result_status: "pass" | "soft_fail" | "hard_fail";
+  score: number | null;
+  baseline_mean: number | null;
+  baseline_count: number | null;
+  static_threshold: number;
+  trace_id: string | null;
 }
 
 function slackText(alert: AlertPayload): string {
-  const parts = [`[attest] drift alert -- type=${alert.drift_type}`];
-  if (alert.runner !== undefined) parts.push(`runner=${alert.runner}`);
-  if (alert.assertion_id !== undefined) parts.push(`assertion_id=${alert.assertion_id}`);
-  if (alert.status !== undefined) parts.push(`status=${alert.status}`);
-  parts.push(`score=${alert.score}`);
-  if (alert.baseline_mean !== undefined) parts.push(`baseline_mean=${alert.baseline_mean}`);
-  if (alert.baseline_count !== undefined) parts.push(`baseline_count=${alert.baseline_count}`);
-  if (alert.static_threshold !== undefined) parts.push(`static_threshold=${alert.static_threshold}`);
-  parts.push(`trace_id=${alert.trace_id}`);
-  return parts.join(" ");
+  return (
+    `[attest] drift alert \u2014 runner=${alert.runner} assertion=${alert.assertion_id} ` +
+    `status=${alert.status} score=${alert.score} baseline_mean=${alert.baseline_mean} ` +
+    `baseline_count=${alert.baseline_count} static_threshold=${alert.static_threshold} ` +
+    `trace_id=${alert.trace_id}`
+  );
 }
+
 
 export class AlertDispatcher extends EventEmitter {
   private readonly webhookUrl: string | undefined;
@@ -97,7 +95,7 @@ export class AlertDispatcher extends EventEmitter {
     }
   }
 
-  private async postJson(url: string, payload: Record<string, unknown>): Promise<void> {
+  private async postJson(url: string, payload: object): Promise<void> {
     const response = await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -121,6 +119,7 @@ export class ContinuousEvalRunner {
   private readonly drainTimeoutMs: number;
   private readonly onError: ((error: unknown) => void) | undefined;
   private readonly inFlight = new Set<Promise<unknown>>();
+  private chain: Promise<unknown> = Promise.resolve();
   private running = false;
   private loopTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -161,10 +160,7 @@ export class ContinuousEvalRunner {
       options.alertSlackUrl,
       options.dispatchTimeoutMs ?? DEFAULT_DISPATCH_TIMEOUT_MS,
     );
-    this.dispatcher.on("alertError", (error: unknown) => {
-      console.error(`attest continuous-eval runner ${JSON.stringify(this.name)}:`, error);
-      this.onError?.(error);
-    });
+    this.dispatcher.on("alertError", (error: unknown) => this.reportError(error));
     this.maxSize = options.maxSize ?? resolveQueueSize();
   }
 
@@ -172,9 +168,50 @@ export class ContinuousEvalRunner {
     return this.dispatcher;
   }
 
+  /** Runs `fn` after every previously queued evaluation, so evaluate → query_drift pairs never interleave. */
+  private serialize<T>(fn: () => Promise<T>): Promise<T> {
+    const run = this.chain.then(fn, fn);
+    this.chain = run.catch(() => undefined);
+    return run;
+  }
+
+  /** Surfaces an error to the log and `onError` without ever throwing or leaving a rejected promise. */
+  private reportError(error: unknown): void {
+    try {
+      console.error(`attest continuous-eval runner ${JSON.stringify(this.name)}:`, error);
+    } catch {
+      // logging must not break the loop; nothing further to surface through
+    }
+    if (this.onError === undefined) return;
+    try {
+      const returned: unknown = this.onError(error);
+      if (returned instanceof Promise) {
+        returned.catch((observerError: unknown) => this.logObserverFailure(observerError));
+      }
+    } catch (observerError) {
+      this.logObserverFailure(observerError);
+    }
+  }
+
+  private logObserverFailure(observerError: unknown): void {
+    try {
+      console.error(`attest continuous-eval runner ${JSON.stringify(this.name)}: onError callback failed:`, observerError);
+    } catch {
+      // see reportError
+    }
+  }
+
+  private emitError(error: unknown): void {
+    try {
+      this.dispatcher.emit("alertError", error);
+    } catch (listenerError) {
+      this.logObserverFailure(listenerError);
+    }
+  }
+
   async evaluateTrace(trace: Trace): Promise<EvaluateBatchResult | null> {
     if (!this.sampler.shouldSample()) return null;
-    const work = this.evaluateAndAlert(trace);
+    const work = this.serialize(() => this.evaluateAndAlert(trace));
     this.inFlight.add(work);
     try {
       return await work;
@@ -185,9 +222,11 @@ export class ContinuousEvalRunner {
 
   private async evaluateAndAlert(trace: Trace): Promise<EvaluateBatchResult> {
     const result = await this.client.evaluateBatch(trace, this.assertions);
-    // The engine records each score before it answers, so the drift read below
-    // judges this run's row.
-    await Promise.all(result.results.map((r) => this.alertIfNeeded(trace, r)));
+    // The engine records each score before it answers, and query_drift judges the
+    // assertion's newest history row, so this loop runs inside the runner's lock.
+    for (const r of result.results) {
+      await this.alertIfNeeded(trace, r);
+    }
     return result;
   }
 
@@ -196,7 +235,7 @@ export class ContinuousEvalRunner {
       | Record<string, unknown>
       | undefined;
     const threshold = spec?.["threshold"];
-    return typeof threshold === "number" ? threshold : DEFAULT_STATIC_THRESHOLD;
+    return typeof threshold === "number" && threshold > 0 ? threshold : DEFAULT_STATIC_THRESHOLD;
   }
 
   private async alertIfNeeded(trace: Trace, result: AssertionResult): Promise<void> {
@@ -206,28 +245,26 @@ export class ContinuousEvalRunner {
     try {
       report = await this.client.queryDrift(result.assertion_id, undefined, { staticThreshold });
     } catch (error) {
-      this.dispatcher.emit("alertError", error);
+      this.emitError(error);
     }
-    const drifted = report?.status === STATUS_DRIFT_DETECTED;
     const hardFailed = result.status === STATUS_HARD_FAIL;
+    const drifted = report?.status === STATUS_DRIFT_DETECTED;
     if (!drifted && !hardFailed) return;
     const alert: AlertPayload = {
-      drift_type: drifted ? STATUS_DRIFT_DETECTED : STATUS_HARD_FAIL,
       runner: this.name,
       assertion_id: result.assertion_id,
-      status: result.status,
-      score: result.score,
-      trace_id: trace.trace_id,
+      status: hardFailed ? STATUS_HARD_FAIL : STATUS_DRIFT_DETECTED,
+      result_status: result.status as AlertPayload["result_status"],
+      score: typeof result.score === "number" ? result.score : null,
+      baseline_mean: report?.mean ?? null,
+      baseline_count: report?.count ?? null,
       static_threshold: staticThreshold,
+      trace_id: trace.trace_id ?? null,
     };
-    if (report !== undefined) {
-      alert.baseline_mean = report.mean;
-      alert.baseline_count = report.count;
-    }
     try {
       await this.dispatcher.dispatch(alert);
     } catch (error) {
-      this.dispatcher.emit("alertError", error);
+      this.emitError(error);
     }
   }
 
@@ -261,8 +298,7 @@ export class ContinuousEvalRunner {
     const outcome = await Promise.race([drained, bound]);
     clearTimeout(timer);
     if (outcome === "timeout") {
-      this.dispatcher.emit(
-        "alertError",
+      this.emitError(
         new Error(`stop() gave up after ${this.drainTimeoutMs} ms with ${this.inFlight.size} evaluation(s) in flight`),
       );
     }
@@ -279,19 +315,24 @@ export class ContinuousEvalRunner {
   private scheduleNext(): void {
     if (!this.running) return;
 
-    this.loopTimer = setTimeout(async () => {
-      if (!this.running) return;
+    this.loopTimer = setTimeout(() => {
+      void this.tick();
+    }, this.queue.length > 0 ? 0 : 100);
+  }
 
+  private async tick(): Promise<void> {
+    try {
+      if (!this.running) return;
       const trace = this.queue.shift();
       if (trace !== undefined) {
         try {
           await this.evaluateTrace(trace);
         } catch (error) {
-          this.dispatcher.emit("alertError", error);
+          this.reportError(error);
         }
       }
-
+    } finally {
       this.scheduleNext();
-    }, this.queue.length > 0 ? 0 : 100);
+    }
   }
 }
