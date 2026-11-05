@@ -33,7 +33,7 @@ gh attestation verify attest-engine-linux-amd64 \
   --source-ref refs/tags/v<VERSION>
 ```
 
-Passing means the file's SHA-256 matches an attestation signed by `release.yml` in `attest-framework/attest` on the `v<VERSION>` tag. It does not tell you the source at that tag is free of bugs, only where and how the binary was built. `--repo` alone accepts an attestation from any workflow in the repository on any ref, so it is not enough on its own. The SDKs do not run this check; they compare against the table shipped in the package.
+Passing means the file's SHA-256 matches an attestation signed by `release.yml` in `attest-framework/attest` on the `v<VERSION>` tag. Only repository admins can create `v*` tags, and the release workflow refuses a tag whose commit is not on `main`; to check that yourself, confirm the attested commit (`gh attestation verify … --format json`) is reachable from `main`. The attestation is created after the release is published, so a binary from a release that was never published has none. It does not tell you the source at that tag is free of bugs, only where and how the binary was built. `--repo` alone accepts an attestation from any workflow in the repository on any ref, so it is not enough on its own. The SDKs do not run this check; they compare against the table shipped in the package.
 
 The `attest` command (`uv run attest`, `npx attest`) implements `attest init` itself and forwards every other command to the version-checked engine, passing arguments, output and exit code through unchanged:
 

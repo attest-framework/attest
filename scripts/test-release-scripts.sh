@@ -219,23 +219,24 @@ fi
 
 # release-build.yml runs on pull requests and dry runs with a floating toolchain and the binary it
 # built; no job in it may be able to mint an OIDC token or write attestations.
-if grep -Eq '^\s+(id-token|attestations): write' "$build_wf" "$wf/ci.yml"; then
-    fail "release-build.yml and ci.yml hold no id-token or attestations permission"
+if grep -Eq '^\s+(id-token|attestations): write|write-all|secrets: inherit' "$build_wf" "$wf/ci.yml" \
+    || grep -Eq '^\s+environment:' "$build_wf"; then
+    fail "release-build.yml and ci.yml hold no id-token, attestations, write-all, inherited secrets or environment"
 else
-    pass "release-build.yml and ci.yml hold no id-token or attestations permission"
+    pass "release-build.yml and ci.yml hold no id-token, attestations, write-all, inherited secrets or environment"
 fi
 
-if job_needs "$workflow" attest-engine | grep -q 'build' && job_needs "$workflow" publish-github | grep -q 'attest-engine'; then
-    pass "attest-engine follows the build and gates publish-github"
+if job_needs "$workflow" attest-engine | grep -q 'publish-github' && ! job_needs "$workflow" publish-github | grep -q 'attest-engine'; then
+    pass "attest-engine runs after publish-github, never before it"
 else
-    fail "attest-engine follows the build and gates publish-github"
+    fail "attest-engine runs after publish-github, never before it"
 fi
 
-if awk '$0 == "  attest-engine:" {f=1; next} f && /^  [a-z]/ {exit} f && /^    if:/ {print}' "$workflow" \
-    | grep -q "publish == 'true'"; then
-    pass "attest-engine runs on publishing runs only"
+attest_if="$(awk '$0 == "  attest-engine:" {f=1; next} f && /^  [a-z]/ {exit} f && /^    if:/ {print}' "$workflow")"
+if grep -q "publish == 'true'" <<< "$attest_if" && grep -q "needs.publish-github.result == 'success'" <<< "$attest_if"; then
+    pass "attest-engine runs on publishing runs only, once the release is published"
 else
-    fail "attest-engine runs on publishing runs only"
+    fail "attest-engine runs on publishing runs only, once the release is published"
 fi
 
 unpinned="$(awk '$0 == "  attest-engine:" {f=1; next} f && /^  [a-z]/ {exit} f && /uses:/ && !/@[0-9a-f]{40} / {print}' "$workflow")"
