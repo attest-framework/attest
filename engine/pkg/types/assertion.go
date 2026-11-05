@@ -37,6 +37,12 @@ const (
 	// ReasonJudgeAbstained: the judge answered {"abstain": true} because
 	// the evidence was insufficient to score the rubric.
 	ReasonJudgeAbstained = "judge_abstained"
+	// ReasonJudgeMalformed: the judge reply is not a valid score in [0,1]
+	// or an explicit abstain (contract C5).
+	ReasonJudgeMalformed = "judge_malformed"
+	// ReasonProviderAuth: the provider rejected the credentials (401/403);
+	// reported after one call (contract C5).
+	ReasonProviderAuth = "provider_auth"
 	// ReasonReplayMiss: a fixture-bound test ran in replay mode, a model
 	// request matched no recording, and the mode allowed no live call. The
 	// SDK sets it on the test's assertions; the engine's own batches never

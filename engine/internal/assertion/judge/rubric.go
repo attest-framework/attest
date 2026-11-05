@@ -92,15 +92,6 @@ func WrapAgentOutput(output string) string {
 	return agentOutputStart + "\n" + output + "\n" + agentOutputEnd
 }
 
-const (
-	// ReasonJudgeMalformed is the not_evaluated reason for a judge reply that
-	// is not a valid score in [0,1] or an explicit abstain (contract C5).
-	ReasonJudgeMalformed = "judge_malformed"
-	// ReasonProviderAuth is the not_evaluated reason for a provider that
-	// rejected the credentials; it is reported after one call (contract C5).
-	ReasonProviderAuth = "provider_auth"
-)
-
 // ErrMalformed marks a judge reply that is not a valid C5 reply.
 var ErrMalformed = errors.New("malformed judge reply")
 
