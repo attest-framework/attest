@@ -346,3 +346,20 @@ func TestReplay_TraceOutWithServe_ExitTwo(t *testing.T) {
 		t.Fatalf("want exit 2, got %d\n%s", run.code, run.stderr)
 	}
 }
+
+func TestReplayCommand_TraceOut_NonZeroExitStillWritesTrace(t *testing.T) {
+	bin := buildEngineBinary(t)
+	dir := t.TempDir()
+	captureWithSystem(t, bin, dir, "You refund once.")
+	traceFile := filepath.Join(dir, "new-run.trace.json")
+	env := append(replayEnv("You refund once."), "ATTEST_CAPTURE_HELPER_EXIT=1")
+
+	run := engineRun(t, bin, dir, env, replayArgs(dir, "--no-live", "--trace-out", traceFile)...)
+
+	if run.code != 1 {
+		t.Fatalf("want exit 1 for a failing command, got %d\n%s", run.code, run.stderr)
+	}
+	if _, err := os.Stat(traceFile); err != nil {
+		t.Fatalf("no trace for a command that served every request and exited 1: %v", err)
+	}
+}

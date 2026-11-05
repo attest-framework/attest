@@ -54,8 +54,9 @@ options:
                          the command (or listed in the --serve env)
   --trace-out <file>     with -- <command>: write the trace of the new run (the
                          spans the command exported over OTLP) to <file> as
-                         attest trace JSON; written only when every request was
-                         served and the command succeeded
+                         attest trace JSON; written when every request was
+                         served, whatever the command's exit status (an incident
+                         recording exits non-zero)
   --serve                for an SDK helper: print {"env":{...}} as one JSON
                          line, serve until stdin sends "stop" or closes, then
                          print {"summary":{...}} and exit
@@ -211,6 +212,13 @@ func replayCommand(s *capture.Session, o *replayOptions, f *capture.Fixture, env
 		}
 	}
 	var exitErr *exec.ExitError
+	ranToEnd := runErr == nil || errors.As(runErr, &exitErr)
+	if o.traceOut != "" && ranToEnd && sum.Misses == 0 {
+		if err := writeReplayTrace(s, f, o.traceOut); err != nil {
+			fmt.Fprintf(stderr, "replay: %s\n", terminalSafe(err.Error()))
+			return 1
+		}
+	}
 	switch {
 	case errors.As(runErr, &exitErr):
 		fmt.Fprintf(stderr, "replay: command exited %d\n", exitErr.ExitCode())
@@ -220,12 +228,6 @@ func replayCommand(s *capture.Session, o *replayOptions, f *capture.Fixture, env
 		return 1
 	case sum.Misses > 0:
 		return 1
-	}
-	if o.traceOut != "" {
-		if err := writeReplayTrace(s, f, o.traceOut); err != nil {
-			fmt.Fprintf(stderr, "replay: %s\n", terminalSafe(err.Error()))
-			return 1
-		}
 	}
 	return 0
 }

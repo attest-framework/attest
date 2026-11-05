@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
@@ -37,6 +38,15 @@ func TestCaptureHelperAgent(t *testing.T) {
 	if err := runScriptedAgent(os.Getenv("OPENAI_BASE_URL"), os.Getenv("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT"), os.Getenv("OPENAI_API_KEY")); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(3)
+	}
+	// ATTEST_CAPTURE_HELPER_EXIT plays an agent that finishes its run and still exits non-zero.
+	if v := os.Getenv("ATTEST_CAPTURE_HELPER_EXIT"); v != "" {
+		code, err := strconv.Atoi(v)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(3)
+		}
+		os.Exit(code)
 	}
 	os.Exit(0)
 }
