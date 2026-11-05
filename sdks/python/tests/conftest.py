@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import stat
-from collections.abc import Callable
+from collections.abc import Callable, Generator
 from pathlib import Path
 
 import pytest
 
+from attest import trials
 from attest._proto.types import (
     STATUS_PASS,
     TYPE_CONSTRAINT,
@@ -20,6 +21,27 @@ from attest._proto.types import (
 )
 from attest.result import AgentResult
 from attest.trace import TraceBuilder
+
+CHAIN_TEARDOWN_MARKER = "chain_teardown"
+
+
+def pytest_configure(config: pytest.Config) -> None:
+    config.addinivalue_line(
+        "markers",
+        f"{CHAIN_TEARDOWN_MARKER}: keep the plugin's check that fails a test with an expect() "
+        "chain it never evaluated (the DSL unit tests of this suite build chains only to read "
+        "their specs, so the check is off for them)",
+    )
+
+
+@pytest.hookimpl(hookwrapper=True, trylast=True)
+def pytest_runtest_call(item: pytest.Item) -> Generator[None, None, None]:
+    """Mark the chains a unit test built as evaluated before the attest plugin's teardown
+    check looks at them, unless the test is marked ``chain_teardown``."""
+    yield
+    if item.get_closest_marker(CHAIN_TEARDOWN_MARKER) is None and trials._ledgers:
+        for chain in trials._ledgers[-1]:
+            chain.evaluated = True
 
 
 @pytest.fixture

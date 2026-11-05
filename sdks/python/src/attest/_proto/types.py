@@ -360,6 +360,8 @@ class Assertion:
     type: str
     spec: dict[str, Any]
     request_id: str | None = None
+    #: Test node id or ``ContinuousEvalRunner`` name; set with ``assertion_id`` at evaluation.
+    scope_id: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         d: dict[str, Any] = {
@@ -369,6 +371,8 @@ class Assertion:
         }
         if self.request_id is not None:
             d["request_id"] = self.request_id
+        if self.scope_id is not None:
+            d["scope_id"] = self.scope_id
         return d
 
 
@@ -519,6 +523,9 @@ class AssertionResult:
     failure_class: str | None = None
     # 1-based trial index, set by the SDK when the test ran as fixed-N trials.
     trial: int | None = None
+    # Echo of the assertion's scope id and the engine's hash of its canonical spec.
+    scope_id: str | None = None
+    spec_hash: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         d: dict[str, Any] = {
@@ -553,6 +560,10 @@ class AssertionResult:
             d["failure_class"] = self.failure_class
         if self.trial is not None:
             d["trial"] = self.trial
+        if self.scope_id is not None:
+            d["scope_id"] = self.scope_id
+        if self.spec_hash is not None:
+            d["spec_hash"] = self.spec_hash
         return d
 
     @classmethod
@@ -584,6 +595,8 @@ class AssertionResult:
             judge_metadata=judge,
             failure_class=data.get("failure_class"),
             trial=data.get("trial"),
+            scope_id=data.get("scope_id"),
+            spec_hash=data.get("spec_hash"),
         )
 
 
@@ -798,15 +811,20 @@ class EvaluateBatchResult:
     total_cost: float = 0.0
     total_duration_ms: int = 0
     simulated: bool = False
+    #: This batch pushed the session past ``ATTEST_MAX_SOFT_FAILURES``; every row is present.
+    budget_exceeded: bool = False
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        d: dict[str, Any] = {
             "results": [r.to_dict() for r in self.results],
             "usage": self.usage.to_dict(),
             "total_cost": self.total_cost,
             "total_duration_ms": self.total_duration_ms,
             "simulated": self.simulated,
         }
+        if self.budget_exceeded:
+            d["budget_exceeded"] = True
+        return d
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> EvaluateBatchResult:
@@ -819,6 +837,7 @@ class EvaluateBatchResult:
             total_cost=data.get("total_cost", 0.0),
             total_duration_ms=data.get("total_duration_ms", 0),
             simulated=data.get("simulated", False),
+            budget_exceeded=data.get("budget_exceeded", False),
         )
 
 

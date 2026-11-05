@@ -11,21 +11,23 @@ groups the report's rows by ``assertion_id``.
 
 from __future__ import annotations
 
-import hashlib
 import math
 import threading
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 from attest._proto.types import (
     FAILURE_CLASS_BROKEN_CODE,
     STATUS_HARD_FAIL,
+    Assertion,
     AssertionResult,
     BatchBudget,
     BatchContext,
     Trace,
     Usage,
 )
+from attest.assertion_id import OccurrenceCounter
 from attest.result import (
     OUTCOME_FAIL,
     OUTCOME_PASS,
@@ -37,6 +39,9 @@ from attest.result import (
     trials_not_evaluated_reasons,
 )
 from attest.simulation.repeat import RepeatResult
+
+if TYPE_CHECKING:
+    from attest.expect import ExpectChain
 
 BUDGET_MARKER = "attest_budget"
 _BUDGET_KWARGS = ("max_judge_calls", "max_cost_usd")
@@ -64,14 +69,6 @@ def min_pass_rate_from_marker(args: Sequence[object], kwargs: Mapping[str, objec
             f"got args={list(args)!r} kwargs={dict(kwargs)!r}"
         )
     return validate_min_pass_rate(args[0], MIN_PASS_RATE_MARKER)
-
-
-def assertion_id_for(test_id: str, ordinal: int) -> str:
-    """Deterministic assertion ID: ``assert_`` + 12 hex chars of
-    sha256(``"{test_id}#{ordinal}"``). Stable across trials and runs, so
-    baselines and trials match rows by ``assertion_id``."""
-    digest = hashlib.sha256(f"{test_id}#{ordinal}".encode()).hexdigest()
-    return f"assert_{digest[:12]}"
 
 
 @dataclass(frozen=True)
@@ -137,26 +134,40 @@ class TestRun:
     #: Source file and 1-based line of the test, sent with each batch as its context.
     file: str | None = None
     line: int | None = None
-    _ordinal: int = 0
+    #: Every ``expect()`` chain built while the test runs; teardown fails any never evaluated.
+    chains: list[ExpectChain] = field(default_factory=list)
     _spent_trace_ids: set[str] = field(default_factory=set)
     _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
+    _occurrences: OccurrenceCounter = field(init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        self._occurrences = OccurrenceCounter(self.test_id)
 
     def batch_context(self) -> BatchContext:
         """The ``evaluate_batch`` context naming this test."""
         return BatchContext(test_id=self.test_id, file=self.file, line=self.line)
 
-    def next_assertion_id(self) -> str:
-        """The next deterministic ID; the ordinal restarts with each trial."""
+    def assign_ids(self, assertions: Sequence[Assertion]) -> None:
+        """Give ``assertions`` their scheme-2 ids in this test's scope, in evaluation order;
+        the occurrence counts restart with each trial."""
+        for assertion in assertions:
+            self._occurrences.assign(assertion)
+
+    def track_chain(self, chain: ExpectChain) -> None:
+        """Register a chain built during the test."""
         with self._lock:
-            ordinal = self._ordinal
-            self._ordinal += 1
-        return assertion_id_for(self.test_id, ordinal)
+            self.chains.append(chain)
+
+    def unevaluated_chains(self) -> list[ExpectChain]:
+        """Chains built during the test that were never sent for evaluation."""
+        with self._lock:
+            return [c for c in self.chains if not c.evaluated]
 
     def start_trial(self, trial: int) -> None:
-        """Enter trial ``trial`` (1-based): restart the ID ordinal."""
+        """Enter trial ``trial`` (1-based): restart the occurrence counts."""
+        self._occurrences.reset()
         with self._lock:
             self.trial = trial
-            self._ordinal = 0
             self.results_by_trial[trial] = []
 
     def spent_usd(self) -> float:
@@ -232,6 +243,38 @@ def end_run() -> None:
     """Leave the running test; assertion IDs are random again."""
     global _current_run
     _current_run = None
+
+
+_ledgers: list[list[ExpectChain]] = []
+_ledger_lock = threading.Lock()
+
+
+def begin_chain_ledger() -> list[ExpectChain]:
+    """Collect the chains built while a test runs that has no ``TestRun`` (it does not use
+    the ``attest`` fixture), so teardown can fail it when one was never evaluated."""
+    ledger: list[ExpectChain] = []
+    with _ledger_lock:
+        _ledgers.append(ledger)
+    return ledger
+
+
+def end_chain_ledger() -> None:
+    """Stop collecting chains for the innermost test (a nested pytest session in the same
+    process runs its own tests inside the outer one)."""
+    with _ledger_lock:
+        _ledgers.pop()
+
+
+def track_chain(chain: ExpectChain) -> None:
+    """Register a chain built by ``expect()`` with the running test, or with the ledger of a
+    test that has no run; a chain built outside any test is not tracked."""
+    run = _current_run
+    if run is not None:
+        run.track_chain(chain)
+        return
+    with _ledger_lock:
+        if _ledgers:
+            _ledgers[-1].append(chain)
 
 
 def _trial_outcome(evaluations: Sequence[AgentResult]) -> str:
