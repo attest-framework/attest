@@ -2,13 +2,16 @@ import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { createInterface, type Interface as ReadlineInterface } from "node:readline";
 import { existsSync, accessSync, statSync, constants as fsConstants } from "node:fs";
 import { delimiter, join } from "node:path";
-import type { InitializeResult } from "./proto/types.js";
-import { decodeResponse, encodeRequest, extractResult } from "./proto/codec.js";
+import { AttestClient, type BudgetReservation } from "./client.js";
+import type { InitializeResult, Usage } from "./proto/types.js";
 import { ENGINE_VERSION, VERSION } from "./version.js";
 import { binaryFilename, cachedEnginePath, downloadEngine } from "./engine-downloader.js";
 
 const ENGINE_BINARY_NAME = "attest-engine";
 const VERSION_PROBE_TIMEOUT_MS = 10_000;
+const DEFAULT_INITIALIZE_TIMEOUT_MS = 30_000;
+const SHUTDOWN_TIMEOUT_MS = 5_000;
+const STDERR_TAIL_BYTES = 4_096;
 
 /** A discovered engine does not report the version this SDK requires. */
 export class EngineVersionMismatchError extends Error {
@@ -132,48 +135,120 @@ export async function resolveEngine(
   return enginePath;
 }
 
+/** Session budget limits read from the environment; null means unlimited. */
+interface SessionBudget {
+  readonly judgeCalls: number | null;
+  readonly usd: number | null;
+}
+
+function envNumber(name: string): number | null {
+  const raw = process.env[name];
+  if (raw === undefined || raw === "") return null;
+  const parsed = Number(raw);
+  // A malformed value is the engine's startup error to report, not ours.
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
+}
+
 export class EngineManager {
   private enginePath: string;
   private readonly logLevel: string;
+  private readonly initializeTimeoutMs: number;
   private process: ChildProcess | null = null;
   private reader: ReadlineInterface | null = null;
   private initialized = false;
-  private requestId = 0;
   private initResult: InitializeResult | null = null;
+  private routedClient: AttestClient | undefined;
+  private stderrBuffer = "";
+  private restarting: Promise<void> | null = null;
 
-  constructor(options?: { enginePath?: string; logLevel?: string }) {
+  private configuredBudget: SessionBudget = { judgeCalls: null, usd: null };
+  private usedJudgeCalls = 0;
+  private usedUsd = 0;
+  private heldJudgeCalls = 0;
+  private heldUsd = 0;
+
+  constructor(options?: { enginePath?: string; logLevel?: string; initializeTimeoutMs?: number }) {
     this.enginePath = options?.enginePath ?? "";
     this.logLevel = options?.logLevel ?? "warn";
+    this.initializeTimeoutMs = options?.initializeTimeoutMs ?? DEFAULT_INITIALIZE_TIMEOUT_MS;
   }
 
+  /**
+   * Start the engine and complete the `initialize` handshake. Rejects when the engine exits,
+   * closes its pipes or fails to answer within the initialize timeout; the error carries the
+   * tail of the engine's stderr.
+   */
   async start(): Promise<InitializeResult> {
     this.enginePath = await resolveEngine(this.enginePath || undefined);
+    this.configuredBudget = {
+      judgeCalls: envNumber("ATTEST_MAX_JUDGE_CALLS"),
+      usd: envNumber("ATTEST_BUDGET_USD"),
+    };
+    this.usedJudgeCalls = this.usedUsd = this.heldJudgeCalls = this.heldUsd = 0;
 
-    this.process = spawn(this.enginePath, [`--log-level=${this.logLevel}`], {
-      stdio: ["pipe", "pipe", "pipe"],
-    });
-
-    this.reader = createInterface({ input: this.process.stdout! });
-
-    try {
-      this.initResult = await this.initialize();
-    } catch (err) {
-      await this.stop();
-      throw err;
-    }
+    this.initResult = await this.launch(undefined);
     this.initialized = true;
     return this.initResult;
   }
 
+  /** Spawn the engine and run `initialize` on it; the engine is stopped when that fails. */
+  private async launch(envOverrides: Record<string, string> | undefined): Promise<InitializeResult> {
+    this.stderrBuffer = "";
+    const child = spawn(this.enginePath, [`--log-level=${this.logLevel}`], {
+      stdio: ["pipe", "pipe", "pipe"],
+      env: { ...process.env, ...envOverrides },
+    });
+    this.process = child;
+    child.stderr.setEncoding("utf8");
+    child.stderr.on("data", (chunk: string) => {
+      this.stderrBuffer = (this.stderrBuffer + chunk).slice(-STDERR_TAIL_BYTES);
+    });
+    // A write to a dead engine fails through the write callback and the close handler,
+    // which both report it with the stderr tail; the stream's own 'error' event would only
+    // duplicate that as an uncaught exception.
+    child.stdin.on("error", () => undefined);
+
+    this.reader = createInterface({ input: child.stdout });
+    const client = new AttestClient(this);
+    this.routedClient = client;
+    client.startReader();
+
+    const exited = new Promise<never>((_, reject) => {
+      child.once("error", (err) => reject(new Error(`attest-engine failed to start: ${err.message}`)));
+      child.once("close", (code, signal) => {
+        const how = signal !== null ? `signal ${signal}` : `exit code ${String(code)}`;
+        reject(
+          new Error(
+            `attest-engine exited before it was ready (${how}).` +
+              (this.stderrBuffer === "" ? "" : ` stderr:\n${this.stderrBuffer.trimEnd()}`),
+          ),
+        );
+      });
+    });
+    // After a successful start this rejection is just the engine stopping.
+    exited.catch(() => undefined);
+
+    try {
+      return await Promise.race([this.initialize(client), exited]);
+    } catch (err) {
+      await this.terminate();
+      throw err;
+    }
+  }
+
   /** Send initialize and check the engine's version and capabilities. */
-  private async initialize(): Promise<InitializeResult> {
-    const init = (await this.sendRequestInternal("initialize", {
-      sdk_name: "attest-typescript",
-      sdk_version: VERSION,
-      protocol_version: 1,
-      required_capabilities: ["layers_1_4"],
-      preferred_encoding: "json",
-    })) as InitializeResult;
+  private async initialize(client: AttestClient): Promise<InitializeResult> {
+    const init = (await client.sendWithoutRestart(
+      "initialize",
+      {
+        sdk_name: "attest-typescript",
+        sdk_version: VERSION,
+        protocol_version: 1,
+        required_capabilities: ["layers_1_4"],
+        preferred_encoding: "json",
+      },
+      this.initializeTimeoutMs,
+    )) as InitializeResult;
     if (init.engine_version !== ENGINE_VERSION) {
       throw new EngineVersionMismatchError(
         this.enginePath,
@@ -189,82 +264,107 @@ export class EngineManager {
   }
 
   async stop(): Promise<void> {
+    if (this.restarting !== null) await this.restarting.catch(() => undefined);
     if (this.process === null) return;
 
-    if (this.initialized) {
+    if (this.initialized && this.routedClient !== undefined && this.isRunning) {
       try {
-        await this.sendRequestInternal("shutdown", {});
+        await this.routedClient.sendWithoutRestart("shutdown", {}, SHUTDOWN_TIMEOUT_MS);
       } catch {
         // shutdown failed, will kill
       }
     }
+    await this.terminate();
+    this.initialized = false;
+  }
 
-    if (this.reader) {
-      this.reader.close();
-      this.reader = null;
-    }
+  /** Close the pipes, reject pending requests and stop the engine process (SIGKILL when `force`). */
+  private async terminate(force = false): Promise<void> {
+    const child = this.process;
+    this.routedClient?.stopReader();
+    this.routedClient?.rejectPending(new Error("Engine stopped."));
+    this.reader?.close();
+    this.reader = null;
+    this.process = null;
+    if (child === null) return;
 
-    if (this.process.exitCode === null) {
-      this.process.kill("SIGTERM");
+    if (child.exitCode === null && child.signalCode === null) {
       await new Promise<void>((res) => {
-        const timer = setTimeout(() => {
-          this.process?.kill("SIGKILL");
-        }, 5000);
-        this.process!.on("exit", () => {
+        const timer = force ? undefined : setTimeout(() => child.kill("SIGKILL"), 5000);
+        child.once("exit", () => {
           clearTimeout(timer);
           res();
         });
+        child.kill(force ? "SIGKILL" : "SIGTERM");
       });
     }
+  }
 
-    this.initialized = false;
-    this.process = null;
+  /**
+   * Replace the engine after a request timed out: its late response can no longer be told
+   * apart from a new one. The new engine gets the remaining session budget: the configured
+   * limit minus the usage already returned, minus what the abandoned requests may still have
+   * reserved. A restart that leaves no budget makes later model calls
+   * `not_evaluated(budget_exhausted)`.
+   */
+  restartAfterTimeout(abandoned: readonly BudgetReservation[]): Promise<void> {
+    for (const r of abandoned) {
+      this.heldJudgeCalls += r.judgeCalls ?? Number.POSITIVE_INFINITY;
+      this.heldUsd += r.usd ?? Number.POSITIVE_INFINITY;
+    }
+    this.restarting ??= this.restart().finally(() => {
+      this.restarting = null;
+    });
+    return this.restarting;
+  }
+
+  private async restart(): Promise<void> {
+    // The abandoned engine may sit in a slow model call; nothing it says is wanted any more.
+    await this.terminate(true);
+    const overrides: Record<string, string> = {};
+    const { judgeCalls, usd } = this.configuredBudget;
+    if (judgeCalls !== null) {
+      overrides["ATTEST_MAX_JUDGE_CALLS"] = String(
+        Math.max(0, Math.floor(judgeCalls - this.usedJudgeCalls - this.heldJudgeCalls)),
+      );
+    }
+    if (usd !== null) {
+      overrides["ATTEST_BUDGET_USD"] = String(Math.max(0, usd - this.usedUsd - this.heldUsd));
+    }
+    this.initResult = await this.launch(overrides);
+  }
+
+  /** Count the usage an evaluate_batch result reported against the session budget. */
+  recordUsage(usage: Usage): void {
+    this.usedJudgeCalls += usage.judge_calls;
+    this.usedUsd += usage.cost_usd;
+  }
+
+  /** Resolves once an engine restart in progress has finished. */
+  async whenReady(): Promise<void> {
+    if (this.restarting !== null) await this.restarting;
+  }
+
+  /** Tail of the engine's stderr: the reason an engine died. */
+  get stderrTail(): string {
+    return this.stderrBuffer.trimEnd();
+  }
+
+  /** The client that routes this engine's responses by id; replaced when the engine restarts. */
+  get client(): AttestClient | undefined {
+    return this.routedClient;
   }
 
   async sendRequest(method: string, params: Record<string, unknown>): Promise<unknown> {
     if (!this.initialized && method !== "initialize") {
       throw new Error("Engine not initialized. Call start() first.");
     }
-    return this.sendRequestInternal(method, params);
-  }
-
-  private async sendRequestInternal(method: string, params: Record<string, unknown>): Promise<unknown> {
-    if (this.process === null || this.process.stdin === null || this.reader === null) {
-      throw new Error("Engine process not started.");
-    }
-
-    this.requestId += 1;
-    const requestStr = encodeRequest(this.requestId, method, params);
-
-    return new Promise<unknown>((resolve, reject) => {
-      const onLine = (line: string): void => {
-        try {
-          const response = decodeResponse(line);
-          resolve(extractResult(response));
-        } catch (err) {
-          reject(err);
-        }
-      };
-
-      this.reader!.once("line", onLine);
-
-      const ok = this.process!.stdin!.write(requestStr, (err: Error | null | undefined) => {
-        if (err) {
-          this.reader!.removeListener("line", onLine);
-          reject(err);
-        }
-      });
-
-      if (!ok) {
-        this.process!.stdin!.once("drain", () => {
-          // write will proceed after drain
-        });
-      }
-    });
+    if (this.routedClient === undefined) throw new Error("Engine process not started.");
+    return this.routedClient.sendRequest(method, params);
   }
 
   get isRunning(): boolean {
-    return this.process !== null && this.process.exitCode === null;
+    return this.process !== null && this.process.exitCode === null && this.process.signalCode === null;
   }
 
   /** Expose process for AttestClient reader loop access */

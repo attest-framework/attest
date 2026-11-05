@@ -139,7 +139,9 @@ export class AttestEngineFixture {
         throw err;
       }
     }
-    this._client = new AttestClient(this.manager);
+    const routed = this.manager.client;
+    if (routed === undefined) throw new Error("Engine started without its id-routed client.");
+    this._client = routed;
   }
 
   async stop(): Promise<void> {
