@@ -83,7 +83,6 @@ jobs:
               - ".github/workflows/ci.yml"
             release:
               - ".github/workflows/release.yml"
-              - ".github/workflows/ci.yml"
               - "scripts/check-release-tag.sh"
               - "scripts/release-notes.sh"
               - "scripts/test-release-scripts.sh"
