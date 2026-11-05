@@ -282,26 +282,47 @@ export class ContinuousEvalRunner {
     this.scheduleNext();
   }
 
-  /** Stops the loop, then waits (bounded by `drainTimeoutMs`) for in-flight evaluations and dispatches. */
+  /**
+   * Stops the loop, then processes the traces already queued and waits for in-flight evaluations
+   * and dispatches, all bounded by `drainTimeoutMs`. Work still pending at the bound is dropped
+   * and reported through `onError`.
+   */
   async stop(): Promise<void> {
     this.running = false;
     if (this.loopTimer !== null) {
       clearTimeout(this.loopTimer);
       this.loopTimer = null;
     }
-    if (this.inFlight.size === 0) return;
+    if (this.inFlight.size === 0 && this.queue.length === 0) return;
+    let expired = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const bound = new Promise<"timeout">((resolve) => {
-      timer = setTimeout(() => resolve("timeout"), this.drainTimeoutMs);
+      timer = setTimeout(() => {
+        expired = true;
+        resolve("timeout");
+      }, this.drainTimeoutMs);
     });
-    const drained = Promise.allSettled([...this.inFlight]).then(() => "drained" as const);
+    const drained = this.drainQueue(() => expired).then(() => "drained" as const);
     const outcome = await Promise.race([drained, bound]);
     clearTimeout(timer);
     if (outcome === "timeout") {
       this.emitError(
-        new Error(`stop() gave up after ${this.drainTimeoutMs} ms with ${this.inFlight.size} evaluation(s) in flight`),
+        new Error(
+          `stop() gave up after ${this.drainTimeoutMs} ms with ${this.inFlight.size} evaluation(s) in flight and ${this.queue.length} trace(s) queued`,
+        ),
       );
     }
+  }
+
+  private async drainQueue(expired: () => boolean): Promise<void> {
+    for (let trace = this.queue.shift(); trace !== undefined && !expired(); trace = this.queue.shift()) {
+      try {
+        await this.evaluateTrace(trace);
+      } catch (error) {
+        this.reportError(error);
+      }
+    }
+    await Promise.allSettled([...this.inFlight]);
   }
 
   get queueLength(): number {
