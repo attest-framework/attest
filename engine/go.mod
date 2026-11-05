@@ -1,4 +1,4 @@
-module github.com/attest-ai/attest/engine
+module github.com/attest-framework/attest/engine
 
 go 1.27.0
 

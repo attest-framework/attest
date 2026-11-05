@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/attest-ai/attest/engine/internal/buildinfo"
-	"github.com/attest-ai/attest/engine/pkg/types"
+	"github.com/attest-framework/attest/engine/internal/buildinfo"
+	"github.com/attest-framework/attest/engine/pkg/types"
 )
 
 // newTestServer creates a Server wired with built-in handlers and connected to in-memory pipes.

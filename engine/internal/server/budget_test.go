@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/attest-ai/attest/engine/internal/policy"
-	"github.com/attest-ai/attest/engine/pkg/types"
+	"github.com/attest-framework/attest/engine/internal/policy"
+	"github.com/attest-framework/attest/engine/pkg/types"
 )
 
 // scriptedJudge is an OpenAI-compatible judge endpoint that counts the

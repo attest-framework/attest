@@ -10,8 +10,8 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/attest-ai/attest/engine/internal/mutate"
-	"github.com/attest-ai/attest/engine/pkg/types"
+	"github.com/attest-framework/attest/engine/internal/mutate"
+	"github.com/attest-framework/attest/engine/pkg/types"
 )
 
 // Bounds on what the viewer reads and renders. Report content is untrusted: a

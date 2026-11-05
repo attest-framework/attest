@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/attest-ai/attest/engine/pkg/types"
+	"github.com/attest-framework/attest/engine/pkg/types"
 )
 
 // TraceEvaluator implements Layer 3: trace structural inspection.

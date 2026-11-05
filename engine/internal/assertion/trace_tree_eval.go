@@ -6,8 +6,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/attest-ai/attest/engine/internal/trace"
-	"github.com/attest-ai/attest/engine/pkg/types"
+	"github.com/attest-framework/attest/engine/internal/trace"
+	"github.com/attest-framework/attest/engine/pkg/types"
 )
 
 // TraceTreeEvaluator implements cross-agent trace tree assertions.

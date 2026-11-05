@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/attest-ai/attest/engine/internal/cache"
+	"github.com/attest-framework/attest/engine/internal/cache"
 )
 
 // seedHistory bulk-inserts ids x perID rows in one transaction. Timestamps are

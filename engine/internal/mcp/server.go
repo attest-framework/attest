@@ -17,8 +17,8 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/attest-ai/attest/engine/internal/assertion"
-	"github.com/attest-ai/attest/engine/internal/pathguard"
+	"github.com/attest-framework/attest/engine/internal/assertion"
+	"github.com/attest-framework/attest/engine/internal/pathguard"
 )
 
 // Limits on what one call may carry or read.

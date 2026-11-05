@@ -7,7 +7,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/attest-ai/attest/engine/internal/redact"
+	"github.com/attest-framework/attest/engine/internal/redact"
 )
 
 // Replay matching. Fixtures are templated with document-wide positional

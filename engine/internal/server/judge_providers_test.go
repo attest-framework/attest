@@ -10,8 +10,8 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/attest-ai/attest/engine/internal/cache"
-	"github.com/attest-ai/attest/engine/pkg/types"
+	"github.com/attest-framework/attest/engine/internal/cache"
+	"github.com/attest-framework/attest/engine/pkg/types"
 )
 
 // nativeJudge describes how one native provider's HTTP API looks on the

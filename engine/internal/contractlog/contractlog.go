@@ -18,7 +18,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/attest-ai/attest/engine/pkg/types"
+	"github.com/attest-framework/attest/engine/pkg/types"
 )
 
 // EnvDir is the environment variable that turns recording on. Its value is

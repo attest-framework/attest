@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/attest-ai/attest/engine/internal/llm"
+	"github.com/attest-framework/attest/engine/internal/llm"
 )
 
 // FaultConfig defines the fault injection parameters for a FaultInjector.

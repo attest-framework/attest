@@ -15,10 +15,10 @@ import (
 
 	"github.com/segmentio/encoding/json"
 
-	"github.com/attest-ai/attest/engine/internal/assertion/judge"
-	"github.com/attest-ai/attest/engine/internal/cache"
-	"github.com/attest-ai/attest/engine/internal/llm"
-	"github.com/attest-ai/attest/engine/pkg/types"
+	"github.com/attest-framework/attest/engine/internal/assertion/judge"
+	"github.com/attest-framework/attest/engine/internal/cache"
+	"github.com/attest-framework/attest/engine/internal/llm"
+	"github.com/attest-framework/attest/engine/pkg/types"
 )
 
 // JudgeEvaluator implements Layer 6: LLM-based judge assertions.

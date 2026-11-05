@@ -7,8 +7,8 @@ import (
 	"io"
 	"os"
 
-	"github.com/attest-ai/attest/engine/internal/buildinfo"
-	"github.com/attest-ai/attest/engine/internal/server"
+	"github.com/attest-framework/attest/engine/internal/buildinfo"
+	"github.com/attest-framework/attest/engine/internal/server"
 )
 
 func init() {

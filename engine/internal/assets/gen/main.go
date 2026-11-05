@@ -8,7 +8,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/attest-ai/attest/engine/internal/assets/assetsync"
+	"github.com/attest-framework/attest/engine/internal/assets/assetsync"
 )
 
 func main() {

@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/attest-ai/attest/engine/pkg/types"
+	"github.com/attest-framework/attest/engine/pkg/types"
 )
 
 // Semantic-convention drift guard: one span per GenAI operation and the step

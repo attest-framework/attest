@@ -14,7 +14,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/attest-ai/attest/engine/internal/world"
+	"github.com/attest-framework/attest/engine/internal/world"
 )
 
 const worldYAML = "../../internal/world/testdata/payments.world.yaml"

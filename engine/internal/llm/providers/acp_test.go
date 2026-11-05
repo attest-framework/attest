@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/attest-ai/attest/engine/internal/llm"
-	"github.com/attest-ai/attest/engine/internal/llm/providers/acptest"
+	"github.com/attest-framework/attest/engine/internal/llm"
+	"github.com/attest-framework/attest/engine/internal/llm/providers/acptest"
 )
 
 // TestMain lets this test binary act as the stub ACP agent: with

@@ -17,7 +17,7 @@ import (
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 
-	"github.com/attest-ai/attest/engine/internal/trace"
+	"github.com/attest-framework/attest/engine/internal/trace"
 )
 
 // TracesPath is the OTLP/HTTP traces endpoint path.

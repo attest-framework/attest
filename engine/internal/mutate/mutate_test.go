@@ -7,10 +7,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/attest-ai/attest/engine/internal/capture"
-	"github.com/attest-ai/attest/engine/internal/mutate"
-	"github.com/attest-ai/attest/engine/internal/trace"
-	"github.com/attest-ai/attest/engine/pkg/types"
+	"github.com/attest-framework/attest/engine/internal/capture"
+	"github.com/attest-framework/attest/engine/internal/mutate"
+	"github.com/attest-framework/attest/engine/internal/trace"
+	"github.com/attest-framework/attest/engine/pkg/types"
 )
 
 const fixturePath = "../../testdata/mutate/inc-1042.attest.json"

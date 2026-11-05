@@ -14,7 +14,7 @@ import (
 
 	toml "github.com/pelletier/go-toml/v2"
 
-	"github.com/attest-ai/attest/engine/internal/pathguard"
+	"github.com/attest-framework/attest/engine/internal/pathguard"
 )
 
 // maxConfigBytes caps an existing client config the installer reads.

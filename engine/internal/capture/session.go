@@ -15,9 +15,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/attest-ai/attest/engine/internal/redact"
-	"github.com/attest-ai/attest/engine/internal/trace"
-	"github.com/attest-ai/attest/engine/internal/world"
+	"github.com/attest-framework/attest/engine/internal/redact"
+	"github.com/attest-framework/attest/engine/internal/trace"
+	"github.com/attest-framework/attest/engine/internal/world"
 )
 
 // Session is one capture: a loopback listener hosting the recording proxy
