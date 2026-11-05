@@ -3,7 +3,7 @@ package assertion
 import (
 	"testing"
 
-	"github.com/attest-ai/attest/engine/pkg/types"
+	"github.com/attest-framework/attest/engine/pkg/types"
 )
 
 func TestRegistry_AllBuiltinTypes(t *testing.T) {

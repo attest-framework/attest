@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/attest-ai/attest/engine/internal/llm"
+	"github.com/attest-framework/attest/engine/internal/llm"
 )
 
 // StopCondition determines whether a simulation should terminate.

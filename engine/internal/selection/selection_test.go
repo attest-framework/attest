@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/attest-ai/attest/engine/internal/selection"
+	"github.com/attest-framework/attest/engine/internal/selection"
 )
 
 func run(t *testing.T, dir string, args ...string) {

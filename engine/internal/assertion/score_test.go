@@ -3,8 +3,8 @@ package assertion_test
 import (
 	"testing"
 
-	"github.com/attest-ai/attest/engine/internal/assertion"
-	"github.com/attest-ai/attest/engine/pkg/types"
+	"github.com/attest-framework/attest/engine/internal/assertion"
+	"github.com/attest-framework/attest/engine/pkg/types"
 )
 
 func TestClassifyScore(t *testing.T) {

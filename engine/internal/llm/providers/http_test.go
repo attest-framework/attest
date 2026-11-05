@@ -10,7 +10,7 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/attest-ai/attest/engine/internal/llm"
+	"github.com/attest-framework/attest/engine/internal/llm"
 )
 
 func judgeRequest() *llm.CompletionRequest {

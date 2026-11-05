@@ -10,9 +10,9 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/attest-ai/attest/engine/internal/capture"
-	"github.com/attest-ai/attest/engine/internal/contractlog"
-	"github.com/attest-ai/attest/engine/internal/mutate"
+	"github.com/attest-framework/attest/engine/internal/capture"
+	"github.com/attest-framework/attest/engine/internal/contractlog"
+	"github.com/attest-framework/attest/engine/internal/mutate"
 )
 
 func init() {

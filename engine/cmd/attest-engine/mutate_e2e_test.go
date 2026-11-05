@@ -9,8 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/attest-ai/attest/engine/internal/capture"
-	"github.com/attest-ai/attest/engine/pkg/types"
+	"github.com/attest-framework/attest/engine/internal/capture"
+	"github.com/attest-framework/attest/engine/pkg/types"
 )
 
 const mutateFixture = "../../testdata/mutate/inc-1042.attest.json"

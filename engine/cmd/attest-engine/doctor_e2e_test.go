@@ -12,8 +12,8 @@ import (
 
 	"github.com/santhosh-tekuri/jsonschema/v6"
 
-	llmproviders "github.com/attest-ai/attest/engine/internal/llm/providers"
-	"github.com/attest-ai/attest/engine/pkg/types"
+	llmproviders "github.com/attest-framework/attest/engine/internal/llm/providers"
+	"github.com/attest-framework/attest/engine/pkg/types"
 )
 
 const (

@@ -3,7 +3,7 @@ package trace
 import (
 	"fmt"
 
-	"github.com/attest-ai/attest/engine/pkg/types"
+	"github.com/attest-framework/attest/engine/pkg/types"
 )
 
 // TraceVisitor is called for each trace in the tree during a walk.

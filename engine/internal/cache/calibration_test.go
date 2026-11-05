@@ -6,7 +6,7 @@ import (
 
 	_ "modernc.org/sqlite"
 
-	"github.com/attest-ai/attest/engine/internal/cache"
+	"github.com/attest-framework/attest/engine/internal/cache"
 )
 
 func openMemoryDB(t *testing.T) *sql.DB {

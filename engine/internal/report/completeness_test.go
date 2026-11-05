@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/attest-ai/attest/engine/internal/report"
+	"github.com/attest-framework/attest/engine/internal/report"
 )
 
 func TestCheckComplete(t *testing.T) {

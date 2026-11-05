@@ -14,8 +14,8 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"github.com/attest-ai/attest/engine/internal/llm"
-	"github.com/attest-ai/attest/engine/internal/redact"
+	"github.com/attest-framework/attest/engine/internal/llm"
+	"github.com/attest-framework/attest/engine/internal/redact"
 )
 
 // maxResponseBytes caps how much of a provider response body is read.

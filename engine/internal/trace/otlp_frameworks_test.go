@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/attest-ai/attest/engine/pkg/types"
+	"github.com/attest-framework/attest/engine/pkg/types"
 )
 
 // Framework routes: the sanitized exports of each framework's OTel

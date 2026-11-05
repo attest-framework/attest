@@ -5,7 +5,7 @@ import (
 	"mime"
 	"strings"
 
-	"github.com/attest-ai/attest/engine/internal/redact"
+	"github.com/attest-framework/attest/engine/internal/redact"
 )
 
 // A streamed response carries its text in many small deltas, so a secret the

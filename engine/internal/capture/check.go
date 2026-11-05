@@ -7,9 +7,9 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/attest-ai/attest/engine/internal/redact"
-	"github.com/attest-ai/attest/engine/internal/trace"
-	"github.com/attest-ai/attest/engine/pkg/types"
+	"github.com/attest-framework/attest/engine/internal/redact"
+	"github.com/attest-framework/attest/engine/internal/trace"
+	"github.com/attest-framework/attest/engine/pkg/types"
 )
 
 // RedactionHit locates a secret in a fixture: Path is the JSON path of the

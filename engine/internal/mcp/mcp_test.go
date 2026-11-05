@@ -17,9 +17,9 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/santhosh-tekuri/jsonschema/v6"
 
-	"github.com/attest-ai/attest/engine/internal/assets"
-	attestmcp "github.com/attest-ai/attest/engine/internal/mcp"
-	"github.com/attest-ai/attest/engine/internal/pathguard"
+	"github.com/attest-framework/attest/engine/internal/assets"
+	attestmcp "github.com/attest-framework/attest/engine/internal/mcp"
+	"github.com/attest-framework/attest/engine/internal/pathguard"
 )
 
 const (

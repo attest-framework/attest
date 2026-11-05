@@ -4,7 +4,7 @@ import (
 	"math"
 	"testing"
 
-	"github.com/attest-ai/attest/engine/internal/assertion/embedding"
+	"github.com/attest-framework/attest/engine/internal/assertion/embedding"
 )
 
 func TestCosineSimilarity_Identical(t *testing.T) {

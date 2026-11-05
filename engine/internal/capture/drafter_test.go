@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/attest-ai/attest/engine/internal/trace"
-	"github.com/attest-ai/attest/engine/pkg/types"
+	"github.com/attest-framework/attest/engine/internal/trace"
+	"github.com/attest-framework/attest/engine/pkg/types"
 )
 
 func incidentTrace(t *testing.T) *types.Trace {
