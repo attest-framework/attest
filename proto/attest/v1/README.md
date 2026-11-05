@@ -2,7 +2,7 @@
 
 **Transport:** JSON-RPC 2.0 over stdio (SDK spawns engine as subprocess)
 **Encoding:** JSON (newline-delimited)
-**Direction:** SDK → Engine (requests), Engine → SDK (responses + notifications)
+**Direction:** SDK → Engine (requests), Engine → SDK (responses only)
 
 ## Upgrade Path
 

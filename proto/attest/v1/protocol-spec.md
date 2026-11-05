@@ -64,7 +64,9 @@ Log levels controlled by `--log-level` flag on engine startup: `debug`, `info`, 
   responses. `max_concurrent_requests` will be `> 1` when this mode is active.
 - **Every line the engine writes to stdout is the response to a request id the SDK sent.**
   The engine sends no notifications; data that used to travel as one (drift) is part of
-  the response (`results[].drift`).
+  the response (`results[].drift`). The only replies whose `id` the SDK did not send are
+  error replies to a line that is not valid JSON (`id` 0) or is over the line limit with
+  no `id` in its first 4 KiB (`id` null).
 - SDKs route each response to its request by `id` and never by arrival order. A line
   without an `id` is logged and dropped, never taken as a response. An `evaluate_batch`
   response whose assertion ids differ from the ids sent is a protocol desync
@@ -72,12 +74,15 @@ Log levels controlled by `--log-level` flag on engine startup: `debug`, `info`, 
 - **Timeouts.** When a request times out, the SDK restarts the engine and fails every
   pending request, so a late reply cannot reach another caller. The new engine starts
   with the remaining session budget: the configured `ATTEST_MAX_JUDGE_CALLS` /
-  `ATTEST_BUDGET_USD` minus the `usage` returned so far, minus a hold for each timed-out
-  or abandoned request (its `budget` limits when it sent them, otherwise everything that
-  is left). Spend the SDK cannot observe (`generate_user_message` calls, engine errors,
-  replies dropped after cancellation) also holds everything that is left. A restart that
-  leaves no budget makes later attest-initiated calls `not_evaluated` with reason
-  `budget_exhausted`.
+  `ATTEST_BUDGET_USD` minus the `usage` returned so far, minus a hold for each request
+  lost in the restart that can call a model (an `evaluate_batch` with a judge or
+  embedding assertion, or `generate_user_message`): its `budget` limits when it sent
+  them, otherwise everything that is left. Requests that cannot call a model hold
+  nothing. Earlier spend the SDK could not observe (`generate_user_message` calls,
+  engine error replies, replies dropped after cancellation) leaves no budget after the
+  restart. With no budget left, later embedding and judge assertions are `not_evaluated`
+  with reason `budget_exhausted`, and later `generate_user_message` requests fail with a
+  non-retryable engine error.
 
 ---
 
