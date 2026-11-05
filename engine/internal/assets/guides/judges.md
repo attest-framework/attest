@@ -33,7 +33,7 @@ Anthropic requests use the model's default sampling (current Claude models rejec
 
 `ATTEST_JUDGE_PROVIDER=acp` runs judges through a local [Agent Client Protocol](https://agentclientprotocol.com) agent, such as an ACP adapter for Claude Code or Codex, on the subscription you are already logged in with. The same agent also generates simulated user turns (`generate_user_message`, used by simulated users), because those calls go to the configured judge provider.
 
-The engine removes these variables from the agent's environment, so an exported key or endpoint switch does not route the agent to API billing instead of your subscription: every `ATTEST_JUDGE_*` variable, `OPENAI_API_KEY`, `OPENAI_BASE_URL`, `CODEX_API_KEY`, `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_BASE_URL`, `CLAUDE_CODE_USE_BEDROCK`, `CLAUDE_CODE_USE_VERTEX`, `GEMINI_API_KEY` and `GOOGLE_API_KEY` (names compared case-insensitively on Windows). The rest of your environment (`HOME`, `PATH`, the agent's own settings) is passed through so the agent finds its login.
+The agent starts with an explicit allowlist of environment variables, not a copy of yours, so unrelated credentials (`GITHUB_TOKEN`, `AWS_SECRET_ACCESS_KEY`, API keys, CI tokens) never reach it and an exported key or endpoint switch cannot route it to API billing instead of your subscription. It receives `PATH`, `HOME`, `USER`, `LOGNAME`, `SHELL`, `TMPDIR`, `TERM`, `LANG`, every `LC_*`, the login and configuration variables `CLAUDE_CODE_OAUTH_TOKEN`, `CLAUDE_CONFIG_DIR` and `CODEX_HOME`, and the proxy and CA settings `HTTPS_PROXY`, `HTTP_PROXY`, `NO_PROXY` (and their lowercase forms), `SSL_CERT_FILE` and `NODE_EXTRA_CA_CERTS`. On Windows it also receives `USERPROFILE`, `APPDATA`, `LOCALAPPDATA`, `SystemRoot`, `ComSpec`, `PATHEXT`, `TEMP`, `TMP`, `HOMEDRIVE` and `HOMEPATH`; names are compared case-insensitively there. Everything else is dropped, including `OPENAI_*`, `ANTHROPIC_*`, `GEMINI_API_KEY`, `GOOGLE_API_KEY` and every `ATTEST_JUDGE_*` variable. If your agent needs another variable, wrap it in a launcher script that sets it.
 
 ```bash
 export ATTEST_JUDGE_PROVIDER=acp
@@ -51,9 +51,19 @@ attest doctor
 
 ## Rate limits and outages
 
-Each provider has its own token-bucket limiter, read from `ATTEST_RATE_LIMIT_<PROVIDER>` (requests per minute, default 60) and `ATTEST_RATE_LIMIT_<PROVIDER>_BURST` (default 10): `ATTEST_RATE_LIMIT_OPENAI`, `ATTEST_RATE_LIMIT_ANTHROPIC`, `ATTEST_RATE_LIMIT_GEMINI`, `ATTEST_RATE_LIMIT_ACP`. A failed call, including HTTP 429 and 5xx, is retried up to three times with exponential backoff.
+Each provider has its own token-bucket limiter, read from `ATTEST_RATE_LIMIT_<PROVIDER>` (requests per minute, default 60) and `ATTEST_RATE_LIMIT_<PROVIDER>_BURST` (default 10): `ATTEST_RATE_LIMIT_OPENAI`, `ATTEST_RATE_LIMIT_ANTHROPIC`, `ATTEST_RATE_LIMIT_GEMINI`, `ATTEST_RATE_LIMIT_ACP`. Only transient failures are retried: HTTP 408, 429 and 5xx, and network errors. A retry waits an exponential backoff (500 ms doubling, capped at 30 s) with jitter, and waits at least as long as the provider's `Retry-After` header when it sends one; a call is retried up to three times. Any other failure is final. Every retry reserves a judge call against `ATTEST_MAX_JUDGE_CALLS` and `ATTEST_BUDGET_USD`.
 
-When the provider is still unavailable after the retries, or its reply cannot be parsed as a score, the assertion is `not_evaluated` with reason `provider_unavailable`. An outage never becomes a pass or a failure: the test is skipped with the reason (`--attest-strict` turns it into a failure), and `attest policy evaluate` warns with exit 2 unless the policy sets `not_evaluated: block`. See [verdicts](verdicts.md).
+A 401 or 403 is not retried: it costs exactly one call and the assertion is `not_evaluated` with reason `provider_auth`. Fix the key or `ATTEST_JUDGE_BASE_URL`; `attest doctor` shows what the engine would use.
+
+When the provider is still unavailable after the retries, the assertion is `not_evaluated` with reason `provider_unavailable`. An outage, a rejected key or an unusable reply never becomes a pass or a failure: the test is skipped with the reason (`--attest-strict` turns it into a failure), and `attest policy evaluate` warns with exit 2 unless the policy sets `not_evaluated: block`. See [verdicts](verdicts.md).
+
+## Judge replies are measurements
+
+A reply counts only as a JSON object whose `score` is a number in [0,1], or an explicit abstain (below). Anything else is `not_evaluated` with reason `judge_malformed`: no JSON object, no `score` (it is not read as 0), a non-numeric score, or a score outside [0,1] (`{"score": 7}` is not a pass). A malformed reply is not cached and is not retried; it is a judge answer, not an outage. With `repeat: N`, a run with a malformed reply is left out of the median; when no run scored, the reason is the first that applies of `provider_auth`, `provider_unavailable`, `judge_malformed`, `judge_abstained`, `budget_exhausted`.
+
+The agent output sits between delimiters that carry a random per-call nonce (`<<<AGENT_OUTPUT_START:<nonce>>>` and `<<<AGENT_OUTPUT_END:<nonce>>>`), so output that contains the plain delimiters cannot close the data block. A reply that echoes the nonce is `judge_malformed`. The nonce is replaced by the plain delimiters in the cache key and in record/replay matching, so replays and cache hits do not depend on it.
+
+The spec is validated before the cache is consulted, and `repeat` and the bias probes are part of the cache key, so a cache hit never skips a spec error. An invalid spec is a `hard_fail` with failure class `spec_error`. For a judge below its threshold, `failure_class` compares the score to the assertion's own `threshold` (0.78 against 0.8 is `stochastic_variance`, not `broken_code`).
 
 ## Abstention
 

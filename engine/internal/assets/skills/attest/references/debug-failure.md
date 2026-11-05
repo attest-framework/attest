@@ -47,11 +47,15 @@ Attest diagnostic — 1 of 4 assertions failed:
 | `missing_evidence` | the trace lacks the field: tool arguments for `per`/`arg`, `metadata.cost_usd`, tool errors on a v1 trace; or `world(None)` | `attest trace check <export or fixture> --json` lists coverage gaps; record the attributes, convert with the OTLP adapters (trace v2), or start the world |
 | `replay_miss` | `auto` mode, a request matched no recording, no key to go live | see replay misses below |
 | `provider_not_configured` | judge or embedding assertion, no provider configured | expected in CI with zero model calls; keep the policy's `not_evaluated: warn` or move the assertion to a deterministic check; `attest doctor --json` shows configuration |
-| `provider_unavailable` | provider call failed | transient; do not convert to pass |
+| `provider_unavailable` | provider call failed (outage, timeout, 408/429/5xx or network error after retries) | transient; do not convert to pass |
+| `provider_auth` | the provider answered 401 or 403; exactly one call was made | fix the judge or embedding API key or `ATTEST_JUDGE_BASE_URL`; `attest doctor --json` |
 | `simulation` | `ATTEST_SIMULATION=1` disables layers 5 and 6 | expected in simulation runs |
 | `short_circuited` | a layer 1–4 assertion in the same batch hard-failed | fix that failure first |
 | `budget_exhausted` | `ATTEST_MAX_JUDGE_CALLS`, `ATTEST_BUDGET_USD` or the test budget is used up | raise the budget only with the user's agreement |
 | `judge_abstained` | the judge said the output lacks the evidence its rubric needs | the reason is in the explanation |
+| `judge_malformed` | the judge reply was not a `score` in [0,1] or an abstain (missing, non-numeric, out of range, no JSON) | read the explanation; fix a custom rubric's response format or switch the judge model; never read it as a score |
+
+Failure classes on `hard_fail` / `soft_fail` rows: `broken_code`, `flaky_judge`, `bad_rubric`, `missing_trace_data`, `stochastic_variance` (a judge or embedding score within 0.05 of the assertion's own threshold) and `spec_error` (the assertion spec is invalid: unknown rubric, `repeat` outside 1–16, unknown bias probe, missing `target`; fix the test, not the agent).
 
 ## 4. Replay misses
 
