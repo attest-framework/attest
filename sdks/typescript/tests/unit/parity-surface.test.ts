@@ -4,11 +4,13 @@ import { join } from "node:path";
 import {
   PARITY_DIR,
   UPDATE_ENV,
+  adapterParityProblems,
   collectSurface,
   compareSurface,
   serializeSurface,
   type Surface,
 } from "../support/parity-surface.js";
+import { ENGINE_PATH, adapterStatuses } from "../support/adapter-conformance.js";
 
 const empty: Surface = {
   adapters: [],
@@ -41,7 +43,9 @@ describe("compareSurface", () => {
 });
 
 describe("typescript parity snapshot", () => {
-  it("matches the live public surface", () => {
+  // collectSurface builds TypeScript programs over the package sources; with the adapters'
+  // @langchain/core types in the graph this takes several seconds on CI runners.
+  it("matches the live public surface", { timeout: 30_000 }, () => {
     const live = collectSurface();
     const file = join(PARITY_DIR, "typescript.json");
     if (process.env[UPDATE_ENV] === "1") {
@@ -52,5 +56,28 @@ describe("typescript parity snapshot", () => {
     const committed = JSON.parse(readFileSync(file, "utf8")) as Surface;
     const drift = compareSurface(committed, live);
     expect(drift, `snapshot drift; regenerate with ${UPDATE_ENV}=1 pnpm -r test\n${drift.join("\n")}`).toEqual([]);
+  });
+});
+
+describe("adapter parity", () => {
+  it("flags an adapter matched by name only", () => {
+    const problems = adapterParityProblems(["FooAdapter", "BarAdapter", "BazAdapter"], {
+      FooAdapter: "passing",
+      BarAdapter: "none",
+      BazAdapter: "failing",
+    });
+
+    expect(problems).toEqual([
+      "adapter BarAdapter: matches by name only; add conformance cases under sdks/parity/adapters",
+      "adapter BazAdapter: corpus cases fail; the trace differs from the golden",
+    ]);
+  });
+
+  it("counts every exported adapter as a match only when its corpus cases pass", { timeout: 30_000 }, async () => {
+    process.env.ATTEST_ENGINE_PATH = ENGINE_PATH;
+
+    const problems = adapterParityProblems(collectSurface().adapters, await adapterStatuses());
+
+    expect(problems).toEqual([]);
   });
 });

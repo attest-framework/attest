@@ -10,7 +10,6 @@ from unittest.mock import patch
 
 import pytest
 
-from attest._proto.types import STEP_AGENT_CALL, STEP_TOOL_CALL
 from attest.adapters.crewai import CrewAIAdapter
 
 # ---------------------------------------------------------------------------
@@ -92,7 +91,7 @@ class TestCrewAIAdapterTraceFromCrewOutput:
         assert trace.agent_id == "test-crew"
         assert trace.output["message"] == "Final answer"
 
-    def test_agents_become_agent_call_steps(self) -> None:
+    def test_configured_agents_are_not_recorded_as_steps(self) -> None:
         with _crewai_available():
             adapter = CrewAIAdapter(agent_id="crew")
 
@@ -101,27 +100,19 @@ class TestCrewAIAdapterTraceFromCrewOutput:
 
         trace = adapter.trace_from_crew_output(crew_output, crew)
 
-        agent_steps = [s for s in trace.steps if s.type == STEP_AGENT_CALL]
-        assert len(agent_steps) == 2
-        assert agent_steps[0].name == "researcher"
-        assert agent_steps[1].name == "writer"
+        assert trace.steps == []
 
-    def test_tasks_output_become_tool_call_steps(self) -> None:
+    def test_task_outputs_are_not_recorded_as_tool_calls(self) -> None:
         with _crewai_available():
             adapter = CrewAIAdapter()
 
         task1 = MockTaskOutput(description="research task", raw="research result")
         task2 = MockTaskOutput(description="write task", raw="written content")
         crew_output = MockCrewOutput(raw="done", tasks_output=[task1, task2])
-        crew = MockCrew()
 
-        trace = adapter.trace_from_crew_output(crew_output, crew)
+        trace = adapter.trace_from_crew_output(crew_output, MockCrew())
 
-        tool_steps = [s for s in trace.steps if s.type == STEP_TOOL_CALL]
-        assert len(tool_steps) == 2
-        assert tool_steps[0].name == "research task"
-        assert tool_steps[0].result == {"output": "research result"}
-        assert tool_steps[1].name == "write task"
+        assert trace.steps == []
 
     def test_token_usage_dict_extracted(self) -> None:
         with _crewai_available():
@@ -194,7 +185,7 @@ class TestCrewAIAdapterTraceFromCrewOutput:
         with adapter.capture() as cap:
             assert cap is adapter
 
-    def test_combined_agents_and_tasks(self) -> None:
+    def test_summary_carries_output_and_tokens_without_steps(self) -> None:
         with _crewai_available():
             adapter = CrewAIAdapter(agent_id="full-crew")
 
@@ -210,14 +201,6 @@ class TestCrewAIAdapterTraceFromCrewOutput:
 
         assert trace.agent_id == "full-crew"
         assert trace.output["message"] == "Final report"
-
-        agent_steps = [s for s in trace.steps if s.type == STEP_AGENT_CALL]
-        tool_steps = [s for s in trace.steps if s.type == STEP_TOOL_CALL]
-
-        assert len(agent_steps) == 1
-        assert agent_steps[0].name == "analyst"
-        assert len(tool_steps) == 1
-        assert tool_steps[0].name == "analyze"
-
+        assert trace.steps == []
         assert trace.metadata is not None
         assert trace.metadata.total_tokens == 500

@@ -174,7 +174,18 @@ def _alias_problems(
     return problems
 
 
-def build_matrix(python: Surface, typescript: Surface, exceptions_doc: dict[str, Any]) -> Matrix:
+def build_matrix(
+    python: Surface,
+    typescript: Surface,
+    exceptions_doc: dict[str, Any],
+    corpus_adapters: set[str] | None = None,
+) -> Matrix:
+    """Compare the two surfaces.
+
+    ``corpus_adapters`` names the adapters with behavioral conformance cases. When given,
+    an adapter that has a TypeScript counterpart but no cases is a problem: a name
+    match is not parity for an adapter.
+    """
     aliases: dict[str, str] = exceptions_doc["aliases"]
     exceptions: list[dict[str, str]] = exceptions_doc["exceptions"]
     by_key = {(e["section"], e["python"]): e for e in exceptions if "section" in e}
@@ -190,6 +201,15 @@ def build_matrix(python: Surface, typescript: Surface, exceptions_doc: dict[str,
             target = aliases.get(name, snake_to_camel(name))
             if target in have:
                 status = "alias" if name in aliases else "match"
+                if (
+                    section == "adapters"
+                    and corpus_adapters is not None
+                    and name not in corpus_adapters
+                ):
+                    problems.append(
+                        f"adapter {name}: matches {target} by name only; "
+                        "add conformance cases under sdks/parity/adapters"
+                    )
                 rows.append(Row(section, name, target, status, note=notes.get(name, "")))
             elif (section, name) in by_key:
                 exc = by_key[(section, name)]

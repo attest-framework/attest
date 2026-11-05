@@ -78,8 +78,9 @@ describe("OpenAIAdapter", () => {
     const toolSteps = trace.steps.filter((s) => s.type === STEP_TOOL_CALL);
     expect(toolSteps).toHaveLength(2);
     expect(toolSteps[0].name).toBe("search");
-    expect(toolSteps[0].args?.arguments).toBe('{"q":"test"}');
+    expect(toolSteps[0].args).toEqual({ q: "test" });
     expect(toolSteps[1].name).toBe("fetch");
+    expect(toolSteps[1].args).toEqual({ url: "http://example.com" });
   });
 
   it("sets input messages when provided", () => {
@@ -118,5 +119,23 @@ describe("OpenAIAdapter", () => {
     const noIdAdapter = new OpenAIAdapter();
     const trace = noIdAdapter.traceFromResponse(baseResponse);
     expect(trace.agent_id).toBeUndefined();
+  });
+
+  it("keeps unparseable tool arguments as raw_arguments", () => {
+    const response = {
+      ...baseResponse,
+      choices: [{ message: { content: null, tool_calls: [{ function: { name: "t", arguments: "{oops" } }] } }],
+    };
+
+    const trace = adapter.traceFromResponse(response);
+
+    expect(trace.steps.find((s) => s.type === STEP_TOOL_CALL)?.args).toEqual({ raw_arguments: "{oops" });
+  });
+
+  it("derives latency from the call timestamps and prefers an explicit latencyMs", () => {
+    const span = adapter.traceFromResponse(baseResponse, { startedAtMs: 100, endedAtMs: 350 });
+    const explicit = adapter.traceFromResponse(baseResponse, { startedAtMs: 100, endedAtMs: 350, latencyMs: 7 });
+
+    expect([span.metadata?.latency_ms, explicit.metadata?.latency_ms]).toEqual([250, 7]);
   });
 });

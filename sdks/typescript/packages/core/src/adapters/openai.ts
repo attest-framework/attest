@@ -1,29 +1,118 @@
 import type { Trace } from "../proto/types.js";
-import { TraceBuilder } from "../trace.js";
+import {
+  buildProviderTrace,
+  type ExtractedCall,
+  type ProviderCallOptions,
+} from "./provider-trace.js";
 
-interface OpenAIUsage {
+interface ChatUsage {
+  prompt_tokens?: number;
+  completion_tokens?: number;
   total_tokens?: number;
 }
 
-interface OpenAIToolCall {
+interface ChatToolCall {
   function: { name: string; arguments: string };
 }
 
-interface OpenAIMessage {
+interface ChatMessage {
   content: string | null;
-  tool_calls?: OpenAIToolCall[];
+  refusal?: string | null;
+  tool_calls?: ChatToolCall[];
 }
 
-interface OpenAIChoice {
-  message: OpenAIMessage;
-}
-
+/** An OpenAI Chat Completions response. */
 interface OpenAIChatCompletion {
+  object?: string;
   model?: string;
-  usage?: OpenAIUsage;
-  choices: OpenAIChoice[];
+  usage?: ChatUsage;
+  choices: { message: ChatMessage }[];
 }
 
+type ResponsesContentPart =
+  | { type: "output_text"; text: string }
+  | { type: "refusal"; refusal: string };
+
+type ResponsesOutputItem =
+  | { type: "message"; content: ResponsesContentPart[] }
+  | { type: "function_call"; name: string; arguments: string }
+  | { type: string };
+
+/** An OpenAI Responses API response. */
+interface OpenAIResponse {
+  object: "response";
+  model?: string;
+  usage?: { input_tokens?: number; output_tokens?: number; total_tokens?: number };
+  output: ResponsesOutputItem[];
+}
+
+function parseArguments(raw: string): Record<string, unknown> {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return { raw_arguments: raw };
+  }
+  if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) {
+    return parsed as Record<string, unknown>;
+  }
+  return { raw_arguments: raw };
+}
+
+function isResponses(response: OpenAIChatCompletion | OpenAIResponse): response is OpenAIResponse {
+  return response.object === "response";
+}
+
+function fromResponses(response: OpenAIResponse): ExtractedCall {
+  const texts: string[] = [];
+  const refusals: string[] = [];
+  const toolCalls: ExtractedCall["toolCalls"] = [];
+  for (const item of response.output) {
+    if (item.type === "message") {
+      for (const part of (item as { content: ResponsesContentPart[] }).content) {
+        if (part.type === "output_text") texts.push(part.text);
+        else if (part.type === "refusal") refusals.push(part.refusal);
+      }
+    } else if (item.type === "function_call") {
+      const call = item as { name: string; arguments: string };
+      toolCalls.push({ name: call.name, args: parseArguments(call.arguments) });
+    }
+  }
+  const refusal = refusals.join("") || undefined;
+  return {
+    model: response.model,
+    completion: texts.join("") || refusal || "",
+    refusal,
+    totalTokens: response.usage?.total_tokens,
+    inputTokens: response.usage?.input_tokens,
+    outputTokens: response.usage?.output_tokens,
+    toolCalls,
+  };
+}
+
+function fromChat(response: OpenAIChatCompletion): ExtractedCall {
+  const message = response.choices[0].message;
+  const refusal = message.refusal || undefined;
+  return {
+    model: response.model,
+    completion: message.content || refusal || "",
+    refusal,
+    totalTokens: response.usage?.total_tokens,
+    inputTokens: response.usage?.prompt_tokens,
+    outputTokens: response.usage?.completion_tokens,
+    toolCalls: (message.tool_calls ?? []).map((tc) => ({
+      name: tc.function.name,
+      args: parseArguments(tc.function.arguments),
+    })),
+  };
+}
+
+/**
+ * Captures OpenAI Chat Completions and Responses API calls into Attest traces.
+ *
+ * A model refusal is the response's message: it becomes the completion and the trace
+ * output, and is also recorded as `refusal` on the llm_call step.
+ */
 export class OpenAIAdapter {
   private readonly agentId: string | undefined;
 
@@ -32,53 +121,14 @@ export class OpenAIAdapter {
   }
 
   traceFromResponse(
-    response: OpenAIChatCompletion,
-    options?: {
-      inputMessages?: Record<string, unknown>[];
-      costUsd?: number;
-      latencyMs?: number;
-      structuredOutput?: Record<string, unknown>;
-    },
+    response: OpenAIChatCompletion | OpenAIResponse,
+    options?: ProviderCallOptions & { structuredOutput?: Record<string, unknown> },
   ): Trace {
-    const builder = new TraceBuilder(this.agentId);
-
-    if (options?.inputMessages) {
-      builder.setInput({ messages: options.inputMessages });
-    }
-
-    const message = response.choices[0].message;
-    const completionText = message.content ?? "";
-
-    const stepArgs: Record<string, unknown> = {};
-    if (response.model !== undefined) stepArgs.model = response.model;
-
-    const stepResult: Record<string, unknown> = { completion: completionText };
-    if (response.usage?.total_tokens !== undefined) {
-      stepResult.tokens = response.usage.total_tokens;
-    }
-
-    builder.addLlmCall("completion", { args: stepArgs, result: stepResult });
-
-    if (message.tool_calls) {
-      for (const tc of message.tool_calls) {
-        builder.addToolCall(tc.function.name, {
-          args: { arguments: tc.function.arguments },
-        });
-      }
-    }
-
-    builder.setOutput({
-      message: completionText,
+    const call = isResponses(response) ? fromResponses(response) : fromChat(response);
+    const input = options?.inputMessages ? { messages: options.inputMessages } : undefined;
+    return buildProviderTrace(this.agentId, call, options, input, {
+      message: call.completion,
       structured: options?.structuredOutput ?? {},
     });
-
-    builder.setMetadata({
-      total_tokens: response.usage?.total_tokens,
-      cost_usd: options?.costUsd,
-      latency_ms: options?.latencyMs,
-      model: response.model,
-    });
-
-    return builder.build();
   }
 }

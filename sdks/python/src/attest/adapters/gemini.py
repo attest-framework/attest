@@ -74,11 +74,16 @@ class GeminiAdapter(BaseProviderAdapter):
             return response.text  # type: ignore[no-any-return]
         if hasattr(response, "candidates") and response.candidates:
             parts = response.candidates[0].content.parts
-            return "".join(p.text for p in parts if hasattr(p, "text"))
+            # Thought-summary parts are the model's reasoning, not the answer.
+            return "".join(
+                p.text
+                for p in parts
+                if getattr(p, "text", None) and not getattr(p, "thought", None)
+            )
         return ""
 
     def _extract_model(self, response: Any, **metadata: Any) -> str | None:
-        return metadata.get("model")
+        return metadata.get("model") or getattr(response, "model_version", None)
 
     def _extract_total_tokens(self, response: Any) -> int | None:
         usage = getattr(response, "usage_metadata", None)
@@ -94,6 +99,17 @@ class GeminiAdapter(BaseProviderAdapter):
         if prompt is not None:
             return int(prompt)
         return None
+
+    def _extract_token_split(self, response: Any) -> tuple[int | None, int | None]:
+        usage = getattr(response, "usage_metadata", None)
+        if usage is None:
+            return None, None
+        prompt = getattr(usage, "prompt_token_count", None)
+        candidates = getattr(usage, "candidates_token_count", None)
+        return (
+            int(prompt) if prompt is not None else None,
+            int(candidates) if candidates is not None else None,
+        )
 
     def _extract_tool_calls(self, response: Any) -> list[dict[str, Any]]:
         if not hasattr(response, "candidates") or not response.candidates:

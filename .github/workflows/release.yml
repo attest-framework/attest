@@ -46,6 +46,33 @@ jobs:
       dry_run: ${{ format('{0}', inputs.dry_run) }}
       tag: ${{ inputs.tag }}
 
+  # Provenance lives in its own job so the only steps that can mint an OIDC token are the two
+  # SHA-pinned ones below. The build job (release-build.yml) runs a floating Go toolchain and the
+  # binary it built, and it also runs on pull requests, so it stays read-only. This job runs only
+  # after publish-github succeeded: binaries from a rejected approval, or from a re-dispatch of a
+  # tag that is already released, are never attested. Until it finishes, the release assets exist
+  # without an attestation; re-run this job if it fails. Dry runs attest nothing and ci.yml never
+  # calls release.yml.
+  attest-engine:
+    name: Attest engine binary provenance
+    needs: [build, publish-github]
+    if: needs.build.outputs.publish == 'true' && needs.publish-github.result == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: engine-binaries
+          path: dist
+      # Binds every binary to this workflow run. `gh attestation verify` checks it; see
+      # docs/guides/configuration.md for the command that pins the workflow and tag.
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: dist/attest-engine-*
+
   publish-github:
     name: Publish GitHub release and engine binaries
     needs: [build]

@@ -15,6 +15,10 @@ export default defineConfig([
     entry: ["src/index.ts", "src/proto/index.ts"],
     format: ["cjs"],
     outDir: "dist/cjs",
+    // engine-downloader reads import.meta.url only when __dirname is undefined, never in CJS.
+    esbuildOptions(options) {
+      options.logOverride = { ...options.logOverride, "empty-import-meta": "silent" };
+    },
     dts: true,
     sourcemap: true,
     clean: false,
