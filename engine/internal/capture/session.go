@@ -18,6 +18,7 @@ import (
 	"github.com/attest-framework/attest/engine/internal/redact"
 	"github.com/attest-framework/attest/engine/internal/trace"
 	"github.com/attest-framework/attest/engine/internal/world"
+	"github.com/attest-framework/attest/engine/pkg/types"
 )
 
 // Session is one capture: a loopback listener hosting the recording proxy
@@ -210,6 +211,24 @@ func (s *Session) Recorded() ([]trace.Span, []rawExchange, int, error) {
 		return nil, nil, 0, fmt.Errorf("trace export incomplete: %d OTLP export requests unfinished and %d rejected; no fixture written", inflight, failed)
 	}
 	return s.receiver.Spans(), ex, incomplete, nil
+}
+
+// ReplayTrace converts the spans the replayed command exported into a trace.
+// Unlike Recorded it needs no model exchanges: a replay session holds the
+// fixture's, and only the new run's spans are wanted. agentID names the trace
+// (empty uses the first turn's agent name).
+func (s *Session) ReplayTrace(agentID string) (*types.Trace, error) {
+	if s.receiver == nil {
+		return nil, errors.New("session hosts only a world; no spans were received")
+	}
+	if inflight, failed := s.receiver.Incomplete(); inflight+failed > 0 {
+		return nil, fmt.Errorf("trace export incomplete: %d OTLP export requests unfinished and %d rejected", inflight, failed)
+	}
+	spans := s.receiver.Spans()
+	if len(spans) == 0 {
+		return nil, errors.New("no spans were received; point the agent's OTLP/HTTP exporter at OTEL_EXPORTER_OTLP_TRACES_ENDPOINT and flush it before exit")
+	}
+	return trace.FromSpans(spans, trace.ConvertOptions{AgentID: agentID})
 }
 
 // BuildInput is everything a fixture is built from.

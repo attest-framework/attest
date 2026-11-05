@@ -110,9 +110,13 @@ The table is checked against the engine's command registry by a test; a change t
 | `world` | 1 | the command exited non-zero (its code is not propagated; --json reports it as exit_code), or the world could not be served or its state written |
 | `world` | 2 | usage error or an invalid world.yaml |
 
+## `replay --trace-out`
+
+`attest-engine replay --trace-out <file> -- <command>` writes the trace of the new run (the spans the command exported over OTLP) to `<file>` as attest trace JSON. It is written when every request was served, whatever the command's exit status (an incident recording exits non-zero). The trace is **not redacted**: it holds what the command sent and received during that run. Write it to a private directory and do not commit it. A drafted replay test keeps it in a private temporary directory that is removed when the run ends. `--trace-out` needs `-- <command>`; it is a usage error with `--serve`.
+
 ## Non-interactive use
 
-Nothing prompts under CI, `--json` or a non-TTY stdin. The only confirmation prompt (`attest capture` before it re-runs a command for `--refresh`) refuses with exit 2 and a `--yes` hint when `CI` is set, `--json` is given or stdin is not a terminal. Pass `--yes` to proceed.
+Nothing prompts under CI, `--json` or a non-TTY stdin. The only confirmation prompt (`attest capture` before it re-runs a command for `--refresh`) refuses with exit 2 and a `--yes` hint when `CI` is set, `--json` is given or stdin is not a terminal. Pass `--yes` to proceed. It is not the only place a recorded command runs: a drafted replay test runs the argv written in the test file itself (`COMMAND`, reviewed with the test) and refuses to run when the fixture's `source.command` differs from it, or has redacted or templated arguments. See [Capture](capture.md#the-drafted-test).
 
 ## Offline
 

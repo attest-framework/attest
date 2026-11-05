@@ -292,3 +292,74 @@ func TestCapture_YesWithoutRefresh_ExitTwo(t *testing.T) {
 		t.Fatalf("exit %d\n%s", run.code, run.stderr)
 	}
 }
+
+func TestReplayCommand_TraceOut_WritesTheNewRunsTrace(t *testing.T) {
+	bin := buildEngineBinary(t)
+	dir := t.TempDir()
+	captureWithSystem(t, bin, dir, "You refund once.")
+	traceFile := filepath.Join(dir, "new-run.trace.json")
+
+	run := engineRun(t, bin, dir, replayEnv("You refund once."), replayArgs(dir, "--no-live", "--trace-out", traceFile)...)
+
+	if run.code != 0 {
+		t.Fatalf("exit %d\n%s", run.code, run.stderr)
+	}
+	raw, err := os.ReadFile(traceFile)
+	if err != nil {
+		t.Fatalf("trace file not written: %v", err)
+	}
+	var doc struct {
+		AgentID string           `json:"agent_id"`
+		Steps   []map[string]any `json:"steps"`
+	}
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatalf("trace file is not JSON: %v\n%s", err, raw)
+	}
+	if doc.AgentID == "" || len(doc.Steps) == 0 {
+		t.Fatalf("trace has no agent_id or steps: %s", raw)
+	}
+}
+
+func TestReplayCommand_TraceOut_MissWritesNoTrace(t *testing.T) {
+	bin := buildEngineBinary(t)
+	dir := t.TempDir()
+	captureWithSystem(t, bin, dir, "You refund once.")
+	traceFile := filepath.Join(dir, "new-run.trace.json")
+
+	run := engineRun(t, bin, dir, replayEnv("You refund twice."), replayArgs(dir, "--no-live", "--trace-out", traceFile)...)
+
+	if run.code != 1 {
+		t.Fatalf("want exit 1 on a miss, got %d\n%s", run.code, run.stderr)
+	}
+	if _, err := os.Stat(traceFile); err == nil {
+		t.Fatal("a trace was written for a run that missed the recording")
+	}
+}
+
+func TestReplay_TraceOutWithServe_ExitTwo(t *testing.T) {
+	bin := buildEngineBinary(t)
+	dir := t.TempDir()
+
+	run := engineRun(t, bin, dir, nil, "replay", "--name", "scripted", "--serve", "--trace-out", filepath.Join(dir, "t.json"))
+
+	if run.code != 2 {
+		t.Fatalf("want exit 2, got %d\n%s", run.code, run.stderr)
+	}
+}
+
+func TestReplayCommand_TraceOut_NonZeroExitStillWritesTrace(t *testing.T) {
+	bin := buildEngineBinary(t)
+	dir := t.TempDir()
+	captureWithSystem(t, bin, dir, "You refund once.")
+	traceFile := filepath.Join(dir, "new-run.trace.json")
+	env := append(replayEnv("You refund once."), "ATTEST_CAPTURE_HELPER_EXIT=1")
+
+	run := engineRun(t, bin, dir, env, replayArgs(dir, "--no-live", "--trace-out", traceFile)...)
+
+	if run.code != 1 {
+		t.Fatalf("want exit 1 for a failing command, got %d\n%s", run.code, run.stderr)
+	}
+	if _, err := os.Stat(traceFile); err != nil {
+		t.Fatalf("no trace for a command that served every request and exited 1: %v", err)
+	}
+}

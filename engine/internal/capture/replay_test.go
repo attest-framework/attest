@@ -720,3 +720,83 @@ func TestReplay_ChangedOutputWithNonceShapedLiteral_Misses(t *testing.T) {
 		t.Fatalf("status = %d body=%s, want a replay miss", status, body)
 	}
 }
+
+// lookupThenNotify is a recording that looked up one address and notified the
+// same one: capture numbers an email by value, so both requests hold
+// {{email_1}}.
+func lookupThenNotify(t *testing.T) *Fixture {
+	t.Helper()
+	req := func(verb, who string) string {
+		return fmt.Sprintf(`{"model":"gpt-test","messages":[{"role":"user","content":"%s %s"}]}`, verb, who)
+	}
+	return handFixture(t, "refund",
+		[2]string{req("look up", "{{email_1}}"), `{"step":"lookup"}`},
+		[2]string{req("notify", "{{email_1}}"), `{"step":"notify"}`},
+	)
+}
+
+func liveMail(verb, who string) string {
+	return fmt.Sprintf(`{"model":"gpt-test","messages":[{"role":"user","content":"%s %s"}]}`, verb, who)
+}
+
+func TestReplay_NotifiesDifferentAddressThanLookedUp_Misses(t *testing.T) {
+	s := startReplay(t, lookupThenNotify(t), ReplayStrict, nil, deadUpstreams())
+
+	first, _, _ := post(t, chatURL(s), liveMail("look up", "alice@example.com"))
+	second, _, body := post(t, chatURL(s), liveMail("notify", "attacker@example.org"))
+
+	if first != 200 {
+		t.Fatalf("lookup status = %d", first)
+	}
+	if second == 200 {
+		t.Fatalf("notify of a different address replayed: %s", body)
+	}
+	if msg := missOf(t, body); !strings.Contains(msg, "messages changed") {
+		t.Fatalf("miss message = %q", msg)
+	}
+}
+
+func TestReplay_UnchangedRun_Replays(t *testing.T) {
+	s := startReplay(t, lookupThenNotify(t), ReplayStrict, nil, deadUpstreams())
+
+	for _, verb := range []string{"look up", "notify"} {
+		if status, _, body := post(t, chatURL(s), liveMail(verb, "alice@example.com")); status != 200 {
+			t.Fatalf("%s: %d %s", verb, status, body)
+		}
+	}
+}
+
+func TestReplay_OneDifferentAddressThroughout_Replays(t *testing.T) {
+	s := startReplay(t, lookupThenNotify(t), ReplayStrict, nil, deadUpstreams())
+
+	for _, verb := range []string{"look up", "notify"} {
+		if status, _, body := post(t, chatURL(s), liveMail(verb, "bob@example.org")); status != 200 {
+			t.Fatalf("%s: %d %s", verb, status, body)
+		}
+	}
+}
+
+func TestReplay_EchoedPlaceholderStandsForTheLookedUpAddress(t *testing.T) {
+	s := startReplay(t, lookupThenNotify(t), ReplayStrict, nil, deadUpstreams())
+
+	post(t, chatURL(s), liveMail("look up", "bob@example.org"))
+	status, _, body := post(t, chatURL(s), liveMail("notify", "{{email_1}}"))
+
+	if status != 200 {
+		t.Fatalf("%d %s", status, body)
+	}
+}
+
+func TestReplay_TwoAddressesRecorded_SwappedRolesMiss(t *testing.T) {
+	req := func(a, b string) string {
+		return fmt.Sprintf(`{"model":"gpt-test","messages":[{"role":"user","content":"from %s to %s"}]}`, a, b)
+	}
+	rec := handFixture(t, "pair", [2]string{req("{{email_1}}", "{{email_2}}"), `{}`})
+	s := startReplay(t, rec, ReplayStrict, nil, deadUpstreams())
+
+	status, _, _ := post(t, chatURL(s), req("a@example.com", "a@example.com"))
+
+	if status == 200 {
+		t.Fatal("one address in both roles replayed a recording with two")
+	}
+}

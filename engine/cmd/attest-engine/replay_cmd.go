@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -51,6 +52,13 @@ options:
   --world <world.yaml>   also host the world the agent acts on, starting from
                          its initial state; its base URL variable is set for
                          the command (or listed in the --serve env)
+  --trace-out <file>     with -- <command>: write the trace of the new run (the
+                         spans the command exported over OTLP) to <file> as
+                         attest trace JSON; written when every request was
+                         served, whatever the command's exit status (an incident
+                         recording exits non-zero); the trace is NOT
+                         redacted: write it to a private directory and
+                         do not commit it
   --serve                for an SDK helper: print {"env":{...}} as one JSON
                          line, serve until stdin sends "stop" or closes, then
                          print {"summary":{...}} and exit
@@ -59,7 +67,7 @@ options:
 
 type replayOptions struct {
 	name, fixturesDir, fixture, mode string
-	world                            string
+	world, traceOut                  string
 	serve, noLive, json              bool
 	command                          []string
 }
@@ -77,6 +85,7 @@ func parseReplayArgs(args []string, stderr io.Writer) (*replayOptions, bool) {
 	fs.StringVar(&o.fixture, "fixture", "", "")
 	fs.StringVar(&o.mode, "mode", capture.ReplayStrict, "")
 	fs.StringVar(&o.world, "world", "", "")
+	fs.StringVar(&o.traceOut, "trace-out", "", "")
 	fs.BoolVar(&o.serve, "serve", false, "")
 	fs.BoolVar(&o.noLive, "no-live", false, "")
 	fs.BoolVar(&o.json, "json", false, "")
@@ -98,6 +107,8 @@ func parseReplayArgs(args []string, stderr io.Writer) (*replayOptions, bool) {
 		return usage("give exactly one of --serve or -- <command>")
 	case o.json && o.serve:
 		return usage(jsonServeConflict)
+	case o.traceOut != "" && o.serve:
+		return usage("--trace-out needs -- <command>; --serve runs no command")
 	}
 	if o.name != "" {
 		if err := capture.ValidateName(o.name); err != nil {
@@ -138,7 +149,7 @@ func runReplay(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if o.serve {
 		return replayServe(s, stdin, stdout, stderr)
 	}
-	return replayCommand(s, o, environ, stdout, stderr)
+	return replayCommand(s, o, f, environ, stdout, stderr)
 }
 
 // replayServe hosts the listener for an SDK helper: it prints the environment
@@ -170,7 +181,7 @@ func replayServe(s *capture.Session, stdin io.Reader, stdout, stderr io.Writer) 
 // replayCommand runs the command against the replay proxy and prints the
 // summary; with --json it also prints the one result object to stdout and
 // sends the command's stdout to stderr.
-func replayCommand(s *capture.Session, o *replayOptions, environ []string, stdout, stderr io.Writer) int {
+func replayCommand(s *capture.Session, o *replayOptions, f *capture.Fixture, environ []string, stdout, stderr io.Writer) int {
 	argv := o.command
 	cmd := exec.Command(argv[0], argv[1:]...)
 	cmd.Env = withEnv(environ, s.Env())
@@ -203,6 +214,13 @@ func replayCommand(s *capture.Session, o *replayOptions, environ []string, stdou
 		}
 	}
 	var exitErr *exec.ExitError
+	ranToEnd := runErr == nil || errors.As(runErr, &exitErr)
+	if o.traceOut != "" && ranToEnd && sum.Misses == 0 {
+		if err := writeReplayTrace(s, f, o.traceOut); err != nil {
+			fmt.Fprintf(stderr, "replay: %s\n", terminalSafe(err.Error()))
+			return 1
+		}
+	}
 	switch {
 	case errors.As(runErr, &exitErr):
 		fmt.Fprintf(stderr, "replay: command exited %d\n", exitErr.ExitCode())
@@ -214,6 +232,24 @@ func replayCommand(s *capture.Session, o *replayOptions, environ []string, stdou
 		return 1
 	}
 	return 0
+}
+
+// writeReplayTrace writes the trace of the replayed run, named for the agent
+// the fixture was captured from.
+func writeReplayTrace(s *capture.Session, f *capture.Fixture, path string) error {
+	agentID := ""
+	if f.Trace != nil {
+		agentID = f.Trace.AgentID
+	}
+	t, err := s.ReplayTrace(agentID)
+	if err != nil {
+		return err
+	}
+	data, err := json.Marshal(t)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, data, 0o600)
 }
 
 // writeReplaySummary prints the one-line summary and each miss.

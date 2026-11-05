@@ -7,7 +7,9 @@ Python side:
 - :func:`record` captures the code inside a ``with`` block of this process.
 - :func:`load_fixture` reads a fixture (``proto/attest/v1/fixture-v1.schema.json``).
 - :func:`emit_pytest` writes the fixture's drafted contracts as a pytest file, using the
-  ``expect()`` DSL. ``attest capture`` and :func:`record` call it.
+  ``expect()`` DSL. ``attest capture`` and :func:`record` call it. For a fixture captured
+  from a command, the test re-runs that command under strict replay (:func:`replay_run`)
+  and evaluates the contracts on the new run's trace.
 """
 
 from __future__ import annotations
@@ -18,8 +20,9 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 import threading
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -236,6 +239,18 @@ def _identifier(name: str) -> str:
     return ident
 
 
+@dataclass(frozen=True)
+class Rerun:
+    """Where a drafted replay test re-runs the fixture's source command.
+
+    ``cwd`` is the directory the capture ran in (the source command's relative paths
+    resolve there) and ``world`` the world file the capture hosted, if any.
+    """
+
+    cwd: Path
+    world: Path | None = None
+
+
 def test_path_for(fixture_path: Path) -> Path:
     """Where the drafted test for a fixture goes: ``tests/attest/test_<name>.py`` for
     ``tests/attest/fixtures/<name>.attest.json``."""
@@ -243,13 +258,108 @@ def test_path_for(fixture_path: Path) -> Path:
     return fixture_path.parent.parent / f"test_{_identifier(name)}.py"
 
 
-def render_pytest(fixture: Fixture, fixture_path: Path, test_path: Path) -> str:
+def _rel_expr(target: Path, test_path: Path) -> str:
+    """A ``Path(__file__).parent / ...`` expression for ``target``, relative to the test."""
+    rel = os.path.relpath(target, test_path.parent).replace(os.sep, "/")
+    return "Path(__file__).parent" if rel == "." else f"Path(__file__).parent / {_py(rel)}"
+
+
+def _contract_lines(calls: list[tuple[Contract, str]], subject: str) -> list[str]:
+    lines = [f"        expect({subject})"]
+    for c, call in calls:
+        lines.append(f"        # {_comment(f'{c.id}: {c.description}')}")
+        lines.append(f"        {call}")
+    lines.append("    )")
+    return lines
+
+
+def _skipped_lines(skipped: list[str]) -> list[str]:
+    if not skipped:
+        return []
+    return ["", "# Drafted contracts without a Python DSL call (left out):"] + [
+        f"# - {_comment(s)}" for s in skipped
+    ]
+
+
+def _render_replay(
+    fixture: Fixture,
+    calls: list[tuple[Contract, str]],
+    skipped: list[str],
+    fixture_path: Path,
+    test_path: Path,
+    rerun: Rerun,
+) -> str:
+    ident = _identifier(fixture.name)
+    world = _rel_expr(rerun.world, test_path) if rerun.world is not None else "None"
+    if fixture.expect_fail:
+        meaning = [
+            "The recording is an incident: these contracts failed on it. The test passes once",
+            "the new run satisfies them, so it fails again if the agent regresses.",
+        ]
+    else:
+        meaning = ["The test fails when the agent's behavior stops satisfying them."]
+    lines = [
+        f'"""Replay test drafted by `attest capture` from fixture {_py(fixture.name)}.',
+        "",
+        "Re-runs COMMAND, the source command of the fixture, under strict replay (the engine's",
+        "`replay --mode strict --no-live`): OpenAI- and Anthropic-compatible calls are served",
+        "from the recording, and one that matches no recording fails the test. Other providers",
+        "are not blocked: run this test without their credentials. The drafted contracts are",
+        "evaluated on the NEW run's trace, not on the recording.",
+        "",
+        "COMMAND is what this test runs and is reviewed with the test: if the fixture's",
+        "source.command stops matching it, the test fails instead of running the fixture's.",
+        *meaning,
+        "",
+        "A pass means the new run is consistent with the recording and satisfies the drafted",
+        "contracts; it does not prove the agent correct. Identities are compared by role",
+        "(relative identity): a run that swaps who plays which role misses, while the absolute",
+        "identity is not checked. Review and edit before committing. Re-capturing does not",
+        "overwrite this file.",
+        '"""',
+        "",
+        "from __future__ import annotations",
+        "",
+        "from pathlib import Path",
+        "",
+        "from attest import ExpectChain, Trace, expect",
+        "from attest.capture import replay_run",
+        "from attest.plugin import AttestEngineFixture",
+        "",
+        f"FIXTURE = {_rel_expr(fixture_path, test_path)}",
+        "# The directory `attest capture` ran in: the source command's relative paths start here.",
+        f"RUN_DIR = {_rel_expr(rerun.cwd, test_path)}",
+        f"WORLD = {world}",
+        "# Reviewed argv: the only command this test runs.",
+        f"COMMAND = {_py(list(fixture.source['command']))}",
+        *_skipped_lines(skipped),
+        "",
+        "",
+        "def contracts(trace: Trace) -> ExpectChain:",
+        "    return (",
+        *_contract_lines(calls, "trace"),
+        "",
+        "",
+        f"def test_{ident}_new_run_consistent_with_recording(attest: AttestEngineFixture) -> None:",
+        "    trace = replay_run(FIXTURE, command=COMMAND, cwd=RUN_DIR, world=WORLD)",
+        "",
+        "    attest.evaluate(contracts(trace))",
+    ]
+    return "\n".join(lines) + "\n"
+
+
+def render_pytest(
+    fixture: Fixture, fixture_path: Path, test_path: Path, rerun: Rerun | None = None
+) -> str:
     """Render a fixture's drafted contracts as a pytest module.
 
-    A verified fixture becomes a test that enforces every contract with
-    ``attest.evaluate``. An incident reproduction (``expect_fail``) becomes a test that
-    checks, with ``attest.inspect``, that the expected failures still fail and the other
-    contracts still pass; it stays green while it reproduces the incident.
+    With ``rerun`` and a fixture captured from a command, the test re-runs that command
+    under strict replay and evaluates every contract on the new run's trace (an incident
+    reproduction included: it passes once the agent no longer reproduces the incident).
+    Otherwise a verified fixture becomes a test that enforces every contract on the
+    recorded trace with ``attest.evaluate``, and an incident reproduction (``expect_fail``)
+    a test that checks, with ``attest.inspect``, that the expected failures still fail and
+    the other contracts still pass; it stays green while it reproduces the incident.
     """
     calls: list[tuple[Contract, str]] = []
     skipped: list[str] = []
@@ -258,8 +368,9 @@ def render_pytest(fixture: Fixture, fixture_path: Path, test_path: Path) -> str:
             calls.append((c, dsl_call(c)))
         except ValueError as exc:
             skipped.append(str(exc))
+    if rerun is not None and fixture.source["kind"] == "command" and fixture.replay_capable:
+        return _render_replay(fixture, calls, skipped, fixture_path, test_path, rerun)
     ident = _identifier(fixture.name)
-    rel = os.path.relpath(fixture_path, test_path.parent).replace(os.sep, "/")
     status = {r.contract: r.status for r in fixture.results}
 
     lines = [
@@ -276,17 +387,14 @@ def render_pytest(fixture: Fixture, fixture_path: Path, test_path: Path) -> str:
         "from attest import ExpectChain, expect, load_fixture",
         "from attest.plugin import AttestEngineFixture",
         "",
-        f"FIXTURE = load_fixture(Path(__file__).parent / {_py(rel)})",
+        f"FIXTURE = load_fixture({_rel_expr(fixture_path, test_path)})",
+        *_skipped_lines(skipped),
+        "",
+        "",
+        "def contracts() -> ExpectChain:",
+        "    return (",
+        *_contract_lines(calls, "FIXTURE.trace"),
     ]
-    if skipped:
-        lines += ["", "# Drafted contracts without a Python DSL call (left out):"]
-        lines += [f"# - {_comment(s)}" for s in skipped]
-    lines += ["", "", "def contracts() -> ExpectChain:", "    return ("]
-    lines.append("        expect(FIXTURE.trace)")
-    for c, call in calls:
-        lines.append(f"        # {_comment(f'{c.id}: {c.description}')}")
-        lines.append(f"        {call}")
-    lines.append("    )")
 
     if fixture.expect_fail:
         lines += [
@@ -316,8 +424,11 @@ def render_pytest(fixture: Fixture, fixture_path: Path, test_path: Path) -> str:
     return "\n".join(lines) + "\n"
 
 
-def emit_pytest(fixture_path: str | os.PathLike[str]) -> Path | None:
+def emit_pytest(fixture_path: str | os.PathLike[str], rerun: Rerun | None = None) -> Path | None:
     """Write the drafted pytest file for a fixture unless it already exists.
+
+    ``rerun`` makes the test of a command fixture re-run the command under strict replay
+    (see :func:`render_pytest`).
 
     Returns the path written, or ``None`` when a test file is already there (re-capturing
     never overwrites an edited test).
@@ -328,7 +439,7 @@ def emit_pytest(fixture_path: str | os.PathLike[str]) -> Path | None:
         raise CaptureError(f"{test_path} is a symbolic link; refusing to draft a test through it")
     if test_path.exists():
         return None
-    source = render_pytest(load_fixture(fp), fp, test_path)
+    source = render_pytest(load_fixture(fp), fp, test_path, rerun)
     test_path.parent.mkdir(parents=True, exist_ok=True)
     # Create exclusively and never through a link planted after the check.
     # Windows has no O_NOFOLLOW; O_EXCL there fails on any existing path.
@@ -340,6 +451,144 @@ def emit_pytest(fixture_path: str | os.PathLike[str]) -> Path | None:
     with os.fdopen(fd, "w", encoding="utf-8") as f:
         f.write(source)
     return test_path
+
+
+# ------------------------------------------------------------------------ replay_run()
+
+_OTHER_PROVIDER_KEYS = ("ANTHROPIC_API_KEY", "GOOGLE_API_KEY", "GEMINI_API_KEY")
+_REPLAY_TIMEOUT_S = 300.0
+_REDACTED_MARKER = "[redacted]"  # engine/internal/redact: Marker
+_PLACEHOLDER = re.compile(r"\{\{(id|email|timestamp)_(\d+)\}\}")  # capture.HasPlaceholder
+_STDERR_TAIL = 4000
+
+
+def _tail(stderr: str) -> str:
+    return stderr[-_STDERR_TAIL:]
+
+
+def _check_replay(fp: Path, fixture: Fixture, proc: subprocess.CompletedProcess[str]) -> None:
+    """Fail unless every request was served and the command exited as it did when recorded.
+
+    The engine exits 1 for a miss and for a failing command alike, so the verdict comes
+    from its ``--json`` result. An incident recording exits non-zero; its replay must too.
+    """
+    try:
+        result = json.loads(proc.stdout)
+        misses = int(result["summary"]["misses"])
+        exit_code = int(result["exit_code"])
+    except (ValueError, KeyError, TypeError):
+        raise CaptureError(
+            f"{fp}: replay run exited {proc.returncode}\n{_tail(proc.stderr)}"
+        ) from None
+    if misses:
+        raise CaptureError(f"{fp}: {misses} request(s) matched no recording\n{_tail(proc.stderr)}")
+    recorded = int(fixture.source.get("exit_code", 0))
+    if exit_code != recorded:
+        raise CaptureError(
+            f"{fp}: the command exited {exit_code}; the recording exited {recorded}\n"
+            f"{_tail(proc.stderr)}"
+        )
+
+
+def replay_run(
+    fixture_path: str | os.PathLike[str],
+    *,
+    command: Sequence[str],
+    cwd: str | os.PathLike[str] | None = None,
+    world: str | os.PathLike[str] | None = None,
+    engine_path: str | None = None,
+    timeout: float = _REPLAY_TIMEOUT_S,
+) -> Trace:
+    """Re-run a fixture's source command under strict replay and return the new run's trace.
+
+    Runs ``attest-engine replay --mode strict --no-live --trace-out ... -- <command>``:
+    OpenAI- and Anthropic-compatible calls the command makes are answered from the
+    fixture's recorded exchanges, and a call that matches no recording fails. Other
+    providers are not blocked: the replay proxy redirects only ``OPENAI_BASE_URL`` and
+    ``ANTHROPIC_BASE_URL``, and ``ATTEST_EGRESS=block`` only affects processes that install
+    attest's guard. ``ANTHROPIC_API_KEY``, ``GOOGLE_API_KEY`` and ``GEMINI_API_KEY`` are
+    removed from the environment and ``OPENAI_API_KEY`` is a placeholder; run without other
+    providers' credentials. The new run's trace is written unredacted to a private
+    temporary directory removed afterwards.
+
+    The fixture file can be changed by a pull request, so its ``source.command`` is never
+    run: ``command`` is, and the call fails when the fixture's differs, or when it has
+    redacted or templated (``{{id_N}}``) arguments.
+
+    Args:
+        fixture_path: The fixture to replay; it must come from a command capture.
+        command: The argv to run, written in the (reviewed) test; must equal the fixture's
+            ``source.command``.
+        cwd: Directory to run the command in (the one the capture ran in).
+        world: World file the capture hosted, when the fixture has a ``world`` section.
+        engine_path: Engine binary; default is the SDK's discovery order.
+        timeout: Seconds before the run is abandoned.
+
+    Raises:
+        CaptureError: The fixture has no replayable source command, its command differs from
+            ``command`` or has redacted or templated arguments, the engine could not
+            start, a request matched no recording, the command exited differently than when
+            recorded, or no trace came out.
+    """
+    from attest.engine_manager import resolve_engine  # engine_manager imports the package
+
+    fp = Path(fixture_path)
+    fixture = load_fixture(fp)
+    recorded_command = fixture.source.get("command")
+    if fixture.source["kind"] != "command" or not fixture.replay_capable or not recorded_command:
+        raise CaptureError(f"{fp}: not a command capture with recorded exchanges; cannot replay")
+    command = list(command)
+    if command != recorded_command:
+        raise CaptureError(
+            f"{fp}: refusing to run: the fixture's source.command {recorded_command!r} differs "
+            f"from the test's COMMAND {command!r}; review the change, then update the test"
+        )
+    for arg in command:
+        if _REDACTED_MARKER in arg or _PLACEHOLDER.search(arg):
+            raise CaptureError(
+                f"{fp}: refusing to run: the recorded command has redacted or templated "
+                "arguments; re-run `attest capture` with the real command"
+            )
+    if fixture.world is not None and world is None:
+        raise CaptureError(f"{fp}: captured with a world; pass the world file the capture ran with")
+    env = {k: v for k, v in os.environ.items() if k not in _OTHER_PROVIDER_KEYS}
+    env["OPENAI_API_KEY"] = "replay-needs-no-key"
+    env["ATTEST_EGRESS"] = "block"
+    with tempfile.TemporaryDirectory(prefix="attest-replay-") as tmp:
+        trace_file = Path(tmp) / "trace.json"
+        argv = [
+            resolve_engine(engine_path),
+            "replay",
+            "--fixture",
+            str(fp.resolve()),
+            "--mode",
+            "strict",
+            "--no-live",
+            "--trace-out",
+            str(trace_file),
+            "--json",
+        ]
+        if world is not None:
+            argv += ["--world", str(Path(world).resolve())]
+        argv += ["--", *command]
+        try:
+            proc = subprocess.run(
+                argv,
+                cwd=cwd,
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+                check=False,
+            )
+        except subprocess.TimeoutExpired:
+            raise CaptureError(f"{fp}: replay run exceeded {timeout:g}s") from None
+        except OSError as exc:
+            raise CaptureError(f"{fp}: could not start the replay run: {exc}") from None
+        _check_replay(fp, fixture, proc)
+        if not trace_file.exists():
+            raise CaptureError(f"{fp}: the replay run exported no trace\n{_tail(proc.stderr)}")
+        return Trace.from_dict(json.loads(trace_file.read_text(encoding="utf-8")))
 
 
 # --------------------------------------------------------------------------- record()

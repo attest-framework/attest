@@ -24,7 +24,7 @@ import (
 func init() {
 	register(command{
 		name:    "capture",
-		summary: "record a run as a verified fixture (trace, model exchanges, drafted contracts)",
+		summary: "record a run as a fixture consistent with its recording (trace, model exchanges, drafted contracts)",
 		run:     handleCaptureCommand,
 		schema:  "cli/capture.schema.json",
 		exits: []exitCode{
@@ -44,13 +44,14 @@ const captureUsage = `usage: attest-engine capture --name <name> [options] -- <c
 Runs <command> with OPENAI_BASE_URL and ANTHROPIC_BASE_URL pointing at a
 recording proxy and OTEL_EXPORTER_OTLP_TRACES_ENDPOINT at a trace receiver,
 both on 127.0.0.1. Writes <out-dir>/<name>.attest.json with secrets redacted,
-volatile values templated and drafted contracts verified. Exits 0 when the
-fixture is verified or the run was healthy with nothing to verify (outcome
-nothing_to_verify), 1 when it is not verified.
+volatile values templated and drafted contracts checked against the run.
+Exits 0 when the fixture is consistent with the recording or the run was
+healthy with nothing to verify (outcome nothing_to_verify), 1 when it is not
+verified.
 
 options:
   --out-dir <dir>        fixture directory (default tests/attest/fixtures)
-  --expect-fail          save an incident reproduction: verified when drafted
+  --expect-fail          save an incident reproduction: consistent when drafted
                          contracts fail, recorded as expected failures
   --agent-id <id>        trace agent_id (default: the first turn's agent name;
                          with --refresh, the fixture's)
@@ -469,9 +470,9 @@ func writeCaptureSummary(w io.Writer, path string, f *capture.Fixture) {
 	case outcome == capture.OutcomeNotVerified:
 		fmt.Fprintf(w, "  not verified: %s\n", terminalSafe(strings.Join(causes, "; ")))
 	case v.ExpectFail:
-		fmt.Fprintf(w, "  verified: incident reproduction; expected %s: %s\n", plural(len(v.ExpectedFailures), "failure", "failures"), terminalSafe(strings.Join(v.ExpectedFailures, ", ")))
+		fmt.Fprintf(w, "  consistent with the recording: incident reproduction; expected %s: %s\n", plural(len(v.ExpectedFailures), "failure", "failures"), terminalSafe(strings.Join(v.ExpectedFailures, ", ")))
 	default:
-		fmt.Fprintln(w, "  verified: every drafted contract passes")
+		fmt.Fprintln(w, "  consistent with the recording: every drafted contract passes")
 	}
 }
 
