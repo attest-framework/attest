@@ -26,6 +26,7 @@ from attest._proto.types import (
     Trace,
 )
 from attest.assertion_id import OccurrenceCounter
+from attest.config import get_alert_slack_url, get_alert_webhook
 
 _DEFAULT_QUEUE_SIZE: int = 1000
 _DEFAULT_STATIC_THRESHOLD: float = 0.8
@@ -253,6 +254,10 @@ class ContinuousEvalRunner:
     ) -> None:
         """Create a runner.
 
+        ``alert_webhook`` and ``alert_slack_url`` default to the values from ``attest.config()``
+        (or ``ATTEST_ALERT_WEBHOOK`` / ``ATTEST_ALERT_SLACK_URL``) when not passed; an explicit
+        argument wins.
+
         ``on_error`` receives every drift-read or alert-dispatch failure (and any evaluation
         failure in the background loop); each is also logged. ``dispatch_timeout_s`` bounds
         each alert POST and ``drain_timeout_s`` bounds how long ``stop()`` waits for queued
@@ -269,8 +274,8 @@ class ContinuousEvalRunner:
             counter.assign(assertion)
         self._sampler = Sampler(sample_rate)
         self._dispatcher = AlertDispatcher(
-            webhook_url=alert_webhook,
-            slack_url=alert_slack_url,
+            webhook_url=alert_webhook if alert_webhook is not None else get_alert_webhook(),
+            slack_url=alert_slack_url if alert_slack_url is not None else get_alert_slack_url(),
             timeout_s=dispatch_timeout_s,
         )
         self._on_error = on_error

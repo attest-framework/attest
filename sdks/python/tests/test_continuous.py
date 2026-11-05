@@ -821,3 +821,91 @@ class TestDispatchWorkerThread:
         assert not alive, f"worker still running {elapsed:.3f}s after start"
         assert len(outcome) == 1
         assert "timed out" in str(outcome[0])
+
+
+class _Receiver:
+    """Local HTTP server that records every POSTed JSON body."""
+
+    def __init__(self) -> None:
+        import json
+        import threading
+        from http.server import BaseHTTPRequestHandler, HTTPServer
+
+        self.bodies: list[dict[str, Any]] = []
+        bodies = self.bodies
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_POST(self) -> None:  # noqa: N802
+                length = int(self.headers["Content-Length"])
+                bodies.append(json.loads(self.rfile.read(length)))
+                self.send_response(200)
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+
+            def log_message(self, format: str, *args: object) -> None:  # noqa: A002
+                return
+
+        self._server = HTTPServer(("127.0.0.1", 0), Handler)
+        self.url = f"http://127.0.0.1:{self._server.server_address[1]}/hook"
+        self._thread = threading.Thread(target=self._server.serve_forever, daemon=True)
+        self._thread.start()
+
+    def close(self) -> None:
+        self._server.shutdown()
+        self._server.server_close()
+        self._thread.join()
+
+
+class TestConfiguredAlertTargets:
+    """attest.config() alert targets are the runner's defaults; explicit arguments win."""
+
+    @pytest.fixture
+    def receivers(self) -> Any:
+        from attest.config import reset
+
+        generic, slack, other = _Receiver(), _Receiver(), _Receiver()
+        yield generic, slack, other
+        reset()
+        for receiver in (generic, slack, other):
+            receiver.close()
+
+    @staticmethod
+    def _runner(**kwargs: Any) -> ContinuousEvalRunner:
+        client, _ = TestDriftAlerts._client("pass", "drift_detected")
+        return ContinuousEvalRunner(
+            client=client,
+            assertions=[TestDriftAlerts._assertion(threshold="dynamic")],
+            name="cfg",
+            sample_rate=1.0,
+            **kwargs,
+        )
+
+    @pytest.mark.asyncio
+    async def test_runner_configured_only_through_attest_config_alerts_both_targets(
+        self, receivers: Any
+    ) -> None:
+        import attest
+
+        generic, slack, _ = receivers
+        attest.config(alert_webhook=generic.url, alert_slack_url=slack.url)
+        runner = self._runner()
+
+        await runner.evaluate_trace(_make_trace("t-cfg"))
+
+        assert [b["trace_id"] for b in generic.bodies] == ["t-cfg"]
+        assert len(slack.bodies) == 1
+        assert "t-cfg" in slack.bodies[0]["text"]
+
+    @pytest.mark.asyncio
+    async def test_explicit_runner_arguments_override_attest_config(self, receivers: Any) -> None:
+        import attest
+
+        generic, slack, other = receivers
+        attest.config(alert_webhook=generic.url, alert_slack_url=slack.url)
+        runner = self._runner(alert_webhook=other.url)
+
+        await runner.evaluate_trace(_make_trace("t-explicit"))
+
+        assert [b["trace_id"] for b in other.bodies] == ["t-explicit"]
+        assert generic.bodies == []
+        assert len(slack.bodies) == 1
