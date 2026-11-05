@@ -2,15 +2,19 @@
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 import os
 import platform
 import shutil
+import socket
+import socketserver
 import ssl
 import subprocess
 import threading
 import time
+import urllib.request
 from collections.abc import Callable, Iterator
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -114,6 +118,7 @@ class FakeRelease:
         self.http_hits: list[str] = []
         self.release = threading.Event()
         self.trickle_delay = 0.0
+        self.declared_length: int | None = None
         outer = self
 
         class Handler(BaseHTTPRequestHandler):
@@ -129,7 +134,8 @@ class FakeRelease:
                 self.send_response(status)
                 for name, value in headers.items():
                     self.send_header(name, value)
-                self.send_header("Content-Length", str(len(body)))
+                declared = len(body) if outer.declared_length is None else outer.declared_length
+                self.send_header("Content-Length", str(declared))
                 self.end_headers()
                 if outer.trickle_delay:
                     for i in range(len(body)):
@@ -200,7 +206,7 @@ def fake_release(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Fa
             "-subj",
             "/CN=127.0.0.1",
             "-addext",
-            "subjectAltName=IP:127.0.0.1",
+            "subjectAltName=IP:127.0.0.1,DNS:release.test",
             "-keyout",
             str(key),
             "-out",
@@ -212,6 +218,8 @@ def fake_release(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Fa
     server = FakeRelease(cert, key)
     monkeypatch.setattr(downloader, "_GITHUB_RELEASE_BASE", server.base)
     monkeypatch.setattr(downloader, "_ssl_context", lambda: server.client_context)
+    # The host running the tests may sit behind a proxy; the default here is a direct connection.
+    monkeypatch.setattr(urllib.request, "getproxies", lambda: {})
     yield server
     server.close()
 
@@ -400,3 +408,224 @@ def test_download_engine_trickling_server_fails_within_total_timeout(
 
     assert time.monotonic() - started < 3
     assert cached_engine_path() is None
+
+
+def test_download_engine_truncated_body_reports_truncation_not_hash_mismatch(
+    isolated_engine_env: Path,
+    fake_release: FakeRelease,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    binary = b"engine that is cut short"
+    _ship_table(tmp_path / "table.json", monkeypatch, binary)
+    fake_release.declared_length = len(binary)
+    fake_release.routes[fake_release.asset_path] = lambda: (200, {}, binary[:6])
+
+    with pytest.raises(RuntimeError, match=r"Failed to download engine.*truncated download"):
+        download_engine()
+
+    assert cached_engine_path() is None
+
+
+@pytest.mark.parametrize(
+    "location",
+    ["https://127.0.0.1:99999999/engine", "https://[::1/engine"],
+    ids=["invalid-port", "bad-ipv6-literal"],
+)
+def test_download_engine_malformed_redirect_location_is_a_download_failure(
+    isolated_engine_env: Path,
+    fake_release: FakeRelease,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    location: str,
+) -> None:
+    _ship_table(tmp_path / "table.json", monkeypatch, b"engine")
+    fake_release.routes[fake_release.asset_path] = lambda: (302, {"Location": location}, b"")
+
+    with pytest.raises(RuntimeError, match=r"Failed to download engine from .*invalid"):
+        download_engine()
+
+    assert cached_engine_path() is None
+
+
+# ── proxies ────────────────────────────────────────────────────────────
+
+
+class ConnectProxy:
+    """A CONNECT-only proxy: it refuses every other method, so a request that does not tunnel
+    never reaches the release host. Resolves ``release.test`` to the local https server."""
+
+    def __init__(self, upstream_port: int) -> None:
+        self.connects: list[str] = []
+        self.auth_headers: list[str | None] = []
+        self.reject_with: int | None = None
+        outer = self
+
+        class Handler(socketserver.BaseRequestHandler):
+            def handle(self) -> None:
+                sock: socket.socket = self.request
+                buf = b""
+                while b"\r\n\r\n" not in buf:
+                    chunk = sock.recv(4096)
+                    if not chunk:
+                        return
+                    buf += chunk
+                head = buf.split(b"\r\n\r\n")[0].decode("latin-1").split("\r\n")
+                method, target, _ = head[0].split(" ")
+                headers = {k.lower(): v for k, _, v in (line.partition(": ") for line in head[1:])}
+                outer.auth_headers.append(headers.get("proxy-authorization"))
+                if method != "CONNECT":
+                    sock.sendall(b"HTTP/1.1 405 Method Not Allowed\r\nContent-Length: 0\r\n\r\n")
+                    return
+                outer.connects.append(target)
+                if outer.reject_with is not None:
+                    sock.sendall(
+                        f"HTTP/1.1 {outer.reject_with} Denied\r\nContent-Length: 0\r\n\r\n".encode()
+                    )
+                    return
+                upstream = socket.create_connection(("127.0.0.1", upstream_port))
+                sock.sendall(b"HTTP/1.1 200 Connection established\r\n\r\n")
+                _relay(sock, upstream)
+
+        class Server(socketserver.ThreadingTCPServer):
+            allow_reuse_address = True
+            daemon_threads = True
+
+        self.server = Server(("127.0.0.1", 0), Handler)
+        self.thread = threading.Thread(
+            target=self.server.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True
+        )
+        self.thread.start()
+
+    @property
+    def port(self) -> int:
+        return int(self.server.server_address[1])
+
+    def close(self) -> None:
+        self.server.shutdown()
+        self.server.server_close()
+
+
+def _relay(a: socket.socket, b: socket.socket) -> None:
+    def pump(src: socket.socket, dst: socket.socket) -> None:
+        try:
+            while data := src.recv(65536):
+                dst.sendall(data)
+        except OSError:
+            pass
+        finally:
+            _shutdown_both(dst)
+
+    forward = threading.Thread(target=pump, args=(a, b), daemon=True)
+    forward.start()
+    pump(b, a)
+    forward.join(timeout=5)
+    b.close()
+
+
+def _shutdown_both(sock: socket.socket) -> None:
+    try:
+        sock.shutdown(socket.SHUT_WR)
+    except OSError:
+        pass
+
+
+@pytest.fixture
+def connect_proxy(fake_release: FakeRelease) -> Iterator[ConnectProxy]:
+    proxy = ConnectProxy(fake_release.https.server_address[1])
+    yield proxy
+    proxy.close()
+
+
+def _release_host_asset_url(fake_release: FakeRelease) -> str:
+    return f"https://release.test:{fake_release.https.server_address[1]}/releases/download"
+
+
+def test_download_engine_honours_https_proxy_and_verifies_the_target_end_to_end(
+    isolated_engine_env: Path,
+    fake_release: FakeRelease,
+    connect_proxy: ConnectProxy,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    binary = b"engine fetched through a proxy"
+    _ship_table(tmp_path / "table.json", monkeypatch, binary)
+    _serve(fake_release, binary)
+    # release.test does not resolve: only a CONNECT to the proxy can reach the server.
+    monkeypatch.setattr(downloader, "_GITHUB_RELEASE_BASE", _release_host_asset_url(fake_release))
+    proxy_url = f"http://127.0.0.1:{connect_proxy.port}"
+    monkeypatch.setattr(urllib.request, "getproxies", lambda: {"https": proxy_url})
+    monkeypatch.setattr(urllib.request, "proxy_bypass", lambda host: False)
+
+    target = download_engine()
+
+    assert target.read_bytes() == binary
+    assert connect_proxy.connects == [f"release.test:{fake_release.https.server_address[1]}"]
+
+
+def test_download_engine_proxy_bypass_connects_directly(
+    isolated_engine_env: Path,
+    fake_release: FakeRelease,
+    connect_proxy: ConnectProxy,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    binary = b"engine fetched directly"
+    _ship_table(tmp_path / "table.json", monkeypatch, binary)
+    _serve(fake_release, binary)
+    proxy_url = f"http://127.0.0.1:{connect_proxy.port}"
+    monkeypatch.setattr(urllib.request, "getproxies", lambda: {"https": proxy_url})
+    monkeypatch.setattr(urllib.request, "proxy_bypass", lambda host: True)
+
+    target = download_engine()
+
+    assert target.read_bytes() == binary
+    assert connect_proxy.connects == []
+
+
+def test_download_engine_proxy_credentials_go_in_connect_header_not_in_errors(
+    isolated_engine_env: Path,
+    fake_release: FakeRelease,
+    connect_proxy: ConnectProxy,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    binary = b"engine"
+    _ship_table(tmp_path / "table.json", monkeypatch, binary)
+    _serve(fake_release, binary)
+    monkeypatch.setattr(downloader, "_GITHUB_RELEASE_BASE", _release_host_asset_url(fake_release))
+    proxy_url = f"http://builder:s3cr3t%2Fpw@127.0.0.1:{connect_proxy.port}"
+    monkeypatch.setattr(urllib.request, "getproxies", lambda: {"https": proxy_url})
+    monkeypatch.setattr(urllib.request, "proxy_bypass", lambda host: False)
+    connect_proxy.reject_with = 407
+
+    with pytest.raises(RuntimeError, match="Failed to download engine") as denied:
+        download_engine()
+
+    expected = "Basic " + base64.b64encode(b"builder:s3cr3t/pw").decode()
+    assert connect_proxy.auth_headers == [expected]
+    assert "s3cr3t" not in str(denied.value)
+    assert "builder" not in str(denied.value)
+
+
+def test_download_engine_unreachable_proxy_error_omits_proxy_credentials(
+    isolated_engine_env: Path,
+    fake_release: FakeRelease,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _ship_table(tmp_path / "table.json", monkeypatch, b"engine")
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        closed_port = probe.getsockname()[1]
+    monkeypatch.setattr(
+        urllib.request,
+        "getproxies",
+        lambda: {"https": f"http://builder:s3cr3t@127.0.0.1:{closed_port}"},
+    )
+    monkeypatch.setattr(urllib.request, "proxy_bypass", lambda host: False)
+
+    with pytest.raises(RuntimeError, match="Failed to download engine") as failed:
+        download_engine()
+
+    assert "s3cr3t" not in str(failed.value)

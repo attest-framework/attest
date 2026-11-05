@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import http.client
 import json
@@ -16,6 +17,7 @@ import tempfile
 import threading
 import time
 import urllib.parse
+import urllib.request
 from pathlib import Path
 
 from attest import ENGINE_VERSION, __version__
@@ -89,12 +91,51 @@ def _shutdown_quietly(sock: socket.socket) -> None:
         pass
 
 
+def _open_connection(host: str, port: int | None, timeout: float) -> http.client.HTTPSConnection:
+    """Connection to ``host``, through the proxy that ``HTTPS_PROXY`` and friends select.
+
+    Behind a proxy the connection goes to the proxy and ``set_tunnel`` issues ``CONNECT``; TLS
+    and hostname verification then run end to end with ``host``, so the proxy only relays bytes.
+    Only ``http://`` proxies are supported. Credentials in the proxy URL travel as a
+    ``Proxy-Authorization`` header on the ``CONNECT`` and never appear in an error message.
+    """
+    proxy = urllib.request.getproxies().get("https")
+    if not proxy or urllib.request.proxy_bypass(host):
+        return http.client.HTTPSConnection(host, port, timeout=timeout, context=_ssl_context())
+    if "://" not in proxy:
+        proxy = f"http://{proxy}"
+    try:
+        proxy_parts = urllib.parse.urlsplit(proxy)
+        proxy_host = proxy_parts.hostname
+        proxy_port = proxy_parts.port
+    except ValueError as exc:
+        raise RuntimeError("The configured HTTPS proxy URL is invalid") from exc
+    if proxy_parts.scheme != "http" or not proxy_host:
+        raise RuntimeError(
+            f"Unsupported HTTPS proxy scheme '{proxy_parts.scheme}': only http:// proxies work"
+        )
+    conn = http.client.HTTPSConnection(
+        proxy_host, proxy_port or 80, timeout=timeout, context=_ssl_context()
+    )
+    tunnel_headers: dict[str, str] = {}
+    if proxy_parts.username is not None:
+        credentials = (
+            f"{urllib.parse.unquote(proxy_parts.username)}:"
+            f"{urllib.parse.unquote(proxy_parts.password or '')}"
+        )
+        token = base64.b64encode(credentials.encode()).decode("ascii")
+        tunnel_headers["Proxy-Authorization"] = f"Basic {token}"
+    conn.set_tunnel(host, port or 443, headers=tunnel_headers)
+    return conn
+
+
 def _fetch(url: str) -> bytes:
     """GET ``url`` over https, following redirects that stay on https.
 
     A redirect to any other scheme is refused. A relative ``Location`` resolves against
     the URL that returned it. The connect phase is bounded by ``_CONNECT_TIMEOUT_S`` and
     the whole fetch, including every redirect hop and body read, by ``_TOTAL_TIMEOUT_S``.
+    A body shorter than its ``Content-Length`` is reported as a truncated download.
     """
     deadline = time.monotonic() + _TOTAL_TIMEOUT_S
 
@@ -106,24 +147,24 @@ def _fetch(url: str) -> bytes:
 
     current = url
     for _ in range(_MAX_REDIRECTS + 1):
-        parts = urllib.parse.urlsplit(current)
-        if parts.scheme != "https" or not parts.hostname:
+        try:
+            parts = urllib.parse.urlsplit(current)
+            host = parts.hostname
+            port = parts.port
+        except ValueError as exc:
+            raise http.client.InvalidURL(f"invalid URL {current!r}: {exc}") from exc
+        if parts.scheme != "https" or not host:
             raise RuntimeError(f"Refusing to download over a non-https URL: {current}")
         target = parts.path or "/"
         if parts.query:
             target += f"?{parts.query}"
-        conn = http.client.HTTPSConnection(
-            parts.hostname,
-            parts.port,
-            timeout=min(_CONNECT_TIMEOUT_S, remaining()),
-            context=_ssl_context(),
-        )
+        conn = _open_connection(host, port, min(_CONNECT_TIMEOUT_S, remaining()))
         watchdog: threading.Timer | None = None
         try:
             conn.connect()
             sock = conn.sock
             if sock is None:
-                raise RuntimeError(f"Connection to {parts.hostname} closed before the request")
+                raise RuntimeError(f"Connection to {host} closed before the request")
             sock.settimeout(remaining())
             # A server that drips bytes resets the per-recv timeout; the watchdog enforces
             # the total deadline by shutting the socket down.
@@ -136,7 +177,12 @@ def _fetch(url: str) -> bytes:
                 location = resp.getheader("Location")
                 if not location:
                     raise RuntimeError(f"Redirect {resp.status} without Location from {current}")
-                current = urllib.parse.urljoin(current, location)
+                try:
+                    current = urllib.parse.urljoin(current, location)
+                except ValueError as exc:
+                    raise http.client.InvalidURL(
+                        f"invalid redirect Location {location!r}: {exc}"
+                    ) from exc
                 continue
             if resp.status != 200:
                 raise RuntimeError(f"HTTP {resp.status} fetching {current}")
@@ -144,7 +190,13 @@ def _fetch(url: str) -> bytes:
             while not resp.isclosed():
                 sock.settimeout(remaining())
                 chunks.append(resp.read(65536))
-            return b"".join(chunks)
+            body = b"".join(chunks)
+            declared = resp.getheader("Content-Length")
+            if declared is not None and declared.isdigit() and len(body) != int(declared):
+                raise http.client.HTTPException(
+                    f"truncated download: received {len(body)} of {declared} bytes from {current}"
+                )
+            return body
         finally:
             if watchdog is not None:
                 watchdog.cancel()
