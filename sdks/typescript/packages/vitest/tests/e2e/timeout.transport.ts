@@ -46,7 +46,7 @@ afterAll(async () => {
 });
 
 it("T1 times out", async (context) => {
-  process.env["ATTEST_ENGINE_TIMEOUT"] = "300";
+  process.env["ATTEST_ENGINE_TIMEOUT"] = "0.3";
   try {
     await evaluate(attestExpect(trace).passesJudge("Is it ok?"), { context });
   } finally {
