@@ -61,19 +61,22 @@ type JSONSummaryV2 struct {
 //
 // The schema is proto/attest/v1/report-v2.schema.json.
 type JSONReportV2 struct {
-	ReportVersion   int                     `json:"report_version"`
-	Timestamp       string                  `json:"timestamp"`
-	Simulated       bool                    `json:"simulated"`
-	Summary         JSONSummaryV2           `json:"summary"`
-	Layers          []LayerSummary          `json:"layers"`
-	Results         []types.AssertionResult `json:"results"`
-	Tests           []TestRecord            `json:"tests"`
-	TotalCost       float64                 `json:"total_cost"`
-	TotalDurationMS int64                   `json:"total_duration_ms"`
-	P50DurationMS   int64                   `json:"p50_duration_ms"`
-	P95DurationMS   int64                   `json:"p95_duration_ms"`
-	FailureClasses  map[string]int          `json:"failure_classes,omitempty"`
-	Baseline        *BaselineDelta          `json:"baseline,omitempty"`
+	ReportVersion int                     `json:"report_version"`
+	Timestamp     string                  `json:"timestamp"`
+	Simulated     bool                    `json:"simulated"`
+	Summary       JSONSummaryV2           `json:"summary"`
+	Layers        []LayerSummary          `json:"layers"`
+	Results       []types.AssertionResult `json:"results"`
+	Tests         []TestRecord            `json:"tests"`
+	// TestsCollected is the number of tests the run collected; nil when the
+	// writer did not record it.
+	TestsCollected  *int           `json:"tests_collected,omitempty"`
+	TotalCost       float64        `json:"total_cost"`
+	TotalDurationMS int64          `json:"total_duration_ms"`
+	P50DurationMS   int64          `json:"p50_duration_ms"`
+	P95DurationMS   int64          `json:"p95_duration_ms"`
+	FailureClasses  map[string]int `json:"failure_classes,omitempty"`
+	Baseline        *BaselineDelta `json:"baseline,omitempty"`
 }
 
 // TestRecord is one test in a v2 report: its outcome under the C1

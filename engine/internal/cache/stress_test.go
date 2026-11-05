@@ -1,7 +1,6 @@
 package cache_test
 
 import (
-	"database/sql"
 	"fmt"
 	"path/filepath"
 	"sync"
@@ -12,17 +11,17 @@ import (
 )
 
 // newTestHistoryStoreFile creates a HistoryStore backed by a file-based SQLite DB
-// with busy_timeout to handle contention under concurrent access.
+// opened through the production path (cache.Open), so the stress tests run
+// against the same DSN the engine uses.
 func newTestHistoryStoreFile(t *testing.T) *cache.HistoryStore {
 	t.Helper()
 	dir := t.TempDir()
 	dbPath := filepath.Join(dir, "history.db")
-	dsn := dbPath + "?_pragma=busy_timeout(5000)"
-	db, err := sql.Open("sqlite", dsn)
+	db, release, err := cache.Open(dbPath)
 	if err != nil {
-		t.Fatalf("open sqlite: %v", err)
+		t.Fatalf("cache.Open: %v", err)
 	}
-	t.Cleanup(func() { db.Close() })
+	t.Cleanup(func() { release() })
 
 	store, err := cache.NewHistoryStore(db)
 	if err != nil {
@@ -35,8 +34,8 @@ func newTestHistoryStoreFile(t *testing.T) *cache.HistoryStore {
 //
 // These tests verify that the EmbeddingCache and HistoryStore are free of data
 // races under concurrent access. Run with -race to catch races.
-// SQLite is single-writer; SQLITE_BUSY errors are expected under heavy contention
-// and are tolerated — the goal is race detection, not zero-error writes.
+// The handle comes from cache.Open, so writers wait on busy_timeout instead of
+// failing; the history tests fail on any Record error.
 
 // ── EmbeddingCache stress ──
 
@@ -291,6 +290,7 @@ func TestHistoryStore_PruneUnderConcurrentRecords(t *testing.T) {
 	}
 
 	wg.Wait()
+	store.WaitForPrune()
 
 	// After pruning, row count should be bounded. Prune triggers at every 100th insert
 	// and races with concurrent inserts, so allow some slack over the configured limit.

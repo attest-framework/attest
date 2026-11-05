@@ -1,15 +1,12 @@
 package main
 
 import (
-	"database/sql"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
 	"path/filepath"
 	"time"
-
-	_ "modernc.org/sqlite"
 
 	"github.com/attest-ai/attest/engine/internal/cache"
 	"github.com/attest-ai/attest/engine/internal/report"
@@ -94,16 +91,16 @@ func openBaselineStore() (*cache.BaselineStore, func(), error) {
 		return nil, nil, fmt.Errorf("mkdir cache: %w", err)
 	}
 	dbPath := filepath.Join(dir, "attest.db")
-	db, err := sql.Open("sqlite", dbPath)
+	db, release, err := cache.Open(dbPath)
 	if err != nil {
-		return nil, nil, fmt.Errorf("open sqlite: %w", err)
+		return nil, nil, err
 	}
 	store, err := cache.NewBaselineStore(db)
 	if err != nil {
-		db.Close()
+		release()
 		return nil, nil, fmt.Errorf("baseline store: %w", err)
 	}
-	return store, func() { db.Close() }, nil
+	return store, func() { release() }, nil
 }
 
 // reportEnvelope is the subset of JSONReportV2 needed to build baseline

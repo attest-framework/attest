@@ -29,8 +29,9 @@ type lruKey struct {
 
 // EmbeddingCache is an LRU-evicting SQLite-backed cache for embedding vectors.
 type EmbeddingCache struct {
-	db    *sql.DB
-	maxMB int
+	db      *sql.DB
+	release func() error
+	maxMB   int
 
 	// Deferred LRU writes: buffer accessed_at updates and flush periodically.
 	pendingLRU sync.Map // map[lruKey]int64 (UnixNano)
@@ -48,14 +49,9 @@ type CacheStats struct {
 // NewEmbeddingCache opens (or creates) an embedding cache at dbPath.
 // maxMB sets the maximum size in megabytes before LRU eviction triggers.
 func NewEmbeddingCache(dbPath string, maxMB int) (*EmbeddingCache, error) {
-	db, err := sql.Open("sqlite", dbPath)
+	db, release, err := Open(dbPath)
 	if err != nil {
-		return nil, fmt.Errorf("open sqlite: %w", err)
-	}
-
-	if _, err := db.Exec(`PRAGMA journal_mode=WAL`); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("set WAL mode: %w", err)
+		return nil, err
 	}
 
 	if _, err := db.Exec(`
@@ -68,17 +64,18 @@ func NewEmbeddingCache(dbPath string, maxMB int) (*EmbeddingCache, error) {
 			PRIMARY KEY (content_hash, model)
 		)
 	`); err != nil {
-		db.Close()
+		release()
 		return nil, fmt.Errorf("create table: %w", err)
 	}
 
 	if _, err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_accessed ON embeddings(accessed_at)`); err != nil {
-		db.Close()
+		release()
 		return nil, fmt.Errorf("create index: %w", err)
 	}
 
 	c := &EmbeddingCache{
 		db:        db,
+		release:   release,
 		maxMB:     maxMB,
 		stopFlush: make(chan struct{}),
 		flushDone: make(chan struct{}),
@@ -227,7 +224,7 @@ func (c *EmbeddingCache) Clear() error {
 func (c *EmbeddingCache) Close() error {
 	close(c.stopFlush)
 	<-c.flushDone
-	return c.db.Close()
+	return c.release()
 }
 
 func (c *EmbeddingCache) evictIfNeeded() error {

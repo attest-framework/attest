@@ -1,7 +1,6 @@
 package main
 
 import (
-	"database/sql"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -10,8 +9,6 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
-
-	_ "modernc.org/sqlite"
 
 	"github.com/attest-ai/attest/engine/internal/assertion/judge"
 	"github.com/attest-ai/attest/engine/internal/cache"
@@ -167,11 +164,11 @@ func persistLabels(records []judge.LabeledRecord, key cache.CalibrationKey) erro
 	if err := os.MkdirAll(cacheDir(), 0o755); err != nil {
 		return fmt.Errorf("mkdir cache: %w", err)
 	}
-	db, err := sql.Open("sqlite", dbPath)
+	db, release, err := cache.Open(dbPath)
 	if err != nil {
-		return fmt.Errorf("open sqlite: %w", err)
+		return err
 	}
-	defer db.Close()
+	defer release()
 	store, err := cache.NewCalibrationStore(db)
 	if err != nil {
 		return fmt.Errorf("calibration store: %w", err)
