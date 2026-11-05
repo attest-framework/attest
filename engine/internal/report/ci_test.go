@@ -246,7 +246,7 @@ func TestRenderSummary_HostileReport_IsInert(t *testing.T) {
 	outside := stripCodeSpans(got)
 	for _, trigger := range []string{
 		"@octocat", "@org", "org/repo#1", "<img", "<!--", "-->", "](", "evil", "attest:pr-annotate",
-		"‮", "​",
+		"\u202e", "\u200b",
 	} {
 		if strings.Contains(outside, trigger) {
 			t.Errorf("%q appears outside a code span:\n%s", trigger, outside)
@@ -301,14 +301,14 @@ func stripCodeSpans(s string) string {
 
 func TestCodeSpan_BacktickRuns_GetALongerFence(t *testing.T) {
 	cases := map[string]string{
-		"plain":       "`plain`",
-		"a`b":         "``a`b``",
-		"a``b":        "```a``b```",
-		"`start":      "`` `start ``",
-		"end`":        "`` end` ``",
-		"a|b":         `a\|b`,
-		"line\nbreak": "`line break`",
-		"z​w‮x":       "`zwx`",
+		"plain":           "`plain`",
+		"a`b":             "``a`b``",
+		"a``b":            "```a``b```",
+		"`start":          "`` `start ``",
+		"end`":            "`` end` ``",
+		"a|b":             `a\|b`,
+		"line\nbreak":     "`line break`",
+		"z\u200bw\u202ex": "`zwx`",
 	}
 	for in, want := range cases {
 		got := report.CodeSpanForTest(in, in == "a|b")

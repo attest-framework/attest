@@ -105,14 +105,14 @@ func TestTemplate_StartBeforeEnd_StepsNestedSpans_ZeroDuration(t *testing.T) {
 		}
 		if s.Sub != nil {
 			c := s.Sub.Steps[0]
-			if !(n(s.Start) < n(c.Start) && n(c.Start) < n(c.End) && n(c.End) < n(s.End)) {
+			if n(s.Start) >= n(c.Start) || n(c.Start) >= n(c.End) || n(c.End) >= n(s.End) {
 				t.Errorf("step %d does not bracket its child: %s %s %s %s", i, s.Start, c.Start, c.End, s.End)
 			}
 		}
 	}
 	for i, s := range parsed.Spans {
 		c := s.Children[0]
-		if !(a(s.Start) < a(c.Start) && a(c.Start) < a(c.End) && a(c.End) < a(s.End)) {
+		if a(s.Start) >= a(c.Start) || a(c.Start) >= a(c.End) || a(c.End) >= a(s.End) {
 			t.Errorf("span %d: %s %s %s %s", i, s.Start, c.Start, c.End, s.End)
 		}
 	}

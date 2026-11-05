@@ -81,7 +81,7 @@ func checkStreams(doc any, r *redact.Redactor) ([]RedactionHit, error) {
 		body, ok := resp["body"].(string)
 		// The writer's rule: a stream body is an event-stream media type, or
 		// a successful answer to a stream request.
-		if !ok || !(isEventStream(ct, false) || (requested && status >= 200 && status <= 299)) {
+		if !ok || (!isEventStream(ct, false) && (!requested || status < 200 || status > 299)) {
 			continue
 		}
 		texts, err := streamTexts(body)

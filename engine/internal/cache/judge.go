@@ -50,12 +50,12 @@ func NewJudgeCache(dbPath string, maxMB int, endpoint string) (*JudgeCache, erro
 			PRIMARY KEY (content_hash, rubric, model)
 		)
 	`); err != nil {
-		release()
+		_ = release() // the failure being returned takes precedence over a close error
 		return nil, fmt.Errorf("create table: %w", err)
 	}
 
 	if _, err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_judge_accessed ON judge_cache(accessed_at)`); err != nil {
-		release()
+		_ = release() // the failure being returned takes precedence over a close error
 		return nil, fmt.Errorf("create index: %w", err)
 	}
 

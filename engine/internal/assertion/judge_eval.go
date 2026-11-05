@@ -359,8 +359,6 @@ func (e *JudgeEvaluator) evaluateSinglePass(
 		return ar
 	}
 
-	durationMS := time.Since(start).Milliseconds()
-
 	if e.cache != nil {
 		if putErr := e.cache.Put(call.cacheKey, rubricName, model, &cache.JudgeCacheEntry{
 			Score:       scoreResult.Score,
@@ -382,7 +380,7 @@ func (e *JudgeEvaluator) evaluateSinglePass(
 		ScoreMean:     scoreResult.Score,
 		BiasProbes:    probeResults,
 	}
-	durationMS = time.Since(start).Milliseconds()
+	durationMS := time.Since(start).Milliseconds()
 	return e.buildResult(assertion, scoreResult.Score, scoreResult.Explanation, spec.Threshold.Value, spec.Soft, durationMS, totalCost,
 		judgeBuildArgs{target: spec.Target, model: model, rubric: rubricName, meta: meta})
 }
@@ -504,8 +502,6 @@ func (e *JudgeEvaluator) evaluateRepeated(
 		combinedExplanation += fmt.Sprintf(" [%d of %d runs not scored: %s]", miss.total(), runs, miss.summary())
 	}
 
-	durationMS := time.Since(start).Milliseconds()
-
 	// Cache the median result only when every run scored: a partial
 	// sample must not stand in for N runs later.
 	if e.cache != nil && miss.total() == 0 {
@@ -533,7 +529,7 @@ func (e *JudgeEvaluator) evaluateRepeated(
 		HighVarianceFlag: spread > metaEvalVarianceThreshold,
 		BiasProbes:       probeResults,
 	}
-	durationMS = time.Since(start).Milliseconds()
+	durationMS := time.Since(start).Milliseconds()
 	return e.buildResult(assertion, medianScore, combinedExplanation, spec.Threshold.Value, spec.Soft, durationMS, totalCost,
 		judgeBuildArgs{target: spec.Target, model: model, rubric: rubricName, meta: meta})
 }

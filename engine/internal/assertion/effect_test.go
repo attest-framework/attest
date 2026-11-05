@@ -143,14 +143,14 @@ func TestEffectUniqueDistinguishesTypesAndMissingFields(t *testing.T) {
 }
 
 func TestEffectExplanationStripsControlCharactersAndCapsLength(t *testing.T) {
-	evil := "O-1\u001b[31m‮evil" + strings.Repeat("a", 500)
+	evil := "O-1\u001b[31m\u202eevil" + strings.Repeat("a", 500)
 	recs, _ := json.Marshal([]map[string]any{{"order_id": evil}, {"order_id": evil}})
 	r := evalEffect(`{"check":"unique","world":` + snapshotJSON(string(recs)) + `,"resource":"refunds","fields":["order_id"]}`)
 	if r.Status != types.StatusHardFail {
 		t.Fatalf("status %s", r.Status)
 	}
 	for _, s := range []string{r.Explanation, r.Actual} {
-		if strings.ContainsAny(s, "\u001b‮") || len(s) > 400 {
+		if strings.ContainsAny(s, "\u001b\u202e") || len(s) > 400 {
 			t.Fatalf("unsafe or unbounded text (%d bytes): %q", len(s), s)
 		}
 	}

@@ -178,17 +178,17 @@ func buildRegistryOptions(logger *slog.Logger) ([]assertion.RegistryOption, []st
 				hs, err := cache.NewHistoryStore(db)
 				if err != nil {
 					logger.Warn("failed to create history store", "err", err)
-					release()
+					_ = release() // the surrounding error or warning is the report
 				} else {
 					// Configure retention from env vars.
 					maxRows, envErr := envInt("ATTEST_HISTORY_MAX_ROWS", 0)
 					if envErr != nil {
-						release()
+						_ = release() // the surrounding error or warning is the report
 						return nil, nil, providers{}, nil, envErr
 					}
 					maxDays, envErr := envInt("ATTEST_HISTORY_MAX_AGE_DAYS", 0)
 					if envErr != nil {
-						release()
+						_ = release() // the surrounding error or warning is the report
 						return nil, nil, providers{}, nil, envErr
 					}
 					if maxRows > 0 || maxDays > 0 {
@@ -785,7 +785,7 @@ func handleGenerateUserMessage(provider llm.Provider) Handler {
 			MaxTokens:    p.Persona.MaxTokens,
 		}
 
-		var prov llm.Provider = provider
+		prov := provider
 		if p.FaultConfig != nil {
 			fc := simulation.FaultConfig{
 				ErrorRate:         p.FaultConfig.ErrorRate,

@@ -221,7 +221,7 @@ func (r *Root) WriteAtomic(rel string, data []byte, mode fs.FileMode, exists boo
 	}
 	fail := func(err error) error {
 		tmp.Close()
-		r.fs.Remove(name)
+		_ = r.fs.Remove(name) // best-effort temp cleanup; the failure being returned takes precedence
 		return err
 	}
 	if _, err := tmp.Write(data); err != nil {
@@ -234,11 +234,11 @@ func (r *Root) WriteAtomic(rel string, data []byte, mode fs.FileMode, exists boo
 		return fail(err)
 	}
 	if err := tmp.Close(); err != nil {
-		r.fs.Remove(name)
+		_ = r.fs.Remove(name) // best-effort temp cleanup; the failure being returned takes precedence
 		return err
 	}
 	if err := r.fs.Rename(name, rel); err != nil {
-		r.fs.Remove(name)
+		_ = r.fs.Remove(name) // best-effort temp cleanup; the failure being returned takes precedence
 		return err
 	}
 	return r.syncDir(dir)

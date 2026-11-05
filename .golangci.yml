@@ -1,0 +1,35 @@
+version: "2"
+
+run:
+  timeout: 5m
+
+linters:
+  default: standard
+  settings:
+    errcheck:
+      exclude-functions:
+        # Writes to CLI output writers (stdout/stderr/buffers): a failed terminal write has no recovery path.
+        - fmt.Fprint
+        - fmt.Fprintf
+        - fmt.Fprintln
+        # Same reason: tabwriter flushes to the CLI output writer.
+        - (*text/tabwriter.Writer).Flush
+        # Rollback after a failed or committed transaction only reports "already done"; the real error is on the failing statement or Commit.
+        - (*database/sql.Tx).Rollback
+        # Closing a prepared statement or result set that was read to completion; read errors surface through Rows.Err and the query itself.
+        - (*database/sql.Stmt).Close
+        - (*database/sql.Rows).Close
+  exclusions:
+    presets:
+      - std-error-handling
+    rules:
+      # Closing a read-only HTTP response body after the body was fully read or the request failed.
+      - linters: [errcheck]
+        text: "Error return value of `[A-Za-z.]*Body\\.Close` is not checked"
+      # Tests: cleanup and fixture setup calls (Close, Remove, Write to pipes) whose failure is reported by the assertions that follow.
+      - linters: [errcheck]
+        path: _test\.go
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0

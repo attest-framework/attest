@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -159,7 +160,7 @@ func loadLabelsByExt(path string) ([]judge.LabeledRecord, error) {
 
 // persistLabels stores records under key; key.PromptHash is computed per
 // record from its input.
-func persistLabels(records []judge.LabeledRecord, key cache.CalibrationKey) error {
+func persistLabels(records []judge.LabeledRecord, key cache.CalibrationKey) (err error) {
 	dbPath := filepath.Join(cacheDir(), "attest.db")
 	if err := os.MkdirAll(cacheDir(), 0o755); err != nil {
 		return fmt.Errorf("mkdir cache: %w", err)
@@ -168,7 +169,7 @@ func persistLabels(records []judge.LabeledRecord, key cache.CalibrationKey) erro
 	if err != nil {
 		return err
 	}
-	defer release()
+	defer func() { err = errors.Join(err, release()) }()
 	store, err := cache.NewCalibrationStore(db)
 	if err != nil {
 		return fmt.Errorf("calibration store: %w", err)
