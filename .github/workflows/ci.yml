@@ -267,7 +267,9 @@ jobs:
           cd sdks/python
           uv sync --frozen --extra dev --extra all
       - name: Run framework-gated adapter tests
+        # pipefail: without it `| tee` hides a pytest failure.
         run: |
+          set -euo pipefail
           cd sdks/python
           targets=(tests/test_adapters tests/integration/test_langchain_integration.py tests/integration/test_google_adk_integration.py tests/integration/test_crewai_integration.py)
           if [ -f tests/test_adapter_conformance.py ]; then
