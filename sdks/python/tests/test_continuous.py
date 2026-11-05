@@ -9,7 +9,7 @@ import pytest
 
 from attest._proto.types import Assertion, AssertionResult, EvaluateBatchResult, Trace, Usage
 from attest.assertion_id import compute_assertion_id
-from attest.continuous import AlertDispatcher, ContinuousEvalRunner, Sampler
+from attest.continuous import AlertDispatcher, AlertDispatchError, ContinuousEvalRunner, Sampler
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -95,7 +95,17 @@ class TestAlertDispatcher:
 
     def test_dispatch_posts_to_slack(self) -> None:
         dispatcher = AlertDispatcher(slack_url="https://hooks.slack.com/services/XXX")
-        alert = {"drift_type": "cosine", "score": 0.3, "trace_id": "t-1"}
+        alert = {
+            "runner": "m",
+            "assertion_id": "a2_x",
+            "status": "hard_fail",
+            "result_status": "hard_fail",
+            "score": 0.3,
+            "baseline_mean": None,
+            "baseline_count": None,
+            "static_threshold": 0.8,
+            "trace_id": "t-1",
+        }
 
         with patch.object(dispatcher, "_post_json") as mock_post:
             asyncio.run(dispatcher.dispatch(alert))
@@ -108,7 +118,17 @@ class TestAlertDispatcher:
             webhook_url="https://hooks.example.com/w",
             slack_url="https://hooks.slack.com/s",
         )
-        alert = {"drift_type": "cosine", "score": 0.3}
+        alert = {
+            "runner": "m",
+            "assertion_id": "a2_x",
+            "status": "hard_fail",
+            "result_status": "hard_fail",
+            "score": 0.3,
+            "baseline_mean": None,
+            "baseline_count": None,
+            "static_threshold": 0.8,
+            "trace_id": "t-1",
+        }
 
         with patch.object(dispatcher, "_post_json") as mock_post:
             asyncio.run(dispatcher.dispatch(alert))
@@ -410,7 +430,7 @@ class TestDriftAlerts:
         return runner, sent
 
     def test_drift_detected_dispatches_with_the_resolved_static_threshold(self) -> None:
-        client, queries = self._client("hard_fail", "drift_detected")
+        client, queries = self._client("pass", "drift_detected")
         runner, sent = self._runner(
             client, self._assertion(threshold=0.6), alert_webhook="http://x"
         )
@@ -499,3 +519,237 @@ class TestDriftAlerts:
 
         assert len(errors) == 1
         assert isinstance(errors[0], TimeoutError)
+
+
+_PAYLOAD_KEYS = {
+    "runner",
+    "assertion_id",
+    "status",
+    "result_status",
+    "score",
+    "baseline_mean",
+    "baseline_count",
+    "static_threshold",
+    "trace_id",
+}
+
+
+class TestAlertPayload:
+    """The one alert schema shared by both SDK runners."""
+
+    def test_drifting_pass_payload_has_exactly_the_schema_keys_and_values(self) -> None:
+        client, _ = TestDriftAlerts._client("pass", "drift_detected")
+        runner, sent = TestDriftAlerts._runner(
+            client, TestDriftAlerts._assertion(threshold=0.6), alert_webhook="http://x"
+        )
+
+        asyncio.run(runner.evaluate_trace(_make_trace("t-7")))
+
+        (alert,) = sent
+        assert set(alert) == _PAYLOAD_KEYS
+        assert alert == {
+            "runner": "m",
+            "assertion_id": runner._assertions[0].assertion_id,
+            "status": "drift_detected",
+            "result_status": "pass",
+            "score": 0.5,
+            "baseline_mean": 0.9,
+            "baseline_count": 10,
+            "static_threshold": 0.6,
+            "trace_id": "t-7",
+        }
+
+    def test_hard_fail_payload_has_the_schema_keys_and_nulls_when_the_drift_read_failed(
+        self,
+    ) -> None:
+        client, _ = TestDriftAlerts._client("hard_fail", "ok")
+        client.send_request = AsyncMock(side_effect=RuntimeError("engine gone"))
+        runner, sent = TestDriftAlerts._runner(
+            client,
+            TestDriftAlerts._assertion(threshold="dynamic"),
+            alert_webhook="http://x",
+            on_error=lambda exc: None,
+        )
+
+        asyncio.run(runner.evaluate_trace(_make_trace("t-8")))
+
+        (alert,) = sent
+        assert alert == {
+            "runner": "m",
+            "assertion_id": runner._assertions[0].assertion_id,
+            "status": "hard_fail",
+            "result_status": "hard_fail",
+            "score": 0.5,
+            "baseline_mean": None,
+            "baseline_count": None,
+            "static_threshold": 0.8,
+            "trace_id": "t-8",
+        }
+
+    def test_hard_fail_with_drift_reports_hard_fail(self) -> None:
+        client, _ = TestDriftAlerts._client("hard_fail", "drift_detected")
+        runner, sent = TestDriftAlerts._runner(
+            client, TestDriftAlerts._assertion(), alert_webhook="http://x"
+        )
+
+        asyncio.run(runner.evaluate_trace(_make_trace()))
+
+        (alert,) = sent
+        assert (alert["status"], alert["baseline_count"]) == ("hard_fail", 10)
+
+    def test_not_evaluated_rows_are_neither_queried_nor_alerted(self) -> None:
+        client, queries = TestDriftAlerts._client("not_evaluated", "drift_detected")
+        runner, sent = TestDriftAlerts._runner(
+            client, TestDriftAlerts._assertion(), alert_webhook="http://x"
+        )
+
+        asyncio.run(runner.evaluate_trace(_make_trace()))
+
+        assert queries == []
+        assert sent == []
+
+    def test_slack_text_renders_the_same_fields(self) -> None:
+        alert = {
+            "runner": "m",
+            "assertion_id": "a2_x",
+            "status": "drift_detected",
+            "result_status": "pass",
+            "score": None,
+            "baseline_mean": None,
+            "baseline_count": None,
+            "static_threshold": 0.8,
+            "trace_id": None,
+        }
+
+        text = AlertDispatcher()._format_slack(alert)
+
+        assert text == (
+            "[attest] drift alert — runner=m assertion=a2_x status=drift_detected score=None "
+            "baseline_mean=None baseline_count=None static_threshold=0.8 trace_id=None"
+        )
+
+
+class TestStaticThresholdResolution:
+    @pytest.mark.parametrize(
+        ("threshold", "expected"),
+        [
+            (0, 0.8),
+            (0.0, 0.8),
+            (-0.5, 0.8),
+            ("dynamic", 0.8),
+            (None, 0.8),
+            (True, 0.8),
+            (0.6, 0.6),
+            (1, 1.0),
+        ],
+    )
+    def test_threshold_resolves_like_the_engine(self, threshold: object, expected: float) -> None:
+        spec: dict[str, object] = {"target": "o"}
+        if threshold is not None:
+            spec["threshold"] = threshold
+        client, queries = TestDriftAlerts._client("pass", "ok")
+        runner, _ = TestDriftAlerts._runner(
+            client,
+            Assertion(assertion_id="x", type="llm_judge", spec=spec),
+            alert_webhook="http://x",
+        )
+
+        asyncio.run(runner.evaluate_trace(_make_trace()))
+
+        assert queries[0]["static_threshold"] == expected
+
+
+class TestSerializedEvaluation:
+    def test_concurrent_evaluations_do_not_interleave_evaluate_and_query(self) -> None:
+        events: list[str] = []
+        release_first = asyncio.Event()
+        client = MagicMock()
+
+        async def evaluate_batch(trace: Trace, assertions: list[Assertion]) -> EvaluateBatchResult:
+            events.append(f"evaluate:{trace.trace_id}")
+            if trace.trace_id == "first":
+                await release_first.wait()
+            return EvaluateBatchResult(
+                results=[
+                    AssertionResult(
+                        assertion_id=a.assertion_id,
+                        status="hard_fail",
+                        score=0.1,
+                        explanation="e",
+                    )
+                    for a in assertions
+                ],
+                usage=Usage(),
+            )
+
+        async def send_request(method: str, params: dict[str, object]) -> dict[str, object]:
+            events.append("query")
+            return {
+                "report": {
+                    "assertion_id": params["assertion_id"],
+                    "mean": 0.9,
+                    "stddev": 0.0,
+                    "count": 10,
+                    "latest_score": 0.1,
+                    "deviation": 8.0,
+                    "status": "drift_detected",
+                }
+            }
+
+        client.evaluate_batch = evaluate_batch
+        client.send_request = send_request
+        runner, sent = TestDriftAlerts._runner(
+            client, TestDriftAlerts._assertion(), alert_webhook="http://x"
+        )
+
+        async def scenario() -> None:
+            first = asyncio.create_task(runner.evaluate_trace(_make_trace("first")))
+            await asyncio.sleep(0.05)
+            second = asyncio.create_task(runner.evaluate_trace(_make_trace("second")))
+            await asyncio.sleep(0.05)
+            release_first.set()
+            await asyncio.gather(first, second)
+
+        asyncio.run(scenario())
+
+        assert events == ["evaluate:first", "query", "evaluate:second", "query"]
+        assert [a["trace_id"] for a in sent] == ["first", "second"]
+
+
+class TestDispatchDeadline:
+    def test_a_receiver_trickling_bytes_cannot_outlive_the_total_deadline(self) -> None:
+        import socket
+        import threading
+        import time
+
+        listener = socket.socket()
+        listener.bind(("127.0.0.1", 0))
+        listener.listen(1)
+        port = listener.getsockname()[1]
+
+        def trickle() -> None:
+            conn, _ = listener.accept()
+            conn.recv(65536)
+            conn.sendall(b"HTTP/1.1 200 OK\r\nContent-Length: 40\r\n\r\n")
+            try:
+                for _ in range(40):
+                    conn.sendall(b"x")
+                    time.sleep(0.03)
+            except OSError:
+                pass
+            finally:
+                conn.close()
+
+        thread = threading.Thread(target=trickle, daemon=True)
+        thread.start()
+        dispatcher = AlertDispatcher(webhook_url=f"http://127.0.0.1:{port}/", timeout_s=0.1)
+
+        started = time.monotonic()
+        failures = asyncio.run(dispatcher.dispatch({"score": 0.1}))
+        elapsed = time.monotonic() - started
+        listener.close()
+
+        assert elapsed < 0.4
+        assert len(failures) == 1
+        assert isinstance(failures[0], AlertDispatchError)
+        assert "timed out" in str(failures[0])

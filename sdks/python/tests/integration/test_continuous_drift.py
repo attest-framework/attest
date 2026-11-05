@@ -21,7 +21,7 @@ import pytest
 import pytest_asyncio
 
 import attest.continuous as continuous
-from attest._proto.types import STATUS_HARD_FAIL, Assertion, Trace
+from attest._proto.types import STATUS_HARD_FAIL, STATUS_SOFT_FAIL, Assertion, Trace
 from attest.client import AttestClient
 from attest.continuous import ContinuousEvalRunner
 from attest.engine_manager import EngineManager
@@ -32,6 +32,7 @@ pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
 _GOOD_SCORE = 0.9
 _BAD_SCORE = 0.3
 _ALERT_DEADLINE_S = 5.0
+_SCRIPTED_SCORES = {"bad-": _BAD_SCORE, "mid-": 0.6, "up-": 0.7}
 _ENGINE_ENV = {
     "ATTEST_JUDGE_PROVIDER": "openai",
     "ATTEST_JUDGE_API_KEY": "fake",
@@ -75,7 +76,10 @@ class _Judge(BaseHTTPRequestHandler):
     def do_POST(self) -> None:  # noqa: N802 (http.server API)
         request = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
         prompt = "\n".join(str(m.get("content")) for m in request["messages"])
-        score = _BAD_SCORE if "bad-" in prompt else _GOOD_SCORE
+        score = _GOOD_SCORE
+        for marker, scripted in _SCRIPTED_SCORES.items():
+            if marker in prompt:
+                score = scripted
         content = json.dumps({"score": score, "explanation": "scripted"})
         body = json.dumps(
             {
@@ -150,7 +154,7 @@ async def client(
         judge.close()
 
 
-def _judge_assertion() -> Assertion:
+def _judge_assertion(**overrides: Any) -> Assertion:
     return Assertion(
         assertion_id="placeholder",
         type="llm_judge",
@@ -158,6 +162,7 @@ def _judge_assertion() -> Assertion:
             "target": "output.message",
             "criteria": "Is the answer helpful?",
             "threshold": "dynamic",
+            **overrides,
         },
     )
 
@@ -211,7 +216,7 @@ async def test_drifting_trace_posts_an_alert_to_the_receiver_within_five_seconds
     (alert,) = receiver.bodies
     assert alert["runner"] == "refund-monitor"
     assert alert["assertion_id"] == runner._assertions[0].assertion_id
-    assert alert["status"] == continuous.STATUS_DRIFT_DETECTED
+    assert alert["status"] == STATUS_HARD_FAIL  # hard_fail wins when drift is detected too
     assert alert["result_status"] == STATUS_HARD_FAIL
     assert alert["score"] == pytest.approx(_BAD_SCORE)
     assert alert["baseline_mean"] == pytest.approx(_GOOD_SCORE)
@@ -274,3 +279,24 @@ async def test_stop_waits_for_the_in_flight_evaluation_and_its_dispatch(
     await runner.stop()
 
     assert len(receiver.bodies) == 1
+
+
+async def test_zero_threshold_resolves_like_the_engine_and_alerts_on_a_soft_rise_below_the_bar(
+    client: AttestClient, receiver: _Receiver
+) -> None:
+    runner = ContinuousEvalRunner(
+        client=client,
+        assertions=[_judge_assertion(threshold=0, soft=True)],
+        name="zero-threshold",
+        alert_webhook=receiver.url,
+    )
+    for n in range(10):
+        await runner.evaluate_trace(_trace("mid", n))
+    assert receiver.bodies == []
+
+    await runner.evaluate_trace(_trace("up", 0))
+
+    (alert,) = receiver.bodies
+    assert alert["status"] == continuous.STATUS_DRIFT_DETECTED
+    assert alert["result_status"] == STATUS_SOFT_FAIL
+    assert alert["static_threshold"] == 0.8

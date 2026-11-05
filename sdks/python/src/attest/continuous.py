@@ -3,10 +3,14 @@
 from __future__ import annotations
 
 import asyncio
+import http.client
 import logging
 import os
 import random
-import urllib.request
+import socket
+import threading
+import time
+import urllib.parse
 from collections.abc import Callable
 from dataclasses import replace
 from json import dumps as json_dumps
@@ -14,6 +18,7 @@ from typing import TYPE_CHECKING, Any
 
 from attest._proto.types import (
     STATUS_HARD_FAIL,
+    STATUS_NOT_EVALUATED,
     Assertion,
     AssertionResult,
     DriftReport,
@@ -26,6 +31,8 @@ _DEFAULT_QUEUE_SIZE: int = 1000
 _DEFAULT_STATIC_THRESHOLD: float = 0.8
 _DEFAULT_DISPATCH_TIMEOUT_S: float = 10.0
 _DEFAULT_DRAIN_TIMEOUT_S: float = 30.0
+_MAX_RESPONSE_BYTES: int = 4096
+_EXECUTOR_GRACE_S: float = 0.5
 STATUS_DRIFT_DETECTED: str = "drift_detected"
 
 
@@ -98,60 +105,118 @@ class AlertDispatcher:
         other one; its error is logged and returned so the caller can surface it.
         """
         loop = asyncio.get_running_loop()
-        futures: list[asyncio.Future[None]] = []
+        posts = []
 
         if self._webhook_url:
-            futures.append(loop.run_in_executor(None, self._post_json, self._webhook_url, alert))
+            posts.append(self._bounded_post(loop, self._webhook_url, alert))
 
         if self._slack_url:
             slack_payload = {"text": self._format_slack(alert)}
-            futures.append(
-                loop.run_in_executor(None, self._post_json, self._slack_url, slack_payload)
-            )
+            posts.append(self._bounded_post(loop, self._slack_url, slack_payload))
 
         failures: list[Exception] = []
-        for result in await asyncio.gather(*futures, return_exceptions=True):
+        for result in await asyncio.gather(*posts, return_exceptions=True):
             if isinstance(result, Exception):
                 logger.warning("Alert dispatch failed: %s", result)
                 failures.append(result)
         return failures
 
-    def _post_json(self, url: str, payload: dict[str, Any]) -> None:
-        """Synchronous HTTP POST of JSON payload. Run in executor."""
-        body = json_dumps(payload).encode()
-        req = urllib.request.Request(
-            url,
-            data=body,
-            headers={"Content-Type": "application/json"},
-            method="POST",
-        )
+    async def _bounded_post(
+        self, loop: asyncio.AbstractEventLoop, url: str, payload: dict[str, Any]
+    ) -> None:
+        """Run one POST in the executor; stop waiting shortly after the total deadline.
+
+        ``_post_json`` enforces the deadline on the socket itself; this bound covers what it
+        cannot interrupt (name resolution).
+        """
+        future = loop.run_in_executor(None, self._post_json, url, payload)
         try:
-            with urllib.request.urlopen(req, timeout=self._timeout_s) as resp:  # noqa: S310
-                resp.read()
+            await asyncio.wait_for(future, timeout=self._timeout_s + _EXECUTOR_GRACE_S)
+        except asyncio.TimeoutError as exc:
+            raise AlertDispatchError(f"POST to {url} timed out after {self._timeout_s}s") from exc
+
+    def _post_json(self, url: str, payload: dict[str, Any]) -> None:
+        """Synchronous HTTP POST of a JSON payload under one total deadline. Run in executor.
+
+        The deadline covers connect, send, the status line, headers and the (at most
+        ``_MAX_RESPONSE_BYTES``) body read: a watchdog shuts the socket down at expiry, so a
+        receiver that trickles bytes cannot keep the dispatch alive. Any non-2xx status fails.
+        """
+        parts = urllib.parse.urlsplit(url)
+        if parts.scheme not in ("http", "https") or not parts.hostname:
+            raise AlertDispatchError(f"POST to {url} failed: not an http(s) URL")
+        connection_class = (
+            http.client.HTTPSConnection if parts.scheme == "https" else http.client.HTTPConnection
+        )
+        target = (parts.path or "/") + (f"?{parts.query}" if parts.query else "")
+        deadline = time.monotonic() + self._timeout_s
+        expired = threading.Event()
+        conn = connection_class(parts.hostname, parts.port, timeout=self._timeout_s)
+
+        def abort() -> None:
+            expired.set()
+            sock = conn.sock
+            if sock is not None:
+                try:
+                    sock.shutdown(socket.SHUT_RDWR)
+                except OSError:
+                    pass
+
+        watchdog = threading.Timer(self._timeout_s, abort)
+        watchdog.daemon = True
+        watchdog.start()
+        try:
+            conn.request(
+                "POST",
+                target,
+                body=json_dumps(payload).encode(),
+                headers={"Content-Type": "application/json"},
+            )
+            resp = conn.getresponse()
+            received = 0
+            while received < _MAX_RESPONSE_BYTES:
+                chunk = resp.read1(1024)
+                if not chunk:
+                    break
+                received += len(chunk)
+            if expired.is_set() or time.monotonic() >= deadline:
+                raise TimeoutError
+            if not 200 <= resp.status < 300:
+                raise AlertDispatchError(f"POST to {url} failed: HTTP {resp.status}")
+        except AlertDispatchError:
+            raise
         except Exception as exc:
+            if expired.is_set() or time.monotonic() >= deadline:
+                raise AlertDispatchError(
+                    f"POST to {url} timed out after {self._timeout_s}s"
+                ) from exc
             raise AlertDispatchError(f"POST to {url} failed: {exc}") from exc
+        finally:
+            watchdog.cancel()
+            conn.close()
 
     def _format_slack(self, alert: dict[str, Any]) -> str:
-        """Format alert dict as a Slack-friendly text message."""
+        """Render the alert fields as a Slack-friendly text message."""
         return (
-            f"[attest] drift alert — runner={alert.get('runner', 'n/a')} "
-            f"assertion={alert.get('assertion_id', 'n/a')} "
-            f"status={alert.get('status', 'n/a')} score={alert.get('score', 'n/a')} "
-            f"baseline_mean={alert.get('baseline_mean', 'n/a')} "
-            f"baseline_count={alert.get('baseline_count', 'n/a')} "
-            f"static_threshold={alert.get('static_threshold', 'n/a')} "
-            f"trace_id={alert.get('trace_id', 'n/a')}"
+            f"[attest] drift alert — runner={alert['runner']} "
+            f"assertion={alert['assertion_id']} "
+            f"status={alert['status']} score={alert['score']} "
+            f"baseline_mean={alert['baseline_mean']} "
+            f"baseline_count={alert['baseline_count']} "
+            f"static_threshold={alert['static_threshold']} "
+            f"trace_id={alert['trace_id']}"
         )
 
 
 def _static_threshold(assertion: Assertion) -> float:
-    """The assertion's static bar: its numeric ``threshold``, else the 0.8 default.
+    """The assertion's static bar, resolved exactly like the engine.
 
-    A ``"dynamic"`` or absent threshold falls back to the engine default, which is also the
-    floor of the dynamic bar.
+    A numeric ``threshold`` above 0 is used as given; a threshold <= 0, a missing one, or
+    ``"dynamic"`` resolves to 0.8 (``judge_eval.go`` and ``embedding_eval.go``), which is
+    also the floor of the dynamic bar.
     """
     value = assertion.spec.get("threshold")
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or value <= 0:
         return _DEFAULT_STATIC_THRESHOLD
     return float(value)
 
@@ -206,6 +271,9 @@ class ContinuousEvalRunner:
         self._queue: asyncio.Queue[Trace] = asyncio.Queue(maxsize=resolved_maxsize)
         self._task: asyncio.Task[None] | None = None
         self._running = False
+        # query_drift reads an assertion's latest history row, not the evaluated trace's, so
+        # evaluate -> query_drift must not interleave across traces (loop and direct calls).
+        self._evaluation_lock = asyncio.Lock()
 
     def _emit_error(self, exc: Exception) -> None:
         """Log the error and hand it to ``on_error``; a failing callback is logged, not raised."""
@@ -226,17 +294,29 @@ class ContinuousEvalRunner:
         """
         if not self._sampler.should_sample():
             return None
-        result = await self._client.evaluate_batch(trace, self._assertions)
-        if self._dispatcher.enabled:
-            await self._alert(trace, result)
+        async with self._evaluation_lock:
+            result = await self._client.evaluate_batch(trace, self._assertions)
+            alerts = await self._collect_alerts(trace, result) if self._dispatcher.enabled else []
+        for alert in alerts:
+            await self._dispatch(alert)
         return result
 
-    async def _alert(self, trace: Trace, result: EvaluateBatchResult) -> None:
+    async def _collect_alerts(
+        self, trace: Trace, result: EvaluateBatchResult
+    ) -> list[dict[str, Any]]:
+        """Read drift for each evaluated row; return the alert payloads. Call under the lock."""
         by_id = {a.assertion_id: a for a in self._assertions}
-        rows = [(r, by_id[r.assertion_id]) for r in result.results if r.assertion_id in by_id]
-        await asyncio.gather(*(self._alert_row(trace, r, a) for r, a in rows))
+        rows = [
+            (r, by_id[r.assertion_id])
+            for r in result.results
+            if r.assertion_id in by_id and r.status != STATUS_NOT_EVALUATED
+        ]
+        built = await asyncio.gather(*(self._build_alert(trace, r, a) for r, a in rows))
+        return [alert for alert in built if alert is not None]
 
-    async def _alert_row(self, trace: Trace, row: AssertionResult, assertion: Assertion) -> None:
+    async def _build_alert(
+        self, trace: Trace, row: AssertionResult, assertion: Assertion
+    ) -> dict[str, Any] | None:
         static = _static_threshold(assertion)
         try:
             drift = await self._read_drift(row.assertion_id, static)
@@ -244,19 +324,22 @@ class ContinuousEvalRunner:
             self._emit_error(exc)
             drift = None
         drifted = drift is not None and drift.status == STATUS_DRIFT_DETECTED
-        if not drifted and row.status != STATUS_HARD_FAIL:
-            return
-        alert: dict[str, Any] = {
+        hard_failed = row.status == STATUS_HARD_FAIL
+        if not drifted and not hard_failed:
+            return None
+        return {
             "runner": self.name,
-            "trace_id": trace.trace_id,
             "assertion_id": row.assertion_id,
-            "status": STATUS_DRIFT_DETECTED if drifted else STATUS_HARD_FAIL,
+            "status": STATUS_HARD_FAIL if hard_failed else STATUS_DRIFT_DETECTED,
             "result_status": row.status,
             "score": row.score,
             "baseline_mean": drift.mean if drift is not None else None,
             "baseline_count": drift.count if drift is not None else None,
             "static_threshold": static,
+            "trace_id": trace.trace_id,
         }
+
+    async def _dispatch(self, alert: dict[str, Any]) -> None:
         try:
             for failure in await self._dispatcher.dispatch(alert):
                 self._emit_error(failure)
