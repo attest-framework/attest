@@ -83,6 +83,15 @@ func policyEvaluate(args []string) {
 		fmt.Fprintf(os.Stderr, "policy evaluate: %v\n", err)
 		os.Exit(policy.ExitUsage)
 	}
+	if err := checkReportComplete(*reportPath); err != nil {
+		fmt.Fprintf(os.Stderr, "policy evaluate: report %s: %v\n", *reportPath, err)
+		os.Exit(policy.ExitUsage)
+	}
+
+	if err := policy.MissingInputsError(pol, *baselineTag != "", *mutationPath != ""); err != nil {
+		fmt.Fprintf(os.Stderr, "policy evaluate: %v\n", err)
+		os.Exit(policy.ExitUsage)
+	}
 
 	var delta *report.BaselineDelta
 	if *baselineTag != "" {
@@ -100,9 +109,6 @@ func policyEvaluate(args []string) {
 			fmt.Fprintf(os.Stderr, "policy evaluate: %v\n", err)
 			os.Exit(policy.ExitUsage)
 		}
-	} else if pol.MinMutationScore != nil {
-		fmt.Fprintln(os.Stderr, "policy evaluate: the policy sets min_mutation_score; pass --mutation <path> (the output of `attest mutate --json`)")
-		os.Exit(policy.ExitUsage)
 	}
 
 	result := policy.Evaluate(pol, env.Results, env.TotalCost, delta)
@@ -121,6 +127,16 @@ func policyEvaluate(args []string) {
 	}
 	emitJSON(out)
 	os.Exit(result.ExitCode())
+}
+
+// checkReportComplete rejects a report with 0 tests while tests_collected is
+// positive.
+func checkReportComplete(path string) error {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("read report: %w", err)
+	}
+	return report.CheckComplete(data)
 }
 
 // loadMutationScore reads the score from `attest mutate --json` output. The
