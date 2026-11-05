@@ -39,6 +39,12 @@ func annotateDiagnostics(r *types.AssertionResult, a *types.Assertion) {
 	if r.SpecHash == "" {
 		r.SpecHash = SpecHash(a.Spec)
 	}
+	if err := assertionid.Validate(a.ScopeID, a.Type, a.Spec); err != nil {
+		r.Status = types.StatusHardFail
+		r.Reason = ""
+		r.Score = 0
+		r.Explanation = "invalid input: no assertion id can be computed: " + err.Error()
+	}
 	if r.Layer == 0 {
 		r.Layer = types.LayerForType(a.Type)
 	}
