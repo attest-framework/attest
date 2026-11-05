@@ -1,0 +1,342 @@
+{
+  "adapter": "langchain",
+  "call": {
+    "kind": "callbacks"
+  },
+  "case": "tool_loop",
+  "construct": {
+    "agent_id": "corpus-agent"
+  },
+  "description": "Agent loop: structured tool inputs, ToolMessage output, usage_metadata tokens, latency from the root chain's own end time.",
+  "golden": {
+    "agent_id": "corpus-agent",
+    "input": {
+      "message": "Where is ORD-1?"
+    },
+    "metadata": {
+      "latency_ms": 700,
+      "model": "gpt-4.1",
+      "total_tokens": 103
+    },
+    "output": {
+      "message": "ORD-1 has shipped."
+    },
+    "schema_version": 1,
+    "steps": [
+      {
+        "agent_id": "corpus-agent",
+        "args": {
+          "model": "gpt-4.1"
+        },
+        "ended_at_ms": 1200,
+        "metadata": {
+          "duration_ms": 100
+        },
+        "name": "gpt-4.1",
+        "result": {
+          "input_tokens": 30,
+          "output_tokens": 12,
+          "tokens": 42
+        },
+        "started_at_ms": 1100,
+        "type": "llm_call"
+      },
+      {
+        "agent_id": "corpus-agent",
+        "args": {
+          "order_id": "ORD-1"
+        },
+        "ended_at_ms": 1400,
+        "metadata": {
+          "duration_ms": 100
+        },
+        "name": "lookup_order",
+        "result": {
+          "output": "shipped"
+        },
+        "started_at_ms": 1300,
+        "type": "tool_call"
+      },
+      {
+        "agent_id": "corpus-agent",
+        "args": {
+          "model": "gpt-4.1"
+        },
+        "ended_at_ms": 1600,
+        "metadata": {
+          "duration_ms": 100
+        },
+        "name": "gpt-4.1",
+        "result": {
+          "completion": "ORD-1 has shipped.",
+          "input_tokens": 55,
+          "output_tokens": 6,
+          "tokens": 61
+        },
+        "started_at_ms": 1500,
+        "type": "llm_call"
+      }
+    ],
+    "trace_id": "trc_normalized"
+  },
+  "payload": {
+    "events": [
+      {
+        "args": {
+          "inputs": {
+            "input": "Where is ORD-1?"
+          }
+        },
+        "method": "on_chain_start",
+        "parent_run_id": null,
+        "run_id": "run-1",
+        "t_ms": 1000
+      },
+      {
+        "args": {
+          "invocation_params": {
+            "_type": "generic-fake-chat-model",
+            "model_name": "gpt-4.1",
+            "stop": null
+          },
+          "messages": [
+            [
+              {
+                "$message": {
+                  "data": {
+                    "additional_kwargs": {},
+                    "content": "Where is ORD-1?",
+                    "id": null,
+                    "name": null,
+                    "response_metadata": {},
+                    "type": "human"
+                  },
+                  "type": "human"
+                }
+              }
+            ]
+          ]
+        },
+        "method": "on_chat_model_start",
+        "parent_run_id": "run-1",
+        "run_id": "run-2",
+        "t_ms": 1100
+      },
+      {
+        "args": {
+          "response": {
+            "$llm_result": {
+              "generations": [
+                [
+                  {
+                    "message": {
+                      "data": {
+                        "additional_kwargs": {},
+                        "content": "",
+                        "id": null,
+                        "invalid_tool_calls": [],
+                        "name": null,
+                        "response_metadata": {},
+                        "tool_calls": [
+                          {
+                            "args": {
+                              "order_id": "ORD-1"
+                            },
+                            "id": "call_corpus",
+                            "name": "lookup_order",
+                            "type": "tool_call"
+                          }
+                        ],
+                        "type": "ai",
+                        "usage_metadata": {
+                          "input_tokens": 30,
+                          "output_tokens": 12,
+                          "total_tokens": 42
+                        }
+                      },
+                      "type": "ai"
+                    },
+                    "text": ""
+                  }
+                ]
+              ],
+              "llm_output": null
+            }
+          }
+        },
+        "method": "on_llm_end",
+        "parent_run_id": "run-1",
+        "run_id": "run-2",
+        "t_ms": 1200
+      },
+      {
+        "args": {
+          "input_str": "{'order_id': 'ORD-1'}",
+          "inputs": {
+            "order_id": "ORD-1"
+          },
+          "serialized": {
+            "description": "Look up an order.",
+            "name": "lookup_order"
+          }
+        },
+        "method": "on_tool_start",
+        "parent_run_id": "run-1",
+        "run_id": "run-3",
+        "t_ms": 1300
+      },
+      {
+        "args": {
+          "output": {
+            "$message": {
+              "data": {
+                "additional_kwargs": {},
+                "artifact": null,
+                "content": "shipped",
+                "id": null,
+                "name": "lookup_order",
+                "response_metadata": {},
+                "status": "success",
+                "tool_call_id": "call_corpus",
+                "type": "tool"
+              },
+              "type": "tool"
+            }
+          }
+        },
+        "method": "on_tool_end",
+        "parent_run_id": "run-1",
+        "run_id": "run-3",
+        "t_ms": 1400
+      },
+      {
+        "args": {
+          "invocation_params": {
+            "_type": "generic-fake-chat-model",
+            "model_name": "gpt-4.1",
+            "stop": null
+          },
+          "messages": [
+            [
+              {
+                "$message": {
+                  "data": {
+                    "additional_kwargs": {},
+                    "content": "Where is ORD-1?",
+                    "id": null,
+                    "name": null,
+                    "response_metadata": {},
+                    "type": "human"
+                  },
+                  "type": "human"
+                }
+              },
+              {
+                "$message": {
+                  "data": {
+                    "additional_kwargs": {},
+                    "content": "",
+                    "id": null,
+                    "invalid_tool_calls": [],
+                    "name": null,
+                    "response_metadata": {},
+                    "tool_calls": [
+                      {
+                        "args": {
+                          "order_id": "ORD-1"
+                        },
+                        "id": "call_corpus",
+                        "name": "lookup_order",
+                        "type": "tool_call"
+                      }
+                    ],
+                    "type": "ai",
+                    "usage_metadata": {
+                      "input_tokens": 30,
+                      "output_tokens": 12,
+                      "total_tokens": 42
+                    }
+                  },
+                  "type": "ai"
+                }
+              },
+              {
+                "$message": {
+                  "data": {
+                    "additional_kwargs": {},
+                    "artifact": null,
+                    "content": "shipped",
+                    "id": null,
+                    "name": "lookup_order",
+                    "response_metadata": {},
+                    "status": "success",
+                    "tool_call_id": "call_corpus",
+                    "type": "tool"
+                  },
+                  "type": "tool"
+                }
+              }
+            ]
+          ]
+        },
+        "method": "on_chat_model_start",
+        "parent_run_id": "run-1",
+        "run_id": "run-4",
+        "t_ms": 1500
+      },
+      {
+        "args": {
+          "response": {
+            "$llm_result": {
+              "generations": [
+                [
+                  {
+                    "message": {
+                      "data": {
+                        "additional_kwargs": {},
+                        "content": "ORD-1 has shipped.",
+                        "id": null,
+                        "invalid_tool_calls": [],
+                        "name": null,
+                        "response_metadata": {},
+                        "tool_calls": [],
+                        "type": "ai",
+                        "usage_metadata": {
+                          "input_tokens": 55,
+                          "output_tokens": 6,
+                          "total_tokens": 61
+                        }
+                      },
+                      "type": "ai"
+                    },
+                    "text": "ORD-1 has shipped."
+                  }
+                ]
+              ],
+              "llm_output": null
+            }
+          }
+        },
+        "method": "on_llm_end",
+        "parent_run_id": "run-1",
+        "run_id": "run-4",
+        "t_ms": 1600
+      },
+      {
+        "args": {
+          "outputs": {
+            "output": "ORD-1 has shipped."
+          }
+        },
+        "method": "on_chain_end",
+        "parent_run_id": null,
+        "run_id": "run-1",
+        "t_ms": 1700
+      }
+    ]
+  },
+  "sdk": {
+    "package": "langchain-core",
+    "type": "langchain_core.messages.BaseMessage"
+  }
+}
