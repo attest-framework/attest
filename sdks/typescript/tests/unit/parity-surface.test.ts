@@ -43,7 +43,9 @@ describe("compareSurface", () => {
 });
 
 describe("typescript parity snapshot", () => {
-  it("matches the live public surface", () => {
+  // collectSurface builds TypeScript programs over the package sources; with the adapters'
+  // @langchain/core types in the graph this takes several seconds on CI runners.
+  it("matches the live public surface", { timeout: 30_000 }, () => {
     const live = collectSurface();
     const file = join(PARITY_DIR, "typescript.json");
     if (process.env[UPDATE_ENV] === "1") {
@@ -71,7 +73,7 @@ describe("adapter parity", () => {
     ]);
   });
 
-  it("counts every exported adapter as a match only when its corpus cases pass", async () => {
+  it("counts every exported adapter as a match only when its corpus cases pass", { timeout: 30_000 }, async () => {
     process.env.ATTEST_ENGINE_PATH = ENGINE_PATH;
 
     const problems = adapterParityProblems(collectSurface().adapters, await adapterStatuses());
