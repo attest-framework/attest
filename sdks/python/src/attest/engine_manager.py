@@ -3,13 +3,22 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import subprocess
+import time
+from collections.abc import Mapping
 from typing import Any
 
 from attest import ENGINE_VERSION, __version__
-from attest._proto.codec import decode_response, encode_request, extract_result
+from attest._proto.codec import (
+    ProtocolError,
+    decode_response,
+    encode_request,
+    extract_id,
+    extract_result,
+)
 from attest._proto.types import InitializeParams, InitializeResult
 from attest.engine_downloader import _binary_filename, cached_engine_path, download_engine
 from attest.exceptions import EngineTimeoutError, EngineVersionMismatchError
@@ -21,6 +30,11 @@ ENGINE_BINARY_NAME = "attest-engine"
 _DEFAULT_ENGINE_TIMEOUT: float = 30.0
 
 _VERSION_PROBE_TIMEOUT: float = 10.0
+
+# Matches the engine's per-line cap (``MaxLineBytes`` in
+# engine/internal/server/server.go). asyncio's default 64 KiB stream limit
+# makes ``readline`` raise ValueError on a larger response line.
+MAX_FRAME_BYTES: int = 10 * 1024 * 1024
 
 
 def _engine_timeout() -> float:
@@ -153,8 +167,22 @@ def resolve_engine(explicit_path: str | None = None, *, allow_download: bool = T
     return path
 
 
+def _line_id(line: bytes) -> int | None:
+    """The integer ``id`` of a JSON-RPC line, or None when absent or unparseable."""
+    try:
+        data: Any = json.loads(line)
+        return int(data["id"])
+    except (ValueError, KeyError, TypeError):
+        return None
+
+
 class EngineManager:
-    """Manages the lifecycle of the attest-engine subprocess."""
+    """Manages the lifecycle of the attest-engine subprocess.
+
+    The manager owns the process and its ``initialize`` / ``shutdown``
+    handshake. Every other request goes through ``AttestClient``, whose
+    reader routes each response to its request by ``id``.
+    """
 
     def __init__(
         self,
@@ -167,18 +195,29 @@ class EngineManager:
         self._initialized = False
         self._request_id = 0
         self._init_result: InitializeResult | None = None
+        self._spawn_env: dict[str, str] = dict(os.environ)
 
-    async def start(self) -> InitializeResult:
+    @property
+    def spawn_env(self) -> Mapping[str, str]:
+        """The environment the current engine process was started with."""
+        return self._spawn_env
+
+    async def start(self, env_overrides: Mapping[str, str] | None = None) -> InitializeResult:
         """Start the engine subprocess and send initialize.
 
-        Any failure after the process starts stops it before the error propagates.
+        ``env_overrides`` is layered over this process's environment for the
+        engine only. Any failure after the process starts stops it before the
+        error propagates.
         """
+        self._spawn_env = {**os.environ, **(env_overrides or {})}
         self._process = await asyncio.create_subprocess_exec(
             self._engine_path,
             f"--log-level={self._log_level}",
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            env=self._spawn_env,
+            limit=MAX_FRAME_BYTES,
         )
         logger.info("Engine started (pid=%d)", self._process.pid)
         try:
@@ -189,9 +228,18 @@ class EngineManager:
         self._initialized = True
         return self._init_result
 
+    async def restart(self, env_overrides: Mapping[str, str] | None = None) -> InitializeResult:
+        """Kill the current engine and start a fresh one.
+
+        Used after a request timeout: the old process may still hold the
+        response, so it is killed rather than asked to shut down.
+        """
+        await self._kill()
+        return await self.start(env_overrides)
+
     async def _initialize(self) -> InitializeResult:
         """Send initialize and check the engine's version and capabilities."""
-        result = await self._send_request(
+        result = await self._handshake(
             "initialize",
             InitializeParams(
                 sdk_name="attest-python",
@@ -199,6 +247,9 @@ class EngineManager:
                 protocol_version=1,
                 required_capabilities=["layers_1_4"],
             ).to_dict(),
+            # Startup is not a request: a short ATTEST_ENGINE_TIMEOUT must not
+            # stop the replacement engine that follows a timeout from starting.
+            timeout=max(_engine_timeout(), _DEFAULT_ENGINE_TIMEOUT),
         )
         init = InitializeResult.from_dict(result)
         if init.engine_version != ENGINE_VERSION:
@@ -210,14 +261,22 @@ class EngineManager:
         return init
 
     async def stop(self) -> None:
-        """Send shutdown and wait for process exit."""
+        """Send shutdown and wait for process exit.
+
+        Stop any ``AttestClient`` reader first: the shutdown reply is read here.
+        """
         if self._process is None:
             return
         if self._initialized:
             try:
-                await self._send_request("shutdown", {})
+                await self._handshake("shutdown", {})
             except Exception:
                 logger.warning("Shutdown request failed, killing process")
+        await self._kill()
+
+    async def _kill(self) -> None:
+        if self._process is None:
+            return
         if self._process.returncode is None:
             self._process.terminate()
             try:
@@ -228,35 +287,62 @@ class EngineManager:
         self._initialized = False
         logger.info("Engine stopped")
 
-    async def send_request(self, method: str, params: dict[str, Any]) -> Any:
-        """Send a JSON-RPC request and return the result."""
-        if not self._initialized and method != "initialize":
-            raise RuntimeError("Engine not initialized. Call start() first.")
-        return await self._send_request(method, params)
+    async def _handshake(
+        self, method: str, params: dict[str, Any], timeout: float | None = None
+    ) -> Any:
+        """Send one request and read until the response carrying its id.
 
-    async def _send_request(self, method: str, params: dict[str, Any]) -> Any:
-        """Internal: send request and read response."""
+        Lines without an id and lines for other ids are logged and dropped;
+        none is ever taken as this request's response. Only valid while no
+        ``AttestClient`` reader owns stdout (``initialize`` and ``shutdown``).
+        """
         assert self._process is not None
         assert self._process.stdin is not None
         assert self._process.stdout is not None
 
         self._request_id += 1
-        request_bytes = encode_request(self._request_id, method, params)
-
-        self._process.stdin.write(request_bytes)
+        request_id = self._request_id
+        self._process.stdin.write(encode_request(request_id, method, params))
         await self._process.stdin.drain()
 
-        timeout = _engine_timeout()
-        try:
-            line = await asyncio.wait_for(self._process.stdout.readline(), timeout=timeout)
-        except asyncio.TimeoutError:
-            raise EngineTimeoutError(method=method, timeout=timeout)
+        timeout = _engine_timeout() if timeout is None else timeout
+        deadline = time.monotonic() + timeout
+        while True:
+            remaining = deadline - time.monotonic()
+            try:
+                if remaining <= 0:
+                    raise asyncio.TimeoutError
+                line = await asyncio.wait_for(self._process.stdout.readline(), timeout=remaining)
+            except asyncio.TimeoutError:
+                raise EngineTimeoutError(method=method, timeout=timeout) from None
+            if not line:
+                raise ConnectionError("Engine process closed stdout unexpectedly")
 
-        if not line:
-            raise ConnectionError("Engine process closed stdout unexpectedly")
-
-        response = decode_response(line)
-        return extract_result(response)
+            try:
+                response = decode_response(line)
+            except ProtocolError:
+                # An engine error is this request's response only when its id matches.
+                if _line_id(line) != request_id:
+                    logger.warning("Dropped engine error line during %s: %.200r", method, line)
+                    continue
+                raise
+            except ValueError:
+                logger.warning("Dropped undecodable engine line during %s: %.200r", method, line)
+                continue
+            try:
+                line_id = extract_id(response)
+            except ValueError:
+                logger.warning("Dropped engine line without id during %s: %.200r", method, line)
+                continue
+            if line_id != request_id:
+                logger.warning(
+                    "Dropped engine line for id=%s while waiting for id=%s (%s)",
+                    line_id,
+                    request_id,
+                    method,
+                )
+                continue
+            return extract_result(response)
 
     async def __aenter__(self) -> EngineManager:
         await self.start()

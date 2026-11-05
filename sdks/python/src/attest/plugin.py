@@ -832,6 +832,13 @@ class AttestEngineFixture:
                 raise
         self._client = AttestClient(self._manager)
 
+        async def _start_reader() -> None:
+            assert self._client is not None
+            self._client.start_reader()
+
+        # Every response is routed to its request by id from here on.
+        self._loop.run_until_complete(_start_reader())
+
         # Run the engine loop in a background thread so callers on any event
         # loop (or no loop) can submit coroutines via run_coroutine_threadsafe.
         self._thread = threading.Thread(
@@ -844,10 +851,15 @@ class AttestEngineFixture:
     def stop(self) -> None:
         """Stop the engine process and its background event loop."""
         if self._manager and self._loop:
-            future = asyncio.run_coroutine_threadsafe(
-                self._manager.stop(),
-                self._loop,
-            )
+            manager = self._manager
+
+            async def _shutdown() -> None:
+                # The reader owns stdout until it stops; shutdown reads its reply.
+                if self._client is not None:
+                    await self._client.stop_reader()
+                await manager.stop()
+
+            future = asyncio.run_coroutine_threadsafe(_shutdown(), self._loop)
             future.result(timeout=10)
             self._loop.call_soon_threadsafe(self._loop.stop)
             if self._thread is not None:

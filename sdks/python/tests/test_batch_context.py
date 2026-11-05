@@ -17,9 +17,8 @@ from attest.trials import TestRun, begin_run, end_run
 
 @pytest.mark.asyncio
 async def test_evaluate_batch_with_context_sends_set_fields_only() -> None:
-    engine = MagicMock()
-    engine.send_request = AsyncMock(return_value={"results": [], "usage": Usage().to_dict()})
-    client = AttestClient(engine)
+    client = AttestClient(MagicMock())
+    client.send_request = AsyncMock(return_value={"results": [], "usage": Usage().to_dict()})  # type: ignore[method-assign]
 
     await client.evaluate_batch(
         Trace(trace_id="t", output={}),
@@ -27,18 +26,20 @@ async def test_evaluate_batch_with_context_sends_set_fields_only() -> None:
         context=BatchContext(test_id="tests/test_a.py::test_b", file="tests/test_a.py"),
     )
 
-    params: dict[str, Any] = engine.send_request.call_args[0][1]
+    params: dict[str, Any] = client.send_request.call_args[0][1]
     assert params["context"] == {"test_id": "tests/test_a.py::test_b", "file": "tests/test_a.py"}
 
 
 @pytest.mark.asyncio
 async def test_evaluate_batch_without_context_omits_the_param() -> None:
-    engine = MagicMock()
-    engine.send_request = AsyncMock(return_value={"results": [], "usage": Usage().to_dict()})
+    client = AttestClient(MagicMock())
+    client.send_request = AsyncMock(  # type: ignore[method-assign]
+        return_value={"results": [], "usage": Usage().to_dict()}
+    )
 
-    await AttestClient(engine).evaluate_batch(Trace(trace_id="t", output={}), [])
+    await client.evaluate_batch(Trace(trace_id="t", output={}), [])
 
-    assert "context" not in engine.send_request.call_args[0][1]
+    assert "context" not in client.send_request.call_args[0][1]
 
 
 @pytest.fixture

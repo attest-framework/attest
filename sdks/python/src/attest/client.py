@@ -28,6 +28,8 @@ from attest._proto.diagnostics import (
     preview_line,
 )
 from attest._proto.types import (
+    TYPE_EMBEDDING,
+    TYPE_LLM_JUDGE,
     Assertion,
     BatchBudget,
     BatchContext,
@@ -38,9 +40,10 @@ from attest._proto.types import (
     SimulateFaultConfig,
     SimulatePersona,
     Trace,
+    Usage,
 )
-from attest.engine_manager import EngineManager
-from attest.exceptions import ProtocolDesyncError
+from attest.engine_manager import EngineManager, _engine_timeout
+from attest.exceptions import EngineTimeoutError, ProtocolDesyncError
 
 logger = logging.getLogger("attest.client")
 
@@ -116,6 +119,19 @@ class AttestClient:
         self._pending: dict[int, asyncio.Future[Any]] = {}
         self._write_lock = asyncio.Lock()
         self._reader_task: asyncio.Task[None] | None = None
+        # request id -> (may call the judge provider, may spend USD) for requests
+        # that have been sent and not answered.
+        self._inflight: dict[int, tuple[bool, bool]] = {}
+        # ids whose caller gave up; a late response for one is dropped quietly.
+        self._abandoned: set[int] = set()
+        self._restart_lock = asyncio.Lock()
+        self._generation = 0
+        # Usage returned by evaluate_batch, summed over every engine of the session.
+        self._spent = Usage()
+        # A timed-out request could have spent all the remaining budget of its
+        # engine; the limit is then exhausted for every later engine.
+        self._judge_calls_exhausted = False
+        self._usd_exhausted = False
 
         self._logger: ProtocolLogger = protocol_logger or _default_logger()
         self._diagnostic_buffer = ProtocolDiagnosticBuffer(diagnostic_buffer_size)
@@ -234,6 +250,10 @@ class AttestClient:
             self._record_diagnostic(kind, str(exc), text)
             return
 
+        if "id" not in response and "method" in response:
+            logger.info("Dropped engine notification %r (not a response)", response["method"])
+            return
+
         try:
             req_id = extract_id(response)
         except ValueError as exc:
@@ -241,7 +261,12 @@ class AttestClient:
             return
 
         fut = self._pending.pop(req_id, None)
+        self._inflight.pop(req_id, None)
         if fut is None:
+            if req_id in self._abandoned:
+                self._abandoned.discard(req_id)
+                logger.info("Dropped late response for abandoned request id=%d", req_id)
+                return
             self._record_diagnostic("unknown_id", f"no pending request for id={req_id}", text)
             return
 
@@ -267,6 +292,7 @@ class AttestClient:
             req_id = -1
 
         fut = self._pending.pop(req_id, None)
+        self._inflight.pop(req_id, None)
         if fut is not None and not fut.done():
             fut.set_exception(exc)
             return
@@ -283,19 +309,22 @@ class AttestClient:
             if not fut.done():
                 fut.set_exception(exc)
         self._pending.clear()
+        self._inflight.clear()
 
     # ── Core send ──
 
     async def send_request(self, method: str, params: dict[str, Any]) -> Any:
-        """Send a JSON-RPC request and return the correlated result.
+        """Send a JSON-RPC request and return the result of its own response.
 
         Assigns an auto-incrementing request ID, registers a Future in the
         pending map, writes the encoded request under the write lock, then
-        awaits the Future which the reader loop resolves when the matching
-        response arrives.
+        awaits the Future which the reader loop resolves when the response
+        with the same ID arrives. The reader starts on first use.
 
-        Falls back to EngineManager.send_request when the reader loop is not
-        running (e.g. during engine initialization before start_reader()).
+        After ``ATTEST_ENGINE_TIMEOUT`` seconds without that response the
+        engine is killed and restarted (its pipe may still hold the answer),
+        every other pending request fails, and ``EngineTimeoutError`` is
+        raised. The new engine gets the session budget that remains.
         """
         if self._desynced:
             raise ProtocolDesyncError(
@@ -303,9 +332,8 @@ class AttestClient:
                 self._diagnostic_buffer.snapshot(),
             )
 
-        if self._reader_task is None or self._reader_task.done():
-            # Reader not running — delegate to engine directly (sequential mode)
-            return await self._engine.send_request(method, params)
+        async with self._restart_lock:  # wait out a restart in progress
+            self._ensure_reader()
 
         loop = asyncio.get_running_loop()
         fut: asyncio.Future[Any] = loop.create_future()
@@ -313,19 +341,97 @@ class AttestClient:
         async with self._write_lock:
             self._request_id += 1
             req_id = self._request_id
-            self._pending[req_id] = fut
+            generation = self._generation
 
             process = self._engine._process
             if process is None or process.stdin is None:
-                self._pending.pop(req_id, None)
-                fut.cancel()
                 raise RuntimeError("Engine process not started.")
 
+            self._pending[req_id] = fut
+            self._inflight[req_id] = _budget_exposure(method, params)
             request_bytes = encode_request(req_id, method, params)
-            process.stdin.write(request_bytes)
-            await process.stdin.drain()
+            try:
+                process.stdin.write(request_bytes)
+                await process.stdin.drain()
+            except BaseException:
+                self._forget(req_id)
+                raise
 
-        return await fut
+        timeout = _engine_timeout()
+        try:
+            done, _ = await asyncio.wait({fut}, timeout=timeout)
+        except asyncio.CancelledError:
+            self._abandon(req_id)
+            raise
+        if done:
+            return fut.result()
+
+        self._abandon(req_id)
+        await self._restart_after_timeout(generation, method, timeout)
+        raise EngineTimeoutError(method=method, timeout=timeout)
+
+    def _ensure_reader(self) -> None:
+        if self._reader_task is None:
+            self.start_reader()
+            return
+        if self._reader_task.get_loop() is not asyncio.get_running_loop():
+            raise RuntimeError(
+                "AttestClient is bound to the event loop that first used it; "
+                "submit requests from that loop."
+            )
+        if self._reader_task.done():
+            raise ConnectionError("Engine reader stopped; the engine closed stdout or failed.")
+
+    def _forget(self, req_id: int) -> None:
+        self._pending.pop(req_id, None)
+        self._inflight.pop(req_id, None)
+
+    def _abandon(self, req_id: int) -> None:
+        """Stop waiting for ``req_id``; a late response for it is dropped."""
+        if self._pending.pop(req_id, None) is not None:
+            self._abandoned.add(req_id)
+
+    async def _restart_after_timeout(self, generation: int, method: str, timeout: float) -> None:
+        """Replace the engine after a timeout, once per engine generation."""
+        async with self._restart_lock:
+            if generation != self._generation:
+                return  # another timed-out request already restarted the engine
+            self._generation += 1
+            for judge, usd in self._inflight.values():
+                self._judge_calls_exhausted |= judge
+                self._usd_exhausted |= usd
+            await self.stop_reader()
+            self._fail_all(
+                ConnectionError(
+                    f"Engine restarted after a {method} request timed out after {timeout:g}s; "
+                    "this request was lost with it."
+                )
+            )
+            self._abandoned.clear()
+            logger.warning("%s timed out after %gs; restarting the engine", method, timeout)
+            await self._engine.restart(self._remaining_budget_env())
+            self.start_reader()
+
+    def _remaining_budget_env(self) -> dict[str, str]:
+        """Budget variables for the replacement engine (contract C1).
+
+        The session limit minus the usage evaluate_batch already returned,
+        minus the worst-case reservation of requests lost in the restart. The
+        engine ledger admits at most the remaining limit, so a lost request
+        that could reach a model provider may have used all of it: that limit
+        is exhausted (0) and the new engine answers ``budget_exhausted``.
+        """
+        env = self._engine.spawn_env
+        out: dict[str, str] = {}
+        raw_calls = env.get("ATTEST_MAX_JUDGE_CALLS", "")
+        if raw_calls:
+            left = 0 if self._judge_calls_exhausted else int(raw_calls) - self._spent.judge_calls
+            out["ATTEST_MAX_JUDGE_CALLS"] = str(max(0, left))
+        raw_usd = env.get("ATTEST_BUDGET_USD", "")
+        if raw_usd:
+            left_usd = 0.0 if self._usd_exhausted else float(raw_usd) - self._spent.cost_usd
+            out["ATTEST_BUDGET_USD"] = repr(max(0.0, left_usd))
+        return out
 
     # ── Convenience methods ──
 
@@ -368,7 +474,18 @@ class AttestClient:
         if context is not None:
             params["context"] = context.to_dict()
         raw = await self.send_request("evaluate_batch", params)
-        return EvaluateBatchResult.from_dict(raw)
+        result = EvaluateBatchResult.from_dict(raw)
+        self._spent = self._spent + result.usage
+        sent = {a.assertion_id for a in assertions}
+        returned = {r.assertion_id for r in result.results}
+        if sent != returned:
+            raise ProtocolDesyncError(
+                "evaluate_batch response does not belong to this request: sent assertion ids "
+                f"{sorted(sent)[:5]} (n={len(sent)}), "
+                f"got {sorted(returned)[:5]} (n={len(returned)}).",
+                self._diagnostic_buffer.snapshot(),
+            )
+        return result
 
     async def submit_plugin_result(
         self,
@@ -459,6 +576,16 @@ class AttestClient:
             params["fault_config"] = fault_config.to_dict()
         raw = await self.send_request("generate_user_message", params)
         return str(raw["message"])
+
+
+def _budget_exposure(method: str, params: dict[str, Any]) -> tuple[bool, bool]:
+    """Whether a request may call the judge provider, and whether it may spend USD."""
+    if method == "generate_user_message":
+        return True, True
+    if method != "evaluate_batch":
+        return False, False
+    types = {a.get("type") for a in params.get("assertions", [])}
+    return TYPE_LLM_JUDGE in types, bool(types & {TYPE_LLM_JUDGE, TYPE_EMBEDDING})
 
 
 def require_simulation_capability(init: InitializeResult | None) -> None:
