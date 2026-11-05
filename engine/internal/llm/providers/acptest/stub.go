@@ -1,6 +1,8 @@
 // Package acptest provides a scripted Agent Client Protocol agent for tests.
-// A test binary runs it from TestMain when StubEnv is set, so
-// ATTEST_JUDGE_ACP_COMMAND can point at the test binary itself.
+// A test binary runs it from TestMain when ScenarioFromArgs finds a scenario
+// flag, so ATTEST_JUDGE_ACP_COMMAND can point at the test binary itself. The
+// scenario travels on the command line because the engine starts the agent
+// with an allowlisted environment that drops test-only variables.
 package acptest
 
 import (
@@ -16,8 +18,36 @@ import (
 	"time"
 )
 
-// StubEnv selects the scenario the stub agent plays.
-const StubEnv = "ATTEST_ACP_STUB"
+// ScenarioFlag and PIDFileFlag are the command-line flags that select the
+// scenario the stub agent plays and the file Hang writes its child's PID to.
+const (
+	ScenarioFlag = "--acp-stub"
+	PIDFileFlag  = "--acp-stub-pidfile"
+)
+
+// Command returns the agent command line that makes the running test binary
+// play scenario. pidFile may be empty unless scenario is Hang.
+func Command(scenario, pidFile string) string {
+	cmd := os.Args[0] + " " + ScenarioFlag + "=" + scenario
+	if pidFile != "" {
+		cmd += " " + PIDFileFlag + "=" + pidFile
+	}
+	return cmd
+}
+
+// ScenarioFromArgs returns the scenario and PID file named by args, or an
+// empty scenario when the binary was not started as the stub agent.
+func ScenarioFromArgs(args []string) (scenario, pidFile string) {
+	for _, a := range args {
+		if v, ok := strings.CutPrefix(a, ScenarioFlag+"="); ok {
+			scenario = v
+		}
+		if v, ok := strings.CutPrefix(a, PIDFileFlag+"="); ok {
+			pidFile = v
+		}
+	}
+	return scenario, pidFile
+}
 
 // Scenarios.
 const (
@@ -35,15 +65,16 @@ const (
 	// VersionMismatch answers initialize with protocol version 2.
 	VersionMismatch = "version-mismatch"
 	// Hang starts a child process that shares the stub's stdout and stderr
-	// (as npx does), writes the child's PID to the file named by PIDFileEnv,
+	// (as npx does), writes the child's PID to the file named by PIDFileFlag,
 	// and never answers session/prompt.
 	Hang = "hang"
+	// DumpEnv answers the prompt with the stub's own environment as a JSON
+	// array of NAME=value strings, so a test can assert what the engine let
+	// reach the agent.
+	DumpEnv = "dump-env"
 	// sleepChild is the child Hang starts.
 	sleepChild = "sleep-child"
 )
-
-// PIDFileEnv names the file Hang writes its child's PID to.
-const PIDFileEnv = "ATTEST_ACP_STUB_PIDFILE"
 
 // SessionID is the session the stub creates.
 const SessionID = "stub-session"
@@ -64,11 +95,13 @@ type stub struct {
 	in         *bufio.Scanner
 	out        io.Writer
 	scenario   string
+	pidFile    string
 	violations []string
 }
 
-// Serve plays scenario over r/w until the client closes r.
-func Serve(r io.Reader, w io.Writer, scenario string) error {
+// Serve plays scenario over r/w until the client closes r. pidFile is where
+// Hang records its child's PID.
+func Serve(r io.Reader, w io.Writer, scenario, pidFile string) error {
 	if scenario == sleepChild {
 		time.Sleep(time.Minute)
 		return nil
@@ -79,7 +112,7 @@ func Serve(r io.Reader, w io.Writer, scenario string) error {
 			return err
 		}
 	}
-	s := &stub{in: bufio.NewScanner(r), out: w, scenario: scenario}
+	s := &stub{in: bufio.NewScanner(r), out: w, scenario: scenario, pidFile: pidFile}
 	s.in.Buffer(make([]byte, 64<<10), 8<<20)
 	for {
 		msg, ok, err := s.read()
@@ -182,7 +215,7 @@ func (s *stub) checkSessionNew(raw json.RawMessage) {
 func (s *stub) prompt(m message) error {
 	switch s.scenario {
 	case Hang:
-		if err := startSleepingChild(); err != nil {
+		if err := startSleepingChild(s.pidFile); err != nil {
 			return err
 		}
 		select {}
@@ -213,7 +246,13 @@ func (s *stub) prompt(m message) error {
 		return err
 	}
 	verdict := `{"score": 0.95, "explanation": "helpful answer"}`
-	if len(s.violations) > 0 {
+	if s.scenario == DumpEnv {
+		b, err := json.Marshal(os.Environ())
+		if err != nil {
+			return err
+		}
+		verdict = string(b)
+	} else if len(s.violations) > 0 {
 		b, _ := json.Marshal(strings.Join(s.violations, "; "))
 		verdict = `{"score": 0.0, "explanation": ` + string(b) + `}`
 	}
@@ -292,14 +331,13 @@ func (s *stub) askFileRead() error {
 	return nil
 }
 
-func startSleepingChild() error {
-	child := exec.Command(os.Args[0])
-	child.Env = append(os.Environ(), StubEnv+"="+sleepChild)
+func startSleepingChild(pidFile string) error {
+	child := exec.Command(os.Args[0], ScenarioFlag+"="+sleepChild)
 	child.Stdout, child.Stderr = os.Stdout, os.Stderr
 	if err := child.Start(); err != nil {
 		return err
 	}
-	return os.WriteFile(os.Getenv(PIDFileEnv), []byte(strconv.Itoa(child.Process.Pid)), 0o600)
+	return os.WriteFile(pidFile, []byte(strconv.Itoa(child.Process.Pid)), 0o600)
 }
 
 func (s *stub) violate(v string) { s.violations = append(s.violations, v) }

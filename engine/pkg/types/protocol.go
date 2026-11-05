@@ -4,18 +4,22 @@ import "encoding/json"
 
 // Request is a JSON-RPC 2.0 request.
 type Request struct {
-	JSONRPC string          `json:"jsonrpc"`
-	ID      int64           `json:"id"`
-	Method  string          `json:"method"`
-	Params  json.RawMessage `json:"params"`
+	JSONRPC string `json:"jsonrpc"`
+	// ID is the raw JSON id (string, number or null); empty means the request
+	// is a notification and gets no reply.
+	ID     json.RawMessage `json:"id,omitempty"`
+	Method string          `json:"method"`
+	Params json.RawMessage `json:"params"`
 }
 
 // Response is a JSON-RPC 2.0 response.
 type Response struct {
-	JSONRPC string          `json:"jsonrpc"`
-	ID      int64           `json:"id"`
-	Result  json.RawMessage `json:"result,omitempty"`
-	Error   *RPCError       `json:"error,omitempty"`
+	JSONRPC string `json:"jsonrpc"`
+	// ID echoes the request id as raw JSON; nil marshals as null, which is the
+	// id of a reply to a request whose id could not be determined.
+	ID     json.RawMessage `json:"id"`
+	Result json.RawMessage `json:"result,omitempty"`
+	Error  *RPCError       `json:"error,omitempty"`
 }
 
 // RPCError represents a JSON-RPC error object.

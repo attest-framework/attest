@@ -1,0 +1,13 @@
+{
+  "name": "006-unknown-method-string-id",
+  "description": "An error reply echoes a string id.",
+  "lines": [
+    "{\"jsonrpc\":\"2.0\",\"id\":\"abc\",\"method\":\"no_such_method\"}"
+  ],
+  "expected_replies": [
+    {
+      "id": "abc",
+      "error_code": -32601
+    }
+  ]
+}

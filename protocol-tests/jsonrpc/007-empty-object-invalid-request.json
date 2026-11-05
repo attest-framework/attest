@@ -1,0 +1,13 @@
+{
+  "name": "007-empty-object-invalid-request",
+  "description": "An empty object is an invalid request answered with -32600 and id null, not silence.",
+  "lines": [
+    "{}"
+  ],
+  "expected_replies": [
+    {
+      "id": null,
+      "error_code": -32600
+    }
+  ]
+}

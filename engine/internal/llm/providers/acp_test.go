@@ -17,11 +17,11 @@ import (
 )
 
 // TestMain lets this test binary act as the stub ACP agent: with
-// acptest.StubEnv set, it serves the scenario on stdio instead of running
-// tests.
+// a scenario flag (acptest.Command), it serves the scenario on stdio instead
+// of running tests.
 func TestMain(m *testing.M) {
-	if scenario := os.Getenv(acptest.StubEnv); scenario != "" {
-		if err := acptest.Serve(os.Stdin, os.Stdout, scenario); err != nil {
+	if scenario, pidFile := acptest.ScenarioFromArgs(os.Args[1:]); scenario != "" {
+		if err := acptest.Serve(os.Stdin, os.Stdout, scenario, pidFile); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
 		}
@@ -45,8 +45,7 @@ func clearCI(t *testing.T) {
 func newStubACP(t *testing.T, scenario string) *ACP {
 	t.Helper()
 	clearCI(t)
-	t.Setenv(acptest.StubEnv, scenario)
-	p, err := NewACP(os.Args[0], "", testACPTimeout)
+	p, err := NewACP(acptest.Command(scenario, ""), "", testACPTimeout)
 	if err != nil {
 		t.Fatalf("NewACP: %v", err)
 	}
@@ -178,20 +177,76 @@ func TestNewACP_MissingExecutable_ErrorOmitsArgumentsAndDirectory(t *testing.T) 
 	}
 }
 
-func TestScrubAgentEnv_RemovesCredentialsAndRoutingVariables(t *testing.T) {
-	env := []string{"PATH=/bin", "HOME=/home/dev", "ATTEST_JUDGE_MODEL=m", "anthropic_base_url=lower"}
-	for _, k := range AgentScrubbedVars {
-		env = append(env, k+"=secret")
+func TestAllowlistedAgentEnv_KeepsOnlyAllowlistedNames(t *testing.T) {
+	env := []string{
+		"PATH=/bin", "LC_ALL=C", "CLAUDE_CODE_OAUTH_TOKEN=oauth", "HTTPS_PROXY=http://proxy",
+		"GITHUB_TOKEN=gh", "AWS_SECRET_ACCESS_KEY=aws", "ATTEST_JUDGE_MODEL=m", "FOO=bar", "Path=/win",
 	}
 
-	unix := scrubAgentEnv(append([]string(nil), env...), false)
-	windows := scrubAgentEnv(append([]string(nil), env...), true)
+	got := allowlistedAgentEnv(env, false)
 
-	if want := []string{"PATH=/bin", "HOME=/home/dev", "anthropic_base_url=lower"}; !slices.Equal(unix, want) {
-		t.Errorf("case-sensitive scrub = %v, want %v", unix, want)
+	want := []string{"PATH=/bin", "LC_ALL=C", "CLAUDE_CODE_OAUTH_TOKEN=oauth", "HTTPS_PROXY=http://proxy"}
+	if !slices.Equal(got, want) {
+		t.Errorf("allowlist = %v, want %v", got, want)
 	}
-	if want := []string{"PATH=/bin", "HOME=/home/dev"}; !slices.Equal(windows, want) {
-		t.Errorf("case-insensitive scrub = %v, want %v", windows, want)
+}
+
+func TestAllowlistedAgentEnv_FoldCase_MatchesWindowsNamesInAnyCase(t *testing.T) {
+	env := []string{"Path=C:\\bin", "userprofile=C:\\Users\\dev", "SystemRoot=C:\\Windows", "lc_all=C", "github_token=gh", "Foo=bar"}
+
+	windows := allowlistedAgentEnv(env, true)
+	unix := allowlistedAgentEnv(env, false)
+
+	if want := []string{"Path=C:\\bin", "userprofile=C:\\Users\\dev", "SystemRoot=C:\\Windows", "lc_all=C"}; !slices.Equal(windows, want) {
+		t.Errorf("case-insensitive allowlist = %v, want %v", windows, want)
+	}
+	if len(unix) != 0 {
+		t.Errorf("case-sensitive allowlist = %v, want nothing", unix)
+	}
+}
+
+func TestACP_Complete_DumpEnv_ChildSeesOnlyAllowlistedVariables(t *testing.T) {
+	p := newStubACP(t, acptest.DumpEnv)
+	for k, v := range map[string]string{
+		"GITHUB_TOKEN": "gh-secret", "AWS_SECRET_ACCESS_KEY": "aws-secret", "FOO": "bar", "LC_DEPLOY_TOKEN": "lc-secret",
+		"ATTEST_JUDGE_API_KEY": "judge-secret", "OPENAI_API_KEY": "openai-secret",
+		"CLAUDE_CODE_OAUTH_TOKEN": "oauth", "CLAUDE_CONFIG_DIR": "/cfg", "CODEX_HOME": "/codex",
+		"HTTPS_PROXY": "http://proxy:3128", "LC_ALL": "C",
+	} {
+		t.Setenv(k, v)
+	}
+
+	resp, err := p.Complete(context.Background(), acpJudgeRequest())
+
+	if err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+	var dump []string
+	if err := json.Unmarshal([]byte(resp.Content), &dump); err != nil {
+		t.Fatalf("env dump %q: %v", resp.Content, err)
+	}
+	seen := map[string]string{}
+	for _, kv := range dump {
+		k, v, _ := strings.Cut(kv, "=")
+		seen[k] = v
+	}
+	for k := range seen {
+		if !slices.Contains(agentEnvNames, k) && !isLocaleVar(k) {
+			t.Errorf("%s reached the agent but is not allowlisted", k)
+		}
+	}
+	for _, k := range []string{"GITHUB_TOKEN", "AWS_SECRET_ACCESS_KEY", "FOO", "ATTEST_JUDGE_API_KEY", "OPENAI_API_KEY", "LC_DEPLOY_TOKEN"} {
+		if _, ok := seen[k]; ok {
+			t.Errorf("%s reached the agent", k)
+		}
+	}
+	for k, want := range map[string]string{
+		"CLAUDE_CODE_OAUTH_TOKEN": "oauth", "CLAUDE_CONFIG_DIR": "/cfg", "CODEX_HOME": "/codex",
+		"HTTPS_PROXY": "http://proxy:3128", "LC_ALL": "C",
+	} {
+		if seen[k] != want {
+			t.Errorf("%s = %q in the agent, want %q", k, seen[k], want)
+		}
 	}
 }
 

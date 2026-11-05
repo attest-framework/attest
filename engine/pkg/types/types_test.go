@@ -114,7 +114,7 @@ func TestAssertionResult_JSON_RoundTrip(t *testing.T) {
 func TestRequest_JSON_RoundTrip(t *testing.T) {
 	original := types.Request{
 		JSONRPC: "2.0",
-		ID:      1,
+		ID:      json.RawMessage("1"),
 		Method:  "evaluate_batch",
 		Params:  json.RawMessage(`{"trace":{},"assertions":[]}`),
 	}
@@ -132,8 +132,8 @@ func TestRequest_JSON_RoundTrip(t *testing.T) {
 	if restored.JSONRPC != "2.0" {
 		t.Errorf("JSONRPC: got %q, want %q", restored.JSONRPC, "2.0")
 	}
-	if restored.ID != original.ID {
-		t.Errorf("ID: got %d, want %d", restored.ID, original.ID)
+	if string(restored.ID) != string(original.ID) {
+		t.Errorf("ID: got %s, want %s", restored.ID, original.ID)
 	}
 	if restored.Method != original.Method {
 		t.Errorf("Method: got %q, want %q", restored.Method, original.Method)
@@ -148,7 +148,7 @@ func TestResponse_WithError(t *testing.T) {
 		false,
 		"trace_id is empty",
 	)
-	resp := types.NewErrorResponse(42, rpcErr)
+	resp := types.NewErrorResponse(json.RawMessage("42"), rpcErr)
 
 	data, err := json.Marshal(resp)
 	if err != nil {
@@ -163,8 +163,8 @@ func TestResponse_WithError(t *testing.T) {
 	if restored.JSONRPC != "2.0" {
 		t.Errorf("JSONRPC: got %q, want %q", restored.JSONRPC, "2.0")
 	}
-	if restored.ID != 42 {
-		t.Errorf("ID: got %d, want 42", restored.ID)
+	if string(restored.ID) != "42" {
+		t.Errorf("ID: got %s, want 42", restored.ID)
 	}
 	if restored.Error == nil {
 		t.Fatal("Error is nil after round-trip")

@@ -1,0 +1,13 @@
+{
+  "name": "004-null-id-request",
+  "description": "A request with id null is answered with id null.",
+  "lines": [
+    "{\"jsonrpc\":\"2.0\",\"id\":null,\"method\":\"no_such_method\"}"
+  ],
+  "expected_replies": [
+    {
+      "id": null,
+      "error_code": -32601
+    }
+  ]
+}

@@ -46,17 +46,26 @@ const DEFAULT_DIAGNOSTIC_BUFFER = 32;
 const DEFAULT_DESYNC_THRESHOLD = 3;
 const DEFAULT_DESYNC_WINDOW_MS = 1_000;
 
-function resolveTimeoutMs(override?: number): number {
+const MAX_TIMEOUT_ENV_SECONDS = 3600;
+
+/** Per-request timeout in milliseconds; ATTEST_ENGINE_TIMEOUT is read in seconds. */
+export function resolveTimeoutMs(override?: number): number {
   if (override !== undefined) return override;
   const env = process.env["ATTEST_ENGINE_TIMEOUT"];
   if (env !== undefined && env !== "") {
     const parsed = Number(env);
     if (!Number.isFinite(parsed) || parsed <= 0) {
       throw new Error(
-        `ATTEST_ENGINE_TIMEOUT must be a positive number of milliseconds, got: '${env}'`,
+        `ATTEST_ENGINE_TIMEOUT must be a positive number of seconds, got: '${env}'`,
       );
     }
-    return parsed;
+    if (parsed > MAX_TIMEOUT_ENV_SECONDS) {
+      throw new Error(
+        `ATTEST_ENGINE_TIMEOUT is in seconds since 1.1.0; got '${env}', which exceeds ${MAX_TIMEOUT_ENV_SECONDS}. ` +
+          `A millisecond value such as 30000 must now be 30.`,
+      );
+    }
+    return parsed * 1000;
   }
   return DEFAULT_TIMEOUT_MS;
 }
