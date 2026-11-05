@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 
+from attest import trials
 from attest._proto.types import (
     STATUS_PASS,
     TYPE_CONSTRAINT,
@@ -18,7 +19,6 @@ from attest._proto.types import (
     AssertionResult,
     Trace,
 )
-from attest import trials
 from attest.result import AgentResult
 from attest.trace import TraceBuilder
 
