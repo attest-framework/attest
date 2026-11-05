@@ -95,6 +95,8 @@ Plain `http` to a host other than `localhost` or a loopback address is allowed f
 | `ATTEST_JUDGE_PRICE_IN`, `ATTEST_JUDGE_PRICE_OUT` | Judge price in USD per 1M input and output tokens, set together. Overrides the built-in table (`gpt-4.1`, `gpt-4.1-mini`, `gpt-4.1-nano`) for every judge call; required for `ATTEST_BUDGET_USD` with any other judge model. | unset |
 | `ATTEST_ENGINE_TIMEOUT` | How long the SDK waits for the engine's reply to one request. Read by the SDK, not the engine. Seconds in Python; milliseconds in TypeScript. On a timeout the SDK restarts the engine and fails every pending request, so a late reply never reaches another test. The new engine gets the session budget that is left. Each request lost in the restart that can call a model (a batch with a judge or embedding assertion, or a simulated-user message) holds its `budget` limits if it sent them, otherwise everything that is left; deterministic requests hold nothing. Spend the SDK could not observe earlier (simulated-user messages, engine errors) leaves no budget after a restart. So a timeout can exhaust `ATTEST_MAX_JUDGE_CALLS` / `ATTEST_BUDGET_USD` for the rest of the session. | `30` s (Python), `30000` ms (TypeScript) |
 
+Under pytest-xdist each worker is a separate pytest process with its own engine session, so `ATTEST_MAX_JUDGE_CALLS`, `ATTEST_BUDGET_USD` and `ATTEST_MAX_SOFT_FAILURES` apply per worker, not across the run. Split the budget by the worker count: with `-n 4` and a total of 40 judge calls, set `ATTEST_MAX_JUDGE_CALLS=10`.
+
 ## Cache and history
 
 | Variable | Purpose | Default |
@@ -102,7 +104,7 @@ Plain `http` to a host other than `localhost` or a loopback address is allowed f
 | `ATTEST_REPORT_TRACES` | `1` embeds the evaluated traces in the report-v2 file (`traces` and a `trace_id` per row) for `attest view`. Traces hold prompts, outputs and tool arguments. Read by the pytest plugin and the Vitest reporter. See [viewer](viewer.md). | unset |
 | `ATTEST_CONTRACTS_DIR` | Directory where each engine process records the assertion specs it evaluates (one `0600` NDJSON file per process, no traces or outputs), for `attest mutate --contracts`. Off when unset. See [mutation](mutation.md). | unset |
 | `ATTEST_CACHE_DIR` | Cache, baseline and history database directory. | `~/.attest/cache` |
-| `ATTEST_HISTORY_MAX_ROWS` | Result history row limit (enables pruning). | `10000` when pruning is enabled |
+| `ATTEST_HISTORY_MAX_ROWS` | Result history row limit (enables pruning). Pruning runs in the background in short batches, so a write never waits for it to finish. | `10000` when pruning is enabled |
 | `ATTEST_HISTORY_MAX_AGE_DAYS` | Result history age limit in days (enables pruning). | `30` when pruning is enabled |
 
 ## Removed variables
