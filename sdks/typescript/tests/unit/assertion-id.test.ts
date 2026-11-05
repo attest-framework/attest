@@ -27,12 +27,21 @@ interface Vector {
 
 const doc = JSON.parse(readFileSync(vectorFile, "utf8")) as {
   vectors: Vector[];
-  invalid?: Array<Partial<Vector> & { name: string }>;
+  invalid?: Array<
+    Partial<Vector> & { name: string; scope_id_bytes_hex?: string; spec_json_bytes_hex?: string }
+  >;
 };
 
+const strictUtf8 = new TextDecoder("utf-8", { fatal: true });
+
+function decodeHex(hex: string): string {
+  return strictUtf8.decode(Buffer.from(hex, "hex"));
+}
+
 describe("assertion id scheme 2 golden vectors", () => {
-  it("has the 29 published vectors", () => {
+  it("has the 29 valid and 7 invalid published vectors", () => {
     expect(doc.vectors).toHaveLength(29);
+    expect(doc.invalid).toHaveLength(7);
   });
 
   it.each(doc.vectors.map((v) => [v.name, v] as const))("%s: canonical bytes and id", (_name, v) => {
@@ -63,8 +72,14 @@ describe("assertion id rejection of text with no UTF-8 form", () => {
     expect(() => assertionIdOf("t", "output_contains", { value: "\u{1f600}" }, 0)).not.toThrow();
   });
   it.each((doc.invalid ?? []).map((v) => [v.name, v] as const))("invalid vector %s is rejected", (_name, v) => {
-    const spec: unknown = JSON.parse(v.spec_json ?? "{}");
-    expect(() => assertionIdOf(v.scope_id ?? "t", v.assertion_type ?? "output_contains", spec, v.occurrence_index ?? 0)).toThrow();
+    // The id API takes JS strings, so bytes that are not UTF-8 are rejected at the
+    // strict decode, before any id can be computed.
+    expect(() => {
+      const scope = v.scope_id_bytes_hex !== undefined ? decodeHex(v.scope_id_bytes_hex) : (v.scope_id ?? "t");
+      const specText = v.spec_json_bytes_hex !== undefined ? decodeHex(v.spec_json_bytes_hex) : (v.spec_json ?? "{}");
+      const spec: unknown = JSON.parse(specText);
+      assertionIdOf(scope, v.assertion_type ?? "output_contains", spec, v.occurrence_index ?? 0);
+    }).toThrow();
   });
 });
 
