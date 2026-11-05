@@ -8,11 +8,20 @@
 
 [Documentation](https://attest-framework.github.io/) | [Examples](https://github.com/attest-framework/attest-examples) | [Contributing](CONTRIBUTING.md)
 
+[![Engine CI](https://github.com/attest-framework/attest/actions/workflows/ci-engine.yml/badge.svg)](https://github.com/attest-framework/attest/actions/workflows/ci-engine.yml)
+[![Python SDK CI](https://github.com/attest-framework/attest/actions/workflows/ci-sdk-python.yml/badge.svg)](https://github.com/attest-framework/attest/actions/workflows/ci-sdk-python.yml)
+[![TypeScript SDK CI](https://github.com/attest-framework/attest/actions/workflows/ci-sdk-typescript.yml/badge.svg)](https://github.com/attest-framework/attest/actions/workflows/ci-sdk-typescript.yml)
+[![PyPI](https://img.shields.io/pypi/v/attest-ai)](https://pypi.org/project/attest-ai/)
+[![npm](https://img.shields.io/npm/v/%40attest-ai%2Fcore)](https://www.npmjs.com/package/@attest-ai/core)
+[![License](https://img.shields.io/github/license/attest-framework/attest)](LICENSE)
+
 Attest is an open-source testing framework purpose-built for AI agents and LLM-powered systems. It treats deterministic assertions as first-class citizens alongside probabilistic evaluation — because 70% of your agent's testable surface is deterministic.
 
-> **Status:** v0.6.0 — 8 assertion layers, 11 adapters (Python) + 7 adapters (TypeScript incl. LangChain.js), continuous eval with drift detection, dynamic thresholds, plugin system, result history (SQLite), CLI (Python + TypeScript), budget tracking, engine timeouts, concurrent evaluation, schema caching, branded types, CJS/ESM dual output, pytest + vitest integrations (incl. simulation mode), `queryDrift` + `generateUserMessage` SDK methods, 4 built-in simulation personas, comprehensive test coverage.
+> **Status:** v1.0.0 — capture → replay → merge gate on real agent runs, 8 assertion layers, 11 adapters (Python) + 7 adapters (TypeScript incl. LangChain.js), behavior contracts, mutation testing, HTML failure viewer, MCP server + agent skills, judges on four provider families, continuous eval with drift detection, pytest + vitest integrations.
 
 ---
+
+![Attest demo — the INC-1042 double refund becomes a replayed regression test: incident, capture, replay with zero model calls](assets/demo.gif)
 
 ## Why Attest
 
@@ -23,8 +32,8 @@ Layer 1: Schema Validation        — free, instant, deterministic
 Layer 2: Constraint Checks        — free, instant, deterministic
 Layer 3: Trace/Behavioral Checks  — free, instant, deterministic
 Layer 4: Content Pattern Matching  — free, instant, near-deterministic
-Layer 5: Embedding Similarity      — ~$0.001, ~100ms, near-deterministic
-Layer 6: LLM-as-Judge             — ~$0.01+, ~1-3s, non-deterministic
+Layer 5: Embedding Similarity      — ≪$0.001, ~100ms, near-deterministic
+Layer 6: LLM-as-Judge             — ~$0.001, ~1-3s, non-deterministic
 Layer 7: Simulation               — free (mocked), variable
 Layer 8: Multi-Agent              — free, instant, deterministic
 ```

@@ -1,0 +1,104 @@
+<!-- Source for attest/assets/banner.png (board #banner, rendered at 2x → 2560×1280) and attest-website/public/og.png (board #og, 1x → 1200×630). Render: open in Chromium, element-screenshot each board. Brand: "Replay" system — see attest-website/src/styles/custom.css. -->
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #333; font-family: 'IBM Plex Sans', sans-serif; }
+  .board { background: #15161A; color: #EDEEF0; position: relative; overflow: hidden; }
+  .board::after { content:''; position: absolute; inset: 0; pointer-events: none;
+    background: radial-gradient(ellipse 52% 60% at 24% 30%, rgba(76,201,240,.07) 0%, transparent 70%); }
+  .mark { display: flex; align-items: center; gap: 20px; }
+  .wordmark { font: 600 56px/1 'IBM Plex Mono', monospace; letter-spacing: -0.04em; }
+  .ver { font: 500 13px/1 'IBM Plex Mono', monospace; color: #4CC9F0; border: 1px solid #2A4A56; border-radius: 999px; padding: 7px 14px; }
+  .tagline { font: 600 44px/1.2 'IBM Plex Mono', monospace; letter-spacing: -0.03em; }
+  .tagline .rec { color: #FF5C5C; } .tagline .play { color: #4CC9F0; }
+  .sub { font: 400 19px/1.55 'IBM Plex Sans', sans-serif; color: #9A9FA8; }
+  .chips { display: flex; gap: 10px; }
+  .chip { font: 500 14px/1 'IBM Plex Mono', monospace; padding: 9px 16px; border-radius: 999px; }
+  .chip.pass { color: #44D7A8; background: rgba(68,215,168,.12); }
+  .chip.fail { color: #FF5C5C; background: rgba(255,92,92,.12); }
+  .chip.skip { color: #9A9FA8; background: rgba(154,159,168,.12); }
+  .term { background: #1A1C21; border: 1px solid #2A2D34; border-radius: 12px; box-shadow: 0 24px 56px rgba(0,0,0,.45); }
+  .term .bar { display: flex; gap: 7px; padding: 14px 16px; border-bottom: 1px solid #2A2D34; }
+  .term .bar i { width: 11px; height: 11px; border-radius: 50%; background: #2A2D34; display: block; }
+  .term pre { font: 400 15.5px/1.75 'IBM Plex Mono', monospace; padding: 20px 24px; color: #C2C6CC; }
+  .term .p { color: #4CC9F0; } .term .g { color: #44D7A8; } .term .r { color: #FF5C5C; }
+  .term .d { color: #5F646E; }
+
+  /* ---- banner 1280x640 (render @2x) ---- */
+  #banner { width: 1280px; height: 640px; padding: 64px 72px; display: flex; gap: 56px; align-items: center; }
+  #banner .left { width: 490px; flex: none; display: flex; flex-direction: column; gap: 28px; }
+  #banner .right { flex: 1; }
+
+  /* ---- og 1200x630 ---- */
+  #og { width: 1200px; height: 630px; padding: 80px; display: flex; flex-direction: column; justify-content: center; gap: 36px; }
+  #og .tagline { font-size: 58px; }
+  #og .sub { font-size: 23px; max-width: 30ch; }
+</style>
+</head>
+<body>
+
+<section class="board" id="banner">
+  <div class="left">
+    <div class="mark">
+      <svg width="72" height="72" viewBox="0 0 64 64" fill="none">
+        <rect x="2.5" y="2.5" width="59" height="59" rx="13" fill="#1A1C21" stroke="#383C45" stroke-width="3"/>
+        <path d="M24 19.5 L24 44.5 L43.5 32 Z" fill="#4CC9F0"/>
+        <circle cx="47" cy="17" r="5.5" fill="#FF5C5C"/>
+      </svg>
+      <span class="wordmark">attest</span>
+      <span class="ver">v1.0.0</span>
+    </div>
+    <div class="tagline"><span class="rec">● rec</span> once.<br><span class="play">▶ replay</span> forever.</div>
+    <p class="sub">Test AI agents like you test your code. Capture a real run as a fixture, replay it in CI with zero model calls, gate the merge on the verdict.</p>
+    <div class="chips">
+      <span class="chip pass">pass</span>
+      <span class="chip fail">fail</span>
+      <span class="chip skip">not_evaluated</span>
+    </div>
+  </div>
+  <div class="right">
+    <div class="term">
+      <div class="bar"><i></i><i></i><i></i></div>
+      <pre>$ <span class="p">attest capture</span> --name inc-1042 -- make incident
+  trace: 5 llm_call, 4 tool_call; trace check <span class="g">OK</span>
+  exchanges: 5 recorded <span class="d">(openai ×5)</span>
+  contracts: 5 <span class="g">pass</span> · 1 <span class="r">hard_fail</span> <span class="d">(the incident)</span>
+
+$ <span class="p">pytest</span> tests/replay --attest-replay=strict
+  4 replayed · 0 live model calls · <span class="g">$0.00</span>
+  <span class="g">✓ merge gate: exit 0</span>
+
+<span class="d"># revert the fix and the same tests go red</span>
+  <span class="r">✗ effect violated: 2 refunds for O-1042</span>
+  <span class="r">✗ merge gate: exit 1 — blocked</span></pre>
+    </div>
+    <p class="sub" style="margin-top:18px; font-size:15px; text-align:right;">pip install attest-ai&nbsp;&nbsp;·&nbsp;&nbsp;npm i @attest-ai/core&nbsp;&nbsp;·&nbsp;&nbsp;Python · TypeScript · Apache-2.0</p>
+  </div>
+</section>
+
+<section class="board" id="og">
+  <div class="mark">
+    <svg width="84" height="84" viewBox="0 0 64 64" fill="none">
+      <rect x="2.5" y="2.5" width="59" height="59" rx="13" fill="#1A1C21" stroke="#383C45" stroke-width="3"/>
+      <path d="M24 19.5 L24 44.5 L43.5 32 Z" fill="#4CC9F0"/>
+      <circle cx="47" cy="17" r="5.5" fill="#FF5C5C"/>
+    </svg>
+    <span class="wordmark" style="font-size:64px">attest</span>
+  </div>
+  <div class="tagline"><span class="rec">● rec</span> once. <span class="play">▶ replay</span> forever.</div>
+  <p class="sub">Test AI agents like you test your code — replay real runs in CI with zero model calls.</p>
+  <div class="chips">
+    <span class="chip pass">pass</span>
+    <span class="chip fail">fail</span>
+    <span class="chip skip">not_evaluated</span>
+  </div>
+</section>
+
+</body>
+</html>
