@@ -1,4 +1,4 @@
-.PHONY: record-judge-fixtures all generate engine engine-test engine-lint engine-benchmark sdk-python sdk-python-test sdk-python-lint security protocol-benchmark test clean dev-setup verify-versions
+.PHONY: record-judge-fixtures all generate engine engine-test engine-lint sdk-python sdk-python-test sdk-python-lint security test clean dev-setup verify-versions
 
 # ── Version source-of-truth ──
 verify-versions:
@@ -18,9 +18,6 @@ engine-test:
 
 engine-lint:
 	cd engine && go vet ./...
-
-engine-benchmark:
-	cd engine && go test ./internal/benchmark/ -bench=. -benchmem -count=3
 
 # ── Python SDK ──
 sdk-python:
@@ -44,11 +41,6 @@ record-judge-fixtures: engine
 security:
 	cd engine && go install golang.org/x/vuln/cmd/govulncheck@latest && govulncheck ./...
 	cd sdks/python && uv pip install pip-audit && uv run pip-audit
-
-# ── Protocol Benchmark (Phase 0 validation) ──
-protocol-benchmark:
-	cd engine && go test ./internal/protocol/ -run=^$$ -bench=BenchmarkStdioRoundTrip -benchtime=5s -count=5
-	@echo "Compare results against targets in architecture doc"
 
 # ── All ──
 test: verify-versions engine-test sdk-python-test

@@ -234,20 +234,37 @@ func envInt(key string, fallback int) (int, error) {
 	return n, nil
 }
 
+// positiveIntEnv lists the integer settings that must be positive when set.
+// ATTEST_JUDGE_TIMEOUT_S is consumed by the judge evaluator, which would
+// otherwise fall back to its default on a bad value.
+var positiveIntEnv = []string{
+	"ATTEST_EVAL_CONCURRENCY", "ATTEST_EMBEDDING_CACHE_MAX_MB", "ATTEST_JUDGE_CACHE_MAX_MB",
+	"ATTEST_HISTORY_MAX_ROWS", "ATTEST_HISTORY_MAX_AGE_DAYS", "ATTEST_JUDGE_TIMEOUT_S",
+}
+
 // validateEngineEnv checks every integer setting the server reads at startup,
 // including those consulted only when a provider is configured, so the server
-// and doctor reject the same broken configuration.
+// and doctor reject the same broken configuration. It reports every offending
+// variable, not just the first.
 func validateEngineEnv() error {
-	for _, key := range []string{
-		"ATTEST_EVAL_CONCURRENCY", "ATTEST_EMBEDDING_CACHE_MAX_MB", "ATTEST_JUDGE_CACHE_MAX_MB",
-		"ATTEST_HISTORY_MAX_ROWS", "ATTEST_HISTORY_MAX_AGE_DAYS",
-	} {
-		if _, err := envInt(key, 0); err != nil {
-			return err
+	var errs []error
+	for _, key := range positiveIntEnv {
+		if os.Getenv(key) == "" {
+			continue
+		}
+		n, err := envInt(key, 0)
+		if err != nil {
+			errs = append(errs, err)
+			continue
+		}
+		if n <= 0 {
+			errs = append(errs, fmt.Errorf("env var %s=%d must be a positive integer", key, n))
 		}
 	}
-	_, _, err := maxSoftFailures()
-	return err
+	if _, _, err := maxSoftFailures(); err != nil {
+		errs = append(errs, err)
+	}
+	return errors.Join(errs...)
 }
 
 // maxSoftFailures reads ATTEST_MAX_SOFT_FAILURES, the maximum number of soft
@@ -281,7 +298,7 @@ func buildBudgetTracker(logger *slog.Logger) (*assertion.BudgetTracker, error) {
 }
 
 func handleInitialize(caps []string) Handler {
-	return func(session *Session, params json.RawMessage) (any, *types.RPCError) {
+	return func(ctx context.Context, session *Session, params json.RawMessage) (any, *types.RPCError) {
 		if session.State() != StateUninitialized {
 			return nil, types.NewRPCError(
 				types.ErrSessionError,
@@ -356,7 +373,7 @@ func handleInitialize(caps []string) Handler {
 	}
 }
 
-func handleShutdown(session *Session, _ json.RawMessage) (any, *types.RPCError) {
+func handleShutdown(_ context.Context, session *Session, _ json.RawMessage) (any, *types.RPCError) {
 	if session.State() != StateInitialized {
 		return nil, types.NewRPCError(
 			types.ErrSessionError,
@@ -391,7 +408,7 @@ type batchBudgets struct {
 }
 
 func handleEvaluateBatch(pipeline *assertion.Pipeline, historyStore *cache.HistoryStore, budgets batchBudgets, recorder *contractlog.Recorder) Handler {
-	return func(session *Session, params json.RawMessage) (any, *types.RPCError) {
+	return func(ctx context.Context, session *Session, params json.RawMessage) (any, *types.RPCError) {
 		if session.State() != StateInitialized {
 			return nil, types.NewRPCError(
 				types.ErrSessionError,
@@ -483,7 +500,7 @@ func handleEvaluateBatch(pipeline *assertion.Pipeline, historyStore *cache.Histo
 		}
 
 		scope := budgets.ledger.NewScope(p.Budget)
-		ctx := assertion.WithBudgetScope(context.Background(), scope)
+		ctx = assertion.WithBudgetScope(ctx, scope)
 		result, err := pipeline.EvaluateBatchWithBudget(ctx, &p.Trace, p.Assertions, budgets.softFail)
 		if err != nil {
 			return nil, types.NewRPCError(
@@ -538,7 +555,7 @@ func handleEvaluateBatch(pipeline *assertion.Pipeline, historyStore *cache.Histo
 }
 
 func handleQueryDrift(historyStore *cache.HistoryStore) Handler {
-	return func(session *Session, params json.RawMessage) (any, *types.RPCError) {
+	return func(ctx context.Context, session *Session, params json.RawMessage) (any, *types.RPCError) {
 		if session.State() != StateInitialized {
 			return nil, types.NewRPCError(
 				types.ErrSessionError,
@@ -622,7 +639,7 @@ func handleQueryDrift(historyStore *cache.HistoryStore) Handler {
 }
 
 func handleSubmitPluginResult(historyStore *cache.HistoryStore) Handler {
-	return func(session *Session, params json.RawMessage) (any, *types.RPCError) {
+	return func(ctx context.Context, session *Session, params json.RawMessage) (any, *types.RPCError) {
 		if session.State() != StateInitialized {
 			return nil, types.NewRPCError(
 				types.ErrSessionError,
@@ -658,7 +675,7 @@ func handleSubmitPluginResult(historyStore *cache.HistoryStore) Handler {
 }
 
 func handleValidateTraceTree() Handler {
-	return func(session *Session, params json.RawMessage) (any, *types.RPCError) {
+	return func(ctx context.Context, session *Session, params json.RawMessage) (any, *types.RPCError) {
 		if session.State() != StateInitialized {
 			return nil, types.NewRPCError(
 				types.ErrSessionError,
@@ -704,7 +721,7 @@ func handleValidateTraceTree() Handler {
 }
 
 func handleGenerateUserMessage(provider llm.Provider) Handler {
-	return func(session *Session, params json.RawMessage) (any, *types.RPCError) {
+	return func(ctx context.Context, session *Session, params json.RawMessage) (any, *types.RPCError) {
 		if session.State() != StateInitialized {
 			return nil, types.NewRPCError(
 				types.ErrSessionError,
@@ -752,7 +769,7 @@ func handleGenerateUserMessage(provider llm.Provider) Handler {
 			messages = append(messages, llm.Message{Role: m.Role, Content: m.Content})
 		}
 
-		msg, err := user.GenerateMessage(context.Background(), messages)
+		msg, err := user.GenerateMessage(ctx, messages)
 		if errors.Is(err, llm.ErrBudgetExhausted) {
 			return nil, types.NewRPCError(
 				types.ErrEngineError,

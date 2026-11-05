@@ -491,15 +491,6 @@ func apiSummary(apis map[string]int) string {
 	return " (" + strings.Join(parts, ", ") + ")"
 }
 
-func contains(list []string, s string) bool {
-	for _, v := range list {
-		if v == s {
-			return true
-		}
-	}
-	return false
-}
-
 // withEnv returns environ with the given variables set, replacing any
 // existing values.
 func withEnv(environ []string, set map[string]string) []string {

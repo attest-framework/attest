@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"log/slog"
@@ -63,9 +64,13 @@ func main() {
 	defer cancel()
 
 	logger.Info("engine starting", "version", buildinfo.Version)
-	if err := srv.Run(ctx); err != nil {
+	err := srv.Run(ctx)
+	if err != nil && !errors.Is(err, context.Canceled) {
 		logger.Error("engine error", "err", err)
 		os.Exit(1)
+	}
+	if err != nil {
+		logger.Info("engine stopped by signal")
 	}
 	logger.Info("engine shutdown complete")
 }

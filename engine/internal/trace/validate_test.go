@@ -22,15 +22,6 @@ func loadFixture(t *testing.T, name string) *types.Trace {
 	return &tr
 }
 
-func makeOutput(t *testing.T, fields map[string]any) json.RawMessage {
-	t.Helper()
-	raw, err := json.Marshal(fields)
-	if err != nil {
-		t.Fatalf("failed to marshal output: %v", err)
-	}
-	return raw
-}
-
 func TestValidate(t *testing.T) {
 	tests := []struct {
 		name        string
