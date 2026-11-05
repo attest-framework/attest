@@ -8,9 +8,7 @@
 
 [Documentation](https://attest-framework.github.io/) | [Examples](https://github.com/attest-framework/attest-examples) | [Contributing](CONTRIBUTING.md)
 
-[![Engine CI](https://github.com/attest-framework/attest/actions/workflows/ci-engine.yml/badge.svg)](https://github.com/attest-framework/attest/actions/workflows/ci-engine.yml)
-[![Python SDK CI](https://github.com/attest-framework/attest/actions/workflows/ci-sdk-python.yml/badge.svg)](https://github.com/attest-framework/attest/actions/workflows/ci-sdk-python.yml)
-[![TypeScript SDK CI](https://github.com/attest-framework/attest/actions/workflows/ci-sdk-typescript.yml/badge.svg)](https://github.com/attest-framework/attest/actions/workflows/ci-sdk-typescript.yml)
+[![CI](https://github.com/attest-framework/attest/actions/workflows/ci.yml/badge.svg)](https://github.com/attest-framework/attest/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/attest-ai)](https://pypi.org/project/attest-ai/)
 [![npm](https://img.shields.io/npm/v/%40attest-ai%2Fcore)](https://www.npmjs.com/package/@attest-ai/core)
 [![License](https://img.shields.io/github/license/attest-framework/attest)](LICENSE)
