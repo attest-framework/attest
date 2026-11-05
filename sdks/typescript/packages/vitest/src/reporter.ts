@@ -11,7 +11,7 @@ import {
 } from "@attest-ai/core";
 import type { Reporter, TestModule, Vitest } from "vitest/node";
 import { buildReport, reportTracesEnabled, summaryLines, type TestRecord } from "./report.js";
-import { ROOT_ENV, USAGE_DIR_ENV } from "./test-state.js";
+import { BUDGET_MARKER_EXT, ROOT_ENV, USAGE_DIR_ENV } from "./test-state.js";
 
 interface ReporterContext {
   printInfo: (message: string) => void;
@@ -121,14 +121,19 @@ export class AttestReporter implements Reporter {
     if (this.usageDir !== undefined) mkdirSync(this.usageDir, { recursive: true });
   }
 
-  /** Sum and remove the usage files workers wrote for evaluations outside any test. */
-  private takeUnattachedUsage(): Usage {
+  /**
+   * Sum and remove the usage files workers wrote for evaluations outside any test, and note
+   * whether any such evaluation returned `budget_exceeded`.
+   */
+  private takeUnattached(): { usage: Usage; budgetExceeded: boolean } {
     const dir = this.usageDir;
-    if (dir === undefined) return sumUsage([]);
-    const files = readdirSync(dir).filter((f) => f.endsWith(".json"));
+    if (dir === undefined) return { usage: sumUsage([]), budgetExceeded: false };
+    const names = readdirSync(dir);
+    const files = names.filter((f) => f.endsWith(".json"));
     const usage = sumUsage(files.map((f) => parseUsage(JSON.parse(readFileSync(join(dir, f), "utf8")))));
+    const budgetExceeded = names.some((f) => f.endsWith(BUDGET_MARKER_EXT));
     rmSync(dir, { recursive: true, force: true });
-    return usage;
+    return { usage, budgetExceeded };
   }
 
   onTestRunEnd(testModules: ReadonlyArray<TestModule>): void {
@@ -159,13 +164,13 @@ export class AttestReporter implements Reporter {
         });
       }
     }
-    const unattached = this.takeUnattachedUsage();
+    const { usage: unattached, budgetExceeded: unattachedBudgetExceeded } = this.takeUnattached();
     const lines = summaryLines(tests, unattached);
     if (lines.length > 0) this.vitest?.logger.log(lines.join("\n"));
     if (outputFile === undefined) return;
     const path = resolve(this.root, outputFile);
     mkdirSync(dirname(path), { recursive: true });
-    writeFileSync(path, `${JSON.stringify(buildReport(tests, isSimulationMode(), unattached, reportTracesEnabled()), null, 2)}\n`);
+    writeFileSync(path, `${JSON.stringify(buildReport(tests, isSimulationMode(), unattached, reportTracesEnabled(), unattachedBudgetExceeded), null, 2)}\n`);
   }
 }
 

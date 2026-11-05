@@ -412,17 +412,16 @@ func TestHandler_EvaluateBatch_AssertionIDTooLong(t *testing.T) {
 func TestHandler_Shutdown_TracksAssertionCount(t *testing.T) {
 	send, recv := initServer(t)
 
-	// Submit a plugin result to increment assertion count.
-	params := types.SubmitPluginResultParams{
-		TraceID:     "trace-1",
-		PluginName:  "p",
-		AssertionID: "a",
-		Result:      types.PluginResult{Status: "pass", Score: 1.0},
+	// Evaluate a batch of one assertion to increment the assertion count.
+	params := types.EvaluateBatchParams{
+		Trace: checkedTrace(),
+		Assertions: []types.Assertion{
+			{AssertionID: "a", Type: types.TypeContent, Spec: json.RawMessage(`{"target":"output.message","check":"contains","value":"world"}`)},
+		},
 	}
-	send(2, "submit_plugin_result", params)
-	pluginResp := recv()
-	if pluginResp.Error != nil {
-		t.Fatalf("submit_plugin_result error: %+v", pluginResp.Error)
+	send(2, "evaluate_batch", params)
+	if batchResp := recv(); batchResp.Error != nil {
+		t.Fatalf("evaluate_batch error: %+v", batchResp.Error)
 	}
 
 	send(3, "shutdown", map[string]any{})
@@ -436,7 +435,7 @@ func TestHandler_Shutdown_TracksAssertionCount(t *testing.T) {
 		t.Fatalf("unmarshal: %v", err)
 	}
 	if result.AssertionsEvaluated < 1 {
-		t.Errorf("AssertionsEvaluated = %d, want >= 1 after submit_plugin_result", result.AssertionsEvaluated)
+		t.Errorf("AssertionsEvaluated = %d, want >= 1 after evaluate_batch", result.AssertionsEvaluated)
 	}
 }
 

@@ -90,6 +90,8 @@ class AgentResult:
     total_duration_ms: int = 0
     #: Attest-initiated model usage of the ``evaluate_batch`` call.
     usage: Usage = field(default_factory=Usage)
+    #: The ``evaluate_batch`` call pushed the session past ``ATTEST_MAX_SOFT_FAILURES``.
+    budget_exceeded: bool = False
 
     @property
     def passed(self) -> bool:

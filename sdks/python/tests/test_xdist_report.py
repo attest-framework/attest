@@ -145,6 +145,8 @@ def test_xdist_report_worker_crash_writes_no_report(pytester: pytest.Pytester) -
 def _worker_doc(*, trace_id: str, trace_value: str, status: str, test_id: str) -> dict[str, Any]:
     return {
         "report_version": 2,
+        "id_scheme": 2,
+        "budget_exceeded": False,
         "timestamp": "2026-01-01T00:00:00Z",
         "simulated": False,
         "summary": {"total": 1, "passed": 0, "soft_fail": 0, "hard_fail": 0, "not_evaluated": 0},

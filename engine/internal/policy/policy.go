@@ -14,6 +14,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 
@@ -79,6 +80,12 @@ type Policy struct {
 	// regressed (Severity, default block → exit 1), inconclusive (warn →
 	// exit 2) or pass. `regression: {}` applies the defaults.
 	Regression *RegressionRule `yaml:"regression" json:"regression,omitempty"`
+	// BlockOnRemoval blocks when a baselined assertion id is missing from the
+	// report and not listed in AllowRemoved. With a baseline it is on unless
+	// set to false. A missing id whose spec was edited is changed, not removed.
+	BlockOnRemoval *bool `yaml:"block_on_removal" json:"block_on_removal,omitempty"`
+	// AllowRemoved lists assertion ids whose removal is accepted.
+	AllowRemoved []string `yaml:"allow_removed" json:"allow_removed,omitempty"`
 	// MinMutationScore requires the mutation score from `attest mutate`
 	// (`policy evaluate --mutation <mutate.json>`) to reach a threshold.
 	MinMutationScore *MutationRule `yaml:"min_mutation_score" json:"min_mutation_score,omitempty"`
@@ -211,6 +218,11 @@ func (p *Policy) Validate() error {
 	}
 	if err := validateSeverity("not_evaluated", p.NotEvaluated); err != nil {
 		return err
+	}
+	for _, id := range p.AllowRemoved {
+		if id == "" {
+			return fmt.Errorf("allow_removed entries must be non-empty assertion ids")
+		}
 	}
 	for layer, lim := range p.Layers {
 		if layer < 0 || layer > 8 {
@@ -377,6 +389,17 @@ func Evaluate(p *Policy, results []types.AssertionResult, totalCost float64, bas
 	// ── Statistical regression (fixed-N trials) ──
 	compared := evaluateTrials(p, &out, results, baseline)
 
+	// ── Removal block ──
+	if baseline != nil && (p.BlockOnRemoval == nil || *p.BlockOnRemoval) {
+		if ids := unallowedRemovals(baseline, p.AllowRemoved); len(ids) > 0 {
+			out.Violations = append(out.Violations, Violation{
+				Rule:     "block_on_removal",
+				Detail:   fmt.Sprintf("assertions in baseline %s are missing from the report: %s", baseline.BaselineTag, strings.Join(ids, ", ")),
+				Severity: resolvedSeverity("", p.Severity),
+			})
+		}
+	}
+
 	// ── Regression block ──
 	// Assertions the Wilson rule compared are judged by it alone: their
 	// folded worst status would call one failing trial in twenty a
@@ -392,6 +415,31 @@ func Evaluate(p *Policy, results []types.AssertionResult, totalCost float64, bas
 	}
 
 	return out
+}
+
+// unallowedRemovals returns the removed assertion ids not listed in allowed.
+func unallowedRemovals(baseline *report.BaselineDelta, allowed []string) []string {
+	var ids []string
+	for _, id := range baseline.AssertionsRemoved {
+		if !slices.Contains(allowed, id) {
+			ids = append(ids, id)
+		}
+	}
+	return ids
+}
+
+// BudgetViolation reports a run that breached the soft-fail budget. The
+// report still holds every result; the breach blocks because rows past the
+// limit may have been judged under a budget the run exceeded.
+func BudgetViolation(p *Policy, exceeded bool) (Violation, bool) {
+	if p == nil || !exceeded {
+		return Violation{}, false
+	}
+	return Violation{
+		Rule:     "budget_exceeded",
+		Detail:   "the run exceeded the soft-fail budget (ATTEST_MAX_SOFT_FAILURES); every result is in the report",
+		Severity: resolvedSeverity("", p.Severity),
+	}, true
 }
 
 // trialViolations reports regressed assertions at severity and

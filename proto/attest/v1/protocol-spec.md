@@ -333,8 +333,9 @@ Capabilities are additive. New capabilities never remove or alter old ones, with
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `assertion_id` | string | yes | Unique identifier within this batch. Echoed in results. |
-| `type` | string | yes | Assertion layer type. One of: `schema`, `constraint`, `trace`, `content`, `embedding`, `llm_judge` |
-| `spec` | object | yes | Type-specific assertion parameters. See Section 4. |
+| `type` | string | yes | Assertion layer type. One of: `schema`, `constraint`, `trace`, `content`, `embedding`, `llm_judge`, `plugin` |
+| `spec` | object | yes | Type-specific assertion parameters. See Section 4. A `plugin` spec is `{"plugin_id": string, "soft": bool}`; `plugin_id` must equal the `plugin_name` of the submitted result (see 2.4). |
+| `scope_id` | string | no | The scope the SDK computed the assertion id in (the test node id, or the `ContinuousEvalRunner` name outside tests). The engine echoes it on the result row. SDKs send it on every assertion; a baseline comparison cannot tell a spec edit from a removal without it. |
 | `request_id` | string | no | Idempotency key. If the same `request_id` is submitted twice, the engine returns the cached result. |
 
 **Optional `budget` param:** `params.budget` limits the attest-initiated model calls of this batch on top of the session budget (`ATTEST_MAX_JUDGE_CALLS`, `ATTEST_BUDGET_USD`). SDKs send the remainder of a test's budget marker here.
@@ -437,6 +438,23 @@ Every model call reserves one call and its worst-case cost (price × prompt byte
 }
 ```
 
+**`budget_exceeded`** is `true` (and omitted otherwise) when this batch pushed the engine session past `ATTEST_MAX_SOFT_FAILURES`. The batch still evaluates every assertion and returns every row, hard failures included; the flag is batch-level and is not a `not_evaluated` reason. SDKs OR it across the batches of a run into the report's top-level `budget_exceeded`, and `attest policy evaluate` blocks on it. A soft-fail budget breach is never an `ENGINE_ERROR`.
+
+**Result row additions:** every row also carries `scope_id` (echo of the assertion's `scope_id`, when sent) and `spec_hash` (lowercase hex SHA-256 of the UTF-8 bytes of `canonical_spec`, defined in [Assertion ids (id scheme 2)](#assertion-ids-id-scheme-2)). The engine computes `spec_hash`; SDKs copy rows into the report unchanged. `assertion_id` is opaque to the engine; the SDKs compute it under id scheme 2 (reports and baselines carry `id_scheme: 2`).
+
+#### Assertion ids (id scheme 2)
+
+Every SDK computes `assertion_id` with exactly this recipe, so independent SDKs produce identical ids.
+
+1. **`canonical_spec`**: the assertion `spec` serialized per [RFC 8785](https://www.rfc-editor.org/rfc/rfc8785) (JSON Canonicalization Scheme): object keys sorted by UTF-16 code units, numbers in ECMAScript `Number::toString` form (`1.0` and `1` both serialize as `1`, `-0` as `0`, `1e21` as `1e+21`), strings escaped minimally (only `\"`, `\\`, `\b`, `\t`, `\n`, `\f`, `\r` and lowercase `\u00xx` for the other control characters below U+0020; `<`, `>`, `&`, U+2028, U+007F and non-ASCII characters stay raw), no whitespace, UTF-8 output. Python's `json.dumps(sort_keys=True)` and Go's `encoding/json` are not conformant (code-point key order, `1.0`, `\u003c` escaping); implement JCS. An assertion without a spec uses `{}`.
+2. **Input**: the JCS array `[scope_id, assertion_type, canonical_spec_value, occurrence_index]`, serialized with the same rules (no whitespace). `scope_id` is the raw scope identifier string: the test node id (for example `tests/test_a.py::TestX::test_y[case-1]`) or the `ContinuousEvalRunner` name; it is never hashed or normalized. `assertion_type` is the wire `type` string. `occurrence_index` is a 0-based integer: the count of earlier assertions in the same scope with the same `(assertion_type, canonical_spec)`, in evaluation order.
+3. **Hash**: SHA-256 over the UTF-8 bytes of the input.
+4. **Id**: `"a2_"` followed by the first 32 characters of the lowercase hex digest (`a2_` plus 32 hex characters, 35 characters in all).
+
+5. **Rejected input**: implementations MUST reject a lone (unpaired) surrogate, escaped (`"\ud800"`) or otherwise, in spec keys, spec string values, `scope_id` and `assertion_type`, and MUST reject invalid UTF-8 in any of them. RFC 8785 gives such input no canonical form, so the id cannot be computed: SDKs raise an error that names the assertion. The engine marks a row `hard_fail` with an `invalid input` explanation when the spec it receives holds such input; `scope_id` and `assertion_type` arrive through the JSON-RPC decoder, which substitutes U+FFFD for a lone escaped surrogate, so the engine does not detect it there and the SDK check is the guard. A valid pair (`"\ud83d\ude00"`) is accepted and canonicalizes to the raw character. Decoders that substitute U+FFFD (Go `encoding/json`) or preserve the lone escape (JavaScript `JSON.stringify`) must scan for it before canonicalizing.
+
+The golden vectors in `protocol-tests/ids/assertion-ids.json` (the `invalid` list holds inputs that must error: lone high and low surrogates, a reversed pair, invalid UTF-8; spec text, canonical bytes and expected id for nested keys, key order, Unicode including non-BMP, `<>&`, integer/float equivalence, `1e21`, `-0`, occurrence indices, empty specs and scope strings with `::` and brackets) are the executable form of this recipe; the engine (`engine/internal/report/assertionid`) and every SDK test against the same file.
+
 **`usage`** counts the batch's attest-initiated model calls: `model_calls` sent (failed requests included) and `judge_calls`, the judge-provider part of them that `max_judge_calls` limits, `input_tokens` / `output_tokens` / `cached_tokens` (provider prompt-cache reads, included in `input_tokens`), `cost_usd` reconciled from the reported tokens at the configured price, `retry_cost_usd` (the part of `cost_usd` spent on retried requests), `unpriced_calls` (calls whose model has no price, so `cost_usd` excludes them) and `budget_refused` (calls not sent because no budget remained). Judge-cache hits make no call. `generate_user_message` calls count against the session budget (a refusal is a non-retryable engine error) but are not part of any batch's `usage`.
 
 **Result object fields:**
@@ -530,9 +548,20 @@ The engine drains in-flight evaluations for up to 30 seconds, then exits regardl
 
 ### 2.4 `submit_plugin_result`
 
-Enables SDK-side custom assertions. The SDK executes custom assertion logic in its own language runtime (Python, TypeScript, Go) and submits the pre-computed result to the engine for recording, aggregation, and reporting.
+Enables SDK-side custom assertions (`.plugin()`). The SDK executes the plugin in its own runtime and submits the pre-computed result; the engine never runs plugin code.
 
-This design avoids embedding a Python or JavaScript runtime inside the Go engine binary. The engine treats plugin results identically to natively evaluated assertions for reporting purposes.
+**Flow.** For each plugin assertion of a batch the SDK (1) runs the plugin, (2) sends `submit_plugin_result` with the batch's `trace_id` and the assertion's `assertion_id`, and only then (3) sends `evaluate_batch` containing an assertion of `type: "plugin"` with that `assertion_id` and `spec.plugin_id` equal to the submitted `plugin_name`. The engine stores the result in memory per `(trace_id, assertion_id)` (a later submission replaces an earlier one) and the `plugin` evaluator reports it:
+
+| State at `evaluate_batch` | Row |
+|---|---|
+| Result submitted, `plugin_name` equals `spec.plugin_id` | `status`, `score` and `explanation` of the submitted result |
+| No result submitted | `not_evaluated`, reason `missing_evidence` |
+| Result submitted by a different plugin name | `hard_fail` naming both plugins |
+| `spec.plugin_id` missing | `hard_fail` |
+
+A plugin row never short-circuits other assertions: it is evaluated in every batch (also in simulation mode and after an L1-4 hard failure, since the result is already computed) and its failure does not gate L5/L6, which still run. Plugin rows count against the soft-fail budget like any other row. The engine records the row in the history store at `evaluate_batch`, not at submit.
+
+The engine rejects a submission whose `result.status` is not `pass`, `soft_fail` or `hard_fail`, or whose `result.score` is outside [0, 1], with `ASSERTION_ERROR` (`invalid submit_plugin_result params`).
 
 #### Request
 

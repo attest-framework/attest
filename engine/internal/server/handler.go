@@ -81,7 +81,7 @@ func RegisterBuiltinHandlers(s *Server) error {
 	s.RegisterHandler("initialize", handleInitialize(caps))
 	s.RegisterHandler("shutdown", handleShutdown)
 	s.RegisterHandler("evaluate_batch", handleEvaluateBatch(pipeline, historyStore, batchBudgets{softFail: budget, ledger: provs.ledger}, recorder))
-	s.RegisterHandler("submit_plugin_result", handleSubmitPluginResult(historyStore))
+	s.RegisterHandler("submit_plugin_result", handleSubmitPluginResult(registry.PluginResults()))
 	s.RegisterHandler("validate_trace_tree", handleValidateTraceTree())
 	s.RegisterHandler("query_drift", handleQueryDrift(historyStore))
 	if provs.judge != nil {
@@ -550,6 +550,7 @@ func handleEvaluateBatch(pipeline *assertion.Pipeline, historyStore *cache.Histo
 			TotalDurationMS: result.TotalDurationMS,
 			Simulated:       false,
 			Usage:           scope.Usage(),
+			BudgetExceeded:  result.BudgetExceeded,
 		}, nil
 	}
 }
@@ -638,7 +639,7 @@ func handleQueryDrift(historyStore *cache.HistoryStore) Handler {
 	}
 }
 
-func handleSubmitPluginResult(historyStore *cache.HistoryStore) Handler {
+func handleSubmitPluginResult(plugins *assertion.PluginResults) Handler {
 	return func(ctx context.Context, session *Session, params json.RawMessage) (any, *types.RPCError) {
 		if session.State() != StateInitialized {
 			return nil, types.NewRPCError(
@@ -661,14 +662,18 @@ func handleSubmitPluginResult(historyStore *cache.HistoryStore) Handler {
 			)
 		}
 
-		// E1: Record plugin result in history store.
-		if historyStore != nil {
-			if recErr := historyStore.Record(p.TraceID, p.AssertionID, "plugin", p.Result.Score, p.Result.Status); recErr != nil {
-				slog.Error("history store record error", "assertion_id", p.AssertionID, "err", recErr)
-			}
+		if err := assertion.ValidatePluginResult(p.Result); err != nil {
+			return nil, types.NewRPCError(
+				types.ErrAssertionError,
+				"invalid submit_plugin_result params",
+				types.ErrTypeAssertionError,
+				false,
+				err.Error(),
+			)
 		}
-
-		session.IncrementAssertions(1)
+		// The row is recorded in history and counted when evaluate_batch
+		// reports it, so a submission alone is neither.
+		plugins.Submit(p.TraceID, p.AssertionID, p.PluginName, p.Result)
 
 		return &types.SubmitPluginResultResponse{Accepted: true}, nil
 	}

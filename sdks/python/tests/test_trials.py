@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 from collections.abc import Callable, Generator
 from pathlib import Path
@@ -30,7 +29,6 @@ from attest.trials import (
     TestBudget,
     TestRun,
     TrialsResult,
-    assertion_id_for,
     begin_run,
     current_run,
     end_run,
@@ -94,42 +92,54 @@ def _trials(run: TestRun, bodies: list[Callable[[], object]]) -> TrialsResult:
 # ── Deterministic assertion IDs ──
 
 
-def test_assertion_id_for_is_sha256_of_test_id_and_ordinal() -> None:
-    digest = hashlib.sha256(b"tests/a.py::test_x#3").hexdigest()
+def _ids(run: TestRun, chain: ExpectChain) -> list[str]:
+    run.assign_ids(chain.assertions)
+    return [a.assertion_id for a in chain.assertions]
 
-    assert assertion_id_for("tests/a.py::test_x", 3) == f"assert_{digest[:12]}"
 
-
-def test_expect_inside_run_ids_are_deterministic_and_restart_each_trial(run: TestRun) -> None:
+def test_assign_ids_inside_run_restart_each_trial(run: TestRun) -> None:
     result = _result()
 
     run.start_trial(1)
-    first = [
-        a.assertion_id for a in ExpectChain(result).output_contains("a").cost_under(1).assertions
-    ]
+    first = _ids(run, ExpectChain(result).output_contains("a").cost_under(1))
     run.start_trial(2)
-    second = [
-        a.assertion_id for a in ExpectChain(result).output_contains("a").cost_under(1).assertions
-    ]
+    second = _ids(run, ExpectChain(result).output_contains("a").cost_under(1))
 
-    assert first == second == [assertion_id_for(run.test_id, 0), assertion_id_for(run.test_id, 1)]
-
-
-def test_expect_ids_unique_within_one_test_without_trials(run: TestRun) -> None:
-    ids = [a.assertion_id for a in ExpectChain(_result()).output_contains("a").assertions]
-    ids += [a.assertion_id for a in ExpectChain(_result()).output_contains("b").assertions]
-
-    assert ids == [assertion_id_for(run.test_id, 0), assertion_id_for(run.test_id, 1)]
+    assert first == second
+    assert len(set(first)) == 2
+    assert all(i.startswith("a2_") and len(i) == 35 for i in first)
 
 
-def test_expect_outside_run_ids_are_random() -> None:
-    assert current_run() is None
-    chain = ExpectChain(_result()).output_contains("a").output_contains("a")
+def test_assign_ids_distinct_for_distinct_assertions_across_chains_in_one_test(
+    run: TestRun,
+) -> None:
+    ids = _ids(run, ExpectChain(_result()).output_contains("a"))
+    ids += _ids(run, ExpectChain(_result()).output_contains("b"))
 
-    first, second = (a.assertion_id for a in chain.assertions)
+    assert len(set(ids)) == 2
+
+
+def test_assign_ids_identical_assertions_in_one_test_get_distinct_ids(run: TestRun) -> None:
+    first = _ids(run, ExpectChain(_result()).output_contains("ok"))
+    second = _ids(run, ExpectChain(_result()).output_contains("ok"))
 
     assert first != second
-    assert len(first) == len("assert_") + 8
+
+
+def test_unevaluated_chains_lists_only_chains_not_sent(run: TestRun) -> None:
+    sent = ExpectChain(_result()).output_contains("a")
+    sent.evaluated = True
+    pending = ExpectChain(_result()).output_contains("b")
+
+    assert run.unevaluated_chains() == [pending]
+
+
+def test_chain_outside_run_is_not_tracked() -> None:
+    assert current_run() is None
+
+    chain = ExpectChain(_result()).output_contains("a")
+
+    assert chain.assertions[0].assertion_id == ""
 
 
 # ── Per-test budget ──

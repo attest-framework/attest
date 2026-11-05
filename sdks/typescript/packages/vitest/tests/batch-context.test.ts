@@ -34,6 +34,7 @@ vi.mock("@attest-ai/core", async (importOriginal) => {
 const chain = {
   trace: { trace_id: "trc_ctx", output: {}, steps: [] },
   assertions: [{ assertion_id: "a1", type: "schema", spec: {} }],
+  markEvaluated: () => {},
 };
 
 afterEach(() => {

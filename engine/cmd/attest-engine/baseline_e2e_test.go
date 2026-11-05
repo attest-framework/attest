@@ -61,6 +61,7 @@ func minimalReportV2(passed, failed int) string {
 	}
 	type envelope struct {
 		ReportVersion   int      `json:"report_version"`
+		IDScheme        int      `json:"id_scheme"`
 		Timestamp       string   `json:"timestamp"`
 		Results         []result `json:"results"`
 		TotalCost       float64  `json:"total_cost"`
@@ -68,6 +69,7 @@ func minimalReportV2(passed, failed int) string {
 	}
 	env := envelope{
 		ReportVersion: 2,
+		IDScheme:      2,
 		Timestamp:     "2026-05-01T00:00:00Z",
 	}
 	for i := 0; i < passed; i++ {

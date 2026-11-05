@@ -1,0 +1,15 @@
+{
+  "report_version": 2,
+  "id_scheme": 2,
+  "budget_exceeded": true,
+  "timestamp": "2026-11-05T10:00:00Z",
+  "simulated": false,
+  "summary": { "total": 2, "passed": 0, "soft_fail": 1, "hard_fail": 1, "not_evaluated": 0 },
+  "results": [
+    { "assertion_id": "9f2c41d7a0b3e6c8", "status": "hard_fail", "score": 0, "explanation": "output does not contain x", "cost": 0, "duration_ms": 1, "layer": 4, "type": "content", "scope_id": "tests/test_a.py::test_a", "spec_hash": "XYZ" },
+    { "assertion_id": "1b7e0a55c3d94f20", "status": "soft_fail", "score": 0.4, "explanation": "plugin lint", "cost": 0, "duration_ms": 1, "layer": 8, "type": "plugin", "scope_id": "tests/test_a.py::test_a", "spec_hash": "XYZ" }
+  ],
+  "tests": [],
+  "total_cost": 0,
+  "total_duration_ms": 2
+}

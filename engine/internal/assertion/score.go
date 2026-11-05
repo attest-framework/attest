@@ -11,6 +11,9 @@ type BatchResult struct {
 	Results         []types.AssertionResult
 	TotalCost       float64
 	TotalDurationMS int64
+	// BudgetExceeded is set when the soft-fail budget was breached during the
+	// batch. The batch still evaluates every assertion.
+	BudgetExceeded bool
 }
 
 // ScoreThresholds defines pass and soft-fail score boundaries.

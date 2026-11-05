@@ -69,7 +69,9 @@ uv run attest policy evaluate --report attest-report.json --policy attest.policy
 | 0 | Every rule passed |
 | 1 | A blocking rule failed — the generated policy blocks on any hard failure |
 | 2 | Warnings only — the generated policy warns when assertions were not evaluated (`not_evaluated: warn`) |
-| 3 | The policy could not be evaluated: a load error, a rule without its input (`block_on_regression` or `regression` without `--baseline`, `min_mutation_score` without `--mutation`), or a report with 0 tests while `tests_collected` is above 0 |
+| 3 | The policy could not be evaluated: a load error, a rule without its input (`block_on_regression` or `regression` without `--baseline`, `min_mutation_score` without `--mutation`), a report with 0 tests while `tests_collected` is above 0, or a baseline pinned under id scheme 1 (`baseline uses id scheme 1; re-pin it on 1.1`) |
+
+With `--baseline <tag>` the gate also blocks when a baselined assertion is missing from the report (`block_on_removal`, allowlist with `allow_removed`) and when the run exceeded the soft-fail budget (`budget_exceeded`). See [baselines](baselines.md#removed-and-changed-assertions).
 
 ## 5. Gate merges in GitHub Actions
 

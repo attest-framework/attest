@@ -7,10 +7,12 @@ import logging
 import os
 import random
 import urllib.request
+from dataclasses import replace
 from json import dumps as json_dumps
 from typing import TYPE_CHECKING, Any
 
 from attest._proto.types import Assertion, EvaluateBatchResult, Trace
+from attest.assertion_id import OccurrenceCounter
 
 _DEFAULT_QUEUE_SIZE: int = 1000
 
@@ -112,7 +114,12 @@ class AlertDispatcher:
 
 
 class ContinuousEvalRunner:
-    """Asyncio background task for continuous evaluation of live traces."""
+    """Asyncio background task for continuous evaluation of live traces.
+
+    ``name`` is the scope of the assertion ids (``a2_...`` over the name, type, spec and
+    occurrence): keep it stable across restarts so history and baselines keep matching, and
+    distinct between runners.
+    """
 
     def __init__(
         self,
@@ -122,9 +129,16 @@ class ContinuousEvalRunner:
         alert_webhook: str | None = None,
         alert_slack_url: str | None = None,
         maxsize: int | None = None,
+        *,
+        name: str,
     ) -> None:
+        self.name = name
         self._client = client
-        self._assertions = assertions
+        # Ids are scoped to the runner name; the same list is evaluated against every trace.
+        counter = OccurrenceCounter(name)
+        self._assertions = [replace(a) for a in assertions]
+        for assertion in self._assertions:
+            counter.assign(assertion)
         self._sampler = Sampler(sample_rate)
         self._dispatcher = AlertDispatcher(
             webhook_url=alert_webhook,
