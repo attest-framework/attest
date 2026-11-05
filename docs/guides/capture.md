@@ -71,29 +71,36 @@ Cardinality depends on the capture mode. A normal capture sets N to the most cal
 
 ## The drafted test
 
-For a verified fixture, `attest capture` writes `tests/attest/test_<name>.py` (Python; the name lowercased, other characters as `_`) or `tests/attest/<name>.test.ts` (TypeScript) next to the fixture directory, unless that file already exists: re-capturing never overwrites a test you edited. An unverified fixture gets no test, so capturing again with `--expect-fail` (or after editing the agent) still drafts one. The test loads the fixture and runs the contracts against its trace without running the agent:
+For a fixture that is consistent with the recording, `attest capture` writes `tests/attest/test_<name>.py` (Python; the name lowercased, other characters as `_`) or `tests/attest/<name>.test.ts` (TypeScript) next to the fixture directory, unless that file already exists: re-capturing never overwrites a test you edited. A fixture that is not consistent with the recording gets no test, so capturing again with `--expect-fail` (or after editing the agent) still drafts one.
+
+For a fixture captured from a command, the test runs the agent again. It re-runs `source.command` with `attest-engine replay --mode strict --no-live`: the recorded model responses answer the agent's calls, a call that matches no recording fails the test, and nothing reaches a provider (the other providers' keys are removed, `OPENAI_API_KEY` is a placeholder, `ATTEST_EGRESS=block` is set). The drafted contracts are evaluated on the trace of that new run, not on the recording:
 
 ```python
-FIXTURE = load_fixture(Path(__file__).parent / "fixtures/inc-1042.attest.json")
+FIXTURE = Path(__file__).parent / "fixtures/inc-1042.attest.json"
+RUN_DIR = Path(__file__).parent / "../.."  # where `attest capture` ran
+WORLD = None  # the --world file of the capture, when it had one
 
 
-def contracts() -> ExpectChain:
+def contracts(trace: Trace) -> ExpectChain:
     return (
-        expect(FIXTURE.trace)
+        expect(trace)
         # cardinality-issue_refund-per-order_id: issue_refund at most once per order_id
         .tool_cardinality("issue_refund", per="order_id", at_most=1)
         # ...
     )
 
 
-def test_inc_1042_reproduces_incident(attest: AttestEngineFixture) -> None:
-    result = attest.inspect(contracts())
+def test_inc_1042_new_run_consistent_with_recording(attest: AttestEngineFixture) -> None:
+    trace = replay_run(FIXTURE, cwd=RUN_DIR, world=WORLD)
 
-    statuses = [row.status for row in result.assertion_results]
-    assert statuses == [status for _, status in EXPECTED]
+    attest.evaluate(contracts(trace))
 ```
 
-For an incident reproduction the test uses `inspect()` and asserts each contract's recorded status, so it stays green while it proves the contract catches the incident. For a verified run it uses `evaluate()` and enforces every contract. The TypeScript file does the same with `attestExpect`, `loadFixture` and `inspect` / `evaluate` from `@attest-ai/vitest`.
+The test fails when the agent regresses: a changed prompt, schema or conversation is a replay miss that names the first component that changed, a changed run order or count fails its contract, and a command that exits differently than when it was recorded fails. A pass means the new run is consistent with the recording and satisfies the drafted contracts; it does not prove the agent correct. The TypeScript file does the same with `attestExpect`, `replayRun` and `evaluate` from `@attest-ai/core` and `@attest-ai/vitest`.
+
+An incident fixture (`--expect-fail`) gets the same test. Its contracts failed on the recording, so the test passes once the new run satisfies them. Fixing the agent usually changes the conversation, so replaying the fixed agent against the incident's recording misses; re-record with `attest capture --refresh <name>` (or capture the fixed agent) to get a recording the fixed agent replays.
+
+The test needs the command to run unchanged: it uses the working directory `attest capture` ran in and the `--world` file the capture was given. A fixture built `--from` an OTLP file or by `record()` has no command to re-run; its test loads the fixture and runs the contracts against the recorded trace without running the agent. For an incident reproduction it uses `inspect()` and asserts each contract's recorded status, so it stays green while it proves the contract catches the incident; otherwise it uses `evaluate()`.
 
 ## Refresh a fixture
 
