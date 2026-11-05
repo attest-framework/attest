@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"github.com/segmentio/encoding/json"
 	"log/slog"
+	"math"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -571,6 +572,20 @@ func handleQueryDrift(historyStore *cache.HistoryStore) Handler {
 			)
 		}
 
+		static := assertion.DefaultThresholds.Pass
+		if p.StaticThreshold != nil {
+			static = *p.StaticThreshold
+		}
+		if math.IsNaN(static) || static < 0 || static > 1 {
+			return nil, types.NewRPCError(
+				types.ErrAssertionError,
+				"invalid query_drift params",
+				types.ErrTypeAssertionError,
+				false,
+				fmt.Sprintf("static_threshold must be a number in [0, 1], got %v", static),
+			)
+		}
+
 		if historyStore == nil {
 			return nil, types.NewRPCError(
 				types.ErrEngineError,
@@ -609,7 +624,7 @@ func handleQueryDrift(historyStore *cache.HistoryStore) Handler {
 		if len(latest) > 0 {
 			latestScore = latest[0]
 		}
-		baseline := assertion.ComputeBaseline(baselineScores, assertion.DefaultThresholds.Pass, cfg)
+		baseline := assertion.ComputeBaseline(baselineScores, static, cfg)
 
 		report := types.DriftReport{
 			AssertionID: p.AssertionID,
@@ -624,7 +639,7 @@ func handleQueryDrift(historyStore *cache.HistoryStore) Handler {
 			report.Status = "drift_detected"
 		}
 
-		return &types.QueryDriftResult{Report: report}, nil
+		return &types.QueryDriftResult{Report: report, StaticThreshold: static}, nil
 	}
 }
 

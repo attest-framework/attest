@@ -271,12 +271,12 @@ func (h *HistoryStore) deleteBatched(query string, args ...any) error {
 }
 
 // QueryWindow returns the last windowSize scores for the given assertionID,
-// ordered by created_at DESC (most recent first).
+// ordered by insertion id DESC (most recent first), the same order QueryBaseline uses.
 func (h *HistoryStore) QueryWindow(assertionID string, windowSize int) ([]float64, error) {
 	rows, err := h.db.Query(
 		`SELECT score FROM assertion_history
 		 WHERE assertion_id = ?
-		 ORDER BY created_at DESC
+		 ORDER BY id DESC
 		 LIMIT ?`,
 		assertionID, windowSize,
 	)
