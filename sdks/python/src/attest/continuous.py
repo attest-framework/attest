@@ -153,10 +153,14 @@ class AlertDispatcher:
         expired = threading.Event()
         conn = connection_class(parts.hostname, parts.port, timeout=self._timeout_s)
 
+        connected: list[socket.socket] = []
+
         def abort() -> None:
+            # Shut down the socket captured at connect time: for HTTP/1.0 and
+            # ``Connection: close`` responses http.client detaches it from ``conn`` during
+            # getresponse(), while the response keeps reading from it.
             expired.set()
-            sock = conn.sock
-            if sock is not None:
+            for sock in connected:
                 try:
                     sock.shutdown(socket.SHUT_RDWR)
                 except OSError:
@@ -166,6 +170,10 @@ class AlertDispatcher:
         watchdog.daemon = True
         watchdog.start()
         try:
+            conn.connect()
+            connected.append(conn.sock)
+            if expired.is_set():
+                abort()
             conn.request(
                 "POST",
                 target,

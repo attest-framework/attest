@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -753,3 +754,70 @@ class TestDispatchDeadline:
         assert len(failures) == 1
         assert isinstance(failures[0], AlertDispatchError)
         assert "timed out" in str(failures[0])
+
+
+class TestDispatchWorkerThread:
+    """The I/O itself must end at the deadline, not just the awaiting coroutine."""
+
+    @staticmethod
+    def _serve_trickle(head: bytes, body_bytes: int) -> tuple[int, Any]:
+        import socket
+        import threading
+        import time
+
+        listener = socket.socket()
+        listener.bind(("127.0.0.1", 0))
+        listener.listen(1)
+
+        def trickle() -> None:
+            conn, _ = listener.accept()
+            conn.recv(65536)
+            conn.sendall(head)
+            try:
+                for _ in range(body_bytes):
+                    conn.sendall(b"x")
+                    time.sleep(0.03)
+            except OSError:
+                pass
+            finally:
+                conn.close()
+
+        threading.Thread(target=trickle, daemon=True).start()
+        return listener.getsockname()[1], listener
+
+    @pytest.mark.parametrize(
+        "head",
+        [
+            b"HTTP/1.1 200 OK\r\nContent-Length: 200\r\n\r\n",
+            b"HTTP/1.1 200 OK\r\nConnection: close\r\n\r\n",
+            b"HTTP/1.0 200 OK\r\n\r\n",
+        ],
+        ids=["keep-alive", "connection-close", "http-1.0"],
+    )
+    def test_post_worker_thread_returns_at_the_deadline(self, head: bytes) -> None:
+        import threading
+        import time
+
+        port, listener = self._serve_trickle(head, 200)
+        timeout_s = 0.05
+        dispatcher = AlertDispatcher(webhook_url=f"http://127.0.0.1:{port}/", timeout_s=timeout_s)
+        outcome: list[BaseException] = []
+
+        def worker() -> None:
+            try:
+                dispatcher._post_json(f"http://127.0.0.1:{port}/", {"score": 0.1})
+            except AlertDispatchError as exc:
+                outcome.append(exc)
+
+        thread = threading.Thread(target=worker)
+        started = time.monotonic()
+        thread.start()
+        thread.join(timeout=timeout_s + 0.1)
+        elapsed = time.monotonic() - started
+        alive = thread.is_alive()
+        thread.join(timeout=5)
+        listener.close()
+
+        assert not alive, f"worker still running {elapsed:.3f}s after start"
+        assert len(outcome) == 1
+        assert "timed out" in str(outcome[0])
