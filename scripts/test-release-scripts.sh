@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# test-release-scripts.sh — behaviour tests for check-release-tag.sh,
-# release-notes.sh and npm-publish-dry-run.sh, plus the release workflow layout. Exits non-zero on the first failed case.
+# test-release-scripts.sh — behaviour tests for check-release-tag.sh, release-notes.sh,
+# engine-checksums.sh and npm-publish-dry-run.sh, plus the release workflow layout and the engine hash
+# table wiring. Exits non-zero on the first failed case.
 set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -134,6 +135,117 @@ else
     pass "missing section exits non-zero"
 fi
 
+# engine-checksums.sh -------------------------------------------------------
+
+engines="$work/engines"
+mkdir -p "$engines"
+for plat in darwin-amd64 darwin-arm64 linux-amd64 linux-arm64; do printf 'bin %s' "$plat" > "$engines/attest-engine-$plat"; done
+for plat in windows-amd64 windows-arm64; do printf 'bin %s' "$plat" > "$engines/attest-engine-$plat.exe"; done
+# A checksums file that disagrees with the binaries must be ignored.
+echo "0000000000000000000000000000000000000000000000000000000000000000  attest-engine-linux-amd64" > "$engines/checksums-sha256.txt"
+
+linux_sha="$(printf 'bin linux-amd64' | { sha256sum 2>/dev/null || shasum -a 256; } | cut -d' ' -f1)"
+win_sha="$(printf 'bin windows-arm64' | { sha256sum 2>/dev/null || shasum -a 256; } | cut -d' ' -f1)"
+
+if "$here/engine-checksums.sh" generate 1.2.3 "$engines" > "$work/table.json" \
+    && [[ "$(jq -r '.["1.2.3"]["linux-amd64"]' "$work/table.json")" == "$linux_sha" ]] \
+    && [[ "$(jq -r '.["1.2.3"]["windows-arm64"]' "$work/table.json")" == "$win_sha" ]] \
+    && [[ "$(jq '.["1.2.3"] | length' "$work/table.json")" == "6" ]]; then
+    pass "engine table maps version -> platform -> sha256 of the binaries, not of checksums-sha256.txt"
+else
+    fail "engine table maps version -> platform -> sha256 of the binaries, not of checksums-sha256.txt"
+fi
+
+if "$here/engine-checksums.sh" verify 1.2.3 "$engines" "$work/table.json" 2>/dev/null; then
+    pass "table verifies against the binaries it was generated from"
+else
+    fail "table verifies against the binaries it was generated from"
+fi
+
+printf 'tampered' > "$engines/attest-engine-darwin-arm64"
+if "$here/engine-checksums.sh" verify 1.2.3 "$engines" "$work/table.json" 2>"$work/err"; then
+    fail "verify rejects a modified binary"
+elif grep -q 'does not equal the hashes' "$work/err"; then
+    pass "verify rejects a modified binary"
+else
+    fail "verify rejects a modified binary with a clear message"
+fi
+
+if "$here/engine-checksums.sh" verify 9.9.9 "$engines" "$work/table.json" 2>/dev/null; then
+    fail "verify rejects a table keyed by another version"
+else
+    pass "verify rejects a table keyed by another version"
+fi
+
+rm "$engines/attest-engine-linux-arm64"
+if "$here/engine-checksums.sh" generate 1.2.3 "$engines" 2>"$work/err" >/dev/null; then
+    fail "generate fails when a platform binary is missing"
+elif grep -q 'missing attest-engine-linux-arm64' "$work/err"; then
+    pass "generate fails when a platform binary is missing"
+else
+    fail "generate names the missing binary"
+fi
+
+# release workflow wiring -----------------------------------------------------
+
+root="$(cd "$here/.." && pwd)"
+wf="$root/.github/workflows"
+build_wf="$wf/release-build.yml"
+workflow="$wf/release.yml"
+job_needs() { # <file> <job>
+    awk -v job="  $2:" '$0 == job {f=1; next} f && /^    needs:/ {print; exit} f && /^  [a-z]/ {exit}' "$1"
+}
+
+for job in build-python build-npm verify-python verify-npm; do
+    if job_needs "$build_wf" "$job" | grep -q 'build-engine'; then
+        pass "$job depends on build-engine"
+    else
+        fail "$job depends on build-engine"
+    fi
+done
+
+if grep -Eq 'uses: actions/attest-build-provenance@[0-9a-f]{40} ' "$workflow"; then
+    pass "engine provenance attestation is SHA-pinned"
+else
+    fail "engine provenance attestation is SHA-pinned"
+fi
+
+attesting_job="$(awk '/^  [a-z0-9-]+:$/ {job=$1} /attestations: write/ {print job}' "$workflow")"
+if [[ "$attesting_job" == "attest-engine:" ]]; then
+    pass "attestation permissions are granted to one job only"
+else
+    fail "attestation permissions are granted to one job only"
+fi
+
+# release-build.yml runs on pull requests and dry runs with a floating toolchain and the binary it
+# built; no job in it may be able to mint an OIDC token or write attestations.
+if grep -Eq '^\s+(id-token|attestations): write|write-all|secrets: inherit' "$build_wf" "$wf/ci.yml" \
+    || grep -Eq '^\s+environment:' "$build_wf"; then
+    fail "release-build.yml and ci.yml hold no id-token, attestations, write-all, inherited secrets or environment"
+else
+    pass "release-build.yml and ci.yml hold no id-token, attestations, write-all, inherited secrets or environment"
+fi
+
+if job_needs "$workflow" attest-engine | grep -q 'publish-github' && ! job_needs "$workflow" publish-github | grep -q 'attest-engine'; then
+    pass "attest-engine runs after publish-github, never before it"
+else
+    fail "attest-engine runs after publish-github, never before it"
+fi
+
+attest_if="$(awk '$0 == "  attest-engine:" {f=1; next} f && /^  [a-z]/ {exit} f && /^    if:/ {print}' "$workflow")"
+if grep -q "publish == 'true'" <<< "$attest_if" && grep -q "needs.publish-github.result == 'success'" <<< "$attest_if"; then
+    pass "attest-engine runs on publishing runs only, once the release is published"
+else
+    fail "attest-engine runs on publishing runs only, once the release is published"
+fi
+
+unpinned="$(awk '$0 == "  attest-engine:" {f=1; next} f && /^  [a-z]/ {exit} f && /uses:/ && !/@[0-9a-f]{40} / {print}' "$workflow")"
+if [[ -z "$unpinned" ]]; then
+    pass "every attest-engine step is SHA-pinned"
+else
+    fail "every attest-engine step is SHA-pinned: $unpinned"
+fi
+
 # npm-publish-dry-run.sh ----------------------------------------------------
 
 # A stand-in `npm` on PATH: `view` answers per NPM_VIEW (published, absent,
@@ -223,9 +335,6 @@ else
 fi
 
 # Workflow layout ------------------------------------------------------------
-
-root="$(cd "$here/.." && pwd)"
-wf="$root/.github/workflows"
 
 if grep -Eq '^permissions:$' "$wf/release-build.yml" \
     && [[ "$(awk '/^permissions:/{getline; print}' "$wf/release-build.yml")" == "  contents: read" ]] \
