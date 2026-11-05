@@ -56,7 +56,9 @@ options:
                          spans the command exported over OTLP) to <file> as
                          attest trace JSON; written when every request was
                          served, whatever the command's exit status (an incident
-                         recording exits non-zero)
+                         recording exits non-zero); the trace is NOT
+                         redacted: write it to a private directory and
+                         do not commit it
   --serve                for an SDK helper: print {"env":{...}} as one JSON
                          line, serve until stdin sends "stop" or closes, then
                          print {"summary":{...}} and exit

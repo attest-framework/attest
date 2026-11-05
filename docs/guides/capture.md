@@ -73,12 +73,15 @@ Cardinality depends on the capture mode. A normal capture sets N to the most cal
 
 For a fixture that is consistent with the recording, `attest capture` writes `tests/attest/test_<name>.py` (Python; the name lowercased, other characters as `_`) or `tests/attest/<name>.test.ts` (TypeScript) next to the fixture directory, unless that file already exists: re-capturing never overwrites a test you edited. A fixture that is not consistent with the recording gets no test, so capturing again with `--expect-fail` (or after editing the agent) still drafts one.
 
-For a fixture captured from a command, the test runs the agent again. It re-runs `source.command` with `attest-engine replay --mode strict --no-live`: the recorded model responses answer the agent's calls, a call that matches no recording fails the test, and nothing reaches a provider (the other providers' keys are removed, `OPENAI_API_KEY` is a placeholder, `ATTEST_EGRESS=block` is set). The drafted contracts are evaluated on the trace of that new run, not on the recording:
+For a fixture captured from a command, the test runs the agent again. It writes the command as a literal in the test file (`COMMAND`) and runs `attest-engine replay --mode strict --no-live` on it: OpenAI- and Anthropic-compatible calls are answered from the recorded model responses, and a call that matches no recording fails the test. Other providers are not blocked: the replay proxy redirects only `OPENAI_BASE_URL` and `ANTHROPIC_BASE_URL`, and `ATTEST_EGRESS=block` only affects processes that install attest's guard. The helper removes `ANTHROPIC_API_KEY`, `GOOGLE_API_KEY` and `GEMINI_API_KEY` and sets `OPENAI_API_KEY` to a placeholder, but run the drafted tests without any other provider's credentials. The drafted contracts are evaluated on the trace of that new run, not on the recording. That trace is not redacted; the helper keeps it in a private temporary directory and removes it afterwards.
+
+`COMMAND` is what runs, because the fixture is a file a pull request can change: review the literal with the test. The test refuses to run (it fails with a message naming both commands) when the fixture's `source.command` differs from `COMMAND`, and when the command has redacted or templated arguments, as `--refresh` does:
 
 ```python
 FIXTURE = Path(__file__).parent / "fixtures/inc-1042.attest.json"
 RUN_DIR = Path(__file__).parent / "../.."  # where `attest capture` ran
 WORLD = None  # the --world file of the capture, when it had one
+COMMAND = ["python", "agent.py"]  # reviewed argv: the only command the test runs
 
 
 def contracts(trace: Trace) -> ExpectChain:
@@ -91,7 +94,7 @@ def contracts(trace: Trace) -> ExpectChain:
 
 
 def test_inc_1042_new_run_consistent_with_recording(attest: AttestEngineFixture) -> None:
-    trace = replay_run(FIXTURE, cwd=RUN_DIR, world=WORLD)
+    trace = replay_run(FIXTURE, command=COMMAND, cwd=RUN_DIR, world=WORLD)
 
     attest.evaluate(contracts(trace))
 ```
