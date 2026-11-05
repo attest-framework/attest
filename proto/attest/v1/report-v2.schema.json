@@ -42,6 +42,7 @@
     },
     "results": { "type": "array", "items": { "$ref": "#/$defs/result" } },
     "tests": { "type": "array", "items": { "$ref": "#/$defs/test" } },
+    "tests_collected": { "type": "integer", "minimum": 0, "description": "Tests collected after deselection. pytest counts it independently of the rows in `tests`; the Vitest reporter derives it from the task tree it reports. `attest policy evaluate` exits 3 when this is above 0 and `tests` is empty." },
     "total_cost": { "type": "number", "minimum": 0 },
     "total_duration_ms": { "type": "integer", "minimum": 0 },
     "p50_duration_ms": { "type": "integer", "minimum": 0 },

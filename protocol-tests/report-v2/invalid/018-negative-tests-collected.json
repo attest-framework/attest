@@ -1,0 +1,42 @@
+{
+  "report_version": 2,
+  "timestamp": "2026-11-04T10:00:00Z",
+  "simulated": false,
+  "summary": {
+    "total": 1,
+    "passed": 1,
+    "soft_fail": 0,
+    "hard_fail": 0,
+    "not_evaluated": 0
+  },
+  "results": [
+    {
+      "assertion_id": "refund_once",
+      "status": "pass",
+      "explanation": "x",
+      "cost": 0.0,
+      "duration_ms": 1,
+      "layer": 3,
+      "type": "trace",
+      "test_id": "tests/test_refund.py::test_inc_1042",
+      "file": "tests/test_refund.py",
+      "line": 12
+    }
+  ],
+  "tests": [
+    {
+      "test_id": "tests/test_refund.py::test_inc_1042",
+      "name": "test_inc_1042",
+      "file": "tests/test_refund.py",
+      "line": 12,
+      "outcome": "passed",
+      "assertion_ids": [
+        "refund_once"
+      ],
+      "duration_ms": 10
+    }
+  ],
+  "total_cost": 0.0,
+  "total_duration_ms": 10,
+  "tests_collected": -1
+}
