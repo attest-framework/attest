@@ -590,12 +590,17 @@ class AttestClient:
         self,
         assertion_id: str,
         window_size: int = 50,
+        static_threshold: float | None = None,
     ) -> DriftReport:
         """Query drift status for an assertion against historical scores.
 
         Args:
             assertion_id: The assertion to check drift for.
-            window_size: Number of recent scores to include (default 50).
+            window_size: Accepted for compatibility and ignored by the engine since 1.1,
+                which fixes the baseline window.
+            static_threshold: The assertion's static pass threshold in [0, 1], the floor the
+                dynamic bar never falls below. Omitted from the request when None, so the
+                engine uses its default of 0.8.
 
         Returns:
             DriftReport with mean, stddev, deviation, and status.
@@ -617,6 +622,8 @@ class AttestClient:
             "assertion_id": assertion_id,
             "window_size": window_size,
         }
+        if static_threshold is not None:
+            params["static_threshold"] = static_threshold
         raw = await self.send_request("query_drift", params)
         return DriftReport.from_dict(raw["report"])
 

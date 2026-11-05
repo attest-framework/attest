@@ -539,3 +539,51 @@ async def test_request_queued_behind_a_write_during_restart_goes_to_the_new_engi
     assert [r["method"] for r in new_engine.requests] == ["evaluate_batch"]
     assert result == {"data": "evaluate_batch"}
     await client.stop_reader()
+
+
+_DRIFT_REPORT = {
+    "report": {
+        "assertion_id": "a1",
+        "mean": 0.9,
+        "stddev": 0.0,
+        "count": 10,
+        "latest_score": 0.7,
+        "deviation": 0.0,
+        "status": "ok",
+    },
+    "static_threshold": 0.6,
+}
+
+
+@pytest.mark.asyncio
+async def test_query_drift_with_static_threshold_sends_it() -> None:
+    client = AttestClient(MagicMock())
+    client.send_request = AsyncMock(return_value=_DRIFT_REPORT)  # type: ignore[method-assign]
+
+    await client.query_drift("a1", static_threshold=0.6)
+
+    client.send_request.assert_awaited_once_with(
+        "query_drift", {"assertion_id": "a1", "window_size": 50, "static_threshold": 0.6}
+    )
+
+
+@pytest.mark.asyncio
+async def test_query_drift_without_static_threshold_omits_it() -> None:
+    client = AttestClient(MagicMock())
+    client.send_request = AsyncMock(return_value=_DRIFT_REPORT)  # type: ignore[method-assign]
+
+    await client.query_drift("a1")
+
+    client.send_request.assert_awaited_once_with(
+        "query_drift", {"assertion_id": "a1", "window_size": 50}
+    )
+
+
+@pytest.mark.asyncio
+async def test_query_drift_zero_static_threshold_is_sent() -> None:
+    client = AttestClient(MagicMock())
+    client.send_request = AsyncMock(return_value=_DRIFT_REPORT)  # type: ignore[method-assign]
+
+    await client.query_drift("a1", static_threshold=0.0)
+
+    assert client.send_request.await_args.args[1]["static_threshold"] == 0.0
