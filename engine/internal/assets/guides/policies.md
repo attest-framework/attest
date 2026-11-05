@@ -69,7 +69,11 @@ A score below `score` is a violation named `min_mutation_score` with the rule's 
 
 ## Baselines
 
-`--baseline <tag>` adds the comparison described in [baselines](baselines.md) and activates `block_on_regression` and `regression`. Both are no-ops without it.
+`--baseline <tag>` adds the comparison described in [baselines](baselines.md) and activates `block_on_regression` and `regression`. A policy that sets either rule without `--baseline` is a load error: `attest policy evaluate` exits 3 and names `--baseline` on stderr, so the gate cannot be skipped by forgetting the flag. `block_on_regression: false` needs no baseline, and `--baseline` without either rule changes nothing.
+
+## Report completeness
+
+A report that records `tests_collected` above 0 and an empty `tests` array lost its results (a crashed worker or reporter), so `attest policy evaluate` exits 3 instead of passing an empty run. A report without `tests_collected` is accepted. The pytest plugin and the Vitest reporter both write the field; under pytest-xdist the controller writes one report that merges every worker's tests.
 
 ## Render the report for reviewers
 

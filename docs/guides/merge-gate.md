@@ -54,6 +54,7 @@ The report follows `proto/attest/v1/report-v2.schema.json`:
 - `results`: one row per assertion, with the engine's status (`pass`, `soft_fail`, `hard_fail`, `not_evaluated` + `reason`), layer, expected and actual, plus the `test_id`, `file` and `line` of the test that requested it.
 - `tests`: one row per test, including tests without Attest assertions, with `outcome` (`passed`, `failed`, `skipped`), `file`, `line` and the reasons of any not-evaluated assertions.
 - `summary`: assertion counts; `not_evaluated` is counted separately.
+- `tests_collected`: tests collected after deselection. Under pytest-xdist the controller writes one report that merges every worker's rows.
 
 `file` is relative to the test runner's root directory (pytest `rootdir`, Vitest `root`) with forward slashes; `line` is the line of the test definition (`def test_…` / `it(…)`). The pytest process exits with the test result as usual; writing the report never changes it.
 
@@ -68,6 +69,7 @@ uv run attest policy evaluate --report attest-report.json --policy attest.policy
 | 0 | Every rule passed |
 | 1 | A blocking rule failed — the generated policy blocks on any hard failure |
 | 2 | Warnings only — the generated policy warns when assertions were not evaluated (`not_evaluated: warn`) |
+| 3 | The policy could not be evaluated: a load error, a rule without its input (`block_on_regression` or `regression` without `--baseline`, `min_mutation_score` without `--mutation`), or a report with 0 tests while `tests_collected` is above 0 |
 
 ## 5. Gate merges in GitHub Actions
 
