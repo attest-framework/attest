@@ -208,7 +208,7 @@ func TestAllowlistedAgentEnv_FoldCase_MatchesWindowsNamesInAnyCase(t *testing.T)
 func TestACP_Complete_DumpEnv_ChildSeesOnlyAllowlistedVariables(t *testing.T) {
 	p := newStubACP(t, acptest.DumpEnv)
 	for k, v := range map[string]string{
-		"GITHUB_TOKEN": "gh-secret", "AWS_SECRET_ACCESS_KEY": "aws-secret", "FOO": "bar",
+		"GITHUB_TOKEN": "gh-secret", "AWS_SECRET_ACCESS_KEY": "aws-secret", "FOO": "bar", "LC_DEPLOY_TOKEN": "lc-secret",
 		"ATTEST_JUDGE_API_KEY": "judge-secret", "OPENAI_API_KEY": "openai-secret",
 		"CLAUDE_CODE_OAUTH_TOKEN": "oauth", "CLAUDE_CONFIG_DIR": "/cfg", "CODEX_HOME": "/codex",
 		"HTTPS_PROXY": "http://proxy:3128", "LC_ALL": "C",
@@ -230,7 +230,12 @@ func TestACP_Complete_DumpEnv_ChildSeesOnlyAllowlistedVariables(t *testing.T) {
 		k, v, _ := strings.Cut(kv, "=")
 		seen[k] = v
 	}
-	for _, k := range []string{"GITHUB_TOKEN", "AWS_SECRET_ACCESS_KEY", "FOO", "ATTEST_JUDGE_API_KEY", "OPENAI_API_KEY"} {
+	for k := range seen {
+		if !slices.Contains(agentEnvNames, k) && !isLocaleVar(k) {
+			t.Errorf("%s reached the agent but is not allowlisted", k)
+		}
+	}
+	for _, k := range []string{"GITHUB_TOKEN", "AWS_SECRET_ACCESS_KEY", "FOO", "ATTEST_JUDGE_API_KEY", "OPENAI_API_KEY", "LC_DEPLOY_TOKEN"} {
 		if _, ok := seen[k]; ok {
 			t.Errorf("%s reached the agent", k)
 		}

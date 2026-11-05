@@ -20,6 +20,7 @@ import (
 
 	"github.com/attest-framework/attest/engine/internal/buildinfo"
 	"github.com/attest-framework/attest/engine/internal/llm"
+	"github.com/attest-framework/attest/engine/internal/redact"
 )
 
 // acpProtocolVersion is the Agent Client Protocol major version this client
@@ -163,8 +164,9 @@ func (p *ACP) Complete(ctx context.Context, req *llm.CompletionRequest) (*llm.Co
 	}, nil
 }
 
-// agentEnvNames are the only variables, besides the LC_* locale family, the
-// ACP agent inherits: process basics, the Windows system variables a child
+// agentEnvNames are the only variables, besides the LC_* locale family (minus
+// names the redact rule treats as secrets, since LC_* is a wildcard that ssh
+// setups also use to forward arbitrary values), the ACP agent inherits: process basics, the Windows system variables a child
 // cannot start without, proxy and CA settings for corporate networks, and the
 // three variables that carry the agent's own session login. The allowlist
 // takes precedence over the redact suffix rule, so CLAUDE_CODE_OAUTH_TOKEN
@@ -194,11 +196,18 @@ func allowlistedAgentEnv(env []string, foldCase bool) []string {
 		if foldCase {
 			name = strings.ToUpper(name)
 		}
-		if strings.HasPrefix(name, "LC_") || slices.Contains(agentEnvNames, name) {
+		if slices.Contains(agentEnvNames, name) || isLocaleVar(name) {
 			out = append(out, kv)
 		}
 	}
 	return out
+}
+
+// isLocaleVar reports whether name belongs to the LC_* wildcard of the
+// allowlist. Explicit names override the redact suffix rule; the wildcard does
+// not, so LC_DEPLOY_TOKEN stays out.
+func isLocaleVar(name string) bool {
+	return strings.HasPrefix(name, "LC_") && !redact.IsSecretEnvName(name)
 }
 
 // stopAgent closes the agent's stdin, which ends a well-behaved agent, and
