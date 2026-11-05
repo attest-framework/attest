@@ -613,6 +613,57 @@ The engine rejects a submission whose `result.status` is not `pass`, `soft_fail`
 
 ---
 
+### 2.5 `query_drift`
+
+Reports whether the newest recorded run of an assertion departs from its C6 baseline. Requires an initialized session. Read-only: it never writes history.
+
+#### Request
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 11,
+  "method": "query_drift",
+  "params": {
+    "assertion_id": "a1b2c3d4e5f60718",
+    "static_threshold": 0.6
+  }
+}
+```
+
+| Param | Type | Required | Description |
+|---|---|---|---|
+| `assertion_id` | string | yes | History key: the assertion id from the report (id scheme 2) or the runner scope. |
+| `static_threshold` | number in [0, 1] | no | The assertion's static pass threshold. The dynamic bar never falls below it. Omitted or `null` means `0.8`; an explicit `0` is honoured. A value outside [0, 1] or a non-number is rejected with `ASSERTION_ERROR` (1002, `invalid query_drift params`). |
+| `window_size` | integer | no | Accepted and ignored: the window is fixed at 50. |
+
+#### Response
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 11,
+  "result": {
+    "report": {
+      "assertion_id": "a1b2c3d4e5f60718",
+      "mean": 0.7,
+      "stddev": 0.0,
+      "count": 10,
+      "latest_score": 0.7,
+      "deviation": 0.0,
+      "status": "ok"
+    },
+    "static_threshold": 0.6
+  }
+}
+```
+
+`result.static_threshold` echoes the floor the engine resolved (`0.8` when the request omitted it). `report.status` is `drift_detected` when the baseline is active and `latest_score` is below the bar, otherwise `ok`.
+
+**Estimator (C6).** The baseline is the newest 50 passing and soft-failing runs before the newest run (the newest run, whatever its status, is the one judged). Hard failures never enter the baseline. The bar is `max(static_threshold, mean − 2·max(stddev, 0.02))`. The baseline needs at least 10 eligible prior runs (cold start): with fewer, `status` is `ok` and `count` is below 10; the same cold start omits `results[].drift` from `evaluate_batch`, where a hard failure is then against the static threshold alone. `count` is the number of baseline rows. History is ordered by insertion, newest first.
+
+---
+
 ## 3. Trace Data Model
 
 The canonical trace format represents a single agent execution from input to output, including all intermediate steps.

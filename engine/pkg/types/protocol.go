@@ -221,12 +221,19 @@ type ValidateTraceTreeResult struct {
 // QueryDriftParams holds parameters for the query_drift RPC method.
 type QueryDriftParams struct {
 	AssertionID string `json:"assertion_id"`
-	WindowSize  int    `json:"window_size"`
+	// WindowSize is accepted for compatibility and ignored: the estimator
+	// window is fixed (C6).
+	WindowSize int `json:"window_size"`
+	// StaticThreshold is the assertion's static pass threshold, the floor the
+	// dynamic bar never falls below. Nil means omitted (0.8).
+	StaticThreshold *float64 `json:"static_threshold,omitempty"`
 }
 
 // QueryDriftResult holds the result of the query_drift RPC method.
 type QueryDriftResult struct {
 	Report DriftReport `json:"report"`
+	// StaticThreshold echoes the floor the engine resolved for this query.
+	StaticThreshold float64 `json:"static_threshold"`
 }
 
 // DriftReport contains drift analysis for a single assertion.

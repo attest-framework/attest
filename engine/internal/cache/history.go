@@ -271,12 +271,12 @@ func (h *HistoryStore) deleteBatched(query string, args ...any) error {
 }
 
 // QueryWindow returns the last windowSize scores for the given assertionID,
-// ordered by created_at DESC (most recent first).
+// ordered by insertion id DESC (most recent first), the same order QueryBaseline uses.
 func (h *HistoryStore) QueryWindow(assertionID string, windowSize int) ([]float64, error) {
 	rows, err := h.db.Query(
 		`SELECT score FROM assertion_history
 		 WHERE assertion_id = ?
-		 ORDER BY created_at DESC
+		 ORDER BY id DESC
 		 LIMIT ?`,
 		assertionID, windowSize,
 	)
@@ -295,6 +295,42 @@ func (h *HistoryStore) QueryWindow(assertionID string, windowSize int) ([]float6
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("query window rows: %w", err)
+	}
+	return scores, nil
+}
+
+// QueryBaseline returns up to windowSize scores of passing and soft-failing
+// runs for assertionID, newest first. Hard failures never enter a baseline, so
+// a run of failures cannot become the bar. With excludeLatest the newest row
+// of any status is left out, which is the baseline the newest run was judged
+// against.
+func (h *HistoryStore) QueryBaseline(assertionID string, windowSize int, excludeLatest bool) ([]float64, error) {
+	query := `SELECT score FROM assertion_history
+		 WHERE assertion_id = ? AND status IN (?, ?)`
+	args := []any{assertionID, types.StatusPass, types.StatusSoftFail}
+	if excludeLatest {
+		query += ` AND id < (SELECT COALESCE(MAX(id), 0) FROM assertion_history WHERE assertion_id = ?)`
+		args = append(args, assertionID)
+	}
+	query += ` ORDER BY id DESC LIMIT ?`
+	args = append(args, windowSize)
+
+	rows, err := h.db.Query(query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("query baseline: %w", err)
+	}
+	defer rows.Close()
+
+	var scores []float64
+	for rows.Next() {
+		var s float64
+		if err := rows.Scan(&s); err != nil {
+			return nil, fmt.Errorf("scan baseline score: %w", err)
+		}
+		scores = append(scores, s)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("query baseline rows: %w", err)
 	}
 	return scores, nil
 }

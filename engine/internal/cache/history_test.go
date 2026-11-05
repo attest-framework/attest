@@ -161,3 +161,33 @@ func TestHistoryStore_RecordNotEvaluated_IsNotStored(t *testing.T) {
 		t.Errorf("QueryWindow = %v, want [0.9] (not_evaluated must not be stored)", got)
 	}
 }
+
+func TestHistoryStore_QueryWindowAndQueryBaseline_AgreeOnNewestRow(t *testing.T) {
+	// Arrange: rows inserted within one clock tick share created_at.
+	store := newTestHistoryStore(t)
+	for i := 0; i < 30; i++ {
+		if err := store.Record("trace", "assert-order", "llm_judge", float64(i)/100, "pass"); err != nil {
+			t.Fatalf("Record: %v", err)
+		}
+	}
+
+	// Act
+	window, err := store.QueryWindow("assert-order", 5)
+	if err != nil {
+		t.Fatalf("QueryWindow: %v", err)
+	}
+	baseline, err := store.QueryBaseline("assert-order", 5, false)
+	if err != nil {
+		t.Fatalf("QueryBaseline: %v", err)
+	}
+
+	// Assert
+	if len(window) != 5 || len(baseline) != 5 {
+		t.Fatalf("lengths = %d, %d, want 5, 5", len(window), len(baseline))
+	}
+	for i := range window {
+		if window[i] != baseline[i] {
+			t.Errorf("row %d: window %v != baseline %v", i, window[i], baseline[i])
+		}
+	}
+}

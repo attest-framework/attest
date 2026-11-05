@@ -28,10 +28,10 @@ func NewEmbeddingEvaluator(embedder embedding.Embedder, c *cache.EmbeddingCache)
 
 // embeddingSpec is the expected structure of the assertion spec JSON.
 type embeddingSpec struct {
-	Target    string  `json:"target"`
-	Reference string  `json:"reference"`
-	Threshold float64 `json:"threshold"`
-	Soft      bool    `json:"soft"`
+	Target    string        `json:"target"`
+	Reference string        `json:"reference"`
+	Threshold thresholdSpec `json:"threshold"`
+	Soft      bool          `json:"soft"`
 }
 
 // Evaluate runs the embedding similarity assertion against the trace.
@@ -54,8 +54,9 @@ func (e *EmbeddingEvaluator) EvaluateContext(ctx context.Context, trace *types.T
 	if spec.Reference == "" {
 		return failResult(assertion, start, "embedding spec missing required field: reference")
 	}
-	if spec.Threshold <= 0 {
-		spec.Threshold = 0.8 // sensible default
+	threshold := spec.Threshold.Value
+	if threshold <= 0 {
+		threshold = 0.8 // sensible default; also the floor of a dynamic bar
 	}
 
 	targetStr, err := ResolveTargetString(trace, spec.Target)
@@ -84,15 +85,15 @@ func (e *EmbeddingEvaluator) EvaluateContext(ctx context.Context, trace *types.T
 		score = 0
 	}
 
-	expected := fmt.Sprintf("cosine_similarity(target, reference) >= %.4f", spec.Threshold)
+	expected := fmt.Sprintf("cosine_similarity(target, reference) >= %.4f", threshold)
 	actual := fmt.Sprintf("cosine_similarity = %.4f against %q", sim, truncate(spec.Reference))
 
-	if sim >= spec.Threshold {
+	if sim >= threshold {
 		return &types.AssertionResult{
 			AssertionID:   assertion.AssertionID,
 			Status:        types.StatusPass,
 			Score:         score,
-			Explanation:   fmt.Sprintf("cosine similarity %.4f >= threshold %.4f", sim, spec.Threshold),
+			Explanation:   fmt.Sprintf("cosine similarity %.4f >= threshold %.4f", sim, threshold),
 			DurationMS:    durationMS,
 			RequestID:     assertion.RequestID,
 			TraceNodePath: spec.Target,
@@ -106,14 +107,14 @@ func (e *EmbeddingEvaluator) EvaluateContext(ctx context.Context, trace *types.T
 		failStatus = types.StatusSoftFail
 	}
 	suggestion := "Inspect the agent response — semantic drift from reference. Lower threshold only if the reference is too narrow."
-	if spec.Threshold > 0.9 {
+	if threshold > 0.9 {
 		suggestion = "Threshold is high (>0.9). Consider whether paraphrasing should pass."
 	}
 	return &types.AssertionResult{
 		AssertionID:     assertion.AssertionID,
 		Status:          failStatus,
 		Score:           score,
-		Explanation:     fmt.Sprintf("cosine similarity %.4f < threshold %.4f", sim, spec.Threshold),
+		Explanation:     fmt.Sprintf("cosine similarity %.4f < threshold %.4f", sim, threshold),
 		DurationMS:      durationMS,
 		RequestID:       assertion.RequestID,
 		TraceNodePath:   spec.Target,
