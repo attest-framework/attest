@@ -296,5 +296,64 @@
       "scope_id": "tests/test_a.py::test_x",
       "spec_json": "{\"a\":[],\"b\":{}}"
     }
+  ],
+  "invalid_description": "Inputs for which no id can be computed. Implementations MUST reject a lone (unpaired) surrogate and invalid UTF-8 in spec keys, spec string values, scope_id and assertion_type; expected is always \"error\". spec_json is raw JSON text; scope_id_bytes_hex, when present, is the scope_id as raw UTF-8 bytes (hex) that cannot be decoded.",
+  "invalid": [
+    {
+      "name": "lone_high_surrogate_in_value",
+      "scope_id": "t::a",
+      "assertion_type": "output_contains",
+      "spec_json": "{\"k\":\"\\ud800\"}",
+      "occurrence_index": 0,
+      "expected": "error"
+    },
+    {
+      "name": "lone_low_surrogate_in_value",
+      "scope_id": "t::a",
+      "assertion_type": "output_contains",
+      "spec_json": "{\"k\":\"\\udc00\"}",
+      "occurrence_index": 0,
+      "expected": "error"
+    },
+    {
+      "name": "reversed_surrogate_pair_in_value",
+      "scope_id": "t::a",
+      "assertion_type": "output_contains",
+      "spec_json": "{\"k\":\"\\udc00\\ud800\"}",
+      "occurrence_index": 0,
+      "expected": "error"
+    },
+    {
+      "name": "lone_high_surrogate_in_key",
+      "scope_id": "t::a",
+      "assertion_type": "output_contains",
+      "spec_json": "{\"\\ud800\":1}",
+      "occurrence_index": 0,
+      "expected": "error"
+    },
+    {
+      "name": "high_surrogate_followed_by_non_low_escape",
+      "scope_id": "t::a",
+      "assertion_type": "output_contains",
+      "spec_json": "{\"k\":\"\\ud800\\u0041\"}",
+      "occurrence_index": 0,
+      "expected": "error"
+    },
+    {
+      "name": "invalid_utf8_in_scope",
+      "scope_id_bytes_hex": "743a3aff",
+      "assertion_type": "output_contains",
+      "spec_json": "{}",
+      "occurrence_index": 0,
+      "expected": "error"
+    },
+    {
+      "name": "invalid_utf8_in_spec",
+      "scope_id": "t::a",
+      "assertion_type": "output_contains",
+      "spec_json_bytes_hex": "7b226b223a22ff227d",
+      "occurrence_index": 0,
+      "expected": "error"
+    }
   ]
 }

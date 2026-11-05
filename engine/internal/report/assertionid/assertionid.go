@@ -35,6 +35,9 @@ func Canonicalize(raw []byte) ([]byte, error) {
 	if !utf8.Valid(raw) {
 		return nil, errors.New("assertionid: input is not valid UTF-8")
 	}
+	if err := rejectLoneSurrogates(raw); err != nil {
+		return nil, err
+	}
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.UseNumber()
 	v, err := decodeValue(dec)
@@ -51,6 +54,14 @@ func Canonicalize(raw []byte) ([]byte, error) {
 	return out.Bytes(), nil
 }
 
+// Validate reports whether an id can be computed for the scope id, assertion
+// type and spec: all strings must be valid UTF-8 without lone surrogates and
+// the spec must have a canonical form.
+func Validate(scopeID, assertionType string, spec []byte) error {
+	_, err := Input(scopeID, assertionType, spec, 0)
+	return err
+}
+
 // Input returns the canonical bytes that are hashed to form an id. An empty
 // spec is the empty object.
 func Input(scopeID, assertionType string, spec []byte, occurrence int) ([]byte, error) {
@@ -63,6 +74,12 @@ func Input(scopeID, assertionType string, spec []byte, occurrence int) ([]byte, 
 	canon, err := Canonicalize(spec)
 	if err != nil {
 		return nil, err
+	}
+	if !utf8.ValidString(scopeID) {
+		return nil, errors.New("assertionid: scope_id is not valid UTF-8")
+	}
+	if !utf8.ValidString(assertionType) {
+		return nil, errors.New("assertionid: assertion_type is not valid UTF-8")
 	}
 	var out bytes.Buffer
 	out.WriteByte('[')
@@ -91,6 +108,61 @@ func ID(scopeID, assertionType string, spec []byte, occurrence int) (string, err
 type object struct {
 	keys []string
 	vals map[string]any
+}
+
+// rejectLoneSurrogates scans the raw JSON text for \uD800-\uDFFF escapes that
+// do not form a high+low pair. encoding/json would silently replace them with
+// U+FFFD, but RFC 8785 requires rejecting them, so the check runs before
+// decoding. Malformed escapes are left for the decoder to report.
+func rejectLoneSurrogates(raw []byte) error {
+	inString := false
+	for i := 0; i < len(raw); i++ {
+		c := raw[i]
+		if !inString {
+			inString = c == '"'
+			continue
+		}
+		switch c {
+		case '"':
+			inString = false
+		case '\\':
+			i++
+			if i >= len(raw) || raw[i] != 'u' {
+				continue
+			}
+			u, ok := hex4(raw, i+1)
+			if !ok {
+				continue
+			}
+			i += 4
+			switch {
+			case u >= 0xDC00 && u <= 0xDFFF:
+				return fmt.Errorf("assertionid: lone low surrogate \\u%04x", u)
+			case u >= 0xD800 && u <= 0xDBFF:
+				paired := false
+				if i+2 < len(raw) && raw[i+1] == '\\' && raw[i+2] == 'u' {
+					v, ok := hex4(raw, i+3)
+					paired = ok && v >= 0xDC00 && v <= 0xDFFF
+				}
+				if !paired {
+					return fmt.Errorf("assertionid: lone high surrogate \\u%04x", u)
+				}
+				i += 6
+			}
+		}
+	}
+	return nil
+}
+
+func hex4(raw []byte, at int) (rune, bool) {
+	if at+4 > len(raw) {
+		return 0, false
+	}
+	n, err := strconv.ParseUint(string(raw[at:at+4]), 16, 32)
+	if err != nil {
+		return 0, false
+	}
+	return rune(n), true
 }
 
 func decodeValue(dec *json.Decoder) (any, error) {

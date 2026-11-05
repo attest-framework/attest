@@ -1,6 +1,7 @@
 package assertionid
 
 import (
+	"encoding/hex"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -111,5 +112,63 @@ func TestCanonicalize_RejectsInputsWithNoCanonicalForm(t *testing.T) {
 func TestInput_NegativeOccurrence_Errors(t *testing.T) {
 	if _, err := Input("s", "t", []byte(`{}`), -1); err == nil || !strings.Contains(err.Error(), "negative") {
 		t.Fatalf("err = %v, want a negative-occurrence error", err)
+	}
+}
+
+type invalidVector struct {
+	Name             string `json:"name"`
+	ScopeID          string `json:"scope_id"`
+	ScopeIDBytesHex  string `json:"scope_id_bytes_hex"`
+	AssertionType    string `json:"assertion_type"`
+	SpecJSON         string `json:"spec_json"`
+	SpecJSONBytesHex string `json:"spec_json_bytes_hex"`
+	OccurrenceIndex  int    `json:"occurrence_index"`
+	Expected         string `json:"expected"`
+}
+
+func TestInvalidVectors_EveryOneErrors(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "..", "..", "..", "protocol-tests", "ids", "assertion-ids.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Invalid []invalidVector `json:"invalid"`
+	}
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatal(err)
+	}
+	if len(doc.Invalid) == 0 {
+		t.Fatal("no invalid vectors in the golden file")
+	}
+	for _, v := range doc.Invalid {
+		t.Run(v.Name, func(t *testing.T) {
+			if v.Expected != "error" {
+				t.Fatalf("expected = %q, want \"error\"", v.Expected)
+			}
+			scope, spec := v.ScopeID, []byte(v.SpecJSON)
+			if v.ScopeIDBytesHex != "" {
+				b, err := hex.DecodeString(v.ScopeIDBytesHex)
+				if err != nil {
+					t.Fatal(err)
+				}
+				scope = string(b)
+			}
+			if v.SpecJSONBytesHex != "" {
+				b, err := hex.DecodeString(v.SpecJSONBytesHex)
+				if err != nil {
+					t.Fatal(err)
+				}
+				spec = b
+			}
+			if id, err := ID(scope, v.AssertionType, spec, v.OccurrenceIndex); err == nil {
+				t.Fatalf("ID succeeded with %q, want an error", id)
+			}
+		})
+	}
+}
+
+func TestInput_InvalidAssertionType_Errors(t *testing.T) {
+	if _, err := Input("s", "t\xff", []byte(`{}`), 0); err == nil {
+		t.Fatal("expected an error for invalid UTF-8 in assertion_type")
 	}
 }
