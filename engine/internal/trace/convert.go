@@ -245,11 +245,6 @@ func (x *spanIndex) isInvokeAgent(i int) bool {
 	return x.kinds[i] == types.StepTypeAgentCall && (x.ops[i] == opInvokeAgent || x.ops[i] == "")
 }
 
-// parent returns the index of a span's parent, or -1.
-func (x *spanIndex) parent(i int) int {
-	return x.parentOf[i]
-}
-
 // resolveAncestry fills cyclic, agentOf and topAgent. Each span is visited
 // once: a walk up the parent chain stops at a resolved span, a root, or a
 // span already on the current walk (a cycle), then resolves the walk from
