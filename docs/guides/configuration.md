@@ -16,7 +16,7 @@ The engine found must report exactly `ENGINE_VERSION` (`attest-engine version`).
 
 ### How the download is verified
 
-Each published `attest-ai` wheel and sdist and each `@attest-ai/core` and `@attest-ai/vitest` tarball carries `engine-checksums.json`, a table of `version → platform → sha256` generated in the same release run from the engine binaries that run built. The downloader trusts only that table. The release's own `checksums-sha256.txt` is never consulted, so a replaced release asset cannot vouch for itself.
+Each published `attest-ai` wheel and sdist and the `@attest-ai/core` tarball carries `engine-checksums.json`, a table of `version → platform → sha256` generated in the same release run from the engine binaries that run built. The downloader trusts only that table. The release's own `checksums-sha256.txt` is never consulted, so a replaced release asset cannot vouch for itself.
 
 - A binary whose hash differs from the shipped one is refused and nothing is written. The error reads `does not match the hash shipped in attest-ai <version>` (Python) or `does not match the hash shipped in @attest-ai/core <version>` (TypeScript).
 - Downloads use https only. A redirect to any other scheme is refused, a relative `Location` resolves against the URL that returned it, and at most 5 redirects are followed.
@@ -24,13 +24,16 @@ Each published `attest-ai` wheel and sdist and each `@attest-ai/core` and `@atte
 - A source checkout or editable install has no table and never downloads. It fails naming `ATTEST_ENGINE_PATH`; build an engine with `make engine` and point `ATTEST_ENGINE_PATH` at `./bin/attest-engine`.
 - `ATTEST_ENGINE_PATH` and the exact-version pin are unchanged.
 
-Every release binary also carries a GitHub build-provenance attestation tied to the release workflow run. To check a binary you downloaded yourself:
+Every release binary also carries a GitHub build-provenance attestation, created by the `attest-engine` job of the release workflow. To check a binary you downloaded yourself, pin the workflow and the tag, not just the repository:
 
 ```bash
-gh attestation verify attest-engine-linux-amd64 --repo attest-framework/attest
+gh attestation verify attest-engine-linux-amd64 \
+  --repo attest-framework/attest \
+  --signer-workflow attest-framework/attest/.github/workflows/release.yml \
+  --source-ref refs/tags/v<VERSION>
 ```
 
-The command prints the workflow and commit that built the binary and exits non-zero when the file was not produced by that repository's release workflow.
+Passing means the file's SHA-256 matches an attestation signed by `release.yml` in `attest-framework/attest` on the `v<VERSION>` tag. It does not tell you the source at that tag is free of bugs, only where and how the binary was built. `--repo` alone accepts an attestation from any workflow in the repository on any ref, so it is not enough on its own. The SDKs do not run this check; they compare against the table shipped in the package.
 
 The `attest` command (`uv run attest`, `npx attest`) implements `attest init` itself and forwards every other command to the version-checked engine, passing arguments, output and exit code through unchanged:
 
