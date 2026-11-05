@@ -1,0 +1,394 @@
+name: CI
+
+# The single PR gate. Every suite that used to be its own path-filtered
+# workflow is a job here, gated on the `changes` job. A job that is skipped
+# because nothing it guards changed counts as passing; `required` is the one
+# check that always reports, so branch protection can require it without a
+# path-filtered check ever sitting "pending" forever.
+#
+# Engine tests also guard sources outside engine/: the conformance fixtures
+# (protocol-tests/), the guides, skills and plugin manifests staged into the
+# engine by `go generate`, and the exit-code table in docs/guides/cli.md. Both
+# SDK suites read sdks/parity/ and protocol-tests/.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  changes:
+    name: Detect changed paths
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      engine: ${{ steps.filter.outputs.engine }}
+      sdk_python: ${{ steps.filter.outputs.sdk_python }}
+      sdk_typescript: ${{ steps.filter.outputs.sdk_typescript }}
+      setup_attest: ${{ steps.filter.outputs.setup_attest }}
+      github_config: ${{ steps.filter.outputs.github_config }}
+      versions: ${{ steps.filter.outputs.versions }}
+      release: ${{ steps.filter.outputs.release }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
+        id: filter
+        with:
+          filters: |
+            engine:
+              - "engine/**"
+              - "proto/**"
+              - "protocol-tests/**"
+              - "docs/guides/**"
+              - "skills/**"
+              - ".claude-plugin/**"
+              - ".cursor-plugin/**"
+              - ".codex-plugin/**"
+              - "VERSION"
+              - ".github/workflows/ci.yml"
+            sdk_python:
+              - "sdks/python/**"
+              - "sdks/parity/**"
+              - "protocol-tests/**"
+              - "engine/**"
+              - "proto/**"
+              - ".github/workflows/ci.yml"
+            sdk_typescript:
+              - "sdks/typescript/**"
+              - "sdks/parity/**"
+              - "protocol-tests/**"
+              - "engine/**"
+              - ".github/workflows/ci.yml"
+            setup_attest:
+              - ".github/actions/setup-attest/**"
+              - ".github/workflows/ci.yml"
+            github_config:
+              - ".github/**"
+            versions:
+              - "VERSION"
+              - "engine/internal/buildinfo/**"
+              - "sdks/python/pyproject.toml"
+              - "sdks/python/src/attest/__init__.py"
+              - "sdks/typescript/packages/core/package.json"
+              - "sdks/typescript/packages/core/src/version.ts"
+              - "sdks/typescript/packages/vitest/package.json"
+              - "scripts/verify-versions.sh"
+              - ".github/workflows/ci.yml"
+            release:
+              - ".github/workflows/release.yml"
+              - ".github/workflows/ci.yml"
+              - "scripts/check-release-tag.sh"
+              - "scripts/release-notes.sh"
+              - "scripts/test-release-scripts.sh"
+              - "CHANGELOG.md"
+              - "VERSION"
+
+  engine-test:
+    name: Engine tests
+    needs: changes
+    if: needs.changes.outputs.engine == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: "1.27"
+          cache-dependency-path: engine/go.sum
+      - name: Run tests
+        run: cd engine && go test ./... -v -race
+      - name: Vet
+        run: cd engine && go vet ./...
+      - name: Vulnerability check
+        continue-on-error: true
+        run: |
+          cd engine
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          govulncheck ./...
+
+
+  engine-build:
+    name: Engine build
+    needs: engine-test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: "1.27"
+          cache-dependency-path: engine/go.sum
+      - name: Build engine binary
+        run: cd engine && go build -o ../bin/attest-engine ./cmd/attest-engine/
+      - name: Verify binary
+        run: ./bin/attest-engine version
+      - uses: actions/upload-artifact@v7
+        with:
+          name: attest-engine-linux-amd64
+          path: bin/attest-engine
+
+  sdk-python:
+    name: Python SDK (${{ matrix.python-version }})
+    needs: changes
+    if: needs.changes.outputs.sdk_python == 'true'
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.10", "3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python-version }}
+      - uses: astral-sh/setup-uv@v7
+      - name: Install dependencies
+        run: |
+          cd sdks/python
+          uv venv .venv
+          uv pip install -e ".[dev]"
+      - uses: actions/setup-go@v7
+        with:
+          go-version: "1.27"
+          cache-dependency-path: engine/go.sum
+      - name: Build engine
+        # Engine-backed tests (judge replay, capture, replay) skip without bin/attest-engine.
+        run: make engine
+      - name: Run tests
+        run: |
+          cd sdks/python
+          uv run pytest tests/ -v
+      - name: Lint
+        run: |
+          cd sdks/python
+          uv run ruff check src tests
+      - name: Format check
+        run: |
+          cd sdks/python
+          uv run ruff format --check src tests
+      - name: Type check
+        run: |
+          cd sdks/python
+          uv run mypy --strict src/attest
+      - name: Security audit
+        # Audit the project's installed dependencies from an isolated pip-audit,
+        # so the auditor's own dependencies are not part of the audited set.
+        run: |
+          cd sdks/python
+          uv pip freeze --exclude-editable > "$RUNNER_TEMP/audit-requirements.txt"
+          uvx pip-audit --no-deps --disable-pip -r "$RUNNER_TEMP/audit-requirements.txt"
+
+
+  sdk-typescript:
+    name: TypeScript SDK (${{ matrix.node-version }})
+    needs: changes
+    if: needs.changes.outputs.sdk_typescript == 'true'
+    defaults:
+      run:
+        working-directory: sdks/typescript
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node-version: ["20", "22"]
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@v6
+        with:
+          package_json_file: sdks/typescript/package.json
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: pnpm
+          cache-dependency-path: sdks/typescript/pnpm-lock.yaml
+      - uses: actions/setup-go@v7
+        with:
+          go-version: "1.27"
+          cache-dependency-path: engine/go.sum
+      - name: Build engine
+        # Engine-backed tests (replay end to end) skip without bin/attest-engine.
+        working-directory: .
+        run: make engine
+      - name: Install dependencies
+        run: pnpm install
+      - name: Build
+        run: pnpm -r build
+      - name: Test
+        run: pnpm -r test
+      - name: Type check
+        run: pnpm -r exec tsc --noEmit
+
+
+  setup-attest:
+    name: setup-attest consumer (action from this change)
+    needs: changes
+    if: github.event_name == 'pull_request' && needs.changes.outputs.setup_attest == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          path: attest-action
+          persist-credentials: false
+      - uses: ./attest-action/.github/actions/setup-attest
+        id: setup
+        with:
+          ref: main
+      - name: Run engine and SDKs
+        env:
+          CORE_TARBALL: ${{ steps.setup.outputs.core-tarball }}
+        run: |
+          set -euo pipefail
+          attest-engine version
+          python -c 'import attest; print("attest-ai", attest.__version__)'
+          project="$(mktemp -d)"
+          cd "$project"
+          npm init -y > /dev/null
+          npm install --no-audit --no-fund "$CORE_TARBALL"
+          node --input-type=module -e 'const m = await import("@attest-ai/core"); console.log("@attest-ai/core", m.VERSION)'
+
+  github-config:
+    name: GitHub config
+    needs: changes
+    if: needs.changes.outputs.github_config == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v7
+        with:
+          go-version: "1.27"
+          cache: false
+      - name: pr-annotate unit tests
+        run: python3 -m unittest discover -s .github/actions/pr-annotate -v
+      - name: actionlint
+        run: |
+          go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
+          "$(go env GOPATH)/bin/actionlint" -color
+      - uses: astral-sh/setup-uv@v7
+      - name: dependabot.yml schema
+        run: uvx check-jsonschema==0.39.0 --builtin-schema vendor.dependabot .github/dependabot.yml
+
+  versions:
+    name: Version source of truth
+    needs: changes
+    if: needs.changes.outputs.versions == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "20"
+      - name: Verify version sources agree
+        run: bash scripts/verify-versions.sh
+
+  # The release dry run: release.yml builds and verifies every artifact and
+  # publishes nothing when called from a pull request. Its publish jobs are
+  # skipped there, but a reusable workflow's jobs may not request more than the
+  # calling job grants, so the grant below must cover them.
+  release-dry-run:
+    name: Release dry run
+    needs: changes
+    if: github.event_name == 'pull_request' && needs.changes.outputs.release == 'true'
+    permissions:
+      contents: write
+      id-token: write
+    uses: ./.github/workflows/release.yml
+
+  # Notify docs site of SDK changes so it can rebuild
+  # Requires DOCS_DEPLOY_TOKEN secret: GitHub PAT with repo scope
+  # for cross-repo repository_dispatch to attest-framework/attest-framework.github.io
+  notify-docs-python:
+    needs: sdk-python
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          fetch-depth: 2
+      - name: Check for SDK source changes
+        id: changes
+        run: |
+          if git diff --name-only HEAD~1 HEAD | grep -qE '^sdks/python/src/attest/'; then
+            echo "sdk_changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "sdk_changed=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Dispatch docs rebuild
+        if: steps.changes.outputs.sdk_changed == 'true' && env.HAS_TOKEN == 'true'
+        env:
+          HAS_TOKEN: ${{ secrets.DOCS_DEPLOY_TOKEN != '' }}
+        uses: peter-evans/repository-dispatch@v4
+        with:
+          token: ${{ secrets.DOCS_DEPLOY_TOKEN }}
+          repository: attest-framework/attest-framework.github.io
+          event-type: docs-update
+
+  # Notify docs site of SDK changes so it can rebuild
+  # Requires DOCS_DEPLOY_TOKEN secret: GitHub PAT with repo scope
+  # for cross-repo repository_dispatch to attest-framework/attest-framework.github.io
+  notify-docs-typescript:
+    needs: sdk-typescript
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: sdks/typescript
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          fetch-depth: 2
+      - name: Check for SDK source changes
+        id: changes
+        working-directory: .
+        run: |
+          if git diff --name-only HEAD~1 HEAD | grep -qE '^sdks/typescript/packages/core/src/'; then
+            echo "sdk_changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "sdk_changed=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Dispatch docs rebuild
+        if: steps.changes.outputs.sdk_changed == 'true' && env.HAS_TOKEN == 'true'
+        env:
+          HAS_TOKEN: ${{ secrets.DOCS_DEPLOY_TOKEN != '' }}
+        uses: peter-evans/repository-dispatch@v4
+        with:
+          token: ${{ secrets.DOCS_DEPLOY_TOKEN }}
+          repository: attest-framework/attest-framework.github.io
+          event-type: docs-update
+
+  required:
+    name: required
+    if: always()
+    needs:
+      - changes
+      - engine-test
+      - engine-build
+      - sdk-python
+      - sdk-typescript
+      - setup-attest
+      - github-config
+      - versions
+      - release-dry-run
+    runs-on: ubuntu-latest
+    permissions: {}
+    steps:
+      - name: Require every needed job to have passed or been skipped
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: |
+          set -euo pipefail
+          echo "$NEEDS" | jq -r 'to_entries[] | "\(.key): \(.value.result)"'
+          if echo "$NEEDS" | jq -e 'any(.[]; .result == "failure" or .result == "cancelled")' > /dev/null; then
+            echo "::error::a required job failed or was cancelled"
+            exit 1
+          fi

@@ -5,8 +5,9 @@ name: Release
 # stored artifacts, record the result in the release notes, and dispatch the
 # website sync.
 #
-# workflow_dispatch with dry_run (default) and pull_request runs build and
-# verify the same artifacts and publish nothing. Publishing happens only from
+# workflow_dispatch with dry_run (default) and the release-dry-run job of
+# ci.yml (which calls this workflow on pull requests) build and verify the
+# same artifacts and publish nothing. Publishing happens only from
 # a v* tag ref: a tag push, or a dispatch on a tag with dry_run=false.
 #
 # Recovery (one version, same artifacts): re-run only the failed publish job
@@ -26,14 +27,7 @@ on:
         description: "Tag to check against VERSION (default: the tag ref, else v<VERSION>)"
         type: string
         default: ""
-  pull_request:
-    paths:
-      - ".github/workflows/release.yml"
-      - "scripts/check-release-tag.sh"
-      - "scripts/release-notes.sh"
-      - "scripts/test-release-scripts.sh"
-      - "CHANGELOG.md"
-      - "VERSION"
+  workflow_call:
 
 permissions:
   contents: read
