@@ -170,7 +170,7 @@ def timeout_agent(builder, message):
 
 
 def test_a_times_out(attest):
-    # The engine needs hundreds of milliseconds to answer a batch this large, so the 0.1 ms timeout always fires.
+    # The engine needs hundreds of ms to answer a batch this large: the 0.1 ms timeout fires.
     chain = expect(timeout_agent(message="a refund " + "x" * 100_000))
     for _ in range(2_000):
         chain = chain.output_contains("refund")
