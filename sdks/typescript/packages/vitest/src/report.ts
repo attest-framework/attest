@@ -210,7 +210,9 @@ export function buildReport(
       usage: sessionUsage(tests, unattached),
       ...replaySummary(tests),
     },
-    // Every test Vitest collected across all projects and pools, skipped ones included.
+    // Every test in the task tree Vitest hands the reporter (all projects and pools, skipped
+    // ones included). It is the same list as `tests`, so it adds no independent count;
+    // tests in a module that failed to import appear in neither.
     tests_collected: tests.length,
     results: rows,
     tests: testRows,
