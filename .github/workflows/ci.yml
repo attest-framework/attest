@@ -71,6 +71,8 @@ jobs:
               - "sdks/python/src/attest/adapters/**"
               - "sdks/python/tests/test_adapters/**"
               - "sdks/python/tests/test_adapter_conformance.py"
+              - "sdks/python/tests/adapter_conformance.py"
+              - "sdks/python/tests/**/conftest.py"
               - "sdks/python/tests/integration/test_*_integration.py"
               - "sdks/python/pyproject.toml"
               - "sdks/python/uv.lock"
@@ -252,20 +254,25 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
+      # No caches: this job runs the most third-party code, and on main a save would be
+      # restored by the other jobs.
       - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: false
       - uses: actions/setup-go@v7
         with:
           go-version: "1.27"
-          cache-dependency-path: engine/go.sum
+          cache: false
       - name: Build engine
         # The conformance corpus drives the engine; it skips without bin/attest-engine.
         run: make engine
       - name: Install SDK with every framework extra
         # uv.lock pins crewai, langchain-core, google-adk, llama-index-core, openai,
-        # anthropic, google-genai, ollama and opentelemetry; --frozen fails on drift.
+        # anthropic, google-genai, ollama and opentelemetry; --locked fails when the lock
+        # is out of date with pyproject.toml.
         run: |
           cd sdks/python
-          uv sync --frozen --extra dev --extra all
+          uv sync --locked --extra dev --extra all
       - name: Run framework-gated adapter tests
         # pipefail: without it `| tee` hides a pytest failure.
         run: |
