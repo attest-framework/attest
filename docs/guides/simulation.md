@@ -96,20 +96,24 @@ def test_refund_with_mocks():
 Run a test function multiple times and collect statistical results. Useful for measuring pass rates under non-deterministic conditions.
 
 ```python
+from attest import expect
 from attest.simulation import repeat
 
-@repeat(n=10)
-def test_agent_reliability():
-    result = my_agent.run("Process refund for ORD-123")
-    return result
 
-repeat_result = test_agent_reliability()
-repeat_result.count          # 10
-repeat_result.pass_rate      # passing / evaluated runs, or None
-repeat_result.not_evaluated  # runs skipped as not evaluated
-repeat_result.all_passed     # True if all 10 passed
-repeat_result.outcome()      # "fail" | "skip" | "pass" over all runs
-repeat_result.results        # list[AgentResult]
+def test_agent_reliability(attest):
+    @repeat(n=10)
+    def trial():
+        result = my_agent.run("Process refund for ORD-123")
+        return attest.inspect(expect(result).output_contains("ORD-123"))
+
+    repeat_result = trial()
+    repeat_result.count          # 10
+    repeat_result.pass_rate      # passing / evaluated runs, or None
+    repeat_result.not_evaluated  # runs skipped as not evaluated
+    repeat_result.all_passed     # True if all 10 passed
+    repeat_result.outcome()      # "fail" | "skip" | "pass" over all runs
+    repeat_result.results        # list[AgentResult]
+    attest.enforce(repeat_result)
 ```
 
 Build each trial's result with `attest.inspect(chain)`, which never fails or skips the test, and enforce only the aggregate with `attest.enforce(repeat_result)` (see [Verdicts](verdicts.md)).
@@ -246,18 +250,21 @@ IMPATIENT_USER = Persona(
 Decorators compose naturally. `@scenario` provides the simulation context; `@repeat` wraps it for statistical runs:
 
 ```python
+from attest import expect
 from attest.simulation import scenario, repeat, ADVERSARIAL_USER
 
-@repeat(n=5)
-@scenario(persona=ADVERSARIAL_USER, fault_error_rate=0.2, max_turns=3, seed=42)
-def test_adversarial_resilience(persona):
-    result = my_agent.run(input=persona.system_prompt)
-    return result
 
-# Each of 5 repeats runs the 3-turn adversarial scenario
-repeat_result = test_adversarial_resilience()
-# pass_rate is None when no repeat was evaluated (e.g. judge-only checks in simulation)
-assert repeat_result.pass_rate is not None and repeat_result.pass_rate >= 0.8
+def test_adversarial_resilience(attest):
+    @repeat(n=5)
+    @scenario(persona=ADVERSARIAL_USER, max_turns=3, seed=42)
+    def trial(persona):
+        result = my_agent.run(input=persona.system_prompt)
+        return attest.inspect(expect(result).output_not_contains("error"))
+
+    # Each of 5 repeats runs the 3-turn adversarial scenario
+    repeat_result = trial()
+    # pass_rate is None when no repeat was evaluated (e.g. judge-only checks in simulation)
+    assert repeat_result.pass_rate is not None and repeat_result.pass_rate >= 0.8
 ```
 
 ## Fault Injection Patterns
@@ -298,21 +305,21 @@ def test_multi_turn_resilience():
 
 4. **Mock expensive tools.** Use `mock_tools` to avoid real API calls during simulation runs. Reserve integration tests for a separate suite.
 
-5. **Combine with assertions.** Simulation decorators produce `AgentResult` objects compatible with Attest's full assertion pipeline:
+5. **Combine with assertions.** Simulation decorators aggregate verdicts. Return `attest.inspect(chain)` from the decorated function so each trial carries its assertion results; a chain that is never evaluated checks nothing:
 
 ```python
 from attest import expect
 from attest.simulation import scenario, repeat, ADVERSARIAL_USER
 
-@repeat(n=10)
-@scenario(persona=ADVERSARIAL_USER, max_turns=3, seed=42)
-def test_adversarial_with_assertions(persona):
-    result = my_agent.run(input=persona.system_prompt)
-    expect(result).output_not_contains("error").cost_under(0.05)
-    return result
+def test_adversarial_with_assertions(attest):
+    @repeat(n=10)
+    @scenario(persona=ADVERSARIAL_USER, max_turns=3, seed=42)
+    def trial(persona):
+        result = my_agent.run(input=persona.system_prompt)
+        return attest.inspect(expect(result).output_not_contains("error").cost_under(0.05))
 
-repeat_result = test_adversarial_with_assertions()
-assert repeat_result.pass_rate is not None and repeat_result.pass_rate >= 0.9
+    repeat_result = trial()
+    assert repeat_result.pass_rate is not None and repeat_result.pass_rate >= 0.9
 ```
 
 ## TypeScript
