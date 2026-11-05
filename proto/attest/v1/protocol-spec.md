@@ -17,7 +17,7 @@ SDK Process
   │
   ├── stdin  ──►  Engine Process (receives requests)
   │
-  └── stdout ◄──  Engine Process (sends responses + notifications)
+  └── stdout ◄──  Engine Process (sends responses only)
 
 stderr ──► Engine debug log output only (never parsed by SDK)
 ```
@@ -55,14 +55,29 @@ Log levels controlled by `--log-level` flag on engine startup: `debug`, `info`, 
 4. SDK sends `evaluate_batch` requests as needed
 5. SDK sends `shutdown` when done; engine drains and exits
 
-### 1.5 Concurrency
+### 1.5 Concurrency and response routing
 
 - **stdio mode (current):** The engine dispatches requests sequentially — one request
-  is processed to completion before the next is read. Responses arrive in request order.
-  `max_concurrent_requests` is `1` in stdio mode.
+  is processed to completion before the next is read. `max_concurrent_requests` is `1`
+  in stdio mode.
 - **gRPC shared-engine mode (planned v0.5+):** Concurrent dispatch with out-of-order
   responses. `max_concurrent_requests` will be `> 1` when this mode is active.
-- Request IDs are included for traceability and future compatibility with concurrent dispatch.
+- **Every line the engine writes to stdout is the response to a request id the SDK sent.**
+  The engine sends no notifications; data that used to travel as one (drift) is part of
+  the response (`results[].drift`).
+- SDKs route each response to its request by `id` and never by arrival order. A line
+  without an `id` is logged and dropped, never taken as a response. An `evaluate_batch`
+  response whose assertion ids differ from the ids sent is a protocol desync
+  (`ProtocolDesyncError`), not a verdict.
+- **Timeouts.** When a request times out, the SDK restarts the engine and fails every
+  pending request, so a late reply cannot reach another caller. The new engine starts
+  with the remaining session budget: the configured `ATTEST_MAX_JUDGE_CALLS` /
+  `ATTEST_BUDGET_USD` minus the `usage` returned so far, minus a hold for each timed-out
+  or abandoned request (its `budget` limits when it sent them, otherwise everything that
+  is left). Spend the SDK cannot observe (`generate_user_message` calls, engine errors,
+  replies dropped after cancellation) also holds everything that is left. A restart that
+  leaves no budget makes later attest-initiated calls `not_evaluated` with reason
+  `budget_exhausted`.
 
 ---
 
@@ -428,6 +443,7 @@ Every model call reserves one call and its worst-case cost (price × prompt byte
 | `duration_ms` | int | Wall-clock time to evaluate this assertion |
 | `request_id` | string | Echoed from the request if provided |
 | `failure_class` | string | Set only on `soft_fail` / `hard_fail` rows; never on `pass` or `not_evaluated` |
+| `drift` | object | Set when a `threshold: "dynamic"` assertion hard-fails and its history can be read: `assertion_id`, `mean`, `stddev`, `count` (history rows, this run included), `latest_score`, `deviation` (`latest_score − mean`) and `status` (`drift_detected`). Omitted otherwise. |
 
 Every requested assertion appears exactly once in `results`, including assertions the engine did not run.
 
