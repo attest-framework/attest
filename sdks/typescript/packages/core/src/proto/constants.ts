@@ -18,6 +18,8 @@ export const REASON_MISSING_EVIDENCE = "missing_evidence" as const;
 export const REASON_SHORT_CIRCUITED = "short_circuited" as const;
 export const REASON_BUDGET_EXHAUSTED = "budget_exhausted" as const;
 export const REASON_JUDGE_ABSTAINED = "judge_abstained" as const;
+export const REASON_JUDGE_MALFORMED = "judge_malformed" as const;
+export const REASON_PROVIDER_AUTH = "provider_auth" as const;
 export const REASON_REPLAY_MISS = "replay_miss" as const;
 
 // Test outcomes derived from a batch of assertion results (AgentResult.outcome)

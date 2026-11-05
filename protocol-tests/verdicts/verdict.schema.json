@@ -46,6 +46,8 @@
               "short_circuited",
               "budget_exhausted",
               "judge_abstained",
+              "judge_malformed",
+              "provider_auth",
               "replay_miss"
             ]
           },

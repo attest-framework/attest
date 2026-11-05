@@ -1,0 +1,38 @@
+{
+  "name": "012-judge-malformed",
+  "description": "A judge reply that is not a score in [0,1] or an explicit abstain is not evaluated: the test is skipped.",
+  "results": [
+    {
+      "assertion_id": "a1",
+      "status": "pass",
+      "score": 1.0,
+      "explanation": "a1 pass",
+      "cost": 0.0,
+      "duration_ms": 0,
+      "layer": 4,
+      "type": "content"
+    },
+    {
+      "assertion_id": "j1",
+      "status": "not_evaluated",
+      "score": 0.0,
+      "explanation": "j1 not_evaluated (judge_malformed)",
+      "cost": 0.0,
+      "duration_ms": 0,
+      "layer": 6,
+      "type": "llm_judge",
+      "reason": "judge_malformed"
+    }
+  ],
+  "expected": {
+    "outcome": "skip",
+    "strictOutcome": "fail",
+    "failedAssertionIds": [],
+    "notEvaluated": {
+      "judge_malformed": 1
+    },
+    "passRate": 1.0,
+    "softFailWarning": false,
+    "policyExit": 2
+  }
+}

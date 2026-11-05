@@ -13,15 +13,17 @@ Attest reports one of four statuses for every assertion you request, and turns t
 
 | Reason | When |
 | --- | --- |
-| `provider_unavailable` | The embedding or judge provider is configured but the call failed (outage, timeout, unusable response). |
+| `provider_unavailable` | The embedding or judge provider is configured but the call failed (outage, timeout, rate limit or server error that outlasted the retries). |
 | `provider_not_configured` | No embedding or judge provider is configured, for example no judge API key. |
 | `simulation` | `ATTEST_SIMULATION=1`: layers 1–4 run for real, layers 5–6 are not called. |
 | `missing_evidence` | The trace does not record the checked field, for example `metadata.cost_usd` unset. |
 | `short_circuited` | A layer 5–6 assertion did not run because a layer 1–4 assertion in the same batch hard-failed. |
 | `budget_exhausted` | An embedding or judge call could not reserve its cost or call count against the session budget (`ATTEST_MAX_JUDGE_CALLS`, `ATTEST_BUDGET_USD`) or the test's budget, so it was not sent. |
 | `judge_abstained` | The judge answered `{"abstain": true, "reason": ...}`: the output lacks the evidence the rubric needs. The reason is in the explanation. |
+| `judge_malformed` | The judge answered, but not with a `score` between 0 and 1 or an explicit abstain: no JSON object, no `score`, a non-numeric or out-of-range score such as `7`, or a reply that contains the output delimiter. The judge measured nothing, so no score is recorded. |
+| `provider_auth` | The provider rejected the credentials (HTTP 401 or 403). Reported after one call, without retries. |
 
-A `not_evaluated` assertion is never a pass and never a `broken_code` failure.
+A `not_evaluated` assertion is never a pass and never a `broken_code` failure. A `hard_fail` or `soft_fail` row can carry a `failure_class`; `spec_error` marks an assertion whose spec cannot be evaluated (unknown rubric, `repeat` outside 1–16, unknown bias probe, missing `target`, `threshold` outside (0, 1]): the test is wrong, not the agent. It is a failure class only, never a `reason`.
 
 ## Test outcome
 

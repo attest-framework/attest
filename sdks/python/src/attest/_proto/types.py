@@ -33,6 +33,8 @@ REASON_MISSING_EVIDENCE: str = "missing_evidence"
 REASON_SHORT_CIRCUITED: str = "short_circuited"
 REASON_BUDGET_EXHAUSTED: str = "budget_exhausted"
 REASON_JUDGE_ABSTAINED: str = "judge_abstained"
+REASON_JUDGE_MALFORMED: str = "judge_malformed"
+REASON_PROVIDER_AUTH: str = "provider_auth"
 REASON_REPLAY_MISS: str = "replay_miss"
 
 # ---------------------------------------------------------------------------
@@ -60,6 +62,7 @@ FAILURE_CLASS_FLAKY_JUDGE: str = "flaky_judge"
 FAILURE_CLASS_BAD_RUBRIC: str = "bad_rubric"
 FAILURE_CLASS_MISSING_TRACE_DATA: str = "missing_trace_data"
 FAILURE_CLASS_STOCHASTIC_VARIANCE: str = "stochastic_variance"
+FAILURE_CLASS_SPEC_ERROR: str = "spec_error"
 
 # ---------------------------------------------------------------------------
 # Error code constants
