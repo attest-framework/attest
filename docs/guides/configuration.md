@@ -10,9 +10,27 @@ Each SDK release requires one engine version, `ENGINE_VERSION`, equal to the SDK
 2. `ATTEST_ENGINE_PATH`
 3. `attest-engine` (`attest-engine.exe` on Windows) in a `PATH` directory; empty entries are skipped, so the current directory is never searched
 4. `~/.attest/bin/<ENGINE_VERSION>/attest-engine`
-5. A download of `ENGINE_VERSION` from GitHub Releases into that directory, verified against the release's `checksums-sha256.txt` and written atomically. `ATTEST_ENGINE_NO_DOWNLOAD=1` turns the download off.
+5. A download of `ENGINE_VERSION` from GitHub Releases into that directory, verified against the hash shipped inside the SDK package (see [How the download is verified](#how-the-download-is-verified)) and written atomically. `ATTEST_ENGINE_NO_DOWNLOAD=1` turns the download off.
 
 The engine found must report exactly `ENGINE_VERSION` (`attest-engine version`). Otherwise the SDK stops with a version-mismatch error naming the engine, where it came from, the version it reports and the version required. It never skips a mismatched engine in favor of the next location. The pytest fixture, Vitest, `EngineManager` and the `attest` command all use this check. The legacy unversioned `~/.attest/bin/attest-engine` from releases before 1.0 is neither used nor deleted.
+
+### How the download is verified
+
+Each published `attest-ai` wheel and sdist and each `@attest-ai/core` and `@attest-ai/vitest` tarball carries `engine-checksums.json`, a table of `version → platform → sha256` generated in the same release run from the engine binaries that run built. The downloader trusts only that table. The release's own `checksums-sha256.txt` is never consulted, so a replaced release asset cannot vouch for itself.
+
+- A binary whose hash differs from the shipped one is refused and nothing is written. The error reads `does not match the hash shipped in attest-ai <version>` (Python) or `does not match the hash shipped in @attest-ai/core <version>` (TypeScript).
+- Downloads use https only. A redirect to any other scheme is refused, a relative `Location` resolves against the URL that returned it, and at most 5 redirects are followed.
+- The connect phase times out after 10 seconds and the whole download, redirects included, after 120 seconds.
+- A source checkout or editable install has no table and never downloads. It fails naming `ATTEST_ENGINE_PATH`; build an engine with `make engine` and point `ATTEST_ENGINE_PATH` at `./bin/attest-engine`.
+- `ATTEST_ENGINE_PATH` and the exact-version pin are unchanged.
+
+Every release binary also carries a GitHub build-provenance attestation tied to the release workflow run. To check a binary you downloaded yourself:
+
+```bash
+gh attestation verify attest-engine-linux-amd64 --repo attest-framework/attest
+```
+
+The command prints the workflow and commit that built the binary and exits non-zero when the file was not produced by that repository's release workflow.
 
 The `attest` command (`uv run attest`, `npx attest`) implements `attest init` itself and forwards every other command to the version-checked engine, passing arguments, output and exit code through unchanged:
 
