@@ -1,9 +1,12 @@
 package judge
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"strings"
 )
 
@@ -80,27 +83,116 @@ func (r *RubricRegistry) Register(rubric *Rubric) error {
 	return nil
 }
 
-// WrapAgentOutput wraps agent output text in delimiters for safe evaluation.
+// WrapAgentOutput wraps agent output in the fixed delimiters. The result is
+// the canonical form: it keys the judge cache and the prompt hash, so it is
+// stable across calls. The text actually sent to a judge is Frame.Wrap, whose
+// delimiters carry a per-call nonce the agent output cannot know.
 func WrapAgentOutput(output string) string {
 	return agentOutputStart + "\n" + output + "\n" + agentOutputEnd
 }
 
+const (
+	// ReasonJudgeMalformed is the not_evaluated reason for a judge reply that
+	// is not a valid score in [0,1] or an explicit abstain (contract C5).
+	ReasonJudgeMalformed = "judge_malformed"
+	// ReasonProviderAuth is the not_evaluated reason for a provider that
+	// rejected the credentials; it is reported after one call (contract C5).
+	ReasonProviderAuth = "provider_auth"
+)
+
+// ErrMalformed marks a judge reply that is not a valid C5 reply.
+var ErrMalformed = errors.New("malformed judge reply")
+
+const nonceBytes = 16
+
+// Frame carries the per-call nonce that delimits agent output in a judge
+// prompt. The zero Frame uses the fixed delimiters; NewFrame returns a Frame
+// with a random nonce, so agent output cannot contain the closing delimiter
+// and a judge reply that contains the nonce is rejected.
+type Frame struct {
+	nonce string
+}
+
+// NewFrame returns a Frame with a fresh random nonce.
+func NewFrame() (Frame, error) {
+	b := make([]byte, nonceBytes)
+	if _, err := rand.Read(b); err != nil {
+		return Frame{}, fmt.Errorf("generate judge delimiter nonce: %w", err)
+	}
+	return Frame{nonce: hex.EncodeToString(b)}, nil
+}
+
+// Nonce returns the nonce, empty for the zero Frame.
+func (f Frame) Nonce() string { return f.nonce }
+
+// Start returns the opening delimiter.
+func (f Frame) Start() string { return f.delimiter(agentOutputStart) }
+
+// End returns the closing delimiter.
+func (f Frame) End() string { return f.delimiter(agentOutputEnd) }
+
+func (f Frame) delimiter(fixed string) string {
+	if f.nonce == "" {
+		return fixed
+	}
+	return strings.TrimSuffix(fixed, ">>>") + ":" + f.nonce + ">>>"
+}
+
+// Wrap wraps agent output in this Frame's delimiters.
+func (f Frame) Wrap(output string) string {
+	return f.Start() + "\n" + output + "\n" + f.End()
+}
+
+// Prompt returns the rubric system prompt with the fixed delimiter names
+// replaced by this Frame's, so the judge is told which delimiters are real.
+func (f Frame) Prompt(r *Rubric) string {
+	if f.nonce == "" {
+		return r.SystemPrompt
+	}
+	return strings.NewReplacer(agentOutputStart, f.Start(), agentOutputEnd, f.End()).Replace(r.SystemPrompt)
+}
+
+// ParseScoreResult parses a judge reply and rejects one that contains this
+// Frame's nonce: the judge echoed a delimiter it was told never to emit,
+// which is how injected output tries to close the data block.
+func (f Frame) ParseScoreResult(response string) (*ScoreResult, error) {
+	if f.nonce != "" && strings.Contains(response, f.nonce) {
+		return nil, fmt.Errorf("%w: reply contains the output delimiter nonce", ErrMalformed)
+	}
+	return ParseScoreResult(response)
+}
+
 // ParseScoreResult extracts {"score": ..., "explanation": ...} or
 // {"abstain": true, "reason": ...} from an LLM response. It parses the span
-// from the first '{' to the last '}'.
+// from the first '{' to the last '}'. A reply is valid only with a numeric
+// score in [0,1] or an explicit abstain; anything else wraps ErrMalformed.
 func ParseScoreResult(response string) (*ScoreResult, error) {
-	// Find first '{' and last '}'
 	start := strings.Index(response, "{")
 	end := strings.LastIndex(response, "}")
 	if start == -1 || end == -1 || end < start {
-		return nil, errors.New("no JSON object found in response")
+		return nil, fmt.Errorf("%w: no JSON object found in response", ErrMalformed)
 	}
 
-	var result ScoreResult
-	if err := json.Unmarshal([]byte(response[start:end+1]), &result); err != nil {
-		return nil, fmt.Errorf("failed to parse score JSON: %w", err)
+	var raw struct {
+		Score       *float64 `json:"score"`
+		Explanation string   `json:"explanation"`
+		Abstain     bool     `json:"abstain"`
+		Reason      string   `json:"reason"`
 	}
-	return &result, nil
+	if err := json.Unmarshal([]byte(response[start:end+1]), &raw); err != nil {
+		return nil, fmt.Errorf("%w: failed to parse score JSON: %v", ErrMalformed, err)
+	}
+	if raw.Abstain {
+		return &ScoreResult{Abstain: true, Reason: raw.Reason, Explanation: raw.Explanation}, nil
+	}
+	if raw.Score == nil {
+		return nil, fmt.Errorf("%w: reply has no score", ErrMalformed)
+	}
+	score := *raw.Score
+	if math.IsNaN(score) || score < 0 || score > 1 {
+		return nil, fmt.Errorf("%w: score %v is outside [0,1]", ErrMalformed, score)
+	}
+	return &ScoreResult{Score: score, Explanation: raw.Explanation}, nil
 }
 
 // builtinVersion is the version pinned to every built-in rubric. Bump on any

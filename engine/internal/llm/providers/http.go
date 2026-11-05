@@ -52,17 +52,8 @@ func newHTTPClient() *http.Client {
 	}
 }
 
-// StatusError is returned for a non-2xx provider response. It never carries
-// request headers, so API keys cannot leak through it.
-type StatusError struct {
-	Provider   string
-	StatusCode int
-	Message    string
-}
-
-func (e *StatusError) Error() string {
-	return fmt.Sprintf("%s: HTTP %d: %s", e.Provider, e.StatusCode, e.Message)
-}
+// StatusError is returned for a non-2xx provider response; see llm.StatusError.
+type StatusError = llm.StatusError
 
 // postRequest is one JSON POST to a provider API.
 type postRequest struct {
@@ -113,7 +104,12 @@ func postJSON(ctx context.Context, client *http.Client, r postRequest) ([]byte, 
 			msg = string(raw)
 		}
 		msg = truncate(redact.Secret(stripControl(msg), r.apiKey), maxErrorDetail)
-		return nil, &StatusError{Provider: provider, StatusCode: resp.StatusCode, Message: msg}
+		return nil, &StatusError{
+			Provider:   provider,
+			StatusCode: resp.StatusCode,
+			Message:    msg,
+			RetryAfter: llm.ParseRetryAfter(resp.Header.Get("Retry-After"), time.Now()),
+		}
 	}
 	return raw, nil
 }

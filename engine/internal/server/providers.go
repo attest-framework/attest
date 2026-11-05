@@ -373,16 +373,18 @@ func positiveEnvInt(key string) (int, error) {
 // capabilities returns the capability list `initialize` advertises for these
 // providers. L5/L6 assertion types are always accepted: without a provider
 // the pipeline returns not_evaluated(provider_not_configured) rows.
-// `layers_5_6` means at least one provider is configured; `simulation_mode`
+// `embedding_configured` and `judge_configured` mean that provider exists, so
+// a client can tell a usable layer from one that only accepts the assertion
+// type. `layers_5_6` means at least one provider is configured; `simulation_mode`
 // means ATTEST_SIMULATION is set, so L5/L6 return not_evaluated(simulation)
 // and no provider is called.
 func (p providers) capabilities(simulation bool) []string {
 	caps := []string{"layers_1_4", "trace_tree", "continuous_eval", "plugins"}
 	if p.embedder != nil {
-		caps = append(caps, "embedding")
+		caps = append(caps, "embedding", "embedding_configured")
 	}
 	if p.judge != nil {
-		caps = append(caps, "llm_judge", "simulation")
+		caps = append(caps, "llm_judge", "simulation", "judge_configured")
 	}
 	if p.embedder != nil || p.judge != nil {
 		caps = append(caps, "layers_5_6")

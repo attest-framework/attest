@@ -205,7 +205,7 @@ func TestBiasProbes_AbstainingProbe_IsSkipped(t *testing.T) {
 	mock := llm.NewMockProvider([]*llm.CompletionResponse{{Content: `{"abstain": true, "reason": "x"}`}}, nil)
 	rubric, _ := judge.NewRubricRegistry().Get("default")
 
-	got, _ := runBiasProbes(context.Background(), mock, rubric, "m", "content", 0.5, []string{"position"})
+	got, _ := runBiasProbes(context.Background(), mock, rubric, "m", judgeCall{content: "content"}, 0.5, []string{"position"})
 
 	if len(got) != 0 {
 		t.Errorf("probes = %+v, want the abstaining probe skipped", got)

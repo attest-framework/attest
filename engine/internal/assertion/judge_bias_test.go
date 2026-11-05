@@ -43,7 +43,7 @@ func TestResolveBiasProbes_Empty(t *testing.T) {
 func TestMutateForProbe_PreservesDelimiters(t *testing.T) {
 	wrapped := judge.WrapAgentOutput("hello world")
 	for _, name := range []string{biasProbeVerbosity, biasProbePosition, biasProbeSelfPreference} {
-		mutated := mutateForProbe(name, wrapped)
+		mutated := mutateForProbe(name, wrapped, judge.Frame{})
 		if !strings.Contains(mutated, "<<<AGENT_OUTPUT_START>>>") {
 			t.Errorf("%s probe lost start delimiter", name)
 		}
@@ -61,7 +61,7 @@ func TestMutateForProbe_PreservesDelimiters(t *testing.T) {
 
 func TestMutateForProbe_NoDelimitersFallsBack(t *testing.T) {
 	plain := "no delimiters here"
-	mutated := mutateForProbe(biasProbeVerbosity, plain)
+	mutated := mutateForProbe(biasProbeVerbosity, plain, judge.Frame{})
 	if mutated == plain {
 		t.Error("verbosity probe should still mutate even without delimiters")
 	}

@@ -39,6 +39,11 @@ const (
 	// is plausibly noise. Action: raise the threshold or use repeat:N
 	// to average out variance.
 	FailureClassStochasticVariance = "stochastic_variance"
+
+	// FailureClassSpecError means the assertion spec itself is invalid
+	// (unknown rubric, repeat out of range, unknown bias probe, missing
+	// target): the fault is in the test, not in the agent.
+	FailureClassSpecError = "spec_error"
 )
 
 // kappaPoorThreshold is the Cohen κ value below which a calibration set
@@ -64,7 +69,8 @@ const stochasticBoundaryEps = 0.05
 //     (the result reflects the static fallback, not a real comparison)
 //  3. type == llm_judge AND Judge.HighVarianceFlag → flaky_judge
 //  4. type == llm_judge AND Judge.Calibration with κ < 0.4 → bad_rubric
-//  5. type ∈ {embedding, llm_judge} AND |score - 0.5| ≤ 0.05 → stochastic_variance
+//  5. type ∈ {embedding, llm_judge} AND |score - threshold| ≤ 0.05
+//     (threshold is the assertion's own; 0.5 when unknown) → stochastic_variance
 //  6. type ∈ {schema, constraint, trace, trace_tree, content, plugin}
 //     hard_fail → broken_code
 //  7. Any soft_fail not classified above → stochastic_variance
@@ -73,6 +79,17 @@ const stochasticBoundaryEps = 0.05
 //     heuristic treats as borderline noise rather than broken code)
 //  8. Anything else → broken_code (most conservative non-empty label)
 func ClassifyFailure(r *AssertionResult) string {
+	return ClassifyFailureAt(r, defaultBoundary)
+}
+
+// defaultBoundary is the pass/fail boundary assumed when the caller does not
+// know the assertion's own threshold.
+const defaultBoundary = 0.5
+
+// ClassifyFailureAt is ClassifyFailure with the assertion's own pass/fail
+// threshold as the boundary for rule 5, so a judge that scores 0.78 against
+// a threshold of 0.8 is a near miss rather than broken code.
+func ClassifyFailureAt(r *AssertionResult, threshold float64) string {
 	if r == nil || r.Status == StatusPass || r.Status == StatusNotEvaluated {
 		return ""
 	}
@@ -91,7 +108,7 @@ func ClassifyFailure(r *AssertionResult) string {
 		}
 	}
 
-	if (r.Type == TypeEmbedding || r.Type == TypeLLMJudge) && nearBoundary(r.Score) {
+	if (r.Type == TypeEmbedding || r.Type == TypeLLMJudge) && nearBoundary(r.Score, threshold) {
 		return FailureClassStochasticVariance
 	}
 
@@ -108,8 +125,8 @@ func ClassifyFailure(r *AssertionResult) string {
 	return FailureClassBrokenCode
 }
 
-func nearBoundary(score float64) bool {
-	d := score - 0.5
+func nearBoundary(score, boundary float64) bool {
+	d := score - boundary
 	if d < 0 {
 		d = -d
 	}

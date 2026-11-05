@@ -154,7 +154,7 @@ func TestAdversarial_JudgeEvaluator_Integration(t *testing.T) {
 	if mock.LastRequest == nil {
 		t.Fatal("MockProvider.LastRequest is nil")
 	}
-	if !strings.Contains(mock.LastRequest.Messages[0].Content, "<<<AGENT_OUTPUT_START>>>") {
+	if !strings.Contains(mock.LastRequest.Messages[0].Content, "<<<AGENT_OUTPUT_START:") {
 		t.Error("LLM request should contain wrapped agent output with start delimiter")
 	}
 
