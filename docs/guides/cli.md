@@ -87,7 +87,7 @@ The table is checked against the engine's command registry by a test; a change t
 | `policy` | 0 | pass: every rule satisfied |
 | `policy` | 1 | block: a block-severity rule was violated |
 | `policy` | 2 | warn: only warn-severity rules were violated |
-| `policy` | 3 | usage error, or the policy, report, baseline or mutation report failed to load, or the policy sets min_mutation_score without --mutation |
+| `policy` | 3 | usage error, or the policy, report, baseline or mutation report failed to load, or a rule lacks its input (block_on_regression or regression without --baseline, min_mutation_score without --mutation), or the report has 0 tests while tests_collected is above 0 |
 | `replay` | 0 | every request was served and the command exited 0 |
 | `replay` | 1 | the command exited non-zero (its code is not propagated; --json reports it as exit_code), a request missed, or the fixture could not be loaded or served |
 | `replay` | 2 | usage error or an invalid --world file |
