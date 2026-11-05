@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from attest._proto.types import TYPE_EMBEDDING, TYPE_LLM_JUDGE
+from attest.assertion_id import OccurrenceCounter
 from attest.expect import expect
 from attest.result import AgentResult
 
@@ -68,6 +69,9 @@ class TestOutputSimilarTo:
 
     def test_assertion_id_is_unique(self, embedding_result: AgentResult) -> None:
         chain = expect(embedding_result).output_similar_to("ref A").output_similar_to("ref B")
+        counter = OccurrenceCounter("tests/test_x.py::test_x")
+        for assertion in chain.assertions:
+            counter.assign(assertion)
         ids = [a.assertion_id for a in chain.assertions]
         assert ids[0] != ids[1]
 
@@ -146,6 +150,9 @@ class TestPassesJudge:
 
     def test_assertion_id_is_unique(self, judge_result: AgentResult) -> None:
         chain = expect(judge_result).passes_judge("criteria A").passes_judge("criteria B")
+        counter = OccurrenceCounter("tests/test_x.py::test_x")
+        for assertion in chain.assertions:
+            counter.assign(assertion)
         ids = [a.assertion_id for a in chain.assertions]
         assert ids[0] != ids[1]
 

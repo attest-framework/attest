@@ -22,7 +22,7 @@ capture inc-1042: tests/attest/fixtures/inc-1042.attest.json
     pass       cardinality-lookup_order-per-order_id      lookup_order within max 1 for each of 1 order_id value(s)
     hard_fail  cardinality-issue_refund-per-order_id      issue_refund called 2× for order_id=O-1042 (max 1)
     pass       cardinality-notify_customer-per-order_id   notify_customer within max 1 for each of 1 order_id value(s)
-  verified: incident reproduction; expected failure: cardinality-issue_refund-per-order_id
+  consistent with the recording: incident reproduction; expected failure: cardinality-issue_refund-per-order_id
   test: drafted tests/attest/test_inc_1042.py
 ```
 
@@ -48,7 +48,9 @@ The listener closes when the command exits. A command that exits non-zero still 
 
 Spans follow the OpenTelemetry GenAI conventions that [`attest trace check`](trace-check.md) reads; the captured spans must pass it, or the fixture is not verified.
 
-## Incident reproductions and verified runs
+## Incident reproductions and runs consistent with the recording
+
+"Consistent with the recording" is what capture establishes: the drafted contracts hold on the run that was captured. It does not establish that the run was correct. A normal capture of a double refund drafts cardinality 2 and reports the fixture consistent; pick the invariants you rely on yourself, and use `--expect-fail` when the run is an incident. The `verified` field and the `verified` outcome in `--json` output keep their names and carry this meaning.
 
 Capture drafts these contracts from the run:
 
@@ -62,36 +64,46 @@ Capture drafts these contracts from the run:
 
 Cardinality depends on the capture mode. A normal capture sets N to the most calls the run made with any one value, so a healthy agent that reads an order twice still verifies. With `--expect-fail`, N is 1 for every such tool, so the calls the incident repeated fail: capturing INC-1042 that way fails only `cardinality-issue_refund-per-order_id` (it refunded order O-1042 twice) and records it as the expected failure. A normal capture of the same run drafts `issue_refund` at 2 and verifies, since without `--expect-fail` capture cannot know the run is an incident.
 
-- Without `--expect-fail`, the fixture is **verified** when at least one contract was drafted, every drafted contract passes and the captured trace passes trace check. It is **not verified** (`attest capture` exits 1, naming every cause that holds, joined by `;`) when a drafted contract fails, the trace check failed, no `llm_call` or `tool_call` step was mapped, or nothing was drafted from a run whose command exited non-zero or whose replay-capable capture recorded no model call. A non-zero exit and a missing model call are named among the causes; on their own they do not fail a capture whose drafted contracts pass (the command's exit code is recorded, not propagated). A capture that drafted nothing is never reported verified.
+- Without `--expect-fail`, the fixture is **consistent with the recording** when at least one contract was drafted, every drafted contract passes and the captured trace passes trace check. It is **not verified** (`attest capture` exits 1, naming every cause that holds, joined by `;`) when a drafted contract fails, the trace check failed, no `llm_call` or `tool_call` step was mapped, or nothing was drafted from a run whose command exited non-zero or whose replay-capable capture recorded no model call. A non-zero exit and a missing model call are named among the causes; on their own they do not fail a capture whose drafted contracts pass (the command's exit code is recorded, not propagated). A capture that drafted nothing is never reported verified.
 - A healthy run with nothing to draft from (the command succeeded, the trace check is clean, model calls were recorded, but the trace has no tool call, structured output or cost) has the outcome `nothing_to_verify`: the fixture is written with `verified: false`, `attest capture` exits 0 and prints `captured: nothing to verify (no tool call, structured output or cost); replay-only fixture, no test drafted`, and no test is drafted. The fixture is still usable for replay. With `--expect-fail`, drafting nothing is not verified (exit 1).
 - `attest capture --json` and `--result-file` report `"outcome"`: `verified`, `not_verified` or `nothing_to_verify`, next to the `verified` boolean (`true` only for `verified`). Branch on `outcome` or the exit code, not on `verified` alone.
-- With `--expect-fail`, the fixture is an **incident reproduction**: verified when at least one drafted contract fails and the rest pass. The failing contracts are recorded as `expected_failures`.
+- With `--expect-fail`, the fixture is an **incident reproduction**: consistent with the recording when at least one drafted contract fails and the rest pass. The failing contracts are recorded as `expected_failures`.
 
 ## The drafted test
 
-For a verified fixture, `attest capture` writes `tests/attest/test_<name>.py` (Python; the name lowercased, other characters as `_`) or `tests/attest/<name>.test.ts` (TypeScript) next to the fixture directory, unless that file already exists: re-capturing never overwrites a test you edited. An unverified fixture gets no test, so capturing again with `--expect-fail` (or after editing the agent) still drafts one. The test loads the fixture and runs the contracts against its trace without running the agent:
+For a fixture that is consistent with the recording, `attest capture` writes `tests/attest/test_<name>.py` (Python; the name lowercased, other characters as `_`) or `tests/attest/<name>.test.ts` (TypeScript) next to the fixture directory, unless that file already exists: re-capturing never overwrites a test you edited. A fixture that is not consistent with the recording gets no test, so capturing again with `--expect-fail` (or after editing the agent) still drafts one.
+
+For a fixture captured from a command, the test runs the agent again. It writes the command as a literal in the test file (`COMMAND`) and runs `attest-engine replay --mode strict --no-live` on it: OpenAI- and Anthropic-compatible calls are answered from the recorded model responses, and a call that matches no recording fails the test. Other providers are not blocked: the replay proxy redirects only `OPENAI_BASE_URL` and `ANTHROPIC_BASE_URL`, and `ATTEST_EGRESS=block` only affects processes that install attest's guard. The helper removes `ANTHROPIC_API_KEY`, `GOOGLE_API_KEY` and `GEMINI_API_KEY` and sets `OPENAI_API_KEY` to a placeholder, but run the drafted tests without any other provider's credentials. The drafted contracts are evaluated on the trace of that new run, not on the recording. That trace is not redacted; the helper keeps it in a private temporary directory and removes it afterwards.
+
+`COMMAND` is what runs, because the fixture is a file a pull request can change: review the literal with the test. The test refuses to run (it fails with a message naming both commands) when the fixture's `source.command` differs from `COMMAND`, and when the command has redacted or templated arguments, as `--refresh` does:
 
 ```python
-FIXTURE = load_fixture(Path(__file__).parent / "fixtures/inc-1042.attest.json")
+FIXTURE = Path(__file__).parent / "fixtures/inc-1042.attest.json"
+RUN_DIR = Path(__file__).parent / "../.."  # where `attest capture` ran
+WORLD = None  # the --world file of the capture, when it had one
+COMMAND = ["python", "agent.py"]  # reviewed argv: the only command the test runs
 
 
-def contracts() -> ExpectChain:
+def contracts(trace: Trace) -> ExpectChain:
     return (
-        expect(FIXTURE.trace)
+        expect(trace)
         # cardinality-issue_refund-per-order_id: issue_refund at most once per order_id
         .tool_cardinality("issue_refund", per="order_id", at_most=1)
         # ...
     )
 
 
-def test_inc_1042_reproduces_incident(attest: AttestEngineFixture) -> None:
-    result = attest.inspect(contracts())
+def test_inc_1042_new_run_consistent_with_recording(attest: AttestEngineFixture) -> None:
+    trace = replay_run(FIXTURE, command=COMMAND, cwd=RUN_DIR, world=WORLD)
 
-    statuses = [row.status for row in result.assertion_results]
-    assert statuses == [status for _, status in EXPECTED]
+    attest.evaluate(contracts(trace))
 ```
 
-For an incident reproduction the test uses `inspect()` and asserts each contract's recorded status, so it stays green while it proves the contract catches the incident. For a verified run it uses `evaluate()` and enforces every contract. The TypeScript file does the same with `attestExpect`, `loadFixture` and `inspect` / `evaluate` from `@attest-ai/vitest`.
+The test fails when the agent regresses: a changed prompt, schema or conversation is a replay miss that names the first component that changed, a changed run order or count fails its contract, and a command that exits differently than when it was recorded fails. A pass means the new run is consistent with the recording and satisfies the drafted contracts; it does not prove the agent correct. The TypeScript file does the same with `attestExpect`, `replayRun` and `evaluate` from `@attest-ai/core` and `@attest-ai/vitest`.
+
+An incident fixture (`--expect-fail`) gets the same test. Its contracts failed on the recording, so the test passes once the new run satisfies them. Fixing the agent usually changes the conversation, so replaying the fixed agent against the incident's recording misses; re-record with `attest capture --refresh <name>` (or capture the fixed agent) to get a recording the fixed agent replays.
+
+The test needs the command to run unchanged: it uses the working directory `attest capture` ran in and the `--world` file the capture was given. A fixture built `--from` an OTLP file or by `record()` has no command to re-run; its test loads the fixture and runs the contracts against the recorded trace without running the agent. For an incident reproduction it uses `inspect()` and asserts each contract's recorded status, so it stays green while it proves the contract catches the incident; otherwise it uses `evaluate()`.
 
 ## Refresh a fixture
 
@@ -321,5 +333,7 @@ One framework puts a per-run id inside the request:
 A pull request that changes a fixture can run just the tests that reference it by name: see [selection](selection.md).
 
 ## Limits
+
+**Strict replay keeps relative identity, not absolute identity.** Email addresses are numbered across the whole replay session in the order the run first sends them, so a request whose identities play different roles than in the recording misses: a recording that looked up and notified the same customer does not replay for a run that looks up customer A and notifies customer B. A run that uses one different address throughout (customer B instead of customer A) still replays, because the roles are unchanged. Replay cannot tell that the run's address differs from the recorded one, so it does not detect a regression that replaces every use of one identity with another. Ids and timestamps are renumbered per request and carry no identity.
 
 The listener accepts loopback clients only: requests whose `Host` is not `localhost` or a loopback address, and requests with an `Origin` header (a web page), are refused. It serves only `/<token>/openai/v1/…`, `/<token>/anthropic/…` and `/<token>/v1/traces`, admits 64 concurrent requests, refuses request bodies over 32 MiB, records at most 32 MiB of each response (marked `truncated`) and 512 MiB per capture (past which the capture fails), and holds at most 20,000 spans; OTLP protobuf bodies are checked against the span, attribute and nesting limits before they are decoded. An agent whose model client cannot change its base URL still gets its trace and drafted contracts through the receiver; its fixture has no exchanges.

@@ -60,7 +60,7 @@ describe("buildReport traces", () => {
 });
 
 describe("recordOnTest traces", () => {
-  const running = () => ({ meta: {}, result: { retryCount: 0 } }) as unknown as Parameters<typeof recordOnTest>[0];
+  const running = () => ({ name: "t", file: { name: "f.test.ts" }, meta: {}, result: { retryCount: 0 } }) as unknown as Parameters<typeof recordOnTest>[0];
   const result = new AgentResult(trace("trc_1", "ok"), [{ assertion_id: "a", status: "pass", score: 1, explanation: "ok" }]);
 
   it("tags rows and stores the trace under ATTEST_REPORT_TRACES=1", () => {

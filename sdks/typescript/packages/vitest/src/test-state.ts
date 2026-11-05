@@ -3,12 +3,13 @@
  * IDs, the per-test budget remainder, and the results recorded on task meta.
  */
 import { AsyncLocalStorage } from "node:async_hooks";
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join, relative, sep } from "node:path";
 import * as vitest from "vitest";
 import type { TestContext } from "vitest";
 import {
+  AssertionIdAssigner,
   addUsage,
   zeroUsage,
   type AgentResult,
@@ -48,8 +49,8 @@ export function inTrial(): boolean {
 
 interface AttemptState {
   attempt: number;
-  /** Assertions given an ID in this test (this trial, under trials()). */
-  ordinal: number;
+  /** Gives ids to the assertions of this test (this trial, under trials()). */
+  ids: AssertionIdAssigner;
   /** Attest usage of this attempt so far. */
   usage: Usage;
   /** Sum of `metadata.cost_usd` of the traces evaluated in this attempt. */
@@ -68,7 +69,7 @@ export function attemptState(test: RunningTest): AttemptState {
   const attempt = attemptOf(test);
   let state = attempts.get(test);
   if (state === undefined || state.attempt !== attempt) {
-    state = { attempt, ordinal: 0, usage: zeroUsage(), agentSpendUsd: 0, traceIds: new Set() };
+    state = { attempt, ids: new AssertionIdAssigner(testIdOf(test)), usage: zeroUsage(), agentSpendUsd: 0, traceIds: new Set() };
     attempts.set(test, state);
   }
   return state;
@@ -160,19 +161,22 @@ export function recordUnattachedUsage(usage: Usage): void {
   writeFileSync(join(dir, `${randomUUID()}.json`), JSON.stringify(usage));
 }
 
-/** `assert_` + the first 12 hex chars of sha256("<test_id>#<ordinal>"). */
-export function deterministicAssertionId(testId: string, ordinal: number): string {
-  return `assert_${createHash("sha256").update(`${testId}#${ordinal}`).digest("hex").slice(0, 12)}`;
+/** Restart the occurrence counts of `test`: each trial of trials() gives its assertions the same ids. */
+export function restartAssertionIds(test: RunningTest): void {
+  attemptState(test).ids = new AssertionIdAssigner(testIdOf(test));
 }
 
-/** Give each assertion the next deterministic ID of the test. */
+/**
+ * Give each assertion its scheme-2 id (contract C3): the hash of the test's report test_id, the
+ * assertion type, its canonical spec and its occurrence index among identical assertions of the
+ * test. The assertion also carries the test id as `scope_id`.
+ */
 export function assignAssertionIds(
   test: RunningTest,
   assertions: readonly Assertion[],
 ): Assertion[] {
-  const state = attemptState(test);
-  const testId = testIdOf(test);
-  return assertions.map((a) => ({ ...a, assertion_id: deterministicAssertionId(testId, state.ordinal++) }));
+  const { ids } = attemptState(test);
+  return assertions.map((a) => ({ ...a, assertion_id: ids.next(a.type, a.spec), scope_id: ids.scopeId }));
 }
 
 /** Reject a budget with unknown keys or negative/non-numeric limits. */
@@ -242,6 +246,8 @@ export function attemptMeta(test: RunningTest): AttestTaskMeta {
       totalCost: 0,
       totalDurationMs: 0,
       usage: meta?.usage ?? zeroUsage(),
+      // The engine session passed its soft-failure budget in an earlier attempt too.
+      ...(meta?.budgetExceeded === true ? { budgetExceeded: true } : {}),
     };
     test.meta.attest = meta;
   }
@@ -272,6 +278,24 @@ export function recordOnTest(test: RunningTest, result: AgentResult, trial: numb
   meta.totalDurationMs += result.totalDurationMs;
   meta.usage = addUsage(meta.usage, result.usage);
 }
+
+/**
+ * Note that a batch returned `budget_exceeded`: on the test's meta when there is a test, else in
+ * a marker file AttestReporter finds in its usage directory. The report ORs it across batches.
+ */
+export function recordBudgetExceeded(test: RunningTest | undefined): void {
+  if (test !== undefined) {
+    attemptMeta(test).budgetExceeded = true;
+    return;
+  }
+  const dir = process.env[USAGE_DIR_ENV];
+  if (dir === undefined) return;
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, `${randomUUID()}${BUDGET_MARKER_EXT}`), "");
+}
+
+/** File extension of the markers `recordBudgetExceeded` writes outside a test. */
+export const BUDGET_MARKER_EXT = ".budget-exceeded";
 
 export function strictFromEnv(): boolean {
   const v = (process.env["ATTEST_STRICT"] ?? "").trim().toLowerCase();

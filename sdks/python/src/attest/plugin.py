@@ -7,7 +7,7 @@ import inspect
 import logging
 import os
 import threading
-from collections.abc import Callable, Generator
+from collections.abc import Callable, Coroutine, Generator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, TypeVar
@@ -15,13 +15,26 @@ from typing import Any, TypeVar
 import pytest
 
 from attest import egress
-from attest._proto.types import BatchBudget, BatchContext, Trace, Usage
+from attest._proto.types import (
+    TYPE_PLUGIN,
+    BatchBudget,
+    BatchContext,
+    EvaluateBatchResult,
+    Trace,
+    Usage,
+)
 from attest.cli.diagnostics import render_diagnostics
 from attest.client import AttestClient, require_simulation_capability
 from attest.config import is_simulation_mode
 from attest.engine_manager import EngineManager
 from attest.exceptions import EngineVersionMismatchError
 from attest.expect import ExpectChain
+from attest.plugins import (
+    PLUGIN_TYPE_ASSERTION,
+    PluginRegistry,
+    execute_plugin_assertion,
+    load_entrypoint_plugins,
+)
 from attest.replay import (
     ReplayError,
     ReplayNotEvaluatedError,
@@ -48,8 +61,10 @@ from attest.trials import (
     MIN_PASS_RATE_MARKER,
     TestBudget,
     TestRun,
+    begin_chain_ledger,
     begin_run,
     current_run,
+    end_chain_ledger,
     end_run,
     min_pass_rate_from_marker,
     run_trials,
@@ -348,7 +363,8 @@ def _uses_attest(item: pytest.Item) -> bool:
 @pytest.hookimpl(hookwrapper=True)
 def pytest_runtest_call(item: pytest.Item) -> Generator[None, Any, None]:
     """Track the running test (deterministic assertion IDs, per-test budget)
-    for tests using the attest fixture; validate the ``attest_budget`` marker."""
+    for tests using the attest fixture, and fail any test that built an ``expect()`` chain
+    it never evaluated, fixture or not; validate the ``attest_budget`` marker."""
     marker = item.get_closest_marker(BUDGET_MARKER)
     budget: TestBudget | None = None
     if marker is not None:
@@ -374,14 +390,35 @@ def pytest_runtest_call(item: pytest.Item) -> Generator[None, Any, None]:
         if _uses_attest(item)
         else None
     )
+    ledger: list[ExpectChain] | None = None
     if run is not None:
         begin_run(run)
+    else:
+        ledger = begin_chain_ledger()
     try:
         outcome = yield
     finally:
         if run is not None:
             end_run()
+        else:
+            end_chain_ledger()
+    if outcome.excinfo is None:
+        chains = run.chains if run is not None else ledger
+        _fail_unevaluated_chains([c for c in chains or [] if not c.evaluated], outcome)
     _finish_replays(item, outcome)
+
+
+def _fail_unevaluated_chains(unevaluated: list[ExpectChain], outcome: Any) -> None:
+    """Fail a test that otherwise passed when it built ``expect()`` chains it never evaluated:
+    such a test checked nothing."""
+    count = len(unevaluated)
+    if count == 0:
+        return
+    noun = "chain" if count == 1 else "chains"
+    try:
+        pytest.fail(f"{count} expect() {noun} built but never evaluated", pytrace=False)
+    except pytest.fail.Exception as exc:
+        outcome.force_exception(exc)
 
 
 def _settle_replays(item: pytest.Item) -> BaseException | None:
@@ -906,6 +943,10 @@ class AttestEngineFixture:
         self._client: AttestClient | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
         self._thread: threading.Thread | None = None
+        #: Python implementations of ``.plugin()`` assertions, by ``plugin_id``; entry points
+        #: of the ``attest.plugins`` group are loaded at construction.
+        self.plugin_registry = PluginRegistry()
+        load_entrypoint_plugins(self.plugin_registry)
 
     def start(self) -> None:
         """Start the engine process and run its event loop in a background thread.
@@ -981,6 +1022,61 @@ class AttestEngineFixture:
         future = asyncio.run_coroutine_threadsafe(coro, self._loop)
         return future.result()
 
+    def _evaluate_chain(self, chain: ExpectChain) -> Coroutine[Any, Any, EvaluateBatchResult]:
+        """Prepare ``chain`` in the calling thread and return the coroutine that runs its
+        plugin assertions and the ``evaluate_batch`` on the engine loop.
+
+        Preparation gives the assertions their ids in the running test's scope, in evaluation
+        order, and marks the chain evaluated.
+
+        Raises:
+            Failed: The chain has no assertions.
+            RuntimeError: No test using the ``attest`` fixture is running, so there is no scope.
+        """
+        assert self._client is not None
+        if not chain.assertions:
+            pytest.fail(
+                "expect() chain has no assertions; add a check before evaluating it",
+                pytrace=False,
+            )
+        run = current_run()
+        if run is None:
+            raise RuntimeError(
+                "evaluating an expect() chain needs a running test that uses the attest "
+                "fixture: assertion ids are scoped to the test node id"
+            )
+        run.assign_ids(chain.assertions)
+        chain.evaluated = True
+        return self._run_chain(chain, budget=_batch_budget(chain.trace), context=_batch_context())
+
+    async def _run_chain(
+        self, chain: ExpectChain, *, budget: BatchBudget | None, context: BatchContext | None
+    ) -> EvaluateBatchResult:
+        """Submit each plugin assertion's result, then evaluate the batch (the engine reads
+        the submitted result at evaluation, so the submit goes first)."""
+        assert self._client is not None
+        trace = chain.trace
+        for assertion in chain.assertions:
+            if assertion.type != TYPE_PLUGIN:
+                continue
+            plugin_id = assertion.spec.get("plugin_id")
+            plugin = self.plugin_registry.get(PLUGIN_TYPE_ASSERTION, str(plugin_id))
+            if plugin is None:
+                # No submission: the engine reports not_evaluated / missing_evidence.
+                continue
+            await execute_plugin_assertion(
+                plugin,
+                trace,
+                assertion.spec,
+                self._client,
+                trace.trace_id,
+                assertion.assertion_id,
+                plugin_name=str(plugin_id),
+            )
+        return await self._client.evaluate_batch(
+            trace, chain.assertions, budget=budget, context=context
+        )
+
     def _process_result(
         self,
         chain: ExpectChain,
@@ -999,6 +1095,7 @@ class AttestEngineFixture:
             total_cost=result.total_cost,
             total_duration_ms=result.total_duration_ms,
             usage=result.usage,
+            budget_exceeded=result.budget_exceeded,
         )
         run = current_run()
         if run is not None:
@@ -1056,15 +1153,7 @@ class AttestEngineFixture:
         (``repeat()``) and enforce only the aggregate verdict. ``budget`` is
         a separate session rule and still fails the test when exceeded.
         """
-        assert self._client is not None
-        result = self._run_on_engine_loop(
-            self._client.evaluate_batch(
-                chain.trace,
-                chain.assertions,
-                budget=_batch_budget(chain.trace),
-                context=_batch_context(),
-            )
-        )
+        result = self._run_on_engine_loop(self._evaluate_chain(chain))
         return self._process_result(chain, result, budget)
 
     async def inspect_async(
@@ -1080,16 +1169,7 @@ class AttestEngineFixture:
         from pytest-asyncio or any other running loop.
         """
         assert self._loop is not None
-        assert self._client is not None
-        future = asyncio.run_coroutine_threadsafe(
-            self._client.evaluate_batch(
-                chain.trace,
-                chain.assertions,
-                budget=_batch_budget(chain.trace),
-                context=_batch_context(),
-            ),
-            self._loop,
-        )
+        future = asyncio.run_coroutine_threadsafe(self._evaluate_chain(chain), self._loop)
         result = await asyncio.wrap_future(future)
         return self._process_result(chain, result, budget)
 

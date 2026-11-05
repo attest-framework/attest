@@ -87,6 +87,9 @@ type Replayer struct {
 	redactor *redact.Redactor
 	liveKeys map[string]string
 
+	idMu sync.Mutex
+	ids  *identityBinder // live identity labels, numbered across the session
+
 	mu      sync.Mutex
 	entries []*replayEntry
 	queues  map[string][]int
@@ -164,6 +167,7 @@ func NewReplayer(o ReplayOptions) (*Replayer, error) {
 		liveKeys: liveKeys(o.Environ, o.NoLive),
 		queues:   map[string][]int{},
 	}
+	recorded := newRecordedBinder()
 	for i, ex := range o.Fixture.Exchanges {
 		doc, err := decodeJSON(ex.Request)
 		if err != nil {
@@ -171,7 +175,7 @@ func NewReplayer(o ReplayOptions) (*Replayer, error) {
 		}
 		// Stored requests are already redacted; the redactor here only guards
 		// against a fixture that carries a secret of the current environment.
-		norm, raw, err := normalizeRequest(doc, r.redactor)
+		norm, raw, err := normalizeRequest(doc, r.redactor, recorded)
 		if err != nil {
 			return nil, fmt.Errorf("fixture: exchanges[%d].request: %w", i, err)
 		}
@@ -183,6 +187,7 @@ func NewReplayer(o ReplayOptions) (*Replayer, error) {
 		k := id.String()
 		r.queues[k] = append(r.queues[k], i)
 	}
+	r.ids = recorded.liveBinder()
 	return r, nil
 }
 
@@ -248,7 +253,9 @@ func (r *Replayer) decide(provider, method, path, credential string, body []byte
 		}
 	}
 	var id requestIdentity
-	norm, raw, err := normalizeRequest(doc, r.redactor)
+	r.idMu.Lock()
+	norm, raw, err := normalizeRequest(doc, r.redactor, r.ids)
+	r.idMu.Unlock()
 	if err == nil {
 		var livePath string
 		if livePath, err = redactPath(path); err == nil {

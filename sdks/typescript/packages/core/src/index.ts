@@ -32,11 +32,19 @@ export {
 } from "./diagnostics.js";
 export type { RenderOptions } from "./diagnostics.js";
 export { TraceTree } from "./trace-tree.js";
-export { ExpectChain, WorldChecks, attestExpect } from "./expect.js";
+export { ExpectChain, WorldChecks, attestExpect, setChainObserver } from "./expect.js";
+export {
+  AssertionIdAssigner,
+  ID_SCHEME,
+  assertionIdOf,
+  canonicalIdInput,
+  canonicalSpec,
+} from "./assertion-id.js";
 export {
   CaptureError,
   loadFixture,
   record,
+  replayRun,
   emitVitest,
   renderVitest,
   dslCall,
@@ -49,6 +57,8 @@ export type {
   Fixture,
   RecordOptions,
   RecordResult,
+  ReplayRunOptions,
+  Rerun,
 } from "./capture.js";
 export {
   ReplayError,
@@ -93,6 +103,7 @@ export {
   executePluginAssertion,
   loadPackagePlugins,
   registerPlugin,
+  submitPluginResults,
 } from "./plugins.js";
 export { ContinuousEvalRunner, Sampler, AlertDispatcher } from "./continuous.js";
 export {

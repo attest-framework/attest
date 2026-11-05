@@ -15,6 +15,9 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("attest.plugins")
 
+#: Registry key kind of a plugin that implements a ``.plugin()`` assertion.
+PLUGIN_TYPE_ASSERTION = "assertion"
+
 
 class AttestPlugin(Protocol):
     """Protocol that all Attest plugins must implement."""
@@ -100,12 +103,16 @@ async def execute_plugin_assertion(
     trace_id: str,
     assertion_id: str,
     timeout: float = 30.0,
+    *,
+    plugin_name: str | None = None,
 ) -> PluginResult:
     """Execute a plugin with a timeout and submit the result via client.
 
     Runs the synchronous plugin.execute() in a thread executor to avoid
     blocking the event loop. Submits the result to the engine via
-    client.submit_plugin_result() after execution.
+    client.submit_plugin_result() after execution, under ``plugin_name`` (the
+    assertion's ``plugin_id``; the engine rejects a different name) or
+    ``plugin.name``.
 
     Raises asyncio.TimeoutError if execution exceeds timeout seconds.
     """
@@ -118,7 +125,7 @@ async def execute_plugin_assertion(
 
     await client.submit_plugin_result(
         trace_id=trace_id,
-        plugin_name=plugin.name,
+        plugin_name=plugin.name if plugin_name is None else plugin_name,
         assertion_id=assertion_id,
         status=result.status,
         score=result.score,

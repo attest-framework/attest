@@ -3,7 +3,6 @@
  * client (the engine boundary). Each test drives its own test task so the
  * recorded meta can be inspected.
  */
-import { createHash } from "node:crypto";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { TestContext } from "vitest";
 import {
@@ -19,13 +18,13 @@ import {
 import { evaluate, inspect } from "../src/fixtures.js";
 import type { AttestTaskMeta } from "../src/report.js";
 import {
-  deterministicAssertionId,
   remainingBudget,
   ROOT_ENV,
   testIdOf,
   validateBudget,
   type RunningTest,
 } from "../src/test-state.js";
+import { assertionIdOf } from "@attest-ai/core";
 import { attestGlobalSetup } from "../src/plugin.js";
 import { trials } from "../src/trials.js";
 
@@ -97,9 +96,15 @@ afterEach(() => {
 });
 
 describe("deterministic assertion IDs", () => {
-  it("are assert_ + 12 hex chars of sha256(test_id#ordinal)", () => {
-    const expected = createHash("sha256").update("tests/a.test.ts > t#3").digest("hex").slice(0, 12);
-    expect(deterministicAssertionId("tests/a.test.ts > t", 3)).toBe(`assert_${expected}`);
+  it("are scheme-2 ids: a2_ + 32 hex chars of the hash of test_id, type, spec and occurrence", async () => {
+    const calls = scriptedClient(["pass"]);
+    const t = fakeTest("scheme 2");
+    await inspect(chain(), { context: t.context });
+    expect(calls[0]!.assertions.map((a) => a.assertion_id)).toEqual(
+      chain().assertions.map((a) => assertionIdOf(testIdOf(t.task), a.type, a.spec, 0)),
+    );
+    expect(calls[0]!.assertions.every((a) => /^a2_[0-9a-f]{32}$/.test(a.assertion_id))).toBe(true);
+    expect(calls[0]!.assertions.every((a) => a.scope_id === testIdOf(t.task))).toBe(true);
   });
 
   it("use the report's test_id: file > suites > name", () => {
@@ -125,14 +130,16 @@ describe("deterministic assertion IDs", () => {
     );
   });
 
-  it("count assertions across a test's evaluations and are random outside a test", async () => {
+  it("count identical assertions across a test's evaluations and are random outside a test", async () => {
     const calls = scriptedClient(["pass", "pass", "pass"]);
     const t = fakeTest("ids");
     const testId = testIdOf(t.task);
     await inspect(chain(), { context: t.context });
     await inspect(chain(), { context: t.context });
     expect(calls.flatMap((c) => c.assertions.map((a) => a.assertion_id))).toEqual(
-      [0, 1, 2, 3].map((i) => deterministicAssertionId(testId, i)),
+      [0, 1].flatMap((occurrence) =>
+        chain().assertions.map((a) => assertionIdOf(testId, a.type, a.spec, occurrence)),
+      ),
     );
 
     const outside = chain();
@@ -210,7 +217,7 @@ describe("trials()", () => {
     }, { n: 3, context: t.context, minPassRate: 0.5 });
 
     const testId = testIdOf(t.task);
-    const ids = [deterministicAssertionId(testId, 0), deterministicAssertionId(testId, 1)];
+    const ids = chain().assertions.map((a) => assertionIdOf(testId, a.type, a.spec, 0));
     for (const call of calls) expect(call.assertions.map((a) => a.assertion_id)).toEqual(ids);
     expect(t.meta().results.map((r) => [r.assertion_id, r.trial, r.status])).toEqual([
       [ids[0], 1, "pass"],

@@ -43,7 +43,10 @@ _SDK_USAGE = (
     "                      --json prints {created, updated, skipped} paths as JSON)\n"
     "\n"
     "`attest capture` (engine) also drafts tests/attest/test_<name>.py (name lowercased,\n"
-    "other characters as _) from a verified fixture, unless that file exists.\n"
+    "other characters as _) from a fixture that is consistent with the recording, unless\n"
+    "that file exists. For a command capture the test re-runs the command written in it\n"
+    "under strict replay (OpenAI- and Anthropic-compatible calls are served from the\n"
+    "recording; other providers are not blocked) and evaluates the contracts on the new run.\n"
     "\n"
     "options:\n"
     "  --version  print the SDK version and the engine version it requires\n"
@@ -216,6 +219,19 @@ def _capture_writes_fixture(args: Sequence[str]) -> bool:
     return True
 
 
+def _world_path(args: Sequence[str]) -> Path | None:
+    """The ``--world`` file of capture args (before the ``--`` command), relative to cwd."""
+    for i, arg in enumerate(args):
+        if arg == "--":
+            return None
+        name, eq, value = arg.partition("=")
+        if name in ("--world", "-world"):
+            if eq:
+                return Path(value).resolve()
+            return Path(args[i + 1]).resolve() if i + 1 < len(args) else None
+    return None
+
+
 def _user_result_file(args: Sequence[str]) -> bool:
     for a in args:
         if a == "--":
@@ -227,7 +243,7 @@ def _user_result_file(args: Sequence[str]) -> bool:
 
 def _capture_and_emit(engine: str, args: Sequence[str]) -> int:
     """Run ``attest-engine capture`` and draft the pytest file for the fixture it wrote."""
-    from attest.capture import emit_pytest, test_path_for
+    from attest.capture import Rerun, emit_pytest, test_path_for
 
     if _user_result_file(args):
         print(
@@ -255,11 +271,17 @@ def _capture_and_emit(engine: str, args: Sequence[str]) -> int:
         )
         print(f"  test: none drafted {reason} {fixture}", file=sys.stderr)
         return code
-    written = emit_pytest(fixture)
+    rerun = Rerun(Path.cwd(), _world_path(args))
+    written = emit_pytest(fixture, rerun)
     if written is None:
         print(f"  test: {test_path_for(fixture)} exists; left unchanged", file=sys.stderr)
     else:
-        print(f"  test: drafted {written}", file=sys.stderr)
+        print(
+            f"  test: drafted {written}; for a command capture it re-runs the command under "
+            "strict replay (other providers are not blocked: run it without their credentials) "
+            "and evaluates the contracts on the new run",
+            file=sys.stderr,
+        )
     return code
 
 

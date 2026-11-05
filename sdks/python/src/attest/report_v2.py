@@ -26,6 +26,7 @@ from attest._proto.types import (
     Trace,
     Usage,
 )
+from attest.assertion_id import ID_SCHEME
 from attest.replay import MODE_AUTO, ReplaySummary
 from attest.result import AgentResult
 
@@ -177,6 +178,8 @@ def build_report(
         }
     document: dict[str, Any] = {
         "report_version": REPORT_VERSION,
+        "id_scheme": ID_SCHEME,
+        "budget_exceeded": any(r.budget_exceeded for test in tests for r in test.agent_results),
         "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "simulated": simulated,
         "summary": summary_block,
@@ -235,6 +238,8 @@ def merge_reports(
         }
     merged: dict[str, Any] = {
         "report_version": REPORT_VERSION,
+        "id_scheme": ID_SCHEME,
+        "budget_exceeded": any(doc["budget_exceeded"] for doc in documents),
         "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "simulated": simulated.pop(),
         "summary": summary_block,
