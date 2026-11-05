@@ -65,7 +65,7 @@ Log levels controlled by `--log-level` flag on engine startup: `debug`, `info`, 
 - **Every line the engine writes to stdout is the response to a request id the SDK sent.**
   The engine sends no notifications; data that used to travel as one (drift) is part of
   the response (`results[].drift`). The only replies whose `id` the SDK did not send are
-  error replies to a line that is not valid JSON (`id` 0) or is over the line limit with
+  error replies to a line that does not parse as a request (`id` 0) or is over the line limit with
   no `id` in its first 4 KiB (`id` null).
 - SDKs route each response to its request by `id` and never by arrival order. A line
   without an `id` is logged and dropped, never taken as a response. An `evaluate_batch`
