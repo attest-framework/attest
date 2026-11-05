@@ -541,19 +541,22 @@ def _release_host_asset_url(fake_release: FakeRelease) -> str:
     return f"https://release.test:{fake_release.https.server_address[1]}/releases/download"
 
 
+@pytest.mark.parametrize("scheme", ["http", "https"])
 def test_download_engine_honours_https_proxy_and_verifies_the_target_end_to_end(
     isolated_engine_env: Path,
     fake_release: FakeRelease,
     connect_proxy: ConnectProxy,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    scheme: str,
 ) -> None:
     binary = b"engine fetched through a proxy"
     _ship_table(tmp_path / "table.json", monkeypatch, binary)
     _serve(fake_release, binary)
     # release.test does not resolve: only a CONNECT to the proxy can reach the server.
     monkeypatch.setattr(downloader, "_GITHUB_RELEASE_BASE", _release_host_asset_url(fake_release))
-    proxy_url = f"http://127.0.0.1:{connect_proxy.port}"
+    # An https:// proxy URL is a plain CONNECT proxy, as urllib treats it.
+    proxy_url = f"{scheme}://127.0.0.1:{connect_proxy.port}"
     monkeypatch.setattr(urllib.request, "getproxies", lambda: {"https": proxy_url})
     monkeypatch.setattr(urllib.request, "proxy_bypass", lambda host: False)
 

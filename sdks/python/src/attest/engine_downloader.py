@@ -96,7 +96,8 @@ def _open_connection(host: str, port: int | None, timeout: float) -> http.client
 
     Behind a proxy the connection goes to the proxy and ``set_tunnel`` issues ``CONNECT``; TLS
     and hostname verification then run end to end with ``host``, so the proxy only relays bytes.
-    Only ``http://`` proxies are supported. Credentials in the proxy URL travel as a
+    An ``https://`` proxy URL is used like ``http://`` (plain ``CONNECT``), as urllib does.
+    Credentials in the proxy URL travel as a
     ``Proxy-Authorization`` header on the ``CONNECT`` and never appear in an error message.
     """
     proxy = urllib.request.getproxies().get("https")
@@ -110,12 +111,13 @@ def _open_connection(host: str, port: int | None, timeout: float) -> http.client
         proxy_port = proxy_parts.port
     except ValueError as exc:
         raise RuntimeError("The configured HTTPS proxy URL is invalid") from exc
-    if proxy_parts.scheme != "http" or not proxy_host:
+    if proxy_parts.scheme not in ("http", "https") or not proxy_host:
         raise RuntimeError(
-            f"Unsupported HTTPS proxy scheme '{proxy_parts.scheme}': only http:// proxies work"
+            f"Unsupported HTTPS proxy scheme '{proxy_parts.scheme}': use an http:// proxy"
         )
+    default_port = 443 if proxy_parts.scheme == "https" else 80
     conn = http.client.HTTPSConnection(
-        proxy_host, proxy_port or 80, timeout=timeout, context=_ssl_context()
+        proxy_host, proxy_port or default_port, timeout=timeout, context=_ssl_context()
     )
     tunnel_headers: dict[str, str] = {}
     if proxy_parts.username is not None:
