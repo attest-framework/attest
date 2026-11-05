@@ -454,6 +454,34 @@ _REPLAY_TIMEOUT_S = 300.0
 _STDERR_TAIL = 4000
 
 
+def _tail(stderr: str) -> str:
+    return stderr[-_STDERR_TAIL:]
+
+
+def _check_replay(fp: Path, fixture: Fixture, proc: subprocess.CompletedProcess[str]) -> None:
+    """Fail unless every request was served and the command exited as it did when recorded.
+
+    The engine exits 1 for a miss and for a failing command alike, so the verdict comes
+    from its ``--json`` result. An incident recording exits non-zero; its replay must too.
+    """
+    try:
+        result = json.loads(proc.stdout)
+        misses = int(result["summary"]["misses"])
+        exit_code = int(result["exit_code"])
+    except (ValueError, KeyError, TypeError):
+        raise CaptureError(
+            f"{fp}: replay run exited {proc.returncode}\n{_tail(proc.stderr)}"
+        ) from None
+    if misses:
+        raise CaptureError(f"{fp}: {misses} request(s) matched no recording\n{_tail(proc.stderr)}")
+    recorded = int(fixture.source.get("exit_code", 0))
+    if exit_code != recorded:
+        raise CaptureError(
+            f"{fp}: the command exited {exit_code}; the recording exited {recorded}\n"
+            f"{_tail(proc.stderr)}"
+        )
+
+
 def replay_run(
     fixture_path: str | os.PathLike[str],
     *,
@@ -479,7 +507,8 @@ def replay_run(
 
     Raises:
         CaptureError: The fixture has no replayable source command, the engine could not
-            start, the command failed, a request matched no recording, or no trace came out.
+            start, a request matched no recording, the command exited differently than when
+            recorded, or no trace came out.
     """
     from attest.engine_manager import resolve_engine  # engine_manager imports the package
 
@@ -505,6 +534,7 @@ def replay_run(
             "--no-live",
             "--trace-out",
             str(trace_file),
+            "--json",
         ]
         if world is not None:
             argv += ["--world", str(Path(world).resolve())]
@@ -523,10 +553,9 @@ def replay_run(
             raise CaptureError(f"{fp}: replay run exceeded {timeout:g}s") from None
         except OSError as exc:
             raise CaptureError(f"{fp}: could not start the replay run: {exc}") from None
-        if proc.returncode != 0:
-            raise CaptureError(
-                f"{fp}: replay run exited {proc.returncode}\n{proc.stderr[-_STDERR_TAIL:]}"
-            )
+        _check_replay(fp, fixture, proc)
+        if not trace_file.exists():
+            raise CaptureError(f"{fp}: the replay run exported no trace\n{_tail(proc.stderr)}")
         return Trace.from_dict(json.loads(trace_file.read_text(encoding="utf-8")))
 
 

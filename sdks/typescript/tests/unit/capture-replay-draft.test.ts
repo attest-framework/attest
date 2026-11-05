@@ -18,18 +18,25 @@ const validDir = join(root, "protocol-tests", "fixture-v1", "valid");
 const commandFixture = join(validDir, "001-command-capture-expect-fail.attest.json");
 const otlpFixture = join(validDir, "002-otlp-file-trace-only.attest.json");
 
-// A stand-in engine: records how it was called and writes a trace file, as
-// `attest-engine replay --trace-out` does. Exit code and stderr come from the environment.
+// A stand-in engine: records how it was called, writes a trace file and prints the --json
+// result, as `attest-engine replay --trace-out ... --json` does. FAKE_ENGINE_EXIT is the
+// command's exit status, FAKE_ENGINE_MISSES the request misses, FAKE_ENGINE_CRASH a startup
+// failure (usage error, no result).
 const fakeEngine = `#!${process.execPath}
 const fs = require("node:fs");
 const argv = process.argv.slice(2);
 const out = argv[argv.indexOf("--trace-out") + 1];
 fs.writeFileSync(process.env.FAKE_ENGINE_LOG, JSON.stringify({ argv, cwd: process.cwd(), env: process.env }));
-if (process.env.FAKE_ENGINE_FAIL) {
-  process.stderr.write(process.env.FAKE_ENGINE_FAIL);
-  process.exit(1);
+if (process.env.FAKE_ENGINE_CRASH) {
+  process.stderr.write(process.env.FAKE_ENGINE_CRASH);
+  process.exit(2);
 }
-fs.writeFileSync(out, process.env.FAKE_ENGINE_TRACE);
+const misses = Number(process.env.FAKE_ENGINE_MISSES || "0");
+const code = Number(process.env.FAKE_ENGINE_EXIT || "0");
+process.stderr.write("replay: " + misses + " misses");
+if (misses === 0) fs.writeFileSync(out, process.env.FAKE_ENGINE_TRACE);
+process.stdout.write(JSON.stringify({ exit_code: code, summary: { misses } }));
+process.exit(misses || code ? 1 : 0);
 `;
 
 const withWorld = (tmp: string): string => {
@@ -115,7 +122,7 @@ describe("replayRun", () => {
     log = join(tmp, "engine-call.json");
     process.env.FAKE_ENGINE_LOG = log;
     process.env.FAKE_ENGINE_TRACE = JSON.stringify(JSON.parse(readFileSync(commandFixture, "utf8")).trace);
-    delete process.env.FAKE_ENGINE_FAIL;
+    for (const k of ["FAKE_ENGINE_CRASH", "FAKE_ENGINE_MISSES", "FAKE_ENGINE_EXIT"]) delete process.env[k];
   });
   afterEach(() => {
     for (const key of Object.keys(process.env)) if (!(key in saved)) delete process.env[key];
@@ -169,10 +176,34 @@ describe("replayRun", () => {
     await expect(replayRun(withWorld(tmp))).rejects.toThrow(/captured with a world/);
   });
 
-  it("rejects with the engine's message when the run fails", async () => {
-    process.env.FAKE_ENGINE_FAIL = "replay: 1 request matched no recording";
+  it("rejects with the engine output when a request matched no recording", async () => {
+    process.env.FAKE_ENGINE_MISSES = "1";
 
-    await expect(replayRun(commandFixture)).rejects.toThrow(/matched no recording/);
+    await expect(replayRun(commandFixture)).rejects.toThrow(/1 request\(s\) matched no recording/);
+  });
+
+  it("rejects with the engine's stderr when it prints no result", async () => {
+    process.env.FAKE_ENGINE_CRASH = "replay: flag provided but not defined: -trace-out";
+
+    await expect(replayRun(commandFixture)).rejects.toThrow(/not defined: -trace-out/);
+  });
+
+  it("rejects a command that exited unlike the recording", async () => {
+    process.env.FAKE_ENGINE_EXIT = "3";
+
+    await expect(replayRun(commandFixture)).rejects.toThrow(/the recording exited 0/);
+  });
+
+  it("returns the trace of an incident that exits non-zero as recorded", async () => {
+    const doc = JSON.parse(readFileSync(commandFixture, "utf8"));
+    doc.source.exit_code = 1;
+    const incident = join(tmp, "incident.attest.json");
+    writeFileSync(incident, JSON.stringify(doc));
+    process.env.FAKE_ENGINE_EXIT = "1";
+
+    const trace = await replayRun(incident);
+
+    expect(trace).toEqual(loadFixture(commandFixture).trace);
   });
 
   it("rejects a fixture with no source command", async () => {

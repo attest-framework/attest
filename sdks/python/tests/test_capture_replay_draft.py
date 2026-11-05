@@ -18,19 +18,27 @@ _VALID = Path(__file__).resolve().parents[3] / "protocol-tests" / "fixture-v1" /
 _COMMAND_FIXTURE = _VALID / "001-command-capture-expect-fail.attest.json"
 _OTLP_FIXTURE = _VALID / "002-otlp-file-trace-only.attest.json"
 
-# A stand-in engine: records how it was called and writes a trace file, as
-# `attest-engine replay --trace-out` does. Exit code and stderr come from the environment.
+# A stand-in engine: records how it was called, writes a trace file and prints the --json
+# result, as `attest-engine replay --trace-out ... --json` does. FAKE_ENGINE_EXIT is the
+# command's exit status, FAKE_ENGINE_MISSES the request misses, FAKE_ENGINE_CRASH a startup
+# failure (usage error, no result).
 _FAKE_ENGINE = f"""#!{sys.executable}
 import json, os, sys
 argv = sys.argv[1:]
 out = argv[argv.index("--trace-out") + 1]
 with open(os.environ["FAKE_ENGINE_LOG"], "w") as f:
     json.dump({{"argv": argv, "cwd": os.getcwd(), "env": dict(os.environ)}}, f)
-if os.environ.get("FAKE_ENGINE_FAIL"):
-    sys.stderr.write(os.environ["FAKE_ENGINE_FAIL"])
-    sys.exit(1)
-with open(out, "w") as f:
-    f.write(os.environ["FAKE_ENGINE_TRACE"])
+if os.environ.get("FAKE_ENGINE_CRASH"):
+    sys.stderr.write(os.environ["FAKE_ENGINE_CRASH"])
+    sys.exit(2)
+misses = int(os.environ.get("FAKE_ENGINE_MISSES", "0"))
+code = int(os.environ.get("FAKE_ENGINE_EXIT", "0"))
+sys.stderr.write("replay: " + str(misses) + " misses")
+if not misses:
+    with open(out, "w") as f:
+        f.write(os.environ["FAKE_ENGINE_TRACE"])
+print(json.dumps({{"exit_code": code, "summary": {{"misses": misses}}}}))
+sys.exit(1 if misses or code else 0)
 """
 
 
@@ -193,13 +201,45 @@ def test_replay_run_world_fixture_without_world_file_raises(tmp_path: Path) -> N
         replay_run(fixture)
 
 
-def test_replay_run_engine_failure_raises_with_the_engine_message(
+def test_replay_run_request_miss_raises_with_the_engine_output(
     fake_engine: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setenv("FAKE_ENGINE_FAIL", "replay: 1 request matched no recording")
+    monkeypatch.setenv("FAKE_ENGINE_MISSES", "1")
 
-    with pytest.raises(CaptureError, match="matched no recording"):
+    with pytest.raises(CaptureError, match=r"1 request\(s\) matched no recording"):
         replay_run(_COMMAND_FIXTURE)
+
+
+def test_replay_run_engine_without_a_result_raises_with_its_stderr(
+    fake_engine: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("FAKE_ENGINE_CRASH", "replay: flag provided but not defined: -trace-out")
+
+    with pytest.raises(CaptureError, match="not defined: -trace-out"):
+        replay_run(_COMMAND_FIXTURE)
+
+
+def test_replay_run_command_exiting_unlike_the_recording_raises(
+    fake_engine: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("FAKE_ENGINE_EXIT", "3")
+
+    with pytest.raises(CaptureError, match="the recording exited"):
+        replay_run(_COMMAND_FIXTURE)
+
+
+def test_replay_run_incident_exiting_nonzero_as_recorded_returns_the_trace(
+    fake_engine: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    doc = json.loads(_COMMAND_FIXTURE.read_text())
+    doc["source"]["exit_code"] = 1
+    incident = tmp_path / "incident.attest.json"
+    incident.write_text(json.dumps(doc))
+    monkeypatch.setenv("FAKE_ENGINE_EXIT", "1")
+
+    trace = replay_run(incident)
+
+    assert trace.to_dict() == load_fixture(_COMMAND_FIXTURE).trace.to_dict()
 
 
 def test_replay_run_trace_only_fixture_raises(fake_engine: Path) -> None:

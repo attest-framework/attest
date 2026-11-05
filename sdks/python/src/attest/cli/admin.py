@@ -276,8 +276,8 @@ def _capture_and_emit(engine: str, args: Sequence[str]) -> int:
         print(f"  test: {test_path_for(fixture)} exists; left unchanged", file=sys.stderr)
     else:
         print(
-            f"  test: drafted {written}; it re-runs the command under strict replay and "
-            "passes while the new run is consistent with the recording",
+            f"  test: drafted {written}; for a command capture it re-runs the command under "
+            "strict replay (egress blocked) and evaluates the contracts on the new run",
             file=sys.stderr,
         )
     return code

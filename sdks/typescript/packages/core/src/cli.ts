@@ -267,7 +267,7 @@ function captureAndEmit(engine: string, args: string[]): number {
   process.stderr.write(
     written === null
       ? `  test: ${testPathFor(fixture)} exists; left unchanged\n`
-      : `  test: drafted ${written}; it re-runs the command under strict replay and passes while the new run is consistent with the recording\n`,
+      : `  test: drafted ${written}; for a command capture it re-runs the command under strict replay (egress blocked) and evaluates the contracts on the new run\n`,
   );
   return code;
 }

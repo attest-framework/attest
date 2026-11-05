@@ -438,8 +438,9 @@ export interface ReplayRunOptions {
  * providers' keys removed, `OPENAI_API_KEY` a placeholder, `ATTEST_EGRESS=block` for any
  * attest guard inside the command).
  *
- * Rejects with `CaptureError` when the fixture has no replayable source command, the
- * command failed, a request matched no recording, or no trace came out.
+ * Rejects with `CaptureError` when the fixture has no replayable source command, a request
+ * matched no recording, the command exited differently than when recorded, or no trace came
+ * out.
  */
 export async function replayRun(fixture: string | URL, options: ReplayRunOptions = {}): Promise<Trace> {
   const fp = path.resolve(toPath(fixture));
@@ -457,7 +458,7 @@ export async function replayRun(fixture: string | URL, options: ReplayRunOptions
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "attest-replay-"));
   try {
     const traceFile = path.join(tmp, "trace.json");
-    const argv = ["replay", "--fixture", fp, "--mode", "strict", "--no-live", "--trace-out", traceFile];
+    const argv = ["replay", "--fixture", fp, "--mode", "strict", "--no-live", "--trace-out", traceFile, "--json"];
     if (options.world !== undefined) argv.push("--world", path.resolve(toPath(options.world)));
     argv.push("--", ...command);
     const timeoutMs = options.timeoutMs ?? REPLAY_TIMEOUT_MS;
@@ -468,8 +469,9 @@ export async function replayRun(fixture: string | URL, options: ReplayRunOptions
     });
     if (run.error !== null) throw new CaptureError(`${fp}: ${run.error}`);
     if (run.timedOut) throw new CaptureError(`${fp}: replay run exceeded ${timeoutMs}ms`);
-    if (run.code !== 0) {
-      throw new CaptureError(`${fp}: replay run exited ${run.code ?? run.signal}\n${run.stderr.slice(-STDERR_TAIL)}`);
+    checkReplay(fp, doc, run);
+    if (!fs.existsSync(traceFile)) {
+      throw new CaptureError(`${fp}: the replay run exported no trace\n${tail(run.stderr)}`);
     }
     return JSON.parse(fs.readFileSync(traceFile, "utf8")) as Trace;
   } finally {
@@ -480,9 +482,37 @@ export async function replayRun(fixture: string | URL, options: ReplayRunOptions
 interface EngineRun {
   code: number | null;
   signal: NodeJS.Signals | null;
+  stdout: string;
   stderr: string;
   timedOut: boolean;
   error: string | null;
+}
+
+function tail(stderr: string): string {
+  return stderr.slice(-STDERR_TAIL);
+}
+
+/**
+ * Fail unless every request was served and the command exited as it did when recorded. The
+ * engine exits 1 for a miss and for a failing command alike, so the verdict comes from its
+ * `--json` result. An incident recording exits non-zero; its replay must too.
+ */
+function checkReplay(fp: string, fixture: Fixture, run: EngineRun): void {
+  let misses: number;
+  let exitCode: number;
+  try {
+    const result = JSON.parse(run.stdout) as { exit_code: unknown; summary: { misses: unknown } };
+    misses = Number(result.summary.misses);
+    exitCode = Number(result.exit_code);
+    if (!Number.isInteger(misses) || !Number.isInteger(exitCode)) throw new TypeError("not integers");
+  } catch {
+    throw new CaptureError(`${fp}: replay run exited ${run.code ?? run.signal}\n${tail(run.stderr)}`);
+  }
+  if (misses > 0) throw new CaptureError(`${fp}: ${misses} request(s) matched no recording\n${tail(run.stderr)}`);
+  const recorded = fixture.source.exit_code ?? 0;
+  if (exitCode !== recorded) {
+    throw new CaptureError(`${fp}: the command exited ${exitCode}; the recording exited ${recorded}\n${tail(run.stderr)}`);
+  }
 }
 
 function runEngine(
@@ -492,9 +522,12 @@ function runEngine(
 ): Promise<EngineRun> {
   return new Promise((resolve) => {
     const child = spawn(engine, argv, { cwd: opts.cwd, env: opts.env, stdio: ["ignore", "pipe", "pipe"] });
+    let stdout = "";
     let stderr = "";
     let timedOut = false;
-    child.stdout.resume();
+    child.stdout.setEncoding("utf8").on("data", (chunk: string) => {
+      stdout += chunk;
+    });
     child.stderr.setEncoding("utf8").on("data", (chunk: string) => {
       stderr += chunk;
     });
@@ -504,11 +537,11 @@ function runEngine(
     }, opts.timeoutMs);
     child.on("error", (err) => {
       clearTimeout(timer);
-      resolve({ code: null, signal: null, stderr, timedOut, error: `could not start the replay run: ${err.message}` });
+      resolve({ code: null, signal: null, stdout, stderr, timedOut, error: `could not start the replay run: ${err.message}` });
     });
     child.on("close", (code, signal) => {
       clearTimeout(timer);
-      resolve({ code, signal, stderr, timedOut, error: null });
+      resolve({ code, signal, stdout, stderr, timedOut, error: null });
     });
   });
 }
