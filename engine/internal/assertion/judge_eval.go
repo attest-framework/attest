@@ -72,10 +72,10 @@ func (e *JudgeEvaluator) EvaluateContext(parent context.Context, trace *types.Tr
 
 	var spec judgeSpec
 	if err := json.Unmarshal(assertion.Spec, &spec); err != nil {
-		return failResult(assertion, start, fmt.Sprintf("invalid judge spec: %v", err))
+		return specErrorResult(assertion, start, fmt.Sprintf("invalid judge spec: %v", err))
 	}
 	if spec.Target == "" {
-		return failResult(assertion, start, "judge spec missing required field: target")
+		return specErrorResult(assertion, start, "judge spec missing required field: target")
 	}
 	rubricName := spec.Rubric
 	if rubricName == "" {
@@ -84,10 +84,24 @@ func (e *JudgeEvaluator) EvaluateContext(parent context.Context, trace *types.Tr
 	if spec.Threshold <= 0 {
 		spec.Threshold = 0.8
 	}
+	if spec.Threshold > 1 {
+		return specErrorResult(assertion, start, fmt.Sprintf("judge spec: threshold=%v out of range (0, 1]", spec.Threshold))
+	}
 
 	rubric, err := e.rubrics.Get(rubricName)
 	if err != nil {
-		return failResult(assertion, start, fmt.Sprintf("rubric not found: %v", err))
+		return specErrorResult(assertion, start, fmt.Sprintf("rubric not found: %v", err))
+	}
+
+	// The whole spec is validated before the cache is consulted, so a cache
+	// hit cannot accept a spec a miss would reject.
+	runs, err := repeatRuns(spec)
+	if err != nil {
+		return specErrorResult(assertion, start, err.Error())
+	}
+	probes, err := resolveBiasProbes(spec.BiasProbes)
+	if err != nil {
+		return specErrorResult(assertion, start, err.Error())
 	}
 
 	targetStr, err := ResolveTargetString(trace, spec.Target)
@@ -100,22 +114,16 @@ func (e *JudgeEvaluator) EvaluateContext(parent context.Context, trace *types.Tr
 		model = e.provider.DefaultModel()
 	}
 
-	wrapped := judge.WrapAgentOutput(targetStr)
-	userContent := wrapped
-	if spec.Criteria != "" {
-		userContent = fmt.Sprintf("Evaluation criteria: %s\n\n%s", spec.Criteria, wrapped)
-	}
-	// Check cache
+	call := newJudgeCall(spec.Criteria, targetStr, rubric.Version, runs, probes)
 	if e.cache != nil {
-		contentHash := cache.JudgePromptKey(rubric.Version, userContent)
-		if cached, cErr := e.cache.Get(contentHash, rubricName, model); cErr == nil && cached != nil {
+		if cached, cErr := e.cache.Get(call.cacheKey, rubricName, model); cErr == nil && cached != nil {
 			durationMS := time.Since(start).Milliseconds()
 			meta := &types.JudgeMetadata{
 				Provider:      e.provider.Name(),
 				Model:         model,
 				RubricName:    rubricName,
 				RubricVersion: rubric.Version,
-				PromptHash:    judge.PromptHash(userContent),
+				PromptHash:    judge.PromptHash(call.canonical),
 				SampleScores:  []float64{cached.Score},
 				ScoreMean:     cached.Score,
 			}
@@ -124,24 +132,64 @@ func (e *JudgeEvaluator) EvaluateContext(parent context.Context, trace *types.Tr
 		}
 	}
 
-	// Build LLM request
 	timeoutSecs := judgeTimeoutSeconds()
 	ctx, cancel := context.WithTimeout(parent, time.Duration(timeoutSecs)*time.Second)
 	defer cancel()
 
-	runs, err := repeatRuns(spec)
-	if err != nil {
-		return failResult(assertion, start, err.Error())
-	}
-	probes, err := resolveBiasProbes(spec.BiasProbes)
-	if err != nil {
-		return failResult(assertion, start, err.Error())
-	}
 	if runs > 1 {
-		return e.evaluateRepeated(ctx, assertion, rubric, model, userContent, spec, start, targetStr, rubricName, runs, probes)
+		return e.evaluateRepeated(ctx, assertion, rubric, model, call, spec, start, targetStr, rubricName, runs, probes)
 	}
 
-	return e.evaluateSinglePass(ctx, assertion, rubric, model, userContent, spec, start, targetStr, rubricName, probes)
+	return e.evaluateSinglePass(ctx, assertion, rubric, model, call, spec, start, targetStr, rubricName, probes)
+}
+
+// judgeCall is the prompt for one assertion evaluation.
+type judgeCall struct {
+	// criteria and target build the user message; each provider request frames
+	// it with its own nonce (see fresh).
+	criteria, target string
+	// canonical is the same message with the fixed delimiters: it is the same
+	// on every call, so it feeds the prompt hash.
+	canonical string
+	// cacheKey identifies the result a cache may serve: the canonical content,
+	// the rubric version, the number of samples and the bias probes, because a
+	// result computed without them is not a result computed with them.
+	cacheKey string
+}
+
+func (c judgeCall) withCriteria(wrapped string) string {
+	if c.criteria == "" {
+		return wrapped
+	}
+	return fmt.Sprintf("Evaluation criteria: %s\n\n%s", c.criteria, wrapped)
+}
+
+// fresh returns a new Frame and the user message framed with its nonce. Every
+// provider request (each repeat sample and each bias probe) takes its own, so
+// a nonce leaked in one reply protects nothing about the next request.
+func (c judgeCall) fresh() (judge.Frame, string, error) {
+	frame, err := judge.NewFrame()
+	if err != nil {
+		return judge.Frame{}, "", err
+	}
+	return frame, c.withCriteria(frame.Wrap(c.target)), nil
+}
+
+func newJudgeCall(criteria, target, rubricVersion string, runs int, probes []string) judgeCall {
+	call := judgeCall{criteria: criteria, target: target}
+	canonical := call.withCriteria(judge.WrapAgentOutput(target))
+	key := fmt.Sprintf("%s\x00repeat=%d\x00probes=%s", canonical, runs, strings.Join(probes, ","))
+	call.canonical = canonical
+	call.cacheKey = cache.JudgePromptKey(rubricVersion, key)
+	return call
+}
+
+// specErrorResult fails an assertion whose spec cannot be evaluated and
+// labels it spec_error: the fault is in the test, not in the agent.
+func specErrorResult(assertion *types.Assertion, start time.Time, explanation string) *types.AssertionResult {
+	r := failResult(assertion, start, explanation)
+	r.FailureClass = types.FailureClassSpecError
+	return r
 }
 
 // judgeBuildArgs bundles the optional diagnostic inputs to buildResult so
@@ -180,8 +228,9 @@ func (e *JudgeEvaluator) buildResult(
 		suggestion = "Calibrate the judge: check rubric clarity, sample human labels, or raise the threshold only if false-positives matter more than false-negatives."
 	}
 
-	return &types.AssertionResult{
+	result := &types.AssertionResult{
 		AssertionID:     assertion.AssertionID,
+		Type:            types.TypeLLMJudge,
 		Status:          status,
 		Score:           score,
 		Explanation:     explanation,
@@ -194,6 +243,9 @@ func (e *JudgeEvaluator) buildResult(
 		SuggestedAction: suggestion,
 		Judge:           diag.meta,
 	}
+	// Classify against this assertion's own threshold, not the global 0.5.
+	result.FailureClass = types.ClassifyFailureAt(result, threshold)
+	return result
 }
 
 // scoreVarianceStats computes mean/stddev for a slice of scores. Returns
@@ -263,16 +315,21 @@ func (e *JudgeEvaluator) evaluateSinglePass(
 	ctx context.Context,
 	assertion *types.Assertion,
 	rubric *judge.Rubric,
-	model, userContent string,
+	model string,
+	call judgeCall,
 	spec judgeSpec,
 	start time.Time,
 	targetStr, rubricName string,
 	probes []string,
 ) *types.AssertionResult {
+	frame, content, err := call.fresh()
+	if err != nil {
+		return notEvaluatedResult(assertion, start, types.ReasonProviderUnavailable, err.Error())
+	}
 	req := &llm.CompletionRequest{
 		Model:        model,
-		SystemPrompt: rubric.SystemPrompt,
-		Messages:     []llm.Message{{Role: "user", Content: userContent}},
+		SystemPrompt: frame.Prompt(rubric),
+		Messages:     []llm.Message{{Role: "user", Content: content}},
 		Temperature:  0.0,
 		MaxTokens:    256,
 	}
@@ -282,10 +339,10 @@ func (e *JudgeEvaluator) evaluateSinglePass(
 		return judgeCallFailed(assertion, start, err)
 	}
 
-	scoreResult, err := judge.ParseScoreResult(resp.Content)
+	scoreResult, err := frame.ParseScoreResult(resp.Content)
 	if err != nil {
 		// The call was billed even though its output is unusable.
-		ar := notEvaluatedResult(assertion, start, types.ReasonProviderUnavailable, fmt.Sprintf("judge response unusable: %v", err))
+		ar := notEvaluatedResult(assertion, start, judge.ReasonJudgeMalformed, fmt.Sprintf("judge response unusable: %v", err))
 		ar.Cost = resp.Cost
 		return ar
 	}
@@ -297,7 +354,7 @@ func (e *JudgeEvaluator) evaluateSinglePass(
 			Model:         model,
 			RubricName:    rubricName,
 			RubricVersion: rubric.Version,
-			PromptHash:    judge.PromptHash(userContent),
+			PromptHash:    judge.PromptHash(call.canonical),
 		}
 		return ar
 	}
@@ -305,8 +362,7 @@ func (e *JudgeEvaluator) evaluateSinglePass(
 	durationMS := time.Since(start).Milliseconds()
 
 	if e.cache != nil {
-		contentHash := cache.JudgePromptKey(rubric.Version, userContent)
-		if putErr := e.cache.Put(contentHash, rubricName, model, &cache.JudgeCacheEntry{
+		if putErr := e.cache.Put(call.cacheKey, rubricName, model, &cache.JudgeCacheEntry{
 			Score:       scoreResult.Score,
 			Explanation: scoreResult.Explanation,
 		}); putErr != nil {
@@ -314,14 +370,14 @@ func (e *JudgeEvaluator) evaluateSinglePass(
 		}
 	}
 
-	probeResults, probeCost := runBiasProbes(ctx, e.provider, rubric, model, userContent, scoreResult.Score, probes)
+	probeResults, probeCost := runBiasProbes(ctx, e.provider, rubric, model, call, scoreResult.Score, probes)
 	totalCost := resp.Cost + probeCost
 	meta := &types.JudgeMetadata{
 		Provider:      e.provider.Name(),
 		Model:         model,
 		RubricName:    rubricName,
 		RubricVersion: rubric.Version,
-		PromptHash:    judge.PromptHash(userContent),
+		PromptHash:    judge.PromptHash(call.canonical),
 		SampleScores:  []float64{scoreResult.Score},
 		ScoreMean:     scoreResult.Score,
 		BiasProbes:    probeResults,
@@ -350,7 +406,8 @@ func (e *JudgeEvaluator) evaluateRepeated(
 	ctx context.Context,
 	assertion *types.Assertion,
 	rubric *judge.Rubric,
-	model, userContent string,
+	model string,
+	call judgeCall,
 	spec judgeSpec,
 	start time.Time,
 	targetStr, rubricName string,
@@ -359,26 +416,38 @@ func (e *JudgeEvaluator) evaluateRepeated(
 ) *types.AssertionResult {
 	results := make([]metaEvalResult, runs)
 	var wg sync.WaitGroup
+	// A rejected credential fails every run alike: stop the runs not yet
+	// sent instead of paying for each one.
+	runCtx, cancelRuns := context.WithCancel(ctx)
+	defer cancelRuns()
 
 	for i := 0; i < runs; i++ {
 		wg.Add(1)
 		go func(idx int) {
 			defer wg.Done()
-			req := &llm.CompletionRequest{
-				Model:        model,
-				SystemPrompt: rubric.SystemPrompt,
-				Messages:     []llm.Message{{Role: "user", Content: userContent}},
-				Temperature:  metaEvalTemperature,
-				MaxTokens:    256,
-			}
-
-			resp, err := e.provider.Complete(ctx, req)
+			frame, content, err := call.fresh()
 			if err != nil {
 				results[idx] = metaEvalResult{err: err}
 				return
 			}
+			req := &llm.CompletionRequest{
+				Model:        model,
+				SystemPrompt: frame.Prompt(rubric),
+				Messages:     []llm.Message{{Role: "user", Content: content}},
+				Temperature:  metaEvalTemperature,
+				MaxTokens:    256,
+			}
 
-			sr, err := judge.ParseScoreResult(resp.Content)
+			resp, err := e.provider.Complete(runCtx, req)
+			if err != nil {
+				if errors.Is(err, llm.ErrAuth) {
+					cancelRuns()
+				}
+				results[idx] = metaEvalResult{err: err}
+				return
+			}
+
+			sr, err := frame.ParseScoreResult(resp.Content)
 			if err != nil {
 				results[idx] = metaEvalResult{err: err, cost: resp.Cost}
 				return
@@ -440,8 +509,7 @@ func (e *JudgeEvaluator) evaluateRepeated(
 	// Cache the median result only when every run scored: a partial
 	// sample must not stand in for N runs later.
 	if e.cache != nil && miss.total() == 0 {
-		contentHash := cache.JudgePromptKey(rubric.Version, userContent)
-		if putErr := e.cache.Put(contentHash, rubricName, model, &cache.JudgeCacheEntry{
+		if putErr := e.cache.Put(call.cacheKey, rubricName, model, &cache.JudgeCacheEntry{
 			Score:       medianScore,
 			Explanation: combinedExplanation,
 		}); putErr != nil {
@@ -449,7 +517,7 @@ func (e *JudgeEvaluator) evaluateRepeated(
 		}
 	}
 
-	probeResults, probeCost := runBiasProbes(ctx, e.provider, rubric, model, userContent, medianScore, probes)
+	probeResults, probeCost := runBiasProbes(ctx, e.provider, rubric, model, call, medianScore, probes)
 	totalCost += probeCost
 
 	mean, stddev := scoreVarianceStats(scores)
@@ -458,7 +526,7 @@ func (e *JudgeEvaluator) evaluateRepeated(
 		Model:            model,
 		RubricName:       rubricName,
 		RubricVersion:    rubric.Version,
-		PromptHash:       judge.PromptHash(userContent),
+		PromptHash:       judge.PromptHash(call.canonical),
 		SampleScores:     scores,
 		ScoreMean:        mean,
 		ScoreStddev:      stddev,
@@ -476,6 +544,9 @@ func judgeCallFailed(assertion *types.Assertion, start time.Time, err error) *ty
 	if errors.Is(err, llm.ErrBudgetExhausted) {
 		return notEvaluatedResult(assertion, start, types.ReasonBudgetExhausted, fmt.Sprintf("judge call not sent: %v", err))
 	}
+	if errors.Is(err, llm.ErrAuth) {
+		return notEvaluatedResult(assertion, start, judge.ReasonProviderAuth, fmt.Sprintf("judge provider rejected the credentials: %v", err))
+	}
 	return notEvaluatedResult(assertion, start, types.ReasonProviderUnavailable, fmt.Sprintf("judge provider call failed: %v", err))
 }
 
@@ -491,9 +562,9 @@ func abstainExplanation(reason string) string {
 
 // unscoredRuns counts repeated judge runs that produced no score, by cause.
 type unscoredRuns struct {
-	failed, refused, abstained int
-	firstErr                   error
-	firstAbstain               string
+	failed, refused, abstained, malformed, authFailed int
+	firstErr                                          error
+	firstAbstain                                      string
 }
 
 // add records r when it produced no score and reports whether it did not.
@@ -506,6 +577,16 @@ func (u *unscoredRuns) add(r metaEvalResult) bool {
 		}
 	case r.err != nil && errors.Is(r.err, llm.ErrBudgetExhausted):
 		u.refused++
+	case r.err != nil && errors.Is(r.err, llm.ErrAuth):
+		u.authFailed++
+		if u.firstErr == nil {
+			u.firstErr = r.err
+		}
+	case r.err != nil && errors.Is(r.err, judge.ErrMalformed):
+		u.malformed++
+		if u.firstErr == nil {
+			u.firstErr = r.err
+		}
 	case r.err != nil:
 		u.failed++
 		if u.firstErr == nil {
@@ -517,14 +598,21 @@ func (u *unscoredRuns) add(r metaEvalResult) bool {
 	return true
 }
 
-func (u *unscoredRuns) total() int { return u.failed + u.refused + u.abstained }
+func (u *unscoredRuns) total() int {
+	return u.failed + u.refused + u.abstained + u.malformed + u.authFailed
+}
 
 // reason picks the not_evaluated reason when no run scored: a provider
-// failure outranks an abstention, which outranks a budget refusal.
+// rejection outranks other provider failures, which outrank a malformed
+// reply, which outranks an abstention, which outranks a budget refusal.
 func (u *unscoredRuns) reason() string {
 	switch {
+	case u.authFailed > 0:
+		return judge.ReasonProviderAuth
 	case u.failed > 0:
 		return types.ReasonProviderUnavailable
+	case u.malformed > 0:
+		return judge.ReasonJudgeMalformed
 	case u.abstained > 0:
 		return types.ReasonJudgeAbstained
 	default:
@@ -534,8 +622,8 @@ func (u *unscoredRuns) reason() string {
 
 func (u *unscoredRuns) summary() string {
 	var parts []string
-	if u.failed > 0 {
-		parts = append(parts, fmt.Sprintf("%d failed (%v)", u.failed, u.firstErr))
+	if n := u.failed + u.malformed + u.authFailed; n > 0 {
+		parts = append(parts, fmt.Sprintf("%d failed (%v)", n, u.firstErr))
 	}
 	if u.abstained > 0 {
 		parts = append(parts, fmt.Sprintf("%d abstained (%s)", u.abstained, truncate(llm.StripControl(u.firstAbstain))))

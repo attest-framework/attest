@@ -8,6 +8,9 @@ import (
 	"io"
 	"net/http"
 	"time"
+	"unicode/utf8"
+
+	"github.com/attest-framework/attest/engine/internal/redact"
 )
 
 const (
@@ -132,6 +135,10 @@ func (p *OpenAIProvider) Complete(ctx context.Context, req *CompletionRequest) (
 		return nil, fmt.Errorf("openai complete: read body: %w", err)
 	}
 
+	if httpResp.StatusCode < 200 || httpResp.StatusCode > 299 {
+		return nil, p.statusError(httpResp, raw)
+	}
+
 	var chatResp openAIChatResponse
 	if err := json.Unmarshal(raw, &chatResp); err != nil {
 		return nil, fmt.Errorf("openai complete: unmarshal: %w", err)
@@ -161,4 +168,40 @@ func (p *OpenAIProvider) Complete(ctx context.Context, req *CompletionRequest) (
 		Cost:              cost,
 		DurationMS:        durationMS,
 	}, nil
+}
+
+// maxErrorDetail caps how much of an error body is echoed.
+const maxErrorDetail = 512
+
+// statusError converts a non-2xx response to a *StatusError. The message is
+// the API's error message when the body has one, with the API key redacted
+// (a gateway may echo request headers), control characters stripped and
+// length capped, because it reaches assertion explanations and reports.
+func (p *OpenAIProvider) statusError(resp *http.Response, raw []byte) *StatusError {
+	var body struct {
+		Error *struct {
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	msg := ""
+	if json.Unmarshal(raw, &body) == nil && body.Error != nil {
+		msg = body.Error.Message
+	}
+	if msg == "" {
+		msg = string(raw)
+	}
+	msg = redact.Secret(StripControl(msg), p.apiKey)
+	if len(msg) > maxErrorDetail {
+		cut := maxErrorDetail
+		for cut > 0 && !utf8.RuneStart(msg[cut]) {
+			cut--
+		}
+		msg = msg[:cut] + "…"
+	}
+	return &StatusError{
+		Provider:   p.Name(),
+		StatusCode: resp.StatusCode,
+		Message:    msg,
+		RetryAfter: ParseRetryAfter(resp.Header.Get("Retry-After"), time.Now()),
+	}
 }

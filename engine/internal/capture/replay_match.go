@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/attest-framework/attest/engine/internal/assertion/judge"
 	"github.com/attest-framework/attest/engine/internal/redact"
 )
 
@@ -34,19 +35,20 @@ const normalizedEmail = "attest-email@attest.invalid"
 // unplaceholder rewrites every stored placeholder to a synthetic raw value of
 // the same kind, distinct per number, so Template renumbers placeholders and
 // raw values with the same rules.
-func unplaceholder(v any) any {
+func unplaceholder(v any, nonce string) any {
 	switch x := v.(type) {
 	case map[string]any:
 		for k, e := range x {
-			x[k] = unplaceholder(e)
+			x[k] = unplaceholder(e, nonce)
 		}
 		return x
 	case []any:
 		for i, e := range x {
-			x[i] = unplaceholder(e)
+			x[i] = unplaceholder(e, nonce)
 		}
 		return x
 	case string:
+		x = judge.CanonicalizeNonce(x, nonce)
 		x = emailPattern.ReplaceAllString(x, normalizedEmail)
 		return storedPlaceholder.ReplaceAllStringFunc(x, func(m string) string {
 			sub := storedPlaceholder.FindStringSubmatch(m)
@@ -64,6 +66,29 @@ func unplaceholder(v any) any {
 	}
 }
 
+// frameNonce returns the judge delimiter nonce a request declares, found from
+// the frame structure of its string values, or "" when it declares none. Only
+// this nonce is canonicalized; any other delimiter-shaped text stays.
+func frameNonce(v any) string {
+	switch x := v.(type) {
+	case map[string]any:
+		for _, e := range x {
+			if n := frameNonce(e); n != "" {
+				return n
+			}
+		}
+	case []any:
+		for _, e := range x {
+			if n := frameNonce(e); n != "" {
+				return n
+			}
+		}
+	case string:
+		return judge.FrameNonce(x)
+	}
+	return ""
+}
+
 // normalizeRequest redacts doc and returns it twice: normalized as a whole,
 // which is the match key's input, and with placeholders made raw but not yet
 // renumbered, which is what a miss diagnosis compares part by part. doc is
@@ -73,7 +98,7 @@ func normalizeRequest(doc any, r *redact.Redactor) (normalized, raw any, err err
 	if err != nil {
 		return nil, nil, err
 	}
-	raw = unplaceholder(doc)
+	raw = unplaceholder(doc, frameNonce(doc))
 	return Template(cloneJSON(raw)), raw, nil
 }
 
@@ -81,7 +106,7 @@ func normalizeRequest(doc any, r *redact.Redactor) (normalized, raw any, err err
 // the same way on the stored and the live side. Only requests to an API with
 // no known prompt split are keyed on it.
 func normalizePath(path string, r *redact.Redactor) string {
-	return Template(unplaceholder(r.String(path))).(string)
+	return Template(unplaceholder(r.String(path), "")).(string)
 }
 
 // cloneJSON deep-copies a decoded JSON value.

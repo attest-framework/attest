@@ -278,3 +278,21 @@ func TestDiagnose_InsecureEndpoint_WarnsWithoutSchemaField(t *testing.T) {
 		t.Errorf("warning leaked into doctor JSON: %s", data)
 	}
 }
+
+func TestProviders_Capabilities_ReportConfiguredProviders(t *testing.T) {
+	none := providers{}.capabilities(false)
+	for _, c := range []string{"judge_configured", "embedding_configured"} {
+		if slices.Contains(none, c) {
+			t.Errorf("capabilities %v include %q with no provider configured", none, c)
+		}
+	}
+	// The assertion types stay accepted so unconfigured layers return not_evaluated.
+	if !slices.Contains(none, "llm_judge") || !slices.Contains(none, "embedding") {
+		t.Errorf("capabilities %v dropped llm_judge/embedding", none)
+	}
+
+	withJudge := providers{judge: llm.NewMockProvider(nil, nil)}.capabilities(false)
+	if !slices.Contains(withJudge, "judge_configured") || slices.Contains(withJudge, "embedding_configured") {
+		t.Errorf("capabilities %v, want judge_configured only", withJudge)
+	}
+}

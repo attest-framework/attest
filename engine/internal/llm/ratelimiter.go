@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"math/rand/v2"
 	"time"
 
 	"golang.org/x/time/rate"
@@ -81,14 +82,25 @@ func (r *RateLimitedProvider) Name() string { return r.inner.Name() }
 func (r *RateLimitedProvider) DefaultModel() string { return r.inner.DefaultModel() }
 
 // Complete waits for a rate limit token then calls the inner provider.
-// On transient failure it retries with exponential backoff up to MaxRetries.
+// Only transient failures (HTTP 408, 429, 5xx and network errors) are
+// retried, up to MaxRetries, with jittered exponential backoff that honours
+// a Retry-After hint. Any other failure, an auth rejection included, is
+// returned after the one call that produced it.
 func (r *RateLimitedProvider) Complete(ctx context.Context, req *CompletionRequest) (*CompletionResponse, error) {
 	var lastErr error
+	var retryAfter time.Duration
 	for attempt := 0; attempt <= r.cfg.MaxRetries; attempt++ {
 		if attempt > 0 {
-			backoff := r.backoff(attempt)
+			wait := r.backoff(attempt)
+			if retryAfter > wait {
+				wait = retryAfter
+			}
+			if deadline, ok := ctx.Deadline(); ok && time.Until(deadline) < wait {
+				// Sleeping would outlive the caller's budget.
+				return nil, &RateLimitedError{Provider: r.inner.Name(), Attempts: attempt, Cause: lastErr}
+			}
 			select {
-			case <-time.After(backoff):
+			case <-time.After(wait):
 			case <-ctx.Done():
 				return nil, fmt.Errorf("rate limited provider: context cancelled during backoff: %w", ctx.Err())
 			}
@@ -102,13 +114,14 @@ func (r *RateLimitedProvider) Complete(ctx context.Context, req *CompletionReque
 		if err == nil {
 			return resp, nil
 		}
-		if errors.Is(err, ErrBudgetExhausted) {
-			if lastErr != nil {
+		retry, hint := retryDecision(err)
+		if !retry || ctx.Err() != nil {
+			if lastErr != nil && errors.Is(err, ErrBudgetExhausted) {
 				return nil, fmt.Errorf("%w; previous attempt: %v", err, lastErr)
 			}
 			return nil, err
 		}
-		lastErr = err
+		lastErr, retryAfter = err, hint
 	}
 	return nil, &RateLimitedError{
 		Provider: r.inner.Name(),
@@ -117,11 +130,13 @@ func (r *RateLimitedProvider) Complete(ctx context.Context, req *CompletionReque
 	}
 }
 
-// backoff returns the exponential backoff duration for the given attempt (1-based).
+// backoff returns the jittered exponential backoff for the given attempt
+// (1-based): half the exponential delay plus a random share of the other
+// half, so concurrent callers do not retry in lockstep.
 func (r *RateLimitedProvider) backoff(attempt int) time.Duration {
 	d := float64(r.cfg.InitialBackoff) * math.Pow(2, float64(attempt-1))
 	if d > float64(r.cfg.MaxBackoff) {
 		d = float64(r.cfg.MaxBackoff)
 	}
-	return time.Duration(d)
+	return time.Duration(d/2 + rand.Float64()*d/2)
 }

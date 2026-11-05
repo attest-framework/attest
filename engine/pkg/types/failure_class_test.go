@@ -155,3 +155,27 @@ func TestClassifyFailure_NotEvaluated_ReturnsEmpty(t *testing.T) {
 		t.Errorf("ClassifyFailure(not_evaluated) = %q, want empty", got)
 	}
 }
+
+func TestClassifyFailureAt_JudgeNearThreshold_IsStochasticNotBroken(t *testing.T) {
+	r := &AssertionResult{Type: TypeLLMJudge, Status: StatusHardFail, Score: 0.78, Judge: &JudgeMetadata{}}
+
+	if got := ClassifyFailureAt(r, 0.8); got != FailureClassStochasticVariance {
+		t.Errorf("0.78 vs 0.8 = %q, want stochastic_variance", got)
+	}
+}
+
+func TestClassifyFailureAt_JudgeFarBelowThreshold_IsBrokenCode(t *testing.T) {
+	r := &AssertionResult{Type: TypeLLMJudge, Status: StatusHardFail, Score: 0.2, Judge: &JudgeMetadata{}}
+
+	if got := ClassifyFailureAt(r, 0.8); got != FailureClassBrokenCode {
+		t.Errorf("0.2 vs 0.8 = %q, want broken_code", got)
+	}
+}
+
+func TestClassifyFailureAt_ScoreNearHalfButFarFromThreshold_IsNotStochastic(t *testing.T) {
+	r := &AssertionResult{Type: TypeLLMJudge, Status: StatusHardFail, Score: 0.5, Judge: &JudgeMetadata{}}
+
+	if got := ClassifyFailureAt(r, 0.9); got == FailureClassStochasticVariance {
+		t.Errorf("0.5 vs 0.9 = %q, want the 0.5 boundary no longer applied", got)
+	}
+}
