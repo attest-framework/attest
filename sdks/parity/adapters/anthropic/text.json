@@ -1,0 +1,75 @@
+{
+  "adapter": "anthropic",
+  "call": {
+    "ended_at_ms": 1250,
+    "input_messages": [
+      {
+        "content": "Where is order ORD-1?",
+        "role": "user"
+      }
+    ],
+    "kind": "trace_from_response",
+    "started_at_ms": 1000
+  },
+  "case": "text",
+  "construct": {},
+  "description": "Messages API text answer with usage.",
+  "golden": {
+    "input": {
+      "messages": [
+        {
+          "content": "Where is order ORD-1?",
+          "role": "user"
+        }
+      ]
+    },
+    "metadata": {
+      "latency_ms": 250,
+      "model": "claude-sonnet-4-5-20250929",
+      "total_tokens": 30
+    },
+    "output": {
+      "message": "Order ORD-1 shipped."
+    },
+    "schema_version": 1,
+    "steps": [
+      {
+        "args": {
+          "model": "claude-sonnet-4-5-20250929"
+        },
+        "ended_at_ms": 1250,
+        "name": "completion",
+        "result": {
+          "completion": "Order ORD-1 shipped.",
+          "input_tokens": 21,
+          "output_tokens": 9,
+          "tokens": 30
+        },
+        "started_at_ms": 1000,
+        "type": "llm_call"
+      }
+    ],
+    "trace_id": "trc_normalized"
+  },
+  "payload": {
+    "content": [
+      {
+        "text": "Order ORD-1 shipped.",
+        "type": "text"
+      }
+    ],
+    "id": "msg_corpus",
+    "model": "claude-sonnet-4-5-20250929",
+    "role": "assistant",
+    "stop_reason": "end_turn",
+    "type": "message",
+    "usage": {
+      "input_tokens": 21,
+      "output_tokens": 9
+    }
+  },
+  "sdk": {
+    "package": "anthropic",
+    "type": "anthropic.types.Message"
+  }
+}

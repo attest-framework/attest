@@ -1,0 +1,82 @@
+{
+  "adapter": "openai",
+  "call": {
+    "ended_at_ms": 1250,
+    "input_messages": [
+      {
+        "content": "Where is order ORD-1?",
+        "role": "user"
+      }
+    ],
+    "kind": "trace_from_response",
+    "started_at_ms": 1000
+  },
+  "case": "chat_text",
+  "construct": {},
+  "description": "Chat Completions text answer with usage.",
+  "golden": {
+    "input": {
+      "messages": [
+        {
+          "content": "Where is order ORD-1?",
+          "role": "user"
+        }
+      ]
+    },
+    "metadata": {
+      "latency_ms": 250,
+      "model": "gpt-4.1-2025-04-14",
+      "total_tokens": 20
+    },
+    "output": {
+      "message": "Order ORD-1 shipped.",
+      "structured": {}
+    },
+    "schema_version": 1,
+    "steps": [
+      {
+        "args": {
+          "model": "gpt-4.1-2025-04-14"
+        },
+        "ended_at_ms": 1250,
+        "name": "completion",
+        "result": {
+          "completion": "Order ORD-1 shipped.",
+          "input_tokens": 12,
+          "output_tokens": 8,
+          "tokens": 20
+        },
+        "started_at_ms": 1000,
+        "type": "llm_call"
+      }
+    ],
+    "trace_id": "trc_normalized"
+  },
+  "payload": {
+    "choices": [
+      {
+        "finish_reason": "stop",
+        "index": 0,
+        "logprobs": null,
+        "message": {
+          "content": "Order ORD-1 shipped.",
+          "refusal": null,
+          "role": "assistant"
+        }
+      }
+    ],
+    "created": 1,
+    "id": "chatcmpl-corpus",
+    "model": "gpt-4.1-2025-04-14",
+    "object": "chat.completion",
+    "usage": {
+      "completion_tokens": 8,
+      "prompt_tokens": 12,
+      "total_tokens": 20
+    }
+  },
+  "sdk": {
+    "package": "openai",
+    "type": "openai.types.chat.ChatCompletion"
+  }
+}

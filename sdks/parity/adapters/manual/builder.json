@@ -1,0 +1,115 @@
+{
+  "adapter": "manual",
+  "call": {
+    "kind": "builder_ops"
+  },
+  "case": "builder",
+  "construct": {
+    "agent_id": "corpus-agent"
+  },
+  "description": "ManualAdapter.capture applies builder calls verbatim.",
+  "golden": {
+    "agent_id": "corpus-agent",
+    "input": {
+      "question": "Where is ORD-1?"
+    },
+    "metadata": {
+      "latency_ms": 150,
+      "model": "gpt-4.1",
+      "total_tokens": 20
+    },
+    "output": {
+      "message": "shipped"
+    },
+    "schema_version": 1,
+    "steps": [
+      {
+        "args": {
+          "model": "gpt-4.1"
+        },
+        "ended_at_ms": 1100,
+        "name": "plan",
+        "result": {
+          "completion": "look it up",
+          "tokens": 20
+        },
+        "started_at_ms": 1000,
+        "type": "llm_call"
+      },
+      {
+        "args": {
+          "order_id": "ORD-1"
+        },
+        "ended_at_ms": 1150,
+        "name": "lookup_order",
+        "result": {
+          "status": "shipped"
+        },
+        "started_at_ms": 1100,
+        "type": "tool_call"
+      }
+    ],
+    "trace_id": "trc_normalized"
+  },
+  "payload": {
+    "ops": [
+      {
+        "args": {
+          "input_data": {
+            "question": "Where is ORD-1?"
+          }
+        },
+        "op": "set_input_dict"
+      },
+      {
+        "args": {
+          "args": {
+            "model": "gpt-4.1"
+          },
+          "ended_at_ms": 1100,
+          "name": "plan",
+          "result": {
+            "completion": "look it up",
+            "tokens": 20
+          },
+          "started_at_ms": 1000
+        },
+        "op": "add_llm_call"
+      },
+      {
+        "args": {
+          "args": {
+            "order_id": "ORD-1"
+          },
+          "ended_at_ms": 1150,
+          "name": "lookup_order",
+          "result": {
+            "status": "shipped"
+          },
+          "started_at_ms": 1100
+        },
+        "op": "add_tool_call"
+      },
+      {
+        "args": {
+          "output_data": {
+            "message": "shipped"
+          }
+        },
+        "op": "set_output_dict"
+      },
+      {
+        "args": {
+          "latency_ms": 150,
+          "model": "gpt-4.1",
+          "total_tokens": 20
+        },
+        "op": "set_metadata"
+      }
+    ]
+  },
+  "sdk": {
+    "package": "attest-ai",
+    "type": "attest.trace.TraceBuilder"
+  }
+}

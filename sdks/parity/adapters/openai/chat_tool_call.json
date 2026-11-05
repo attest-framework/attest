@@ -1,0 +1,99 @@
+{
+  "adapter": "openai",
+  "call": {
+    "ended_at_ms": 1250,
+    "input_messages": [
+      {
+        "content": "Where is order ORD-1?",
+        "role": "user"
+      }
+    ],
+    "kind": "trace_from_response",
+    "started_at_ms": 1000
+  },
+  "case": "chat_tool_call",
+  "construct": {},
+  "description": "Chat Completions function call; arguments arrive as a JSON string.",
+  "golden": {
+    "input": {
+      "messages": [
+        {
+          "content": "Where is order ORD-1?",
+          "role": "user"
+        }
+      ]
+    },
+    "metadata": {
+      "latency_ms": 250,
+      "model": "gpt-4.1-2025-04-14",
+      "total_tokens": 20
+    },
+    "output": {
+      "message": "",
+      "structured": {}
+    },
+    "schema_version": 1,
+    "steps": [
+      {
+        "args": {
+          "model": "gpt-4.1-2025-04-14"
+        },
+        "ended_at_ms": 1250,
+        "name": "completion",
+        "result": {
+          "completion": "",
+          "input_tokens": 12,
+          "output_tokens": 8,
+          "tokens": 20
+        },
+        "started_at_ms": 1000,
+        "type": "llm_call"
+      },
+      {
+        "args": {
+          "order_id": "ORD-1"
+        },
+        "name": "lookup_order",
+        "type": "tool_call"
+      }
+    ],
+    "trace_id": "trc_normalized"
+  },
+  "payload": {
+    "choices": [
+      {
+        "finish_reason": "tool_calls",
+        "index": 0,
+        "logprobs": null,
+        "message": {
+          "content": null,
+          "refusal": null,
+          "role": "assistant",
+          "tool_calls": [
+            {
+              "function": {
+                "arguments": "{\"order_id\": \"ORD-1\"}",
+                "name": "lookup_order"
+              },
+              "id": "call_corpus",
+              "type": "function"
+            }
+          ]
+        }
+      }
+    ],
+    "created": 1,
+    "id": "chatcmpl-corpus",
+    "model": "gpt-4.1-2025-04-14",
+    "object": "chat.completion",
+    "usage": {
+      "completion_tokens": 8,
+      "prompt_tokens": 12,
+      "total_tokens": 20
+    }
+  },
+  "sdk": {
+    "package": "openai",
+    "type": "openai.types.chat.ChatCompletion"
+  }
+}
