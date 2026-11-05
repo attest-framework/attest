@@ -231,10 +231,3 @@ type DriftReport struct {
 	Deviation   float64 `json:"deviation"`
 	Status      string  `json:"status"`
 }
-
-// DriftAlertNotification is a JSON-RPC 2.0 notification emitted when drift is detected.
-type DriftAlertNotification struct {
-	JSONRPC string      `json:"jsonrpc"`
-	Method  string      `json:"method"`
-	Params  DriftReport `json:"params"`
-}
