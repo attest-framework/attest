@@ -32,7 +32,15 @@ from attest.replay import (
     resolve_mode,
     start_replay,
 )
-from attest.report_v2 import TEST_OUTCOMES, TestRecord, write_report
+from attest.report_v2 import (
+    TEST_OUTCOMES,
+    TestRecord,
+    build_report,
+    merge_reports,
+    report_traces_enabled,
+    write_document,
+    write_report,
+)
 from attest.result import OUTCOME_FAIL, OUTCOME_SKIP, AgentResult, Verdict
 from attest.trials import (
     BUDGET_MARKER,
@@ -725,6 +733,10 @@ def pytest_sessionstart(session: pytest.Session) -> None:
 def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> Generator[None, Any, None]:
     """Write the --attest-report file, let the terminal summary run, then
     restore the enclosing session's state."""
+    if _is_xdist_worker(session.config) and _report_target(session) is not None:
+        # Before the yield: xdist's own wrapper sends ``workeroutput`` to the controller as
+        # this hook finishes, so the report document must already be in it.
+        _send_worker_report(session)
     yield
     _write_session_report(session)
     release = _egress_installed.pop()
@@ -747,20 +759,121 @@ def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> Generator[
         begin_run(saved.run)
 
 
-def _write_session_report(session: pytest.Session) -> None:
-    """Write the --attest-report file once every test has run."""
+# pytest-xdist: each worker's report document, by worker id, and the collected-test count
+# a worker reported, kept on the controller's config.
+_XDIST_WORKER_REPORTS = pytest.StashKey[dict[str, dict[str, Any]]]()
+_XDIST_MISSING_WORKERS = pytest.StashKey[list[str]]()
+_XDIST_COLLECTED = pytest.StashKey[int]()
+_WORKER_REPORT_KEY = "attest_report"
+
+
+def _is_xdist_worker(config: pytest.Config) -> bool:
+    return hasattr(config, "workerinput")
+
+
+def _is_xdist_controller(config: pytest.Config) -> bool:
+    return not _is_xdist_worker(config) and config.pluginmanager.has_plugin("dsession")
+
+
+@pytest.hookimpl(optionalhook=True)
+def pytest_xdist_node_collection_finished(node: Any, ids: list[str]) -> None:
+    """Record the collected-test count (every worker collects the same list)."""
+    config: pytest.Config = node.config
+    if _XDIST_COLLECTED not in config.stash:
+        config.stash[_XDIST_COLLECTED] = len(ids)
+
+
+@pytest.hookimpl(optionalhook=True)
+def pytest_testnodedown(node: Any, error: object) -> None:
+    """Take a finished worker's report document; note a worker that left none (it crashed)."""
+    config: pytest.Config = node.config
+    document = getattr(node, "workeroutput", {}).get(_WORKER_REPORT_KEY)
+    worker_id: str = node.workerinput["workerid"]
+    if document is None:
+        config.stash.setdefault(_XDIST_MISSING_WORKERS, []).append(worker_id)
+        return
+    config.stash.setdefault(_XDIST_WORKER_REPORTS, {})[worker_id] = document
+
+
+def _report_target(session: pytest.Session) -> Path | None:
     target: str | None = session.config.getoption("--attest-report", default=None)
     if not target:
-        return
+        return None
     path = Path(target)
     if not path.is_absolute():
         path = Path(session.config.invocation_params.dir) / path
+    return path
+
+
+def _send_worker_report(session: pytest.Session) -> None:
+    """Put this worker's report document in the ``workeroutput`` the controller receives."""
+    session.config.workeroutput[_WORKER_REPORT_KEY] = build_report(  # type: ignore[attr-defined]
+        list(_session_tests.values()),
+        simulated=is_simulation_mode(),
+        usage=_session_usage,
+        include_traces=report_traces_enabled(),
+    )
+
+
+def _write_session_report(session: pytest.Session) -> None:
+    """Write the --attest-report file once every test has run.
+
+    Under pytest-xdist a worker hands its report document to the controller through
+    ``workeroutput`` (``_send_worker_report``) and writes nothing; the controller merges every
+    worker's document.
+    """
+    path = _report_target(session)
+    if path is None:
+        return
+    config = session.config
+    if _is_xdist_worker(config):
+        return
+    if _is_xdist_controller(config):
+        try:
+            document = _merge_worker_reports(config)
+        except _IncompleteReportError as exc:
+            # Raising here would be an uncaught traceback after the run; fail the run instead.
+            config.get_terminal_writer().line(f"ERROR: {exc}", red=True)
+            session.exitstatus = pytest.ExitCode.INTERNAL_ERROR
+            return
+        write_document(path, document)
+        return
     write_report(
         path,
         list(_session_tests.values()),
         simulated=is_simulation_mode(),
         usage=_session_usage,
+        tests_collected=session.testscollected,
     )
+
+
+class _IncompleteReportError(RuntimeError):
+    """The controller cannot build a complete report: a worker's rows are missing."""
+
+
+def _merge_worker_reports(config: pytest.Config) -> dict[str, Any]:
+    """The controller's report: every worker's rows, or a loud error when one is missing."""
+    missing = config.stash.get(_XDIST_MISSING_WORKERS, [])
+    if missing:
+        raise _IncompleteReportError(
+            f"--attest-report not written: worker(s) {', '.join(sorted(missing))} ended "
+            "without sending their report (crashed?); the report would be incomplete"
+        )
+    reports = config.stash.get(_XDIST_WORKER_REPORTS, {})
+    if not reports:
+        raise _IncompleteReportError(
+            "--attest-report not written: no pytest-xdist worker sent a report"
+        )
+    ordered = [reports[w] for w in sorted(reports, key=_worker_order)]
+    usage = Usage.total(Usage.from_dict(doc["summary"]["usage"]) for doc in ordered)
+    return merge_reports(
+        ordered, tests_collected=config.stash.get(_XDIST_COLLECTED, 0), usage=usage
+    )
+
+
+def _worker_order(worker_id: str) -> tuple[int, str]:
+    digits = worker_id.removeprefix("gw")
+    return (int(digits) if digits.isdigit() else 0, worker_id)
 
 
 def soft_failure_lines(soft_counts: dict[str, int], outcomes: dict[str, str]) -> list[str]:
