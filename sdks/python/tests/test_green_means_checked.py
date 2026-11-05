@@ -248,3 +248,36 @@ def test_build_report_ors_budget_exceeded_across_batches() -> None:
     merged = merge_reports([quiet, loud], tests_collected=3, usage=Usage())
     assert merged["budget_exceeded"] is True
     assert merged["id_scheme"] == 2
+
+
+_NO_FIXTURE_TESTS = (
+    _PRELUDE
+    + """
+MODULE_CHAIN = expect(_result()).output_contains("built at import")
+
+def test_never_evaluated():
+    expect(_result()).output_contains("definitely-missing")
+
+def test_plain_test_is_unaffected():
+    assert 1 + 1 == 2
+
+def test_plain_test_with_a_stray_result_is_unaffected():
+    _result()
+"""
+)
+
+
+@pytest.mark.parametrize("workers", [[], ["-n", "2"]], ids=["serial", "xdist"])
+def test_chain_built_without_the_attest_fixture_fails_when_never_evaluated(
+    scratch: pytest.Pytester, workers: list[str]
+) -> None:
+    scratch.makepyfile(test_nofixture=_NO_FIXTURE_TESTS)
+
+    result = scratch.runpytest_subprocess(
+        "--attest-report=r.json", "-p", "no:cacheprovider", *workers
+    )
+
+    result.assert_outcomes(passed=2, failed=1)
+    result.stdout.fnmatch_lines(
+        ["FAILED *::test_never_evaluated - Failed: 1 expect() chain built but never evaluated"]
+    )

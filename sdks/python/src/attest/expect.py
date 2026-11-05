@@ -19,7 +19,7 @@ from attest._proto.types import (
     Trace,
 )
 from attest.result import AgentResult
-from attest.trials import current_run
+from attest.trials import track_chain
 
 TrajectoryMode = Literal["strict", "unordered", "subset", "superset"]
 ArgOperator = Literal["eq", "ne", "lt", "lte", "gt", "gte", "in", "not_in"]
@@ -144,9 +144,7 @@ class ExpectChain:
         #: Set when the chain was sent for evaluation; teardown fails a test with a chain
         #: that never was.
         self.evaluated = False
-        run = current_run()
-        if run is not None:
-            run.track_chain(self)
+        track_chain(self)
 
     @property
     def assertions(self) -> list[Assertion]:

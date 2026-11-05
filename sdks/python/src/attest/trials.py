@@ -245,6 +245,38 @@ def end_run() -> None:
     _current_run = None
 
 
+_ledgers: list[list[ExpectChain]] = []
+_ledger_lock = threading.Lock()
+
+
+def begin_chain_ledger() -> list[ExpectChain]:
+    """Collect the chains built while a test runs that has no ``TestRun`` (it does not use
+    the ``attest`` fixture), so teardown can fail it when one was never evaluated."""
+    ledger: list[ExpectChain] = []
+    with _ledger_lock:
+        _ledgers.append(ledger)
+    return ledger
+
+
+def end_chain_ledger() -> None:
+    """Stop collecting chains for the innermost test (a nested pytest session in the same
+    process runs its own tests inside the outer one)."""
+    with _ledger_lock:
+        _ledgers.pop()
+
+
+def track_chain(chain: ExpectChain) -> None:
+    """Register a chain built by ``expect()`` with the running test, or with the ledger of a
+    test that has no run; a chain built outside any test is not tracked."""
+    run = _current_run
+    if run is not None:
+        run.track_chain(chain)
+        return
+    with _ledger_lock:
+        if _ledgers:
+            _ledgers[-1].append(chain)
+
+
 def _trial_outcome(evaluations: Sequence[AgentResult]) -> str:
     """C1 outcome of one trial over all its rows; a trial without rows is
     not evaluated."""

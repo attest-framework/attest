@@ -61,8 +61,10 @@ from attest.trials import (
     MIN_PASS_RATE_MARKER,
     TestBudget,
     TestRun,
+    begin_chain_ledger,
     begin_run,
     current_run,
+    end_chain_ledger,
     end_run,
     min_pass_rate_from_marker,
     run_trials,
@@ -361,7 +363,8 @@ def _uses_attest(item: pytest.Item) -> bool:
 @pytest.hookimpl(hookwrapper=True)
 def pytest_runtest_call(item: pytest.Item) -> Generator[None, Any, None]:
     """Track the running test (deterministic assertion IDs, per-test budget)
-    for tests using the attest fixture; validate the ``attest_budget`` marker."""
+    for tests using the attest fixture, and fail any test that built an ``expect()`` chain
+    it never evaluated, fixture or not; validate the ``attest_budget`` marker."""
     marker = item.get_closest_marker(BUDGET_MARKER)
     budget: TestBudget | None = None
     if marker is not None:
@@ -387,22 +390,28 @@ def pytest_runtest_call(item: pytest.Item) -> Generator[None, Any, None]:
         if _uses_attest(item)
         else None
     )
+    ledger: list[ExpectChain] | None = None
     if run is not None:
         begin_run(run)
+    else:
+        ledger = begin_chain_ledger()
     try:
         outcome = yield
     finally:
         if run is not None:
             end_run()
-    if run is not None and outcome.excinfo is None:
-        _fail_unevaluated_chains(run, outcome)
+        else:
+            end_chain_ledger()
+    if outcome.excinfo is None:
+        chains = run.chains if run is not None else ledger
+        _fail_unevaluated_chains([c for c in chains or [] if not c.evaluated], outcome)
     _finish_replays(item, outcome)
 
 
-def _fail_unevaluated_chains(run: TestRun, outcome: Any) -> None:
+def _fail_unevaluated_chains(unevaluated: list[ExpectChain], outcome: Any) -> None:
     """Fail a test that otherwise passed when it built ``expect()`` chains it never evaluated:
     such a test checked nothing."""
-    count = len(run.unevaluated_chains())
+    count = len(unevaluated)
     if count == 0:
         return
     noun = "chain" if count == 1 else "chains"
