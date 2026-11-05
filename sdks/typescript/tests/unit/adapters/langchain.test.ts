@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { RunnableLambda } from "@langchain/core/runnables";
-import { DynamicTool, StructuredTool } from "@langchain/core/tools";
+import { DynamicStructuredTool, DynamicTool, StructuredTool } from "@langchain/core/tools";
 import { FakeListChatModel } from "@langchain/core/utils/testing";
 import { LangChainAdapter } from "../../../packages/core/src/adapters/langchain.js";
 import { STEP_LLM_CALL, STEP_TOOL_CALL } from "../../../packages/core/src/proto/constants.js";
@@ -62,6 +62,20 @@ describe("LangChainAdapter", () => {
 
     expect(step.name).toBe("lookup_order");
     expect(step.result).toEqual({ output: "shipped" });
+  });
+
+  it("keeps the tool name when a tool returns a plain object with its own name field", async () => {
+    const getCustomer = new DynamicStructuredTool({
+      name: "get_customer",
+      description: "Get a customer.",
+      schema: { type: "object" as const, properties: { id: { type: "string" } }, required: ["id"] },
+      func: async ({ id }: { id: string }) => ({ name: "Alice", id }),
+    });
+    const adapter = new LangChainAdapter();
+
+    await getCustomer.invoke({ id: "C-1" }, { callbacks: [adapter] });
+
+    expect(adapter.buildTrace().steps[0].name).toBe("get_customer");
   });
 
   it("keys interleaved tool runs by runId", () => {

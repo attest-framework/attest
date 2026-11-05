@@ -303,7 +303,10 @@ export class LangChainAdapter extends BaseCallbackHandler {
     // A ToolMessage carries the tool's own name whenever the call has a tool-call id;
     // `runName` / `serialized` name a StructuredTool subclass after its class. The error
     // path has no ToolMessage, so a failed custom tool keeps the class-derived name.
-    const toolName = isValues(output) && typeof output.name === "string" && output.name ? output.name : undefined;
+    // Only a ToolMessage (it has a tool_call_id) names the tool: a plain object a tool returns
+    // may have its own `name` field.
+    const isToolMessage = isValues(output) && typeof output.tool_call_id === "string";
+    const toolName = isToolMessage && typeof output.name === "string" && output.name ? output.name : undefined;
     this.finishTool(runId, { output: text }, toolName);
   }
 
