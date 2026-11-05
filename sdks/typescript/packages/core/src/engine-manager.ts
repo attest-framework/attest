@@ -12,6 +12,17 @@ const VERSION_PROBE_TIMEOUT_MS = 10_000;
 const DEFAULT_INITIALIZE_TIMEOUT_MS = 30_000;
 const SHUTDOWN_TIMEOUT_MS = 5_000;
 const STDERR_TAIL_BYTES = 4_096;
+/** How long a failed pipe write waits for the exiting engine's own report (exit status and stderr). */
+const EXIT_REPORT_GRACE_MS = 1_000;
+const PIPE_WRITE_ERROR_CODES = new Set(["EPIPE", "ECONNRESET", "ERR_STREAM_DESTROYED"]);
+
+function isPipeWriteError(err: unknown): boolean {
+  for (let e: unknown = err; e instanceof Error; e = e.cause) {
+    const code = (e as NodeJS.ErrnoException).code;
+    if (code !== undefined && PIPE_WRITE_ERROR_CODES.has(code)) return true;
+  }
+  return false;
+}
 
 /** A discovered engine does not report the version this SDK requires. */
 export class EngineVersionMismatchError extends Error {
@@ -149,6 +160,23 @@ function envNumber(name: string): number | null {
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
 }
 
+/**
+ * Rethrow the engine's exit report (status and stderr tail) when it arrives within `graceMs`.
+ * A pipe write fails before the child's 'close' fires; a grandchild holding stderr open can
+ * delay 'close' indefinitely, hence the bound.
+ */
+async function reportExit(exited: Promise<never>, graceMs: number): Promise<void> {
+  let timer: NodeJS.Timeout | undefined;
+  const grace = new Promise<void>((done) => {
+    timer = setTimeout(done, graceMs);
+  });
+  try {
+    await Promise.race([exited, grace]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export class EngineManager {
   private enginePath: string;
   private readonly logLevel: string;
@@ -158,7 +186,8 @@ export class EngineManager {
   private initialized = false;
   private initResult: InitializeResult | null = null;
   private routedClient: AttestClient | undefined;
-  private stderrBuffer = "";
+  /** The running engine's stderr tail; each launch owns a fresh one so a killed engine cannot write into it. */
+  private stderr: { text: string } = { text: "" };
   private restarting: Promise<void> | null = null;
 
   private configuredBudget: SessionBudget = { judgeCalls: null, usd: null };
@@ -166,6 +195,8 @@ export class EngineManager {
   private usedUsd = 0;
   private heldJudgeCalls = 0;
   private heldUsd = 0;
+  /** Spend the SDK cannot observe may have happened; a restart then leaves no budget. */
+  private unknownSpend = false;
 
   constructor(options?: { enginePath?: string; logLevel?: string; initializeTimeoutMs?: number }) {
     this.enginePath = options?.enginePath ?? "";
@@ -185,6 +216,7 @@ export class EngineManager {
       usd: envNumber("ATTEST_BUDGET_USD"),
     };
     this.usedJudgeCalls = this.usedUsd = this.heldJudgeCalls = this.heldUsd = 0;
+    this.unknownSpend = false;
 
     this.initResult = await this.launch(undefined);
     this.initialized = true;
@@ -193,7 +225,8 @@ export class EngineManager {
 
   /** Spawn the engine and run `initialize` on it; the engine is stopped when that fails. */
   private async launch(envOverrides: Record<string, string> | undefined): Promise<InitializeResult> {
-    this.stderrBuffer = "";
+    const stderr = { text: "" };
+    this.stderr = stderr;
     const child = spawn(this.enginePath, [`--log-level=${this.logLevel}`], {
       stdio: ["pipe", "pipe", "pipe"],
       env: { ...process.env, ...envOverrides },
@@ -201,11 +234,11 @@ export class EngineManager {
     this.process = child;
     child.stderr.setEncoding("utf8");
     child.stderr.on("data", (chunk: string) => {
-      this.stderrBuffer = (this.stderrBuffer + chunk).slice(-STDERR_TAIL_BYTES);
+      stderr.text = (stderr.text + chunk).slice(-STDERR_TAIL_BYTES);
     });
-    // A write to a dead engine fails through the write callback and the close handler,
-    // which both report it with the stderr tail; the stream's own 'error' event would only
-    // duplicate that as an uncaught exception.
+    // A write to a dead engine fails through the write callback (launch() then waits for the
+    // exit report below); the stream's own 'error' event would only duplicate that as an
+    // uncaught exception.
     child.stdin.on("error", () => undefined);
 
     this.reader = createInterface({ input: child.stdout });
@@ -220,7 +253,7 @@ export class EngineManager {
         reject(
           new Error(
             `attest-engine exited before it was ready (${how}).` +
-              (this.stderrBuffer === "" ? "" : ` stderr:\n${this.stderrBuffer.trimEnd()}`),
+              (stderr.text === "" ? "" : ` stderr:\n${stderr.text.trimEnd()}`),
           ),
         );
       });
@@ -232,6 +265,7 @@ export class EngineManager {
       return await Promise.race([this.initialize(client), exited]);
     } catch (err) {
       await this.terminate();
+      if (isPipeWriteError(err)) await reportExit(exited, EXIT_REPORT_GRACE_MS);
       throw err;
     }
   }
@@ -318,18 +352,24 @@ export class EngineManager {
     return this.restarting;
   }
 
+  /** An engine reply the SDK cannot account for (no usage, an RPC error, a dropped reply) may have spent budget. */
+  markUnknownSpend(): void {
+    this.unknownSpend = true;
+  }
+
   private async restart(): Promise<void> {
     // The abandoned engine may sit in a slow model call; nothing it says is wanted any more.
     await this.terminate(true);
     const overrides: Record<string, string> = {};
     const { judgeCalls, usd } = this.configuredBudget;
+    const unknown = this.unknownSpend ? Number.POSITIVE_INFINITY : 0;
     if (judgeCalls !== null) {
       overrides["ATTEST_MAX_JUDGE_CALLS"] = String(
-        Math.max(0, Math.floor(judgeCalls - this.usedJudgeCalls - this.heldJudgeCalls)),
+        Math.max(0, Math.floor(judgeCalls - this.usedJudgeCalls - this.heldJudgeCalls - unknown)),
       );
     }
     if (usd !== null) {
-      overrides["ATTEST_BUDGET_USD"] = String(Math.max(0, usd - this.usedUsd - this.heldUsd));
+      overrides["ATTEST_BUDGET_USD"] = String(Math.max(0, usd - this.usedUsd - this.heldUsd - unknown));
     }
     this.initResult = await this.launch(overrides);
   }
@@ -347,7 +387,7 @@ export class EngineManager {
 
   /** Tail of the engine's stderr: the reason an engine died. */
   get stderrTail(): string {
-    return this.stderrBuffer.trimEnd();
+    return this.stderr.text.trimEnd();
   }
 
   /** The client that routes this engine's responses by id; replaced when the engine restarts. */

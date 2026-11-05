@@ -399,7 +399,7 @@ export class AttestClient {
         cp.stdin!.write(requestStr, (err: Error | null | undefined) => {
           if (err) {
             this.pending.delete(reqId);
-            reject(err);
+            reject(this.describeWriteError(err));
           }
         });
       });
@@ -419,6 +419,16 @@ export class AttestClient {
     } finally {
       clearTimeout(timer);
     }
+  }
+
+  /** A failed pipe write names the engine's stderr tail; the original error stays as `cause` and `code`. */
+  private describeWriteError(err: Error): Error {
+    const tail = this.engine.stderrTail ?? "";
+    const wrapped = new Error(
+      `Failed to write to the engine: ${err.message}.${tail === "" ? "" : ` stderr:\n${tail}`}`,
+      { cause: err },
+    );
+    return Object.assign(wrapped, { code: (err as NodeJS.ErrnoException).code });
   }
 
   private async recoverFromTimeout(
@@ -463,11 +473,18 @@ export class AttestClient {
       ...(options?.budget !== undefined ? { budget: options.budget } : {}),
       ...(options?.context !== undefined ? { context: options.context } : {}),
     };
-    const raw = (await this.sendRequest(
-      "evaluate_batch",
-      params as unknown as Record<string, unknown>,
-      options?.timeout,
-    )) as Record<string, unknown>;
+    let raw: Record<string, unknown>;
+    try {
+      raw = (await this.sendRequest(
+        "evaluate_batch",
+        params as unknown as Record<string, unknown>,
+        options?.timeout,
+      )) as Record<string, unknown>;
+    } catch (err) {
+      // An RPC error carries no usage, yet the engine may have called the judge first.
+      if (err instanceof ProtocolError) this.engine.markUnknownSpend?.();
+      throw err;
+    }
     const usage = parseUsage(raw["usage"]);
     this.engine.recordUsage?.(usage);
     const result = raw as unknown as EvaluateBatchResult;
@@ -570,6 +587,8 @@ export class AttestClient {
       params,
       options?.timeout,
     );
+    // The reply carries no usage: the simulated user's model call is spend the SDK cannot see.
+    this.engine.markUnknownSpend?.();
     return String((raw as { message: string }).message);
   }
 }

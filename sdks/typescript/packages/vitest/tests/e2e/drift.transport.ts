@@ -7,9 +7,9 @@ const trace = new TraceBuilder("refund-agent")
   .setOutput({ message: "Your refund has been issued." })
   .build();
 
-// The engine writes a drift_alert line before the response of a failing assertion
-// whose threshold is "dynamic". The chain DSL has no dynamic content check, so the
-// spec is added through the chain's private add().
+// A failing assertion whose threshold is "dynamic" carries its drift data inside its own
+// result. The chain DSL has no dynamic content check, so the spec is added through the
+// chain's private add().
 function dynamicContentFailure() {
   const chain = attestExpect(trace);
   chain["add"]("content", {

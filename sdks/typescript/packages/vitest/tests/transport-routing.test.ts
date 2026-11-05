@@ -78,7 +78,7 @@ function statuses(run: Run): Record<string, string | undefined> {
 }
 
 describe.skipIf(!existsSync(engine))("id-routed transport (real engine)", () => {
-  it("a drift_alert line before A's response does not shift B and C", async () => {
+  it("a dynamic-threshold hard-fail in A does not shift B and C", async () => {
     const run = await runFixture("tests/e2e/drift.transport.ts");
 
     expect(statuses(run)).toEqual({
@@ -95,6 +95,7 @@ describe.skipIf(!existsSync(engine))("id-routed transport (real engine)", () => 
       "T1 times out": "failed",
       "T2 fails on its own verdict": "failed",
     });
+    expect(run.byTitle.get("T1 times out")?.failureMessages.join("\n")).toContain("timed out");
     expect(run.stdout).toContain("expected:   contains \"absent-in-t2\"");
   }, 60_000);
 

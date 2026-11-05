@@ -222,3 +222,58 @@ describe("AttestClient protocol diagnostics", () => {
     }
   });
 });
+
+describe("AttestClient id-less lines", () => {
+  function engineWithWriter(onWrite: (line: string) => void) {
+    const rl = new EventEmitter();
+    const engine = {
+      readlineInterface: rl,
+      childProcess: {
+        stdin: {
+          write: (data: string, cb?: (err: Error | null) => void) => {
+            onWrite(data);
+            cb?.(null);
+            return true;
+          },
+        },
+      },
+      isRunning: true,
+      client: undefined,
+    };
+    return { rl, engine };
+  }
+
+  it("resolves a pending request with its own result after an id-less notification line", async () => {
+    const { rl, engine } = engineWithWriter((data) => {
+      const id = (JSON.parse(data) as { id: number }).id;
+      setImmediate(() => {
+        rl.emit("line", JSON.stringify({ jsonrpc: "2.0", method: "drift_alert", params: { n: 1 } }));
+        rl.emit("line", JSON.stringify({ jsonrpc: "2.0", id, result: { own: id } }));
+      });
+    });
+    const client = new AttestClient(engine as never, { logger: silentLogger() });
+
+    const result = await client.sendRequest("ping", {}, 1_000);
+
+    expect(result).toEqual({ own: 1 });
+  });
+
+  it("does not latch desync after more id-less lines than the desync threshold", async () => {
+    const { rl, engine } = engineWithWriter((data) => {
+      const id = (JSON.parse(data) as { id: number }).id;
+      setImmediate(() => {
+        for (let i = 0; i < 10; i += 1) {
+          rl.emit("line", JSON.stringify({ jsonrpc: "2.0", method: "note", params: { i } }));
+        }
+        rl.emit("line", JSON.stringify({ jsonrpc: "2.0", id, result: { ok: true } }));
+      });
+    });
+    const client = new AttestClient(engine as never, {
+      logger: silentLogger(),
+      desyncThreshold: 3,
+    });
+
+    await expect(client.sendRequest("ping", {}, 1_000)).resolves.toEqual({ ok: true });
+    await expect(client.sendRequest("ping", {}, 1_000)).resolves.toEqual({ ok: true });
+  });
+});
