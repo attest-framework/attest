@@ -94,6 +94,18 @@ def _verdict_chain(message: str, *, passes: bool) -> ExpectChain:
     return expect(_routing_agent(message=f"{message} refund")).output_contains(needle)
 
 
+def _slow_deterministic_chain() -> ExpectChain:
+    """A deterministic batch too large to be answered within a 0.1 ms ATTEST_ENGINE_TIMEOUT.
+
+    A tiny batch can be answered before the timer fires on a fast machine; 2,000 assertions on
+    a 100 KB output take far longer than 0.1 ms to send and evaluate, so the timeout is certain.
+    """
+    chain = expect(_routing_agent(message="deterministic refund " + "x" * 100_000))
+    for _ in range(2_000):
+        chain = chain.output_contains("refund")
+    return chain
+
+
 def _statuses(result: AgentResult) -> list[str]:
     return [r.status for r in result.assertion_results]
 
@@ -157,9 +169,13 @@ def timeout_agent(builder, message):
 
 
 def test_a_times_out(attest):
+    # A request this large cannot be answered within 0.1 ms, so the timeout always fires.
+    chain = expect(timeout_agent(message="a refund " + "x" * 100_000))
+    for _ in range(2_000):
+        chain = chain.output_contains("refund")
     os.environ["ATTEST_ENGINE_TIMEOUT"] = "0.0001"
     try:
-        attest.evaluate(expect(timeout_agent(message="a refund")).output_contains("refund"))
+        attest.evaluate(chain)
     finally:
         del os.environ["ATTEST_ENGINE_TIMEOUT"]
 
@@ -355,7 +371,7 @@ def test_timeout_outside_the_judge_keeps_the_remaining_call_budget(
         first = fixture.inspect(_judged("first judged output"))
         monkeypatch.setenv("ATTEST_ENGINE_TIMEOUT", "0.0001")
         with pytest.raises(EngineTimeoutError):
-            fixture.inspect(_verdict_chain("deterministic", passes=True))
+            fixture.inspect(_slow_deterministic_chain())
         monkeypatch.delenv("ATTEST_ENGINE_TIMEOUT")
 
         second = fixture.inspect(_judged("second judged output"))
@@ -381,7 +397,7 @@ def test_unobserved_judge_spend_holds_the_whole_budget_at_restart(
             fixture._run_on_engine_loop(fixture.client.generate_user_message(persona, []))
         monkeypatch.setenv("ATTEST_ENGINE_TIMEOUT", "0.0001")
         with pytest.raises(EngineTimeoutError):
-            fixture.inspect(_verdict_chain("deterministic", passes=True))
+            fixture.inspect(_slow_deterministic_chain())
         monkeypatch.delenv("ATTEST_ENGINE_TIMEOUT")
 
         after = fixture.inspect(_judged("judged output after the restart"))
