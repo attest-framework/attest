@@ -34,6 +34,8 @@ trap 'rm -f "$err"' EXIT
 for pkg in core vitest; do
     name="@attest-ai/$pkg"
     tgz="$dist_dir/attest-ai-$pkg-$version.tgz"
+    # npm reads a bare relative path such as dist/x.tgz as a GitHub <user>/<repo> spec.
+    [[ "$tgz" == /* || "$tgz" == ./* || "$tgz" == ../* ]] || tgz="./$tgz"
 
     packed="$(tar -xOzf "$tgz" package/package.json | jq -r '.name + "@" + .version')"
     if [[ "$packed" != "$name@$version" ]]; then

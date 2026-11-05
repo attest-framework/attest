@@ -198,10 +198,28 @@ else
     fail "dry-run reports the registry lookup error"
 fi
 
+# A 1.0.2-named tarball that holds 1.0.1: the name/version check must reject it.
+for pkg in core vitest; do
+    cp "$work/dist/attest-ai-$pkg-1.0.1.tgz" "$work/dist/attest-ai-$pkg-1.0.2.tgz"
+done
 if dry dry-run published 1.0.2 >/dev/null 2>"$work/err"; then
     fail "a tarball whose version differs from the expected one is rejected"
-else
+elif grep -q "holds '@attest-ai/core@1.0.1', expected '@attest-ai/core@1.0.2'" "$work/err"; then
     pass "a tarball whose version differs from the expected one is rejected"
+else
+    fail "a tarball whose version differs is rejected by the name/version check"
+fi
+rm -f "$work/dist/"attest-ai-*-1.0.2.tgz
+
+# release-build.yml passes a relative dist dir; npm must get ./dist/..., which it reads as a file.
+: > "$work/npm-calls"
+if (cd "$work" && PATH="$work/bin:$PATH" NPM_CALLS="$work/npm-calls" NPM_VIEW=absent \
+    "$here/npm-publish-dry-run.sh" dry-run 1.0.1 latest dist >/dev/null 2>&1) \
+    && grep -q '^publish \./dist/attest-ai-core-1\.0\.1\.tgz --dry-run' "$work/npm-calls" \
+    && ! grep -q '^publish dist/' "$work/npm-calls"; then
+    pass "a relative dist dir reaches npm as ./dist/..., not a GitHub spec"
+else
+    fail "a relative dist dir reaches npm as ./dist/..., not a GitHub spec"
 fi
 
 # Workflow layout ------------------------------------------------------------
