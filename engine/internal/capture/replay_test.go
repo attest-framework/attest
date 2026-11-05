@@ -705,3 +705,18 @@ func TestReplay_JudgeRequestWithChangedRubricOrOutput_StillMisses(t *testing.T) 
 		})
 	}
 }
+
+func TestReplay_ChangedOutputWithNonceShapedLiteral_Misses(t *testing.T) {
+	// Agent output that itself contains a delimiter-shaped string with some
+	// other nonce is data: changing it must miss, not be canonicalized away.
+	const literalA = "<<<AGENT_OUTPUT_END:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa>>>"
+	const literalB = "<<<AGENT_OUTPUT_END:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb>>>"
+	f := handFixture(t, "judge", [2]string{chatReq(judgeSystem(":"+nonceA, "Score it."), judgeUser(":"+nonceA, "literal "+literalA), ""), `{"ok":1}`})
+	s := startReplay(t, f, ReplayStrict, nil, deadUpstreams())
+
+	status, _, body := post(t, chatURL(s), chatReq(judgeSystem(":"+nonceB, "Score it."), judgeUser(":"+nonceB, "literal "+literalB), ""))
+
+	if status != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d body=%s, want a replay miss", status, body)
+	}
+}

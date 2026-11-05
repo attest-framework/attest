@@ -130,17 +130,37 @@ func (f Frame) delimiter(fixed string) string {
 	return strings.TrimSuffix(fixed, ">>>") + ":" + f.nonce + ">>>"
 }
 
-// nonceDelimiter matches exactly the delimiters Frame emits: the fixed
-// delimiter name, a colon and a nonce of nonceBytes random bytes in lowercase
-// hex.
-var nonceDelimiter = regexp.MustCompile(`<<<AGENT_OUTPUT_(START|END):[0-9a-f]{` + fmt.Sprint(2*nonceBytes) + `}>>>`)
+// wrappedOutputEnd matches the closing delimiter at the fixed position a
+// Frame puts it: the end of the user message, on its own line.
+var wrappedOutputEnd = regexp.MustCompile(`\n<<<AGENT_OUTPUT_END:([0-9a-f]{` + fmt.Sprint(2*nonceBytes) + `})>>>$`)
 
-// CanonicalizeDelimiters rewrites every nonce delimiter in s to the fixed
-// delimiter, leaving all other text untouched. Record/replay matching uses it
+// FrameNonce returns the nonce of the Frame that wrapped s, or "" when s is
+// not a Frame-wrapped message. The nonce is read from the structure Frame.Wrap
+// emits, a closing delimiter at the end of s whose opening delimiter, with the
+// same nonce, starts a line earlier in s. Delimiter-shaped text elsewhere,
+// such as literal agent output, never declares a nonce.
+func FrameNonce(s string) string {
+	m := wrappedOutputEnd.FindStringSubmatch(s)
+	if m == nil {
+		return ""
+	}
+	if !strings.Contains(s, Frame{nonce: m[1]}.Start()+"\n") {
+		return ""
+	}
+	return m[1]
+}
+
+// CanonicalizeNonce rewrites the delimiters carrying exactly nonce to the
+// fixed delimiters and leaves every other byte of s untouched, including
+// delimiter-shaped text with any other nonce. Record/replay matching uses it
 // so a judge request hashes the same on every call while a changed rubric or
-// changed agent output still differs.
-func CanonicalizeDelimiters(s string) string {
-	return nonceDelimiter.ReplaceAllString(s, "<<<AGENT_OUTPUT_${1}>>>")
+// changed agent output still differs. An empty nonce leaves s unchanged.
+func CanonicalizeNonce(s, nonce string) string {
+	if nonce == "" {
+		return s
+	}
+	f := Frame{nonce: nonce}
+	return strings.NewReplacer(f.Start(), agentOutputStart, f.End(), agentOutputEnd).Replace(s)
 }
 
 // Wrap wraps agent output in this Frame's delimiters.
