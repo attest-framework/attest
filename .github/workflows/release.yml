@@ -35,6 +35,9 @@ on:
       - "scripts/test-release-scripts.sh"
       - "CHANGELOG.md"
       - "VERSION"
+      - "sdks/python/pyproject.toml"
+      - "sdks/typescript/packages/core/package.json"
+      - "sdks/typescript/packages/vitest/package.json"
 
 permissions:
   contents: read
@@ -189,8 +192,6 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      id-token: write
-      attestations: write
     outputs:
       artifact_id: ${{ steps.upload.outputs.artifact-id }}
       artifact_digest: ${{ steps.upload.outputs.artifact-digest }}
@@ -234,12 +235,28 @@ jobs:
           name: engine-binaries
           path: dist/
           if-no-files-found: error
-      # Provenance for every binary, bound to this workflow run. Skipped on dry runs,
-      # which carry no id-token. Check a downloaded binary with
-      # `gh attestation verify <file> --repo attest-framework/attest`.
-      - name: Attest engine binary provenance
-        if: needs.check-tag.outputs.publish == 'true'
-        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+
+  # Provenance lives in its own job so the only steps that can mint an OIDC token are the two
+  # SHA-pinned ones below. build-engine runs a floating Go toolchain and the binary it built,
+  # and it runs on pull requests and dispatch dry runs, so it holds contents: read only. This
+  # job runs on a publishing run only; dry runs attest nothing.
+  attest-engine:
+    name: Attest engine binary provenance
+    needs: [check-tag, build-engine]
+    if: needs.check-tag.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: engine-binaries
+          path: dist
+      # Binds every binary to this workflow run. `gh attestation verify` checks it; see
+      # docs/guides/configuration.md for the command that pins the workflow and tag.
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-path: dist/attest-engine-*
 
@@ -327,10 +344,9 @@ jobs:
           VERSION: ${{ needs.check-tag.outputs.version }}
         run: |
           set -euo pipefail
-          for pkg in core vitest; do
-            "$GITHUB_WORKSPACE/scripts/engine-checksums.sh" generate "$VERSION" "$GITHUB_WORKSPACE/engine-dist" \
-              > "packages/$pkg/engine-checksums.json"
-          done
+          # Only @attest-ai/core downloads an engine; @attest-ai/vitest resolves it through core.
+          "$GITHUB_WORKSPACE/scripts/engine-checksums.sh" generate "$VERSION" "$GITHUB_WORKSPACE/engine-dist" \
+            > packages/core/engine-checksums.json
           cat packages/core/engine-checksums.json
       - name: Pack tarballs
         env:
@@ -458,11 +474,13 @@ jobs:
           VERSION: ${{ needs.check-tag.outputs.version }}
         run: |
           set -euo pipefail
-          for pkg in core vitest; do
-            tar -xOzf "dist/attest-ai-$pkg-$VERSION.tgz" package/engine-checksums.json > "$pkg-table.json"
-            scripts/engine-checksums.sh verify "$VERSION" engine-dist "$pkg-table.json"
-          done
-          echo "core and vitest tables equal the engine binaries" >> "$GITHUB_STEP_SUMMARY"
+          tar -xOzf "dist/attest-ai-core-$VERSION.tgz" package/engine-checksums.json > core-table.json
+          scripts/engine-checksums.sh verify "$VERSION" engine-dist core-table.json
+          if tar -tzf "dist/attest-ai-vitest-$VERSION.tgz" | grep -q 'engine-checksums.json'; then
+            echo "::error::@attest-ai/vitest ships an engine hash table; it has no downloader"
+            exit 1
+          fi
+          echo "core table equals the engine binaries; vitest ships none" >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/setup-node@v6
         with:
           node-version: "24"
@@ -495,7 +513,7 @@ jobs:
 
   publish-github:
     name: Publish GitHub release and engine binaries
-    needs: [check-tag, verify-engine, verify-python, verify-npm]
+    needs: [check-tag, attest-engine, verify-engine, verify-python, verify-npm]
     if: needs.check-tag.outputs.publish == 'true'
     runs-on: ubuntu-latest
     environment: release

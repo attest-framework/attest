@@ -206,10 +206,38 @@ else
 fi
 
 attesting_job="$(awk '/^  [a-z0-9-]+:$/ {job=$1} /attestations: write/ {print job}' "$workflow")"
-if [[ "$attesting_job" == "build-engine:" ]]; then
+if [[ "$attesting_job" == "attest-engine:" ]]; then
     pass "attestation permissions are granted to one job only"
 else
     fail "attestation permissions are granted to one job only"
+fi
+
+# build-engine runs on pull requests and dry runs with a floating toolchain and the binary it
+# built; it must never be able to mint an OIDC token.
+if awk '/^  [a-z0-9-]+:$/ {job=$1} /id-token: write/ {print job}' "$workflow" | grep -qx 'build-engine:'; then
+    fail "build-engine holds no id-token permission"
+else
+    pass "build-engine holds no id-token permission"
+fi
+
+if job_needs attest-engine | grep -q 'build-engine' && job_needs publish-github | grep -q 'attest-engine'; then
+    pass "attest-engine follows build-engine and gates publish-github"
+else
+    fail "attest-engine follows build-engine and gates publish-github"
+fi
+
+if awk '$0 == "  attest-engine:" {f=1; next} f && /^  [a-z]/ {exit} f && /^    if:/ {print}' "$workflow" \
+    | grep -q "publish == 'true'"; then
+    pass "attest-engine runs on publishing runs only"
+else
+    fail "attest-engine runs on publishing runs only"
+fi
+
+unpinned="$(awk '$0 == "  attest-engine:" {f=1; next} f && /^  [a-z]/ {exit} f && /uses:/ && !/@[0-9a-f]{40} / {print}' "$workflow")"
+if [[ -z "$unpinned" ]]; then
+    pass "every attest-engine step is SHA-pinned"
+else
+    fail "every attest-engine step is SHA-pinned: $unpinned"
 fi
 
 if [[ $failures -gt 0 ]]; then
