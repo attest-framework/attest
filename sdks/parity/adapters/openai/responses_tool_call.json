@@ -1,0 +1,96 @@
+{
+  "adapter": "openai",
+  "call": {
+    "ended_at_ms": 1250,
+    "input_messages": [
+      {
+        "content": "Where is order ORD-1?",
+        "role": "user"
+      }
+    ],
+    "kind": "trace_from_response",
+    "started_at_ms": 1000
+  },
+  "case": "responses_tool_call",
+  "construct": {},
+  "description": "Responses API function_call output item.",
+  "golden": {
+    "input": {
+      "messages": [
+        {
+          "content": "Where is order ORD-1?",
+          "role": "user"
+        }
+      ]
+    },
+    "metadata": {
+      "latency_ms": 250,
+      "model": "gpt-4.1-2025-04-14",
+      "total_tokens": 20
+    },
+    "output": {
+      "message": "",
+      "structured": {}
+    },
+    "schema_version": 1,
+    "steps": [
+      {
+        "args": {
+          "model": "gpt-4.1-2025-04-14"
+        },
+        "ended_at_ms": 1250,
+        "name": "completion",
+        "result": {
+          "completion": "",
+          "input_tokens": 12,
+          "output_tokens": 8,
+          "tokens": 20
+        },
+        "started_at_ms": 1000,
+        "type": "llm_call"
+      },
+      {
+        "args": {
+          "order_id": "ORD-1"
+        },
+        "name": "lookup_order",
+        "type": "tool_call"
+      }
+    ],
+    "trace_id": "trc_normalized"
+  },
+  "payload": {
+    "created_at": 1.0,
+    "id": "resp_corpus",
+    "model": "gpt-4.1-2025-04-14",
+    "object": "response",
+    "output": [
+      {
+        "arguments": "{\"order_id\": \"ORD-1\"}",
+        "call_id": "call_corpus",
+        "id": "fc_corpus",
+        "name": "lookup_order",
+        "status": "completed",
+        "type": "function_call"
+      }
+    ],
+    "parallel_tool_calls": true,
+    "tool_choice": "auto",
+    "tools": [],
+    "usage": {
+      "input_tokens": 12,
+      "input_tokens_details": {
+        "cached_tokens": 0
+      },
+      "output_tokens": 8,
+      "output_tokens_details": {
+        "reasoning_tokens": 0
+      },
+      "total_tokens": 20
+    }
+  },
+  "sdk": {
+    "package": "openai",
+    "type": "openai.types.responses.Response"
+  }
+}

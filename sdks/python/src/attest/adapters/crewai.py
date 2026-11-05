@@ -7,7 +7,7 @@ from collections.abc import Generator
 from contextlib import contextmanager
 from typing import Any
 
-from attest._proto.types import STEP_AGENT_CALL, Step, Trace
+from attest._proto.types import Trace
 from attest.adapters._base import BaseAdapter
 
 
@@ -20,9 +20,14 @@ def _require_crewai() -> None:
 
 
 class CrewAIAdapter(BaseAdapter):
-    """Maps CrewAI Crew execution to Attest traces.
+    """Maps a CrewAI Crew run to a summary-only Attest trace.
 
-    Crew → root trace, each Agent → sub-trace step (agent_call type).
+    The trace carries the crew's final output, token usage and latency. It has
+    no steps: CrewAI reports which agents and tools ran through its event bus,
+    not through ``CrewOutput``, and an agent or task listed in the crew's
+    configuration may never have run. Assert on ``output``, ``total_tokens`` and
+    ``latency_ms``; to assert on tool calls, capture the run through
+    OpenTelemetry instead.
 
     Usage::
 
@@ -53,59 +58,27 @@ class CrewAIAdapter(BaseAdapter):
         yield self
 
     def trace_from_crew_output(self, crew_output: Any, crew: Any) -> Trace:
-        """Build a Trace from a CrewAI CrewOutput and Crew objects.
+        """Build a summary-only Trace from a CrewAI CrewOutput.
 
         Maps:
-        - crew.agents → sub-trace steps (agent_call type)
-        - crew_output.tasks_output → tool_call steps per task
+        - crew.description → input (when the crew has one)
         - crew_output.raw → output message
-        - crew_output.token_usage → metadata
+        - crew_output.token_usage → metadata.total_tokens
+        - time since ``capture()`` → metadata.latency_ms
 
         Args:
             crew_output: CrewAI CrewOutput object returned by crew.kickoff().
-            crew: CrewAI Crew object whose agents are recorded as agent_call steps.
+            crew: CrewAI Crew object; only its description is read.
 
         Returns:
             Populated Attest Trace.
         """
         builder = self._create_builder()
-        started_at_ms = self._now_ms()
 
         # Input: record the crew description if available
         crew_description: str = getattr(crew, "description", "") or ""
         if crew_description:
             builder.set_input_dict({"description": crew_description})
-
-        # Agent steps: each Agent in the Crew → agent_call step
-        agents: list[Any] = getattr(crew, "agents", []) or []
-        for agent_obj in agents:
-            agent_name: str = str(
-                getattr(agent_obj, "role", "") or getattr(agent_obj, "name", "agent")
-            )
-            builder.add_step(
-                Step(
-                    type=STEP_AGENT_CALL,
-                    name=agent_name,
-                    started_at_ms=started_at_ms,
-                    ended_at_ms=started_at_ms,
-                    agent_id=self._agent_id,
-                )
-            )
-
-        # Task output steps: each TaskOutput → tool_call step
-        tasks_output: list[Any] = getattr(crew_output, "tasks_output", []) or []
-        for task_out in tasks_output:
-            task_description: str = str(
-                getattr(task_out, "description", "") or getattr(task_out, "name", "task")
-            )
-            task_raw: str = str(getattr(task_out, "raw", "") or "")
-            builder.add_tool_call(
-                name=task_description,
-                result={"output": task_raw} if task_raw else None,
-                started_at_ms=started_at_ms,
-                ended_at_ms=started_at_ms,
-                agent_id=self._agent_id,
-            )
 
         # Extract token usage
         token_usage: Any = getattr(crew_output, "token_usage", None)
