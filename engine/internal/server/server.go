@@ -164,7 +164,7 @@ func readLine(r *bufio.Reader) (inputLine, error) {
 		if errors.Is(err, bufio.ErrBufferFull) {
 			continue
 		}
-		if err != nil && !(errors.Is(err, io.EOF) && (len(buf) > 0 || oversize)) {
+		if err != nil && (!errors.Is(err, io.EOF) || (len(buf) == 0 && !oversize)) {
 			return inputLine{}, err
 		}
 		if oversize {

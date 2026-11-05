@@ -51,12 +51,12 @@ otel = ["opentelemetry-api>=1.20", "opentelemetry-sdk>=1.20"]
 langchain = ["langchain-core>=0.3"]
 google-adk = ["google-adk>=1.0"]
 llamaindex = ["llama-index-core>=0.10.20"]
-crewai = ["crewai>=0.60"]
+crewai = ["crewai>=0.60; python_version < '3.14'"]
 integration-test = [
     "langchain-core>=0.3",
     "google-adk>=1.0",
     "google-genai>=1.0",
-    "crewai>=0.60",
+    "crewai>=0.60; python_version < '3.14'",
 ]
 all = ["attest-ai[openai,anthropic,gemini,ollama,otel,langchain,google-adk,llamaindex,crewai]"]
 

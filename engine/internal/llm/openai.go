@@ -100,7 +100,7 @@ func (p *OpenAIProvider) Complete(ctx context.Context, req *CompletionRequest) (
 		messages = append(messages, openAIChatMessage{Role: "system", Content: req.SystemPrompt})
 	}
 	for _, m := range req.Messages {
-		messages = append(messages, openAIChatMessage{Role: m.Role, Content: m.Content})
+		messages = append(messages, openAIChatMessage(m))
 	}
 
 	chatReq := openAIChatRequest{
