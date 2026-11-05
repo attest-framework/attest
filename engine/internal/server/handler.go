@@ -81,7 +81,7 @@ func RegisterBuiltinHandlers(s *Server) error {
 
 	s.RegisterHandler("initialize", handleInitialize(caps))
 	s.RegisterHandler("shutdown", handleShutdown)
-	s.RegisterHandler("evaluate_batch", handleEvaluateBatch(pipeline, historyStore, batchBudgets{softFail: budget, ledger: provs.ledger}, recorder, s.writeNotification))
+	s.RegisterHandler("evaluate_batch", handleEvaluateBatch(pipeline, historyStore, batchBudgets{softFail: budget, ledger: provs.ledger}, recorder))
 	s.RegisterHandler("submit_plugin_result", handleSubmitPluginResult(historyStore))
 	s.RegisterHandler("validate_trace_tree", handleValidateTraceTree())
 	s.RegisterHandler("query_drift", handleQueryDrift(historyStore))
@@ -400,7 +400,7 @@ type batchBudgets struct {
 	ledger   *assertion.Ledger
 }
 
-func handleEvaluateBatch(pipeline *assertion.Pipeline, historyStore *cache.HistoryStore, budgets batchBudgets, recorder *contractlog.Recorder, writeNotification func(any)) Handler {
+func handleEvaluateBatch(pipeline *assertion.Pipeline, historyStore *cache.HistoryStore, budgets batchBudgets, recorder *contractlog.Recorder) Handler {
 	return func(session *Session, params json.RawMessage) (any, *types.RPCError) {
 		if session.State() != StateInitialized {
 			return nil, types.NewRPCError(
@@ -514,25 +514,22 @@ func handleEvaluateBatch(pipeline *assertion.Pipeline, historyStore *cache.Histo
 					slog.Error("history store record error", "assertion_id", ar.AssertionID, "err", recErr)
 				}
 
-				// Emit drift_alert notification when dynamic assertion hard-fails.
-				// E2: Use writeNotification (mutex-protected) instead of bare os.Stdout encoder.
+				// Report drift inside the response: stdout carries only
+				// responses to requests the SDK sent.
 				if meta.dynamic && ar.Status == types.StatusHardFail {
 					mean, stddev, count, statsErr := historyStore.Stats(ar.AssertionID)
-					if statsErr == nil {
-						notification := types.DriftAlertNotification{
-							JSONRPC: "2.0",
-							Method:  "drift_alert",
-							Params: types.DriftReport{
-								AssertionID: ar.AssertionID,
-								Mean:        mean,
-								Stddev:      stddev,
-								Count:       count,
-								LatestScore: ar.Score,
-								Deviation:   ar.Score - mean,
-								Status:      "drift_detected",
-							},
-						}
-						writeNotification(notification)
+					if statsErr != nil {
+						slog.Error("history store stats error", "assertion_id", ar.AssertionID, "err", statsErr)
+						continue
+					}
+					ar.Drift = &types.DriftReport{
+						AssertionID: ar.AssertionID,
+						Mean:        mean,
+						Stddev:      stddev,
+						Count:       count,
+						LatestScore: ar.Score,
+						Deviation:   ar.Score - mean,
+						Status:      "drift_detected",
 					}
 				}
 			}
