@@ -97,8 +97,9 @@ def _verdict_chain(message: str, *, passes: bool) -> ExpectChain:
 def _slow_deterministic_chain() -> ExpectChain:
     """A deterministic batch too large to be answered within a 0.1 ms ATTEST_ENGINE_TIMEOUT.
 
-    A tiny batch can be answered before the timer fires on a fast machine; 2,000 assertions on
-    a 100 KB output take far longer than 0.1 ms to send and evaluate, so the timeout is certain.
+    A tiny batch can be answered before the timer fires on a fast machine. The timer starts once
+    the request is written; the engine needs hundreds of milliseconds to evaluate 2,000
+    assertions on a 100 KB output and the SDK to parse the reply, so the timeout is certain.
     """
     chain = expect(_routing_agent(message="deterministic refund " + "x" * 100_000))
     for _ in range(2_000):
@@ -169,7 +170,7 @@ def timeout_agent(builder, message):
 
 
 def test_a_times_out(attest):
-    # A request this large cannot be answered within 0.1 ms, so the timeout always fires.
+    # The engine needs hundreds of milliseconds to answer a batch this large, so the 0.1 ms timeout always fires.
     chain = expect(timeout_agent(message="a refund " + "x" * 100_000))
     for _ in range(2_000):
         chain = chain.output_contains("refund")
