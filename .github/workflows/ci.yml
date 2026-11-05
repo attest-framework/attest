@@ -30,6 +30,7 @@ jobs:
       engine: ${{ steps.filter.outputs.engine }}
       sdk_python: ${{ steps.filter.outputs.sdk_python }}
       sdk_typescript: ${{ steps.filter.outputs.sdk_typescript }}
+      frameworks: ${{ steps.filter.outputs.frameworks }}
       setup_attest: ${{ steps.filter.outputs.setup_attest }}
       github_config: ${{ steps.filter.outputs.github_config }}
       versions: ${{ steps.filter.outputs.versions }}
@@ -65,6 +66,16 @@ jobs:
               - "sdks/parity/**"
               - "protocol-tests/**"
               - "engine/**"
+              - ".github/workflows/ci.yml"
+            frameworks:
+              - "sdks/python/src/attest/adapters/**"
+              - "sdks/python/tests/test_adapters/**"
+              - "sdks/python/tests/test_adapter_conformance.py"
+              - "sdks/python/tests/integration/test_*_integration.py"
+              - "sdks/python/pyproject.toml"
+              - "sdks/python/uv.lock"
+              - "sdks/typescript/packages/core/src/adapters/**"
+              - "sdks/parity/**"
               - ".github/workflows/ci.yml"
             setup_attest:
               - ".github/actions/setup-attest/**"
@@ -227,6 +238,49 @@ jobs:
         run: pnpm -r exec tsc --noEmit
 
 
+  frameworks:
+    name: Adapters against real frameworks
+    needs: changes
+    if: needs.changes.outputs.frameworks == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: "1.27"
+          cache-dependency-path: engine/go.sum
+      - name: Build engine
+        # The conformance corpus drives the engine; it skips without bin/attest-engine.
+        run: make engine
+      - name: Install SDK with every framework extra
+        # uv.lock pins crewai, langchain-core, google-adk, llama-index-core, openai,
+        # anthropic, google-genai, ollama and opentelemetry; --frozen fails on drift.
+        run: |
+          cd sdks/python
+          uv sync --frozen --extra dev --extra all
+      - name: Run framework-gated adapter tests
+        run: |
+          cd sdks/python
+          targets=(tests/test_adapters tests/integration/test_langchain_integration.py tests/integration/test_google_adk_integration.py tests/integration/test_crewai_integration.py)
+          if [ -f tests/test_adapter_conformance.py ]; then
+            targets+=(tests/test_adapter_conformance.py)
+          fi
+          uv run --no-sync pytest "${targets[@]}" -v -rs -p no:cacheprovider 2>&1 | tee "$RUNNER_TEMP/frameworks.log"
+          # importorskip turns a missing framework into a skip, which reads as green.
+          # Every selected test must run here, so any skip fails the job.
+          if grep -E '^SKIPPED' "$RUNNER_TEMP/frameworks.log"; then
+            echo "::error::a framework-gated test was skipped; the framework must be installed and the engine built"
+            exit 1
+          fi
+
   setup-attest:
     name: setup-attest consumer (action from this change)
     needs: changes
@@ -374,6 +428,7 @@ jobs:
       - engine-build
       - sdk-python
       - sdk-typescript
+      - frameworks
       - setup-attest
       - github-config
       - versions
