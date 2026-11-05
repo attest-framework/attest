@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# test-release-scripts.sh — behaviour tests for check-release-tag.sh and
-# release-notes.sh. Exits non-zero on the first failed case.
+# test-release-scripts.sh — behaviour tests for check-release-tag.sh,
+# release-notes.sh and engine-checksums.sh, plus the release.yml wiring that embeds
+# and verifies the engine hash table. Runs on every release.yml pull request.
 set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -132,6 +133,83 @@ if "$here/release-notes.sh" 9.9.9 "$work/CHANGELOG.md" 2>/dev/null; then
     fail "missing section exits non-zero"
 else
     pass "missing section exits non-zero"
+fi
+
+# engine-checksums.sh -------------------------------------------------------
+
+engines="$work/engines"
+mkdir -p "$engines"
+for plat in darwin-amd64 darwin-arm64 linux-amd64 linux-arm64; do printf 'bin %s' "$plat" > "$engines/attest-engine-$plat"; done
+for plat in windows-amd64 windows-arm64; do printf 'bin %s' "$plat" > "$engines/attest-engine-$plat.exe"; done
+# A checksums file that disagrees with the binaries must be ignored.
+echo "0000000000000000000000000000000000000000000000000000000000000000  attest-engine-linux-amd64" > "$engines/checksums-sha256.txt"
+
+linux_sha="$(printf 'bin linux-amd64' | { sha256sum 2>/dev/null || shasum -a 256; } | cut -d' ' -f1)"
+win_sha="$(printf 'bin windows-arm64' | { sha256sum 2>/dev/null || shasum -a 256; } | cut -d' ' -f1)"
+
+if "$here/engine-checksums.sh" generate 1.2.3 "$engines" > "$work/table.json" \
+    && [[ "$(jq -r '.["1.2.3"]["linux-amd64"]' "$work/table.json")" == "$linux_sha" ]] \
+    && [[ "$(jq -r '.["1.2.3"]["windows-arm64"]' "$work/table.json")" == "$win_sha" ]] \
+    && [[ "$(jq '.["1.2.3"] | length' "$work/table.json")" == "6" ]]; then
+    pass "engine table maps version -> platform -> sha256 of the binaries, not of checksums-sha256.txt"
+else
+    fail "engine table maps version -> platform -> sha256 of the binaries, not of checksums-sha256.txt"
+fi
+
+if "$here/engine-checksums.sh" verify 1.2.3 "$engines" "$work/table.json" 2>/dev/null; then
+    pass "table verifies against the binaries it was generated from"
+else
+    fail "table verifies against the binaries it was generated from"
+fi
+
+printf 'tampered' > "$engines/attest-engine-darwin-arm64"
+if "$here/engine-checksums.sh" verify 1.2.3 "$engines" "$work/table.json" 2>"$work/err"; then
+    fail "verify rejects a modified binary"
+elif grep -q 'does not equal the hashes' "$work/err"; then
+    pass "verify rejects a modified binary"
+else
+    fail "verify rejects a modified binary with a clear message"
+fi
+
+if "$here/engine-checksums.sh" verify 9.9.9 "$engines" "$work/table.json" 2>/dev/null; then
+    fail "verify rejects a table keyed by another version"
+else
+    pass "verify rejects a table keyed by another version"
+fi
+
+rm "$engines/attest-engine-linux-arm64"
+if "$here/engine-checksums.sh" generate 1.2.3 "$engines" 2>"$work/err" >/dev/null; then
+    fail "generate fails when a platform binary is missing"
+elif grep -q 'missing attest-engine-linux-arm64' "$work/err"; then
+    pass "generate fails when a platform binary is missing"
+else
+    fail "generate names the missing binary"
+fi
+
+# release.yml wiring -----------------------------------------------------------
+
+workflow="$here/../.github/workflows/release.yml"
+job_needs() { awk -v job="  $1:" '$0 == job {f=1; next} f && /^    needs:/ {print; exit} f && /^  [a-z]/ {exit}' "$workflow"; }
+
+for job in build-python build-npm verify-python verify-npm; do
+    if job_needs "$job" | grep -q 'build-engine'; then
+        pass "$job depends on build-engine"
+    else
+        fail "$job depends on build-engine"
+    fi
+done
+
+if grep -Eq 'uses: actions/attest-build-provenance@[0-9a-f]{40} ' "$workflow"; then
+    pass "engine provenance attestation is SHA-pinned"
+else
+    fail "engine provenance attestation is SHA-pinned"
+fi
+
+attesting_job="$(awk '/^  [a-z0-9-]+:$/ {job=$1} /attestations: write/ {print job}' "$workflow")"
+if [[ "$attesting_job" == "build-engine:" ]]; then
+    pass "attestation permissions are granted to one job only"
+else
+    fail "attestation permissions are granted to one job only"
 fi
 
 if [[ $failures -gt 0 ]]; then
