@@ -67,7 +67,10 @@ export function attestGlobalSetup(options?: AttestGlobalSetupOptions) {
           throw err;
         }
       }
-      attestClient = new AttestClient(engineManager);
+      attestClient = engineManager.client;
+      if (attestClient === undefined) {
+        throw new Error("Engine started without its id-routed client.");
+      }
 
       globalThis.__attest_engine__ = engineManager;
       globalThis.__attest_client__ = attestClient;

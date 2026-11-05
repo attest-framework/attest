@@ -16,16 +16,17 @@ const evaluateBatch = vi.fn(async () => ({
 
 vi.mock("@attest-ai/core", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@attest-ai/core")>();
+  class MockAttestClient {
+    evaluateBatch = evaluateBatch;
+  }
   class MockEngineManager {
     start = vi.fn(async () => ({
       compatible: true,
       engine_version: "1.0.0",
       capabilities: ["layers_1_4"],
     }));
+    client = new MockAttestClient();
     stop = vi.fn().mockResolvedValue(undefined);
-  }
-  class MockAttestClient {
-    evaluateBatch = evaluateBatch;
   }
   return { ...actual, EngineManager: MockEngineManager, AttestClient: MockAttestClient };
 });
