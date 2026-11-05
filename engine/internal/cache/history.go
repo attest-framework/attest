@@ -25,7 +25,6 @@ type HistoryStore struct {
 	pruneMaxDays int
 	dirtyMu      sync.Mutex
 	dirty        map[string]struct{}
-	fullPruned   bool
 }
 
 // NewHistoryStore creates the assertion_history table and index if they don't exist,
@@ -51,6 +50,13 @@ func NewHistoryStore(db *sql.DB) (*HistoryStore, error) {
 		ON assertion_history (assertion_id, created_at)
 	`); err != nil {
 		return nil, fmt.Errorf("create assertion_history index: %w", err)
+	}
+
+	if _, err := db.Exec(`
+		CREATE INDEX IF NOT EXISTS idx_assertion_history_ts
+		ON assertion_history (created_at)
+	`); err != nil {
+		return nil, fmt.Errorf("create assertion_history age index: %w", err)
 	}
 
 	return &HistoryStore{
@@ -127,9 +133,10 @@ func (h *HistoryStore) WaitForPrune() {
 	h.pruneWG.Wait()
 }
 
-// pruneDirty prunes the assertion ids recorded since the last prune. The
-// first background prune covers every id in the table so rows of ids this
-// process never records still age out.
+// pruneDirty is one background prune run: the global age delete, then the row
+// cap for the assertion ids recorded since the previous run. The age delete
+// covers every id in one indexed pass, so a short-lived process that never
+// reaches a later id still ages out old rows.
 func (h *HistoryStore) pruneDirty() error {
 	h.dirtyMu.Lock()
 	ids := make([]string, 0, len(h.dirty))
@@ -137,20 +144,13 @@ func (h *HistoryStore) pruneDirty() error {
 		ids = append(ids, id)
 	}
 	h.dirty = map[string]struct{}{}
-	full := !h.fullPruned
-	h.fullPruned = true
 	h.dirtyMu.Unlock()
 
-	if full {
-		all, err := h.assertionIDs()
-		if err != nil {
-			return err
-		}
-		ids = all
+	if err := h.pruneAge(h.pruneMaxDays); err != nil {
+		return err
 	}
-	cutoff := time.Now().AddDate(0, 0, -h.pruneMaxDays).UnixNano()
 	for _, id := range ids {
-		if err := h.pruneAssertion(id, h.pruneMaxRows, cutoff); err != nil {
+		if err := h.pruneRows(id, h.pruneMaxRows); err != nil {
 			return err
 		}
 	}
@@ -158,19 +158,35 @@ func (h *HistoryStore) pruneDirty() error {
 }
 
 // Prune removes stale and excess rows from assertion_history for every
-// assertion id: rows older than maxAgeDays, then rows past the maxRows most
-// recent per id. It runs one id at a time in batches of pruneBatch rows, so no
-// statement holds the write lock for longer than one small batch.
+// assertion id: rows older than maxAgeDays in one global pass, then rows past
+// the maxRows most recent per id. Every statement deletes at most pruneBatch
+// rows, so none holds the write lock for longer than one small batch.
 func (h *HistoryStore) Prune(maxRows int, maxAgeDays int) error {
 	ids, err := h.assertionIDs()
 	if err != nil {
 		return err
 	}
-	cutoff := time.Now().AddDate(0, 0, -maxAgeDays).UnixNano()
+	if err := h.pruneAge(maxAgeDays); err != nil {
+		return err
+	}
 	for _, id := range ids {
-		if err := h.pruneAssertion(id, maxRows, cutoff); err != nil {
+		if err := h.pruneRows(id, maxRows); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+// pruneAge deletes every row older than maxAgeDays, whatever its assertion id,
+// selecting victims through the created_at index in pruneBatch-row statements.
+func (h *HistoryStore) pruneAge(maxAgeDays int) error {
+	cutoff := time.Now().AddDate(0, 0, -maxAgeDays).UnixNano()
+	if err := h.deleteBatched(
+		`DELETE FROM assertion_history WHERE id IN (
+		   SELECT id FROM assertion_history WHERE created_at < ? LIMIT ?)`,
+		cutoff, pruneBatch,
+	); err != nil {
+		return fmt.Errorf("prune by age: %w", err)
 	}
 	return nil
 }
@@ -197,22 +213,13 @@ func (h *HistoryStore) assertionIDs() ([]string, error) {
 	return ids, nil
 }
 
-// pruneAssertion deletes one id's rows older than cutoff and rows ranked past
-// the maxRows most recent. Both deletes select their victims through the
-// (assertion_id, created_at) index and run in pruneBatch-row statements. The
+// pruneRows deletes one id's rows ranked past the maxRows most recent, in
+// pruneBatch-row statements through the (assertion_id, created_at) index. The
 // row-count boundary is found with a read-only query first: skipping maxRows
 // index entries inside the DELETE would hold the write lock for that walk.
-func (h *HistoryStore) pruneAssertion(id string, maxRows int, cutoff int64) error {
+func (h *HistoryStore) pruneRows(id string, maxRows int) error {
 	if maxRows < 1 {
 		return fmt.Errorf("prune %q: maxRows must be at least 1, got %d", id, maxRows)
-	}
-	if err := h.deleteBatched(
-		`DELETE FROM assertion_history WHERE id IN (
-		   SELECT id FROM assertion_history
-		   WHERE assertion_id = ? AND created_at < ? LIMIT ?)`,
-		id, cutoff, pruneBatch,
-	); err != nil {
-		return fmt.Errorf("prune %q by age: %w", id, err)
 	}
 
 	// The oldest row inside the keep window; every row ordered before it

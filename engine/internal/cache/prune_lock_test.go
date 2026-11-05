@@ -2,7 +2,6 @@ package cache_test
 
 import (
 	"database/sql"
-	"fmt"
 	"testing"
 	"time"
 
@@ -81,38 +80,92 @@ func TestHistoryStore_PruneLargeTable_ConcurrentRecordDoesNotWait(t *testing.T) 
 	}
 }
 
-// Only ids recorded since the last prune are pruned by the background path
-// after the first run, so a trigger never rescans the whole table.
-func TestHistoryStore_BackgroundPrune_TrimsRecordedIDToMaxRows(t *testing.T) {
-	// Arrange
+func openHistory(t *testing.T) (*sql.DB, *cache.HistoryStore) {
+	t.Helper()
 	db, release, err := cache.Open(t.TempDir() + "/attest.db")
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
-	defer release()
+	t.Cleanup(func() { _ = release() })
 	store, err := cache.NewHistoryStore(db)
 	if err != nil {
 		t.Fatalf("NewHistoryStore: %v", err)
 	}
+	return db, store
+}
+
+func countRows(t *testing.T, db *sql.DB, id string) int {
+	t.Helper()
+	var n int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM assertion_history WHERE assertion_id = ?`, id).Scan(&n); err != nil {
+		t.Fatalf("count %q: %v", id, err)
+	}
+	return n
+}
+
+// The background prune step applies the row cap only to ids recorded since the
+// previous run; an over-cap id this process never recorded keeps its rows.
+func TestHistoryStore_PruneDirty_TrimsOnlyRecordedIDs(t *testing.T) {
+	// Arrange
+	db, store := openHistory(t)
 	store.SetPruneConfig(150, 30)
+	seedHistory(t, db, 2, 400) // seed-0 and seed-1, 400 recent rows each
+	if err := store.Record("t-live", "seed-0", "constraint", 1, "pass"); err != nil {
+		t.Fatalf("Record: %v", err)
+	}
 
 	// Act
-	for i := 0; i < 500; i++ {
-		if err := store.Record(fmt.Sprintf("t-%d", i), "one", "constraint", 1, "pass"); err != nil {
-			t.Fatalf("Record: %v", err)
-		}
-	}
-	store.WaitForPrune()
-	if err := store.Prune(150, 30); err != nil {
-		t.Fatalf("Prune: %v", err)
+	if err := store.PruneDirty(); err != nil {
+		t.Fatalf("PruneDirty: %v", err)
 	}
 
 	// Assert
-	var n int
-	if err := db.QueryRow(`SELECT COUNT(*) FROM assertion_history WHERE assertion_id = 'one'`).Scan(&n); err != nil {
-		t.Fatalf("count: %v", err)
+	if n := countRows(t, db, "seed-0"); n != 150 {
+		t.Fatalf("recorded id rows = %d, want 150", n)
 	}
-	if n != 150 {
-		t.Fatalf("rows = %d, want 150", n)
+	if n := countRows(t, db, "seed-1"); n != 400 {
+		t.Fatalf("unrecorded id rows = %d, want 400 (row cap applies to recorded ids only)", n)
+	}
+}
+
+// Rows past the max age are removed for every id, including ids never recorded
+// by this process, on each prune run rather than only the first.
+func TestHistoryStore_PruneDirty_AgesOutRowsOfUnrecordedIDs(t *testing.T) {
+	// Arrange
+	db, store := openHistory(t)
+	store.SetPruneConfig(10000, 30)
+	if err := store.PruneDirty(); err != nil { // an earlier run in this process
+		t.Fatalf("first PruneDirty: %v", err)
+	}
+	old := time.Now().AddDate(0, 0, -60).UnixNano()
+	if _, err := db.Exec(`
+		WITH RECURSIVE n(i) AS (SELECT 0 UNION ALL SELECT i+1 FROM n WHERE i < 1999)
+		INSERT INTO assertion_history (trace_id, assertion_id, assertion_type, score, status, created_at)
+		SELECT 'old', 'old-' || i, 'constraint', 0.5, 'pass', ? + i FROM n`, old,
+	); err != nil {
+		t.Fatalf("seed old rows: %v", err)
+	}
+	seedHistory(t, db, 1, 5) // recent rows of an unrecorded id survive
+	for run := 0; run < 2; run++ {
+		if err := store.Record("t-live", "live", "constraint", 1, "pass"); err != nil {
+			t.Fatalf("Record: %v", err)
+		}
+
+		// Act
+		if err := store.PruneDirty(); err != nil {
+			t.Fatalf("PruneDirty run %d: %v", run, err)
+		}
+	}
+
+	// Assert
+	var aged int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM assertion_history WHERE trace_id = 'old'`).Scan(&aged); err != nil {
+		t.Fatalf("count old: %v", err)
+	}
+	if aged != 0 {
+		t.Fatalf("aged rows left = %d, want 0", aged)
+	}
+	if n := countRows(t, db, "seed-0"); n != 5 {
+		t.Fatalf("recent unrecorded rows = %d, want 5", n)
 	}
 }
