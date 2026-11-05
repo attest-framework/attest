@@ -128,11 +128,42 @@ class TestAlertDispatcher:
 
     def test_slack_message_format(self) -> None:
         dispatcher = AlertDispatcher()
-        msg = dispatcher._format_slack({"drift_type": "cosine", "score": 0.42, "trace_id": "t-99"})
-        assert "drift" in msg
-        assert "cosine" in msg
-        assert "0.42" in msg
-        assert "t-99" in msg
+        msg = dispatcher._format_slack(
+            {
+                "runner": "refund-monitor",
+                "assertion_id": "a2_abc",
+                "status": "drift_detected",
+                "score": 0.42,
+                "baseline_mean": 0.9,
+                "baseline_count": 10,
+                "static_threshold": 0.8,
+                "trace_id": "t-99",
+            }
+        )
+        for part in (
+            "refund-monitor",
+            "a2_abc",
+            "drift_detected",
+            "0.42",
+            "0.9",
+            "10",
+            "0.8",
+            "t-99",
+        ):
+            assert part in msg
+
+    def test_dispatch_returns_the_failures(self) -> None:
+        dispatcher = AlertDispatcher(webhook_url="https://hooks.example.com/w")
+        failure = RuntimeError("connection refused")
+
+        with patch.object(dispatcher, "_post_json", side_effect=failure):
+            failures = asyncio.run(dispatcher.dispatch({"status": "hard_fail"}))
+
+        assert failures == [failure]
+
+    def test_non_positive_timeout_raises(self) -> None:
+        with pytest.raises(ValueError):
+            AlertDispatcher(webhook_url="https://hooks.example.com/w", timeout_s=0)
 
 
 # ---------------------------------------------------------------------------
@@ -315,3 +346,156 @@ class TestContinuousEvalRunnerIds:
         assert [(a.scope_id, a.assertion_id) for a in sent] == [
             (a.scope_id, a.assertion_id) for a in runner._assertions
         ]
+
+
+class TestDriftAlerts:
+    """The runner reads drift after each evaluation and dispatches alerts (fake client)."""
+
+    @staticmethod
+    def _assertion(**spec: object) -> Assertion:
+        return Assertion(assertion_id="x", type="llm_judge", spec={"target": "o", **spec})
+
+    @staticmethod
+    def _client(status: str, drift_status: str) -> tuple[MagicMock, list[dict[str, object]]]:
+        queries: list[dict[str, object]] = []
+        client = MagicMock()
+
+        async def evaluate_batch(trace: Trace, assertions: list[Assertion]) -> EvaluateBatchResult:
+            return EvaluateBatchResult(
+                results=[
+                    AssertionResult(
+                        assertion_id=a.assertion_id, status=status, score=0.5, explanation="e"
+                    )
+                    for a in assertions
+                ],
+                usage=Usage(),
+            )
+
+        async def send_request(method: str, params: dict[str, object]) -> dict[str, object]:
+            assert method == "query_drift"
+            queries.append(params)
+            return {
+                "report": {
+                    "assertion_id": params["assertion_id"],
+                    "mean": 0.9,
+                    "stddev": 0.0,
+                    "count": 10,
+                    "latest_score": 0.5,
+                    "deviation": 4.0,
+                    "status": drift_status,
+                },
+                "static_threshold": params["static_threshold"],
+            }
+
+        client.evaluate_batch = evaluate_batch
+        client.send_request = send_request
+        return client, queries
+
+    @staticmethod
+    def _runner(
+        client: MagicMock, assertion: Assertion, **kwargs: object
+    ) -> tuple[ContinuousEvalRunner, list[dict[str, object]]]:
+        sent: list[dict[str, object]] = []
+
+        runner = ContinuousEvalRunner(
+            client=client,
+            assertions=[assertion],
+            name="m",
+            sample_rate=1.0,
+            **kwargs,  # type: ignore[arg-type]
+        )
+        runner._dispatcher.dispatch = AsyncMock(  # type: ignore[method-assign]
+            side_effect=lambda alert: sent.append(alert) or []
+        )
+        return runner, sent
+
+    def test_drift_detected_dispatches_with_the_resolved_static_threshold(self) -> None:
+        client, queries = self._client("hard_fail", "drift_detected")
+        runner, sent = self._runner(
+            client, self._assertion(threshold=0.6), alert_webhook="http://x"
+        )
+
+        asyncio.run(runner.evaluate_trace(_make_trace()))
+
+        (assertion,) = runner._assertions
+        assert queries == [{"assertion_id": assertion.assertion_id, "static_threshold": 0.6}]
+        (alert,) = sent
+        assert alert["status"] == "drift_detected"
+        assert alert["static_threshold"] == 0.6
+        assert alert["baseline_count"] == 10
+
+    def test_dynamic_threshold_queries_with_the_default_bar(self) -> None:
+        client, queries = self._client("pass", "ok")
+        runner, sent = self._runner(
+            client, self._assertion(threshold="dynamic"), alert_webhook="http://x"
+        )
+
+        asyncio.run(runner.evaluate_trace(_make_trace()))
+
+        assert queries[0]["static_threshold"] == 0.8
+        assert sent == []
+
+    def test_hard_fail_without_drift_still_alerts(self) -> None:
+        client, _ = self._client("hard_fail", "ok")
+        runner, sent = self._runner(client, self._assertion(), alert_webhook="http://x")
+
+        asyncio.run(runner.evaluate_trace(_make_trace()))
+
+        assert [a["status"] for a in sent] == ["hard_fail"]
+
+    def test_no_destination_never_reads_drift(self) -> None:
+        client, queries = self._client("hard_fail", "drift_detected")
+        runner, sent = self._runner(client, self._assertion())
+
+        asyncio.run(runner.evaluate_trace(_make_trace()))
+
+        assert queries == []
+        assert sent == []
+
+    def test_drift_read_failure_is_emitted_and_hard_fail_still_alerts(self) -> None:
+        client, _ = self._client("hard_fail", "ok")
+        client.send_request = AsyncMock(side_effect=RuntimeError("engine gone"))
+        errors: list[Exception] = []
+        runner, sent = self._runner(
+            client, self._assertion(), alert_webhook="http://x", on_error=errors.append
+        )
+
+        asyncio.run(runner.evaluate_trace(_make_trace()))
+
+        assert [str(e) for e in errors] == ["engine gone"]
+        assert [a["baseline_mean"] for a in sent] == [None]
+
+    def test_raising_on_error_callback_does_not_crash_the_runner(self) -> None:
+        client, _ = self._client("hard_fail", "ok")
+        client.send_request = AsyncMock(side_effect=RuntimeError("engine gone"))
+
+        def boom(exc: Exception) -> None:
+            raise ValueError("callback bug")
+
+        runner, _ = self._runner(client, self._assertion(), alert_webhook="http://x", on_error=boom)
+
+        assert asyncio.run(runner.evaluate_trace(_make_trace())) is not None
+
+    def test_stop_emits_a_timeout_when_the_drain_exceeds_the_bound(self) -> None:
+        client, _ = self._client("pass", "ok")
+        errors: list[Exception] = []
+
+        async def slow(trace: Trace, assertions: list[Assertion]) -> EvaluateBatchResult:
+            await asyncio.sleep(30)
+            raise AssertionError("unreachable")
+
+        client.evaluate_batch = slow
+        runner, _ = self._runner(
+            client, self._assertion(), on_error=errors.append, drain_timeout_s=0.2
+        )
+
+        async def scenario() -> None:
+            await runner.start()
+            await runner.submit(_make_trace())
+            await asyncio.sleep(0.05)
+            await runner.stop()
+
+        asyncio.run(scenario())
+
+        assert len(errors) == 1
+        assert isinstance(errors[0], TimeoutError)
