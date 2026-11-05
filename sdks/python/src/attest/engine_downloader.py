@@ -3,18 +3,29 @@
 from __future__ import annotations
 
 import hashlib
+import http.client
+import json
 import os
 import platform
+import re
+import ssl
 import stat
 import sys
 import tempfile
-import urllib.error
-import urllib.request
+import time
+import urllib.parse
 from pathlib import Path
 
-from attest import ENGINE_VERSION
+from attest import ENGINE_VERSION, __version__
 
 _GITHUB_RELEASE_BASE = "https://github.com/attest-framework/attest/releases/download"
+
+_TABLE_PATH = Path(__file__).with_name("engine-checksums.json")
+_CONNECT_TIMEOUT_S = 10.0
+_TOTAL_TIMEOUT_S = 120.0
+_MAX_REDIRECTS = 5
+_REDIRECT_STATUSES = frozenset({301, 302, 303, 307, 308})
+_SHA256_HEX = re.compile(r"[0-9a-f]{64}")
 
 _PLATFORM_MAP: dict[str, str] = {
     "Darwin-arm64": "darwin-arm64",
@@ -64,34 +75,102 @@ def cached_engine_path() -> Path | None:
     return bin_path
 
 
-def _parse_checksums(text: str) -> dict[str, str]:
-    """Parse a checksums file with ``{hash}  {filename}`` lines."""
-    checksums: dict[str, str] = {}
-    for line in text.splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        # Format: sha256hash  filename (two spaces)
-        parts = line.split(None, 1)
-        if len(parts) == 2:
-            checksums[parts[1].strip()] = parts[0]
-    return checksums
+def _ssl_context() -> ssl.SSLContext:
+    """TLS context for release downloads: system trust store, hostname checking on."""
+    return ssl.create_default_context()
 
 
-def _url_read(url: str) -> bytes:
-    """Fetch a URL, following redirects. Stdlib-only."""
-    request = urllib.request.Request(url, headers={"User-Agent": "attest-sdk"})
-    with urllib.request.urlopen(request, timeout=120) as resp:
-        return resp.read()  # type: ignore[no-any-return]
+def _fetch(url: str) -> bytes:
+    """GET ``url`` over https, following redirects that stay on https.
+
+    A redirect to any other scheme is refused. A relative ``Location`` resolves against
+    the URL that returned it. The connect phase is bounded by ``_CONNECT_TIMEOUT_S`` and
+    the whole fetch, including every redirect hop and body read, by ``_TOTAL_TIMEOUT_S``.
+    """
+    deadline = time.monotonic() + _TOTAL_TIMEOUT_S
+
+    def remaining() -> float:
+        left = deadline - time.monotonic()
+        if left <= 0:
+            raise TimeoutError(f"exceeded the {_TOTAL_TIMEOUT_S:g}s total timeout")
+        return left
+
+    current = url
+    for _ in range(_MAX_REDIRECTS + 1):
+        parts = urllib.parse.urlsplit(current)
+        if parts.scheme != "https" or not parts.hostname:
+            raise RuntimeError(f"Refusing to download over a non-https URL: {current}")
+        target = parts.path or "/"
+        if parts.query:
+            target += f"?{parts.query}"
+        conn = http.client.HTTPSConnection(
+            parts.hostname,
+            parts.port,
+            timeout=min(_CONNECT_TIMEOUT_S, remaining()),
+            context=_ssl_context(),
+        )
+        try:
+            conn.connect()
+            sock = conn.sock
+            if sock is None:
+                raise RuntimeError(f"Connection to {parts.hostname} closed before the request")
+            sock.settimeout(remaining())
+            conn.request("GET", target, headers={"User-Agent": "attest-sdk"})
+            resp = conn.getresponse()
+            if resp.status in _REDIRECT_STATUSES:
+                location = resp.getheader("Location")
+                if not location:
+                    raise RuntimeError(f"Redirect {resp.status} without Location from {current}")
+                current = urllib.parse.urljoin(current, location)
+                continue
+            if resp.status != 200:
+                raise RuntimeError(f"HTTP {resp.status} fetching {current}")
+            chunks: list[bytes] = []
+            while not resp.isclosed():
+                sock.settimeout(remaining())
+                chunks.append(resp.read(65536))
+            return b"".join(chunks)
+        finally:
+            conn.close()
+    raise RuntimeError(f"Too many redirects (>{_MAX_REDIRECTS}) following {url}")
+
+
+def _embedded_hash(plat: str) -> str:
+    """Return the sha256 this package ships for ``ENGINE_VERSION`` on ``plat``."""
+    if not _TABLE_PATH.is_file():
+        raise RuntimeError(
+            "This attest-ai install has no embedded engine hash table (engine-checksums.json), "
+            "which is how a source or editable install looks, so it never downloads an engine. "
+            "Point ATTEST_ENGINE_PATH at an engine binary, or build one with `make engine` "
+            "and set ATTEST_ENGINE_PATH=./bin/attest-engine."
+        )
+    try:
+        table = json.loads(_TABLE_PATH.read_text(encoding="utf-8"))
+        digest = table[ENGINE_VERSION][plat]
+    except (ValueError, KeyError, TypeError) as exc:
+        raise RuntimeError(
+            f"attest-ai {__version__} ships no usable engine hash for v{ENGINE_VERSION} on "
+            f"{plat} in {_TABLE_PATH}: {type(exc).__name__}: {exc}"
+        ) from exc
+    if not isinstance(digest, str) or _SHA256_HEX.fullmatch(digest) is None:
+        raise RuntimeError(
+            f"attest-ai {__version__} ships a malformed engine hash for {plat}: {digest!r}"
+        )
+    return digest
 
 
 def download_engine() -> Path:
-    """Download the engine binary from GitHub Releases with SHA256 verification.
+    """Download the engine binary from GitHub Releases and verify it against the shipped hash.
+
+    The only trusted hash is the table embedded in this package (``engine-checksums.json``),
+    generated from the same release run's binaries. Nothing the download server sends can
+    change what is accepted.
 
     Returns the path to the downloaded binary.
 
     Raises:
-        RuntimeError: On download failure, checksum mismatch, or unsupported platform.
+        RuntimeError: No embedded table (source or editable install), unsupported platform,
+            download failure, or a binary that does not match the shipped hash.
     """
     plat = _platform_key()
     ver = ENGINE_VERSION
@@ -100,43 +179,22 @@ def download_engine() -> Path:
     if platform.system() == "Windows":
         asset_name += ".exe"
 
+    expected_hash = _embedded_hash(plat)
     binary_url = f"{_GITHUB_RELEASE_BASE}/v{ver}/{asset_name}"
-    checksums_url = f"{_GITHUB_RELEASE_BASE}/v{ver}/checksums-sha256.txt"
 
     sys.stderr.write(f"attest: downloading engine v{ver} for {plat}...\n")
-
-    # Fetch checksums first
     try:
-        checksums_text = _url_read(checksums_url).decode("utf-8")
-    except (urllib.error.URLError, OSError) as exc:
-        raise RuntimeError(
-            f"Failed to download checksums from {checksums_url}: {exc}\n"
-            "Verify the release exists at "
-            f"https://github.com/attest-framework/attest/releases/tag/v{ver}"
-        ) from exc
-
-    checksums = _parse_checksums(checksums_text)
-    expected_hash = checksums.get(asset_name)
-    if expected_hash is None:
-        raise RuntimeError(
-            f"No checksum found for '{asset_name}' in checksums-sha256.txt. "
-            f"Available assets: {', '.join(sorted(checksums.keys()))}"
-        )
-
-    # Download binary
-    try:
-        binary_data = _url_read(binary_url)
-    except (urllib.error.URLError, OSError) as exc:
+        binary_data = _fetch(binary_url)
+    except (OSError, http.client.HTTPException) as exc:
         raise RuntimeError(f"Failed to download engine from {binary_url}: {exc}") from exc
 
-    # Verify SHA256
     actual_hash = hashlib.sha256(binary_data).hexdigest()
     if actual_hash != expected_hash:
         raise RuntimeError(
-            f"SHA256 mismatch for {asset_name}:\n"
+            f"{asset_name} does not match the hash shipped in attest-ai {__version__}:\n"
             f"  expected: {expected_hash}\n"
             f"  actual:   {actual_hash}\n"
-            "The download may be corrupted. Retry or download manually."
+            "Refusing to install it. Retry, or set ATTEST_ENGINE_PATH to a binary you trust."
         )
 
     # Atomic write: temp file + rename
