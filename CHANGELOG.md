@@ -34,6 +34,7 @@ Hotfix themed "Red stays red". On 1.0.0 a failing assertion could be reported as
 
 - The protocol spec states that the engine writes only responses to stdout and that SDKs route by request id; `docs/guides/configuration.md` documents `ATTEST_ENGINE_TIMEOUT` (seconds in Python, milliseconds in TypeScript) and what a timeout does to the session budget, and notes that budgets apply per pytest-xdist worker.
 - Install instructions use `attest-ai>=1.0.1` and `@attest-ai/core@>=1.0.1` / `@attest-ai/vitest@>=1.0.1`; `@attest-ai/vitest` declares the peer `@attest-ai/core >=1.0.1`. The annotations guide pins `pr-annotate@v1.0.1`.
+- The PyPI classifier is `Development Status :: 4 - Beta` (was `5 - Production/Stable`) until 1.1.0 completes its re-evaluation.
 - Engine Go dependencies: `go.opentelemetry.io/proto/otlp` 1.11.1, `golang.org/x/text` 0.43.0, `modernc.org/sqlite` 1.61.1, `google.golang.org/protobuf` 1.36.12.
 
 ### Removed

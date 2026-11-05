@@ -12,7 +12,7 @@ requires-python = ">=3.10"
 authors = [{ name = "Attest Contributors" }]
 keywords = ["testing", "ai", "agents", "llm", "evaluation"]
 classifiers = [
-    "Development Status :: 5 - Production/Stable",
+    "Development Status :: 4 - Beta",
     "Framework :: Pytest",
     "Intended Audience :: Developers",
     "Topic :: Software Development :: Testing",
