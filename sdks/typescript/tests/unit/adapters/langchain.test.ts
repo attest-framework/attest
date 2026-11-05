@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { RunnableLambda } from "@langchain/core/runnables";
-import { DynamicTool } from "@langchain/core/tools";
+import { DynamicTool, StructuredTool } from "@langchain/core/tools";
 import { FakeListChatModel } from "@langchain/core/utils/testing";
 import { LangChainAdapter } from "../../../packages/core/src/adapters/langchain.js";
 import { STEP_LLM_CALL, STEP_TOOL_CALL } from "../../../packages/core/src/proto/constants.js";
@@ -37,6 +37,31 @@ describe("LangChainAdapter", () => {
     expect(trace.steps[0].args).toEqual({ input: "ORD-1" });
     expect(trace.steps[0].result).toEqual({ output: "shipped" });
     expect(trace.steps[1].result?.completion).toBe("ORD-1 has shipped.");
+  });
+
+  it("names a StructuredTool subclass after its tool name, not its class", async () => {
+    class MyLookup extends StructuredTool {
+      name = "lookup_order";
+      description = "Look up an order.";
+      schema = {
+        type: "object" as const,
+        properties: { order_id: { type: "string" } },
+        required: ["order_id"],
+      };
+      async _call(): Promise<string> {
+        return "shipped";
+      }
+    }
+    const adapter = new LangChainAdapter();
+
+    await new MyLookup().invoke(
+      { type: "tool_call", id: "call_1", name: "lookup_order", args: { order_id: "ORD-1" } },
+      { callbacks: [adapter] },
+    );
+    const step = adapter.buildTrace().steps[0];
+
+    expect(step.name).toBe("lookup_order");
+    expect(step.result).toEqual({ output: "shipped" });
   });
 
   it("keys interleaved tool runs by runId", () => {

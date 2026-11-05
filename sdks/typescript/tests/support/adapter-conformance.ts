@@ -328,13 +328,6 @@ export async function otlpDiffs(path: string): Promise<string[]> {
   return diff(golden, JSON.parse(JSON.stringify(trace)) as Json);
 }
 
-/** Parity-matrix adapter names that have at least one corpus case a TypeScript adapter runs. */
-export function matrixAdaptersWithCases(): Set<string> {
-  const dirs = new Set(loadCases().map((c) => c.adapter));
-  if (otlpCases().length > 0) dirs.add("otel");
-  return new Set([...dirs].flatMap((d) => MATRIX_NAMES[d] ?? []));
-}
-
 /** `passing`: the adapter has cases and all pass; `failing`: some fail; `none`: no cases. */
 export type ConformanceStatus = "passing" | "failing" | "none";
 

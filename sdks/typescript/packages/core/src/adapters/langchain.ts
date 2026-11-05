@@ -35,6 +35,9 @@ function resolveBaseCallbackHandler(): CallbackHandlerConstructor {
   }
 }
 
+// Dual-package caveat: this resolves the CJS `BaseCallbackHandler`, which an ESM consumer's
+// `instanceof` check would not match. langchainjs dispatches by duck typing (handler methods
+// and `ignore*` flags), never `instanceof`, so the capture is unaffected.
 const BaseCallbackHandler = resolveBaseCallbackHandler();
 
 type Values = Record<string, unknown>;
@@ -103,10 +106,13 @@ function modelNameOf(extraParams: Values | undefined): string | undefined {
   return typeof name === "string" && name ? name : undefined;
 }
 
-function toolNameOf(serialized: Values, runName: string | undefined): string {
+/** `serialized` is langchainjs's `Serialized` (no index signature), so it is narrowed here. */
+function toolNameOf(serialized: unknown, runName: string | undefined): string {
   if (runName) return runName;
-  if (typeof serialized.name === "string" && serialized.name) return serialized.name;
-  if (Array.isArray(serialized.id) && serialized.id.length > 0) return String(serialized.id.at(-1));
+  if (isValues(serialized)) {
+    if (typeof serialized.name === "string" && serialized.name) return serialized.name;
+    if (Array.isArray(serialized.id) && serialized.id.length > 0) return String(serialized.id.at(-1));
+  }
   return "unknown_tool";
 }
 
@@ -179,7 +185,7 @@ export class LangChainAdapter extends BaseCallbackHandler {
     return Date.now();
   }
 
-  handleChainStart(_chain: Values, inputs: Values, _runId: string, parentRunId?: string): void {
+  handleChainStart(_chain: unknown, inputs: Values, _runId: string, parentRunId?: string): void {
     if (parentRunId !== undefined) return;
     this.startedAtMs = this.now();
     if (!isValues(inputs)) return;
@@ -211,7 +217,7 @@ export class LangChainAdapter extends BaseCallbackHandler {
   }
 
   handleChatModelStart(
-    _llm: Values,
+    _llm: unknown,
     _messages: unknown[][],
     runId: string,
     _parentRunId?: string,
@@ -221,7 +227,7 @@ export class LangChainAdapter extends BaseCallbackHandler {
   }
 
   handleLLMStart(
-    _llm: Values,
+    _llm: unknown,
     _prompts: string[],
     runId: string,
     _parentRunId?: string,
@@ -276,7 +282,7 @@ export class LangChainAdapter extends BaseCallbackHandler {
   }
 
   handleToolStart(
-    tool: Values,
+    tool: unknown,
     input: string,
     runId: string,
     _parentRunId?: string,
@@ -294,21 +300,25 @@ export class LangChainAdapter extends BaseCallbackHandler {
   handleToolEnd(output: unknown, runId: string): void {
     // LangGraph passes ToolMessage objects; their content is text or content blocks.
     const text = hasContent(output) ? messageText(output.content) : String(output);
-    this.finishTool(runId, { output: text });
+    // A ToolMessage carries the tool's own name whenever the call has a tool-call id;
+    // `runName` / `serialized` name a StructuredTool subclass after its class. The error
+    // path has no ToolMessage, so a failed custom tool keeps the class-derived name.
+    const toolName = isValues(output) && typeof output.name === "string" && output.name ? output.name : undefined;
+    this.finishTool(runId, { output: text }, toolName);
   }
 
   handleToolError(error: unknown, runId: string): void {
     const message = error instanceof Error ? error.message : String(error);
-    this.finishTool(runId, { error: message });
+    this.finishTool(runId, { error: message }, undefined);
   }
 
-  private finishTool(runId: string, result: Values): void {
+  private finishTool(runId: string, result: Values, endName: string | undefined): void {
     const start = this.toolStarts.get(runId);
     this.toolStarts.delete(runId);
     this.steps.push(
       this.step(
         STEP_TOOL_CALL,
-        start?.name ?? "unknown_tool",
+        endName ?? start?.name ?? "unknown_tool",
         start?.input ?? {},
         result,
         start?.startedAtMs,
