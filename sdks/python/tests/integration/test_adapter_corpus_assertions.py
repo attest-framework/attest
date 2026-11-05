@@ -44,4 +44,6 @@ def test_refusal_text_fails_output_not_contains(engine: AttestEngineFixture, nam
 
     result = engine.inspect(chain)
 
-    assert not result.passed
+    assert [r.status for r in result.hard_failures] == ["hard_fail"], [
+        (r.status, r.explanation) for r in result.assertion_results
+    ]

@@ -16,6 +16,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 from unittest.mock import patch
+from uuid import UUID
 
 from attest._proto.types import Trace
 from attest.adapters._base import BaseAdapter
@@ -136,23 +137,23 @@ def _decode(value: Any) -> Any:
     return value
 
 
-_RUN_ID = "00000000-0000-4000-8000-000000000001"
-
-
 def _replay_langchain(case: Case) -> Trace:
     """Replay recorded callbacks on the handler with its clock fixed at each event's ``t_ms``."""
     clock = {"ms": 0}
     handler = LangChainCallbackHandler(**case["construct"])
-    from uuid import UUID
+    run_ids: dict[str, UUID] = {}
 
-    root, child = UUID(_RUN_ID), UUID(_RUN_ID.replace("1", "2"))
+    def run_uuid(name: str | None) -> UUID | None:
+        if name is None:
+            return None
+        return run_ids.setdefault(name, UUID(int=len(run_ids) + 1, version=4))
+
     with patch.object(BaseAdapter, "_now_ms", lambda self: clock["ms"]):
         for event in case["payload"]["events"]:
             clock["ms"] = event["t_ms"]
             args = _decode(event["args"])
-            is_root = args.pop("root", False)
-            run_id = root if is_root else child
-            parent = None if is_root else root
+            run_id = run_uuid(event["run_id"])
+            parent = run_uuid(event["parent_run_id"])
             method = getattr(handler, event["method"])
             if event["method"] == "on_tool_start":
                 method(

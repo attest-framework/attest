@@ -26,8 +26,7 @@ class CrewAIAdapter(BaseAdapter):
     no steps: CrewAI reports which agents and tools ran through its event bus,
     not through ``CrewOutput``, and an agent or task listed in the crew's
     configuration may never have run. Assert on ``output``, ``total_tokens`` and
-    ``latency_ms``; to assert on tool calls, capture the run through
-    OpenTelemetry instead.
+    ``latency_ms``; the trace cannot support assertions on agent or tool calls.
 
     Usage::
 

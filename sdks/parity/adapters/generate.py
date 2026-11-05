@@ -9,7 +9,7 @@ Run (no network, no model calls)::
 
     uv run --no-project \
         --with openai==1.83.0 --with anthropic==0.81.0 --with google-genai==1.63.0 \
-        --with ollama==0.6.1 --with langchain-core==1.2.14 --with crewai==1.9.3 \
+        --with ollama==0.6.1 --with langchain-core==1.3.3 --with crewai==1.9.3 \
         python sdks/parity/adapters/generate.py [--check]
 
 ``--check`` fails when a committed file differs from what the script generates.
@@ -30,10 +30,31 @@ Case file format::
     input_messages=call.input_messages, started_at_ms=call.started_at_ms,
     ended_at_ms=call.ended_at_ms)``.
 ``callbacks``  LangChain: payload is ``{"events": [...]}``; each event is
-    ``{"t_ms", "method", "args"}`` replayed on the callback handler with the clock
-    (wall and monotonic) fixed at ``t_ms``; then ``build_trace()``. Values in
-    ``args`` wrap non-JSON objects as ``{"$message": <message_to_dict>}``,
-    ``{"$llm_result": ...}``, ``{"$error": {"type", "message"}}``.
+    ``{"t_ms", "method", "run_id", "parent_run_id", "args"}``. ``run_id`` and
+    ``parent_run_id`` are the run ids of the real run, renamed ``run-1``, ``run-2``... in
+    order of first appearance (``parent_run_id`` is null for the root run), so runs that
+    interleave are expressible. A replayer maps each ``run-N`` to one stable id and calls
+    the handler with the clock (wall and monotonic) fixed at ``t_ms``, then
+    ``build_trace()``. Values in ``args`` wrap non-JSON objects as
+    ``{"$message": <message_to_dict>}``, ``{"$llm_result": ...}``,
+    ``{"$error": {"type", "message"}}``.
+
+    Python replays ``method(..., run_id=, parent_run_id=)`` as recorded. A langchainjs
+    ``BaseCallbackHandler`` replayer maps:
+
+    - ``on_chain_start``: ``handleChainStart({}, args.inputs, runId, parentRunId)``
+    - ``on_chain_end``: ``handleChainEnd(args.outputs, runId, parentRunId)``
+    - ``on_chat_model_start``: ``handleChatModelStart({}, args.messages, runId,
+      parentRunId, args.invocation_params)``
+    - ``on_llm_end``: ``handleLLMEnd(args.response, runId, parentRunId)``
+    - ``on_tool_start``: ``handleToolStart({}, input, runId, parentRunId)`` with
+      ``input = JSON.stringify(args.inputs)``: langchainjs takes a string, and
+      ``args.input_str`` is Python's repr, so it is not used.
+    - ``on_tool_end``: ``handleToolEnd(args.output, runId, parentRunId)``
+    - ``on_tool_error``: ``handleToolError(new Error(message), runId, parentRunId)``
+
+    ``$message`` / ``$llm_result`` values are decoded to the langchainjs message and
+    ``LLMResult`` shapes (``{"generations": [[{"text", "message"}]], "llmOutput"}``).
 ``crew_output``  CrewAI: ``adapter.trace_from_crew_output(crew_output, crew)`` with no
     ``capture()`` window, so the trace has no latency.
 ``builder_ops``  ManualAdapter: payload is ``{"ops": [{"op", "args"}]}`` applied to the
@@ -66,6 +87,14 @@ CALL = {
 
 Case = dict[str, Any]
 
+# Import root of each official SDK -> its pinned distribution name in versions.json.
+DISTRIBUTIONS = {
+    "openai": "openai",
+    "anthropic": "anthropic",
+    "google": "google-genai",
+    "ollama": "ollama",
+}
+
 
 def _check_versions() -> dict[str, str]:
     pins: dict[str, str] = json.loads((ROOT / "versions.json").read_text())["packages"]
@@ -90,8 +119,13 @@ def _provider(
     obj: Any,
     golden: dict[str, Any],
     construct: dict[str, Any] | None = None,
+    wire_nulls: bool = False,
 ) -> Case:
-    package = sdk_type.split(".")[0]
+    # ``by_alias`` writes the names the wire (and the JS SDKs) use, e.g. Gemini's
+    # ``functionCall``; ``model_validate`` accepts them back. ``wire_nulls`` keeps the
+    # explicit nulls the provider sends (OpenAI ``content: null``); others omit them.
+    package = DISTRIBUTIONS[sdk_type.split(".")[0]]
+    dump = {"exclude_unset": True} if wire_nulls else {"exclude_none": True}
     return {
         "adapter": adapter,
         "case": case,
@@ -99,7 +133,7 @@ def _provider(
         "sdk": {"package": package, "type": sdk_type},
         "construct": construct or {},
         "call": CALL,
-        "payload": obj.model_dump(mode="json", exclude_none=True),
+        "payload": obj.model_dump(mode="json", by_alias=True, **dump),
         "golden": golden,
     }
 
@@ -160,6 +194,9 @@ def openai_cases() -> list[Case]:
         OutputTokensDetails,
     )
 
+    def provider(*args: Any) -> Case:
+        return _provider(*args, wire_nulls=True)
+
     chat_type = "openai.types.chat.ChatCompletion"
     responses_type = "openai.types.responses.Response"
     chat_model = "gpt-4.1-2025-04-14"
@@ -174,7 +211,7 @@ def openai_cases() -> list[Case]:
             object="chat.completion",
             created=1,
             model=chat_model,
-            choices=[Choice(index=0, finish_reason=finish, message=message)],  # type: ignore[arg-type]
+            choices=[Choice(index=0, finish_reason=finish, logprobs=None, message=message)],  # type: ignore[arg-type]
             usage=usage,
         )
 
@@ -212,19 +249,21 @@ def openai_cases() -> list[Case]:
     )
     structured = {"structured": {}}
     return [
-        _provider(
+        provider(
             "openai",
             "chat_text",
             "Chat Completions text answer with usage.",
             chat_type,
-            chat(ChatCompletionMessage(role="assistant", content="Order ORD-1 shipped."), "stop"),
+            chat(ChatCompletionMessage(
+                    role="assistant", content="Order ORD-1 shipped.", refusal=None
+                ), "stop"),
             _golden(
                 [_llm(chat_model, {"completion": "Order ORD-1 shipped.", **split})],
                 {"message": "Order ORD-1 shipped.", **structured},
                 meta,
             ),
         ),
-        _provider(
+        provider(
             "openai",
             "chat_tool_call",
             "Chat Completions function call; arguments arrive as a JSON string.",
@@ -233,6 +272,7 @@ def openai_cases() -> list[Case]:
                 ChatCompletionMessage(
                     role="assistant",
                     content=None,
+                    refusal=None,
                     tool_calls=[
                         ChatCompletionMessageToolCall(
                             id="call_corpus",
@@ -251,7 +291,7 @@ def openai_cases() -> list[Case]:
                 meta,
             ),
         ),
-        _provider(
+        provider(
             "openai",
             "chat_refusal",
             "Chat Completions refusal: the refusal text is the output, not an empty message.",
@@ -263,7 +303,7 @@ def openai_cases() -> list[Case]:
                 meta,
             ),
         ),
-        _provider(
+        provider(
             "openai",
             "responses_text",
             "Responses API text answer; the object has output items, not choices.",
@@ -283,7 +323,7 @@ def openai_cases() -> list[Case]:
                 meta,
             ),
         ),
-        _provider(
+        provider(
             "openai",
             "responses_tool_call",
             "Responses API function_call output item.",
@@ -295,7 +335,7 @@ def openai_cases() -> list[Case]:
                 meta,
             ),
         ),
-        _provider(
+        provider(
             "openai",
             "responses_refusal",
             "Responses API refusal content part.",
@@ -479,6 +519,28 @@ def gemini_cases() -> list[Case]:
                 input_=gemini_input,
             ),
         ),
+        _provider(
+            "gemini",
+            "thought_function_call",
+            "A thought-summary part beside a function_call: the reasoning is not the completion.",
+            sdk,
+            response(
+                [
+                    types.Part(text="I should look the order up first.", thought=True),
+                    types.Part(
+                        function_call=types.FunctionCall(
+                            name="lookup_order", args={"order_id": "ORD-1"}
+                        )
+                    ),
+                ]
+            ),
+            _golden(
+                [_llm(model, {"completion": "", **split}), _tool("lookup_order", {"order_id": "ORD-1"})],
+                {"message": ""},
+                meta,
+                input_=gemini_input,
+            ),
+        ),
     ]
 
 
@@ -552,9 +614,24 @@ class _Recorder:
 
     def __init__(self) -> None:
         self.events: list[dict[str, Any]] = []
+        self._ids: dict[str, str] = {}
 
-    def record(self, method: str, args: dict[str, Any]) -> None:
-        self.events.append({"t_ms": 1000 + 100 * len(self.events), "method": method, "args": args})
+    def _run(self, run_id: Any) -> str | None:
+        """Random UUIDs become ``run-1``, ``run-2``... in order of first appearance."""
+        if run_id is None:
+            return None
+        return self._ids.setdefault(str(run_id), f"run-{len(self._ids) + 1}")
+
+    def record(self, method: str, run_id: Any, parent_run_id: Any, args: dict[str, Any]) -> None:
+        self.events.append(
+            {
+                "t_ms": 1000 + 100 * len(self.events),
+                "method": method,
+                "run_id": self._run(run_id),
+                "parent_run_id": self._run(parent_run_id),
+                "args": args,
+            }
+        )
 
 
 def _message(message: Any) -> dict[str, Any]:
@@ -599,7 +676,7 @@ def _encode(value: Any) -> Any:
     return str(value)
 
 
-def _langchain_run(fail_tool: bool) -> list[dict[str, Any]]:
+def _langchain_run(tool_mode: str) -> list[dict[str, Any]]:
     """Run a real LangChain agent loop on a fake chat model and record its callbacks."""
     from langchain_core.callbacks import BaseCallbackHandler
     from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
@@ -611,14 +688,16 @@ def _langchain_run(fail_tool: bool) -> list[dict[str, Any]]:
 
     class Handler(BaseCallbackHandler):
         def on_chain_start(self, serialized, inputs, *, run_id, parent_run_id=None, **kw):  # type: ignore[no-untyped-def]
-            recorder.record("on_chain_start", {"inputs": _encode(inputs), "root": parent_run_id is None})
+            recorder.record("on_chain_start", run_id, parent_run_id, {"inputs": _encode(inputs)})
 
         def on_chain_end(self, outputs, *, run_id, parent_run_id=None, **kw):  # type: ignore[no-untyped-def]
-            recorder.record("on_chain_end", {"outputs": _encode(outputs), "root": parent_run_id is None})
+            recorder.record("on_chain_end", run_id, parent_run_id, {"outputs": _encode(outputs)})
 
         def on_chat_model_start(self, serialized, messages, *, run_id, parent_run_id=None, **kw):  # type: ignore[no-untyped-def]
             recorder.record(
                 "on_chat_model_start",
+                run_id,
+                parent_run_id,
                 {
                     "messages": _encode(messages),
                     "invocation_params": kw.get("invocation_params"),
@@ -626,25 +705,31 @@ def _langchain_run(fail_tool: bool) -> list[dict[str, Any]]:
             )
 
         def on_llm_end(self, response, *, run_id, parent_run_id=None, **kw):  # type: ignore[no-untyped-def]
-            recorder.record("on_llm_end", {"response": _encode(response)})
+            recorder.record("on_llm_end", run_id, parent_run_id, {"response": _encode(response)})
 
         def on_tool_start(self, serialized, input_str, *, run_id, parent_run_id=None, **kw):  # type: ignore[no-untyped-def]
             recorder.record(
                 "on_tool_start",
+                run_id,
+                parent_run_id,
                 {"serialized": serialized, "input_str": input_str, "inputs": _encode(kw.get("inputs"))},
             )
 
         def on_tool_end(self, output, *, run_id, parent_run_id=None, **kw):  # type: ignore[no-untyped-def]
-            recorder.record("on_tool_end", {"output": _encode(output)})
+            recorder.record("on_tool_end", run_id, parent_run_id, {"output": _encode(output)})
 
         def on_tool_error(self, error, *, run_id, parent_run_id=None, **kw):  # type: ignore[no-untyped-def]
-            recorder.record("on_tool_error", {"error": _encode(error)})
+            recorder.record("on_tool_error", run_id, parent_run_id, {"error": _encode(error)})
+
+    fail_tool = tool_mode == "error"
 
     @tool
-    def lookup_order(order_id: str) -> str:
+    def lookup_order(order_id: str) -> Any:
         """Look up an order."""
         if fail_tool:
             raise ToolException("order not found")
+        if tool_mode == "blocks":
+            return [{"type": "text", "text": "shipped"}]
         return "shipped"
 
     class FakeModel(GenericFakeChatModel):
@@ -715,10 +800,10 @@ def langchain_cases() -> list[Case]:
         }
 
     cases = []
-    for name, fail, description, tool_result, answer in (
+    for name, tool_mode, description, tool_result, answer in (
         (
             "tool_loop",
-            False,
+            "ok",
             "Agent loop: structured tool inputs, ToolMessage output, usage_metadata tokens, "
             "latency from the root chain's own end time.",
             {"output": "shipped"},
@@ -726,14 +811,23 @@ def langchain_cases() -> list[Case]:
         ),
         (
             "tool_error",
-            True,
+            "error",
             "A tool that raises ToolException: structured inputs and the error as result.",
             {"error": "order not found"},
             "Sorry, I could not find ORD-1.",
         ),
+        (
+            "tool_content_blocks",
+            "blocks",
+            "A tool that returns content blocks: the ToolMessage content is the block text, "
+            "not the list's repr.",
+            {"output": "shipped"},
+            "ORD-1 has shipped.",
+        ),
     ):
+        fail = tool_mode == "error"
         # Event clock: chain 1000, llm 1100-1200, tool 1300-1400, llm 1500-1600, chain_end 1700.
-        events = _langchain_run(fail)
+        events = _langchain_run(tool_mode)
         names = [e["method"] for e in events]
         assert names == [
             "on_chain_start",

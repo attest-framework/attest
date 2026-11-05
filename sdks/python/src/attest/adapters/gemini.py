@@ -74,7 +74,12 @@ class GeminiAdapter(BaseProviderAdapter):
             return response.text  # type: ignore[no-any-return]
         if hasattr(response, "candidates") and response.candidates:
             parts = response.candidates[0].content.parts
-            return "".join(p.text for p in parts if getattr(p, "text", None))
+            # Thought-summary parts are the model's reasoning, not the answer.
+            return "".join(
+                p.text
+                for p in parts
+                if getattr(p, "text", None) and not getattr(p, "thought", None)
+            )
         return ""
 
     def _extract_model(self, response: Any, **metadata: Any) -> str | None:

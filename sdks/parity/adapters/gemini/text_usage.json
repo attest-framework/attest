@@ -57,18 +57,18 @@
           ],
           "role": "model"
         },
-        "finish_reason": "STOP"
+        "finishReason": "STOP"
       }
     ],
-    "model_version": "gemini-2.0-flash-001",
-    "usage_metadata": {
-      "candidates_token_count": 7,
-      "prompt_token_count": 11,
-      "total_token_count": 18
+    "modelVersion": "gemini-2.0-flash-001",
+    "usageMetadata": {
+      "candidatesTokenCount": 7,
+      "promptTokenCount": 11,
+      "totalTokenCount": 18
     }
   },
   "sdk": {
-    "package": "google",
+    "package": "google-genai",
     "type": "google.genai.types.GenerateContentResponse"
   }
 }

@@ -7,6 +7,7 @@ import importlib.util
 import json
 from importlib import metadata
 from pathlib import Path
+from typing import Any
 from unittest.mock import patch
 
 import pytest
@@ -101,3 +102,10 @@ def test_corpus_pins_match_installed_sdks() -> None:
             continue
 
     assert {k: pins[k] for k in installed} == installed
+
+
+@pytest.mark.parametrize("case", CASES, ids=case_id)
+def test_case_sdk_package_is_a_pinned_distribution(case: dict[str, Any]) -> None:
+    pins = json.loads((CORPUS / "versions.json").read_text())["packages"]
+
+    assert case["sdk"]["package"] in {*pins, "attest-ai"}

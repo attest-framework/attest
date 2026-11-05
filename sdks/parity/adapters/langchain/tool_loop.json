@@ -85,10 +85,11 @@
         "args": {
           "inputs": {
             "input": "Where is ORD-1?"
-          },
-          "root": true
+          }
         },
         "method": "on_chain_start",
+        "parent_run_id": null,
+        "run_id": "run-1",
         "t_ms": 1000
       },
       {
@@ -117,6 +118,8 @@
           ]
         },
         "method": "on_chat_model_start",
+        "parent_run_id": "run-1",
+        "run_id": "run-2",
         "t_ms": 1100
       },
       {
@@ -162,6 +165,8 @@
           }
         },
         "method": "on_llm_end",
+        "parent_run_id": "run-1",
+        "run_id": "run-2",
         "t_ms": 1200
       },
       {
@@ -176,6 +181,8 @@
           }
         },
         "method": "on_tool_start",
+        "parent_run_id": "run-1",
+        "run_id": "run-3",
         "t_ms": 1300
       },
       {
@@ -198,6 +205,8 @@
           }
         },
         "method": "on_tool_end",
+        "parent_run_id": "run-1",
+        "run_id": "run-3",
         "t_ms": 1400
       },
       {
@@ -271,6 +280,8 @@
           ]
         },
         "method": "on_chat_model_start",
+        "parent_run_id": "run-1",
+        "run_id": "run-4",
         "t_ms": 1500
       },
       {
@@ -307,16 +318,19 @@
           }
         },
         "method": "on_llm_end",
+        "parent_run_id": "run-1",
+        "run_id": "run-4",
         "t_ms": 1600
       },
       {
         "args": {
           "outputs": {
             "output": "ORD-1 has shipped."
-          },
-          "root": true
+          }
         },
         "method": "on_chain_end",
+        "parent_run_id": null,
+        "run_id": "run-1",
         "t_ms": 1700
       }
     ]
