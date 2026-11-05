@@ -1,6 +1,8 @@
 package report
 
 import (
+	"sort"
+
 	"github.com/attest-framework/attest/engine/internal/cache"
 	"github.com/attest-framework/attest/engine/pkg/types"
 )
@@ -9,23 +11,35 @@ import (
 // baseline (pinned via `attest baseline pin <tag>`). It powers the
 // `attest report --vs <tag>` and PR-comment regression block.
 type BaselineDelta struct {
-	BaselineTag       string                `json:"baseline_tag"`
-	PassRateBaseline  float64               `json:"pass_rate_baseline"`
-	PassRateCurrent   float64               `json:"pass_rate_current"`
-	PassRateDelta     float64               `json:"pass_rate_delta"`
-	CostBaseline      float64               `json:"cost_baseline"`
-	CostCurrent       float64               `json:"cost_current"`
-	CostDelta         float64               `json:"cost_delta"`
-	DurationBaseline  int64                 `json:"duration_baseline_ms"`
-	DurationCurrent   int64                 `json:"duration_current_ms"`
-	DurationDelta     int64                 `json:"duration_delta_ms"`
-	AssertionsAdded   []string              `json:"assertions_added,omitempty"`
-	AssertionsRemoved []string              `json:"assertions_removed,omitempty"`
+	BaselineTag       string   `json:"baseline_tag"`
+	PassRateBaseline  float64  `json:"pass_rate_baseline"`
+	PassRateCurrent   float64  `json:"pass_rate_current"`
+	PassRateDelta     float64  `json:"pass_rate_delta"`
+	CostBaseline      float64  `json:"cost_baseline"`
+	CostCurrent       float64  `json:"cost_current"`
+	CostDelta         float64  `json:"cost_delta"`
+	DurationBaseline  int64    `json:"duration_baseline_ms"`
+	DurationCurrent   int64    `json:"duration_current_ms"`
+	DurationDelta     int64    `json:"duration_delta_ms"`
+	AssertionsAdded   []string `json:"assertions_added,omitempty"`
+	AssertionsRemoved []string `json:"assertions_removed,omitempty"`
+	// AssertionsChanged lists baselined ids that are gone from the head
+	// report because the assertion's spec was edited: the same scope and type
+	// are still asserted under a new id. They are not in AssertionsRemoved.
+	AssertionsChanged []ChangedAssertion    `json:"assertions_changed,omitempty"`
 	Regressions       []AssertionTransition `json:"regressions,omitempty"`
 	Improvements      []AssertionTransition `json:"improvements,omitempty"`
 	// BaselineCounts holds each baseline assertion's pinned pass tally for
 	// the policy regression rule. Not serialized.
 	BaselineCounts map[string]PassCount `json:"-"`
+}
+
+// ChangedAssertion is a baselined assertion whose spec was edited.
+type ChangedAssertion struct {
+	AssertionID    string `json:"assertion_id"`
+	NewAssertionID string `json:"new_assertion_id"`
+	ScopeID        string `json:"scope_id"`
+	Type           string `json:"type"`
 }
 
 // AssertionTransition records a status change for a single assertion
@@ -110,12 +124,7 @@ func ComputeBaselineDelta(tag string, baseline []cache.BaselineEntry, current []
 			d.AssertionsAdded = append(d.AssertionsAdded, id)
 		}
 	}
-	// Assertions present in baseline but not current — removed.
-	for id := range baselineByID {
-		if _, ok := currentByID[id]; !ok {
-			d.AssertionsRemoved = append(d.AssertionsRemoved, id)
-		}
-	}
+	d.AssertionsRemoved, d.AssertionsChanged = splitRemoved(baselineByID, currentByID)
 
 	// Status transitions for assertions present in both sides.
 	for id, b := range baselineByID {
@@ -147,6 +156,63 @@ func ComputeBaselineDelta(tag string, baseline []cache.BaselineEntry, current []
 	return d
 }
 
+// splitRemoved finds baselined ids missing from current and separates spec
+// edits from removals. A missing id is changed when current holds an id the
+// baseline lacks with the same scope id and type but a different spec hash;
+// each such new id explains one missing id. Both lists are sorted by id.
+func splitRemoved(baselineByID map[string]cache.BaselineEntry, currentByID map[string]types.AssertionResult) ([]string, []ChangedAssertion) {
+	var missing []string
+	for id := range baselineByID {
+		if _, ok := currentByID[id]; !ok {
+			missing = append(missing, id)
+		}
+	}
+	sort.Strings(missing)
+
+	type key struct{ scope, typ string }
+	fresh := make(map[key][]types.AssertionResult)
+	var freshIDs []string
+	for id := range currentByID {
+		if _, ok := baselineByID[id]; !ok {
+			freshIDs = append(freshIDs, id)
+		}
+	}
+	sort.Strings(freshIDs)
+	for _, id := range freshIDs {
+		r := currentByID[id]
+		if r.ScopeID != "" {
+			k := key{r.ScopeID, r.Type}
+			fresh[k] = append(fresh[k], r)
+		}
+	}
+
+	var removed []string
+	var changed []ChangedAssertion
+	for _, id := range missing {
+		b := baselineByID[id]
+		if b.ScopeID == "" {
+			removed = append(removed, id)
+			continue
+		}
+		k := key{b.ScopeID, b.Type}
+		matched := -1
+		for i, r := range fresh[k] {
+			if r.SpecHash != b.SpecHash {
+				matched = i
+				break
+			}
+		}
+		if matched < 0 {
+			removed = append(removed, id)
+			continue
+		}
+		c := ChangedAssertion{AssertionID: id, NewAssertionID: fresh[k][matched].AssertionID, ScopeID: b.ScopeID, Type: b.Type}
+		fresh[k] = append(fresh[k][:matched], fresh[k][matched+1:]...)
+		changed = append(changed, c)
+	}
+	return removed, changed
+}
+
 // HasChanges reports whether the delta has anything worth showing in a
 // report — used to skip rendering an empty baseline section.
 func (d BaselineDelta) HasChanges() bool {
@@ -154,6 +220,7 @@ func (d BaselineDelta) HasChanges() bool {
 		len(d.Improvements) > 0 ||
 		len(d.AssertionsAdded) > 0 ||
 		len(d.AssertionsRemoved) > 0 ||
+		len(d.AssertionsChanged) > 0 ||
 		d.PassRateDelta != 0 ||
 		d.CostDelta != 0 ||
 		d.DurationDelta != 0
@@ -231,6 +298,8 @@ func BaselineEntries(results []types.AssertionResult) []cache.BaselineEntry {
 		out = append(out, cache.BaselineEntry{
 			AssertionID:  r.AssertionID,
 			Type:         r.Type,
+			ScopeID:      r.ScopeID,
+			SpecHash:     r.SpecHash,
 			Status:       r.Status,
 			Score:        r.Score,
 			Cost:         r.Cost,

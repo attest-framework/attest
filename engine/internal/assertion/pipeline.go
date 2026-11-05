@@ -2,9 +2,11 @@ package assertion
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -78,6 +80,7 @@ var layerOrder = map[string]int{
 	types.TypeContent:    4,
 	types.TypeEmbedding:  5,
 	types.TypeLLMJudge:   6,
+	types.TypePlugin:     8,
 }
 
 // EvaluateBatch evaluates all assertions against the trace in layer order.
@@ -94,7 +97,8 @@ func (p *Pipeline) EvaluateBatch(ctx context.Context, trace *types.Trace, assert
 }
 
 // EvaluateBatchWithBudget evaluates all assertions, applying budget tracking when budget is non-nil.
-// If the soft-fail budget is exceeded, the batch stops and returns a BudgetExceededError.
+// If the soft-fail budget is exceeded, the batch still evaluates everything and
+// sets BatchResult.BudgetExceeded; it is not an error.
 // L1-4 assertions run sequentially; L5-6 fan out concurrently bounded by evalConcurrency.
 // Any L1-4 hard_fail gates L5-6. ctx cancellation is propagated to L5-6 workers.
 func (p *Pipeline) EvaluateBatchWithBudget(ctx context.Context, trace *types.Trace, assertions []types.Assertion, budget *BudgetTracker) (*BatchResult, error) {
@@ -117,6 +121,14 @@ func (p *Pipeline) EvaluateBatchWithBudget(ctx context.Context, trace *types.Tra
 		}
 	}
 	l14, l56 := sorted[:splitIdx], sorted[splitIdx:]
+	var plugins []types.Assertion
+	l56 = slices.DeleteFunc(l56, func(a types.Assertion) bool {
+		if a.Type != types.TypePlugin {
+			return false
+		}
+		plugins = append(plugins, a)
+		return true
+	})
 
 	result := &BatchResult{
 		Results: make([]types.AssertionResult, 0, len(sorted)),
@@ -148,11 +160,7 @@ func (p *Pipeline) EvaluateBatchWithBudget(ctx context.Context, trace *types.Tra
 			annotateDiagnostics(&ar, &l14[i])
 			result.Results = append(result.Results, ar)
 			hardFail = true
-			if budget != nil {
-				if budgetErr := budget.Record(&ar); budgetErr != nil {
-					return result, budgetErr
-				}
-			}
+			result.noteBudget(budget, &ar)
 			continue
 		}
 
@@ -167,11 +175,18 @@ func (p *Pipeline) EvaluateBatchWithBudget(ctx context.Context, trace *types.Tra
 			hardFail = true
 		}
 
-		if budget != nil {
-			if budgetErr := budget.Record(ar); budgetErr != nil {
-				return result, budgetErr
-			}
-		}
+		result.noteBudget(budget, ar)
+	}
+
+	// Plugin results were computed by the SDK and are free to report, so they
+	// are neither gated by an L1-4 hard failure nor able to gate L5-6.
+	for i := range plugins {
+		eval, _ := p.registry.Get(plugins[i].Type)
+		ar := eval.Evaluate(trace, &plugins[i])
+		annotateDiagnostics(ar, &plugins[i])
+		result.Results = append(result.Results, *ar)
+		result.TotalDurationMS += ar.DurationMS
+		result.noteBudget(budget, ar)
 	}
 
 	if len(l56) == 0 {
@@ -280,14 +295,23 @@ func (p *Pipeline) EvaluateBatchWithBudget(ctx context.Context, trace *types.Tra
 		result.TotalCost += l56Costs[i]
 		result.TotalDurationMS += l56Durations[i]
 
-		if budget != nil {
-			if budgetErr := budget.Record(&l56Results[i]); budgetErr != nil {
-				return result, budgetErr
-			}
-		}
+		result.noteBudget(budget, &l56Results[i])
 	}
 
 	return result, nil
+}
+
+// noteBudget records ar against the soft-fail budget. A breach sets
+// BudgetExceeded and nothing else: the batch keeps evaluating and every row,
+// hard failures included, is returned.
+func (r *BatchResult) noteBudget(budget *BudgetTracker, ar *types.AssertionResult) {
+	if budget == nil {
+		return
+	}
+	var exceeded *BudgetExceededError
+	if err := budget.Record(ar); errors.As(err, &exceeded) {
+		r.BudgetExceeded = true
+	}
 }
 
 // appendNotEvaluated appends one not_evaluated row per assertion with the

@@ -27,6 +27,7 @@ type ContextEvaluator interface {
 // Registry maps assertion type strings to Evaluator implementations.
 type Registry struct {
 	evaluators map[string]Evaluator
+	plugins    *PluginResults
 }
 
 // registryConfig holds optional Layer 5/6 configuration.
@@ -72,7 +73,9 @@ func WithHistory(store *cache.HistoryStore) RegistryOption {
 func NewRegistry(opts ...RegistryOption) *Registry {
 	r := &Registry{
 		evaluators: make(map[string]Evaluator),
+		plugins:    NewPluginResults(),
 	}
+	r.Register(types.TypePlugin, NewPluginEvaluator(r.plugins))
 	r.Register(types.TypeSchema, &SchemaEvaluator{})
 	r.Register(types.TypeConstraint, &ConstraintEvaluator{})
 	r.Register(types.TypeTrace, &TraceEvaluator{})
@@ -94,6 +97,10 @@ func NewRegistry(opts ...RegistryOption) *Registry {
 
 	return r
 }
+
+// PluginResults returns the store submit_plugin_result writes to and the
+// plugin evaluator reads from.
+func (r *Registry) PluginResults() *PluginResults { return r.plugins }
 
 // HasEvaluator returns true if an evaluator is registered for the given type.
 func (r *Registry) HasEvaluator(assertionType string) bool {

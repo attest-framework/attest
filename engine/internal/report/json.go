@@ -61,13 +61,18 @@ type JSONSummaryV2 struct {
 //
 // The schema is proto/attest/v1/report-v2.schema.json.
 type JSONReportV2 struct {
-	ReportVersion int                     `json:"report_version"`
-	Timestamp     string                  `json:"timestamp"`
-	Simulated     bool                    `json:"simulated"`
-	Summary       JSONSummaryV2           `json:"summary"`
-	Layers        []LayerSummary          `json:"layers"`
-	Results       []types.AssertionResult `json:"results"`
-	Tests         []TestRecord            `json:"tests"`
+	ReportVersion int `json:"report_version"`
+	// IDScheme is the assertion-id scheme of results[].assertion_id (2: C3).
+	IDScheme int `json:"id_scheme"`
+	// BudgetExceeded is true when any batch of the run breached the
+	// soft-fail budget; the policy blocks on it.
+	BudgetExceeded bool                    `json:"budget_exceeded"`
+	Timestamp      string                  `json:"timestamp"`
+	Simulated      bool                    `json:"simulated"`
+	Summary        JSONSummaryV2           `json:"summary"`
+	Layers         []LayerSummary          `json:"layers"`
+	Results        []types.AssertionResult `json:"results"`
+	Tests          []TestRecord            `json:"tests"`
 	// TestsCollected is the number of tests the run collected; nil when the
 	// writer did not record it.
 	TestsCollected  *int           `json:"tests_collected,omitempty"`
@@ -112,7 +117,13 @@ type ReportOptions struct {
 	Baseline *BaselineDelta
 	// Usage, when non-nil, is written to summary.usage. Ignored for v1.
 	Usage *types.Usage
+	// BudgetExceeded is written to the v2 budget_exceeded flag.
+	BudgetExceeded bool
 }
+
+// IDSchemeCurrent is the assertion-id scheme (C3) this engine writes into
+// reports and baselines and requires of baselines.
+const IDSchemeCurrent = 2
 
 // GenerateJSONReport emits a JSON report. By default it returns v2. Pass
 // ReportOptions{Version: ReportVersionV1} to emit the legacy schema for
@@ -163,6 +174,8 @@ func generateJSONV2(results []types.AssertionResult, totalCost float64, totalDur
 
 	report := JSONReportV2{
 		ReportVersion:   int(ReportVersionV2),
+		IDScheme:        IDSchemeCurrent,
+		BudgetExceeded:  opt.BudgetExceeded,
 		Timestamp:       time.Now().UTC().Format(time.RFC3339),
 		Simulated:       opt.Simulated,
 		Summary:         summary,

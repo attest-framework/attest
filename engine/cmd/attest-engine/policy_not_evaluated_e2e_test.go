@@ -37,6 +37,7 @@ func outageReport(t *testing.T, dir string) string {
 
 	data, err := json.Marshal(map[string]any{
 		"report_version": 2,
+		"id_scheme":      2,
 		"results":        batch.Results,
 		"total_cost":     batch.TotalCost,
 	})

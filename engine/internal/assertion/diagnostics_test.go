@@ -3,6 +3,7 @@ package assertion
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/attest-framework/attest/engine/pkg/types"
@@ -133,5 +134,22 @@ func TestTruncate_ShortString(t *testing.T) {
 	got := truncate("short")
 	if got != "short" {
 		t.Errorf("truncate(short) = %q, want unchanged", got)
+	}
+}
+
+func TestAnnotateDiagnostics_LoneSurrogateSpec_IsHardFailInvalidInput(t *testing.T) {
+	a := &types.Assertion{
+		AssertionID: "x", Type: "output_contains", ScopeID: "t::a",
+		Spec: json.RawMessage(`{"k":"\ud800"}`),
+	}
+	r := &types.AssertionResult{AssertionID: "x", Status: types.StatusPass}
+
+	annotateDiagnostics(r, a)
+
+	if r.Status != types.StatusHardFail {
+		t.Fatalf("status = %q, want hard_fail", r.Status)
+	}
+	if !strings.Contains(r.Explanation, "invalid input") {
+		t.Fatalf("explanation = %q, want an invalid input message", r.Explanation)
 	}
 }

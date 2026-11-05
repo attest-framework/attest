@@ -1,12 +1,15 @@
 package assertion
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"strings"
 	"time"
 
 	"github.com/segmentio/encoding/json"
 
+	"github.com/attest-framework/attest/engine/internal/report/assertionid"
 	"github.com/attest-framework/attest/engine/pkg/types"
 )
 
@@ -29,6 +32,18 @@ func annotateDiagnostics(r *types.AssertionResult, a *types.Assertion) {
 	}
 	if r.Type == "" {
 		r.Type = a.Type
+	}
+	if r.ScopeID == "" {
+		r.ScopeID = a.ScopeID
+	}
+	if r.SpecHash == "" {
+		r.SpecHash = SpecHash(a.Spec)
+	}
+	if err := assertionid.Validate(a.ScopeID, a.Type, a.Spec); err != nil {
+		r.Status = types.StatusHardFail
+		r.Reason = ""
+		r.Score = 0
+		r.Explanation = "invalid input: no assertion id can be computed: " + err.Error()
 	}
 	if r.Layer == 0 {
 		r.Layer = types.LayerForType(a.Type)
@@ -141,4 +156,17 @@ func notEvaluatedResult(assertion *types.Assertion, start time.Time, reason, exp
 		DurationMS:  time.Since(start).Milliseconds(),
 		RequestID:   assertion.RequestID,
 	}
+}
+
+// SpecHash returns the sha256 (hex) of a spec's RFC 8785 (JCS) canonical
+// bytes, the same canonical_spec the assertion id recipe uses. An empty or
+// non-canonicalizable spec hashes the empty string so the row still carries a
+// stable value.
+func SpecHash(spec json.RawMessage) string {
+	canon, err := assertionid.Canonicalize(spec)
+	if err != nil {
+		canon = nil
+	}
+	sum := sha256.Sum256(canon)
+	return hex.EncodeToString(sum[:])
 }

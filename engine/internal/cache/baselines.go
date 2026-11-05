@@ -25,6 +25,13 @@ type BaselineEntry struct {
 	Passes       int
 	Evaluated    int
 	NotEvaluated int
+	// IDScheme is the assertion-id scheme of the report this row was pinned
+	// from (C3). Rows pinned before id schemes existed read as scheme 1.
+	IDScheme int
+	// ScopeID and SpecHash identify what the assertion asserted, so a
+	// comparison can report a spec edit as changed instead of removed (C4).
+	ScopeID  string
+	SpecHash string
 }
 
 // BaselineSummary aggregates the rows of a single baseline tag for listing.
@@ -102,8 +109,8 @@ func (b *BaselineStore) Pin(tag string, entries []BaselineEntry) error {
 	stmt, err := tx.Prepare(`
 		INSERT INTO baselines
 		(tag, assertion_id, assertion_type, status, score, cost, duration_ms, pinned_at,
-		 passes, evaluated, not_evaluated)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		 passes, evaluated, not_evaluated, id_scheme, scope_id, spec_hash)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`)
 	if err != nil {
 		return fmt.Errorf("prepare insert: %w", err)
@@ -114,6 +121,9 @@ func (b *BaselineStore) Pin(tag string, entries []BaselineEntry) error {
 	for _, e := range entries {
 		if e.Evaluated == 0 && e.NotEvaluated == 0 {
 			e.Passes, e.Evaluated, e.NotEvaluated = legacyCounts(e.Status)
+		}
+		if e.IDScheme == 0 {
+			e.IDScheme = 1
 		}
 		if _, err := stmt.Exec(
 			tag,
@@ -127,6 +137,9 @@ func (b *BaselineStore) Pin(tag string, entries []BaselineEntry) error {
 			e.Passes,
 			e.Evaluated,
 			e.NotEvaluated,
+			e.IDScheme,
+			e.ScopeID,
+			e.SpecHash,
 		); err != nil {
 			return fmt.Errorf("insert entry %s: %w", e.AssertionID, err)
 		}
@@ -143,7 +156,7 @@ func (b *BaselineStore) Pin(tag string, entries []BaselineEntry) error {
 func (b *BaselineStore) Get(tag string) ([]BaselineEntry, error) {
 	rows, err := b.db.Query(`
 		SELECT tag, assertion_id, assertion_type, status, score, cost, duration_ms, pinned_at,
-		       passes, evaluated, not_evaluated
+		       passes, evaluated, not_evaluated, id_scheme, scope_id, spec_hash
 		FROM baselines
 		WHERE tag = ?
 		ORDER BY assertion_id
@@ -169,6 +182,9 @@ func (b *BaselineStore) Get(tag string) ([]BaselineEntry, error) {
 			&e.Passes,
 			&e.Evaluated,
 			&e.NotEvaluated,
+			&e.IDScheme,
+			&e.ScopeID,
+			&e.SpecHash,
 		); err != nil {
 			return nil, fmt.Errorf("scan baseline row: %w", err)
 		}
@@ -272,6 +288,9 @@ func addBaselineCountColumns(db *sql.DB) error {
 		{"passes", "INTEGER NOT NULL DEFAULT -1"},
 		{"evaluated", "INTEGER NOT NULL DEFAULT -1"},
 		{"not_evaluated", "INTEGER NOT NULL DEFAULT 0"},
+		{"id_scheme", "INTEGER NOT NULL DEFAULT 1"},
+		{"scope_id", "TEXT NOT NULL DEFAULT ''"},
+		{"spec_hash", "TEXT NOT NULL DEFAULT ''"},
 	} {
 		if have[col.name] {
 			continue
