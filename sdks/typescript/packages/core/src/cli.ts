@@ -37,8 +37,10 @@ const SDK_USAGE =
   "                      .codex/config.toml) with attest-engine;\n" +
   "                      --json prints {created, updated, skipped} paths as JSON)\n" +
   "\n" +
-  "`attest capture` (engine) also drafts tests/attest/<name>.test.ts from a verified\n" +
-  "fixture, unless that file exists.\n" +
+  "`attest capture` (engine) also drafts tests/attest/<name>.test.ts from a fixture that\n" +
+  "is consistent with the recording, unless that file exists. For a command capture the\n" +
+  "test re-runs the command under strict replay (egress blocked) and evaluates the\n" +
+  "contracts on the new run.\n" +
   "\n" +
   "options:\n" +
   "  --version  print the SDK version and the engine version it requires\n" +
@@ -212,6 +214,20 @@ export function captureWritesFixture(args: string[]): boolean {
   return true;
 }
 
+/** The `--world` file of `attest capture` args (before the `--` command), resolved against cwd. */
+export function captureWorldPath(args: string[]): string | undefined {
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i] as string;
+    if (a === "--") return undefined;
+    const [name, ...rest] = a.split("=");
+    if (name === "--world" || name === "-world") {
+      const value = rest.length > 0 ? rest.join("=") : args[i + 1];
+      return value === undefined ? undefined : path.resolve(value);
+    }
+  }
+  return undefined;
+}
+
 function userResultFile(args: string[]): boolean {
   for (const a of args) {
     if (a === "--") break;
@@ -247,11 +263,11 @@ function captureAndEmit(engine: string, args: string[]): number {
     process.stderr.write(`  test: none drafted ${reason} ${fixture}\n`);
     return code;
   }
-  const written = emitVitest(fixture);
+  const written = emitVitest(fixture, { cwd: process.cwd(), world: captureWorldPath(args) });
   process.stderr.write(
     written === null
       ? `  test: ${testPathFor(fixture)} exists; left unchanged\n`
-      : `  test: drafted ${written}\n`,
+      : `  test: drafted ${written}; it re-runs the command under strict replay and passes while the new run is consistent with the recording\n`,
   );
   return code;
 }

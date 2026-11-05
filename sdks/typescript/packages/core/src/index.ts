@@ -37,6 +37,7 @@ export {
   CaptureError,
   loadFixture,
   record,
+  replayRun,
   emitVitest,
   renderVitest,
   dslCall,
@@ -49,6 +50,8 @@ export type {
   Fixture,
   RecordOptions,
   RecordResult,
+  ReplayRunOptions,
+  Rerun,
 } from "./capture.js";
 export {
   ReplayError,

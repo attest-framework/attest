@@ -8,11 +8,14 @@
  * - `record()` captures the code in a callback in this process.
  * - `loadFixture()` reads a fixture (`proto/attest/v1/fixture-v1.schema.json`).
  * - `emitVitest()` writes the fixture's drafted contracts as a Vitest file, using the
- *   `attestExpect()` DSL. `attest capture` and `record()` call it.
+ *   `attestExpect()` DSL. `attest capture` and `record()` call it. For a fixture captured
+ *   from a command, the test re-runs that command under strict replay (`replayRun()`) and
+ *   evaluates the contracts on the new run's trace.
  */
 
 import { spawn } from "node:child_process";
 import * as fs from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { resolveEngine } from "./engine-manager.js";
@@ -215,6 +218,16 @@ export function dslCall(contract: Contract): string {
 }
 
 /**
+ * Where a drafted replay test re-runs the fixture's source command: `cwd` is the directory
+ * the capture ran in (the command's relative paths resolve there), `world` the world file
+ * the capture hosted, if any.
+ */
+export interface Rerun {
+  cwd: string;
+  world?: string;
+}
+
+/**
  * Where the drafted test for a fixture goes: `tests/attest/<name>.test.ts` for
  * `tests/attest/fixtures/<name>.attest.json`.
  */
@@ -223,15 +236,97 @@ export function testPathFor(fixturePath: string): string {
   return path.join(path.dirname(path.dirname(fixturePath)), `${name}.test.ts`);
 }
 
+function relUrl(target: string, testPath: string): string {
+  const rel = path.relative(path.dirname(testPath), target).split(path.sep).join("/");
+  const url = rel === "" ? "." : rel;
+  return `new URL(${ts(url.startsWith(".") ? url : `./${url}`)}, import.meta.url)`;
+}
+
+function chainLines(calls: Array<[Contract, string]>, subject: string, param: string): string[] {
+  const lines = [`function contracts(${param}): ExpectChain {`, `  return attestExpect(${subject})`];
+  for (const [c, dsl] of calls) {
+    lines.push(`    // ${comment(`${c.id}: ${c.description}`)}`, `    ${dsl}`);
+  }
+  lines[lines.length - 1] += ";";
+  lines.push("}");
+  return lines;
+}
+
+function skippedLines(skipped: string[]): string[] {
+  if (skipped.length === 0) return [];
+  return ["", "// Drafted contracts without a TypeScript DSL call (left out):", ...skipped.map((s) => `// - ${comment(s)}`)];
+}
+
+function renderReplay(
+  fixture: Fixture,
+  calls: Array<[Contract, string]>,
+  skipped: string[],
+  fixturePath: string,
+  testPath: string,
+  rerun: Rerun,
+): string {
+  const meaning = fixture.verification.expect_fail
+    ? [
+        "// The recording is an incident: these contracts failed on it. The test passes once",
+        "// the new run satisfies them, so it fails again if the agent regresses.",
+      ]
+    : ["// The test fails when the agent's behavior stops satisfying them."];
+  const world = rerun.world === undefined ? "undefined" : relUrl(rerun.world, testPath);
+  const lines = [
+    `// Replay test drafted by \`attest capture\` from fixture ${comment(ts(fixture.name))}.`,
+    "//",
+    "// Re-runs the fixture's source command under strict replay with egress blocked (the",
+    "// engine's `replay --mode strict --no-live`): the recorded model responses answer the",
+    "// agent's calls, and a call that matches no recording fails the test. The drafted",
+    "// contracts are evaluated on the NEW run's trace, not on the recording.",
+    ...meaning,
+    "//",
+    "// A pass means the new run is consistent with the recording and satisfies the drafted",
+    "// contracts; it does not prove the agent correct. Identities are compared by role",
+    "// (relative identity): a run that swaps who plays which role misses, while the absolute",
+    "// identity is not checked. Review and edit before committing. Re-capturing does not",
+    "// overwrite this file.",
+    `import { attestExpect, replayRun, type ExpectChain } from "@attest-ai/core";`,
+    `import type { Trace } from "@attest-ai/core/proto";`,
+    `import { evaluate } from "@attest-ai/vitest";`,
+    `import { describe, it } from "vitest";`,
+    "",
+    `const FIXTURE = ${relUrl(fixturePath, testPath)};`,
+    "// The directory `attest capture` ran in: the source command's relative paths start here.",
+    `const RUN_DIR = ${relUrl(rerun.cwd, testPath)};`,
+    `const WORLD = ${world};`,
+    ...skippedLines(skipped),
+    "",
+    ...chainLines(calls, "trace", "trace: Trace"),
+    "",
+    `describe(${ts(fixture.name)}, () => {`,
+    `  it("new run is consistent with the recording", async () => {`,
+    "    const trace = await replayRun(FIXTURE, { cwd: RUN_DIR, world: WORLD });",
+    "",
+    "    await evaluate(contracts(trace));",
+    "  });",
+    "});",
+  ];
+  return `${lines.join("\n")}\n`;
+}
+
 /**
  * Render a fixture's drafted contracts as a Vitest module.
  *
- * A verified fixture becomes a test that enforces every contract with `evaluate`. An
- * incident reproduction (`expect_fail`) becomes a test that checks, with `inspect`, that
- * the expected failures still fail and the other contracts still pass; it stays green
- * while it reproduces the incident.
+ * With `rerun` and a fixture captured from a command, the test re-runs that command under
+ * strict replay and evaluates every contract on the new run's trace (an incident
+ * reproduction included: it passes once the agent no longer reproduces the incident).
+ * Otherwise a verified fixture becomes a test that enforces every contract on the recorded
+ * trace with `evaluate`, and an incident reproduction (`expect_fail`) a test that checks,
+ * with `inspect`, that the expected failures still fail and the other contracts still
+ * pass; it stays green while it reproduces the incident.
  */
-export function renderVitest(fixture: Fixture, fixturePath: string, testPath: string): string {
+export function renderVitest(
+  fixture: Fixture,
+  fixturePath: string,
+  testPath: string,
+  rerun?: Rerun,
+): string {
   const calls: Array<[Contract, string]> = [];
   const skipped: string[] = [];
   for (const c of fixture.contracts) {
@@ -241,7 +336,9 @@ export function renderVitest(fixture: Fixture, fixturePath: string, testPath: st
       skipped.push((err as Error).message);
     }
   }
-  const rel = path.relative(path.dirname(testPath), fixturePath).split(path.sep).join("/");
+  if (rerun !== undefined && fixture.source.kind === "command" && fixture.source.replay_capable) {
+    return renderReplay(fixture, calls, skipped, fixturePath, testPath, rerun);
+  }
   const status = new Map(fixture.verification.results.map((r) => [r.contract, r.status]));
   const expectFail = fixture.verification.expect_fail;
 
@@ -254,18 +351,11 @@ export function renderVitest(fixture: Fixture, fixturePath: string, testPath: st
     `import { ${expectFail ? "inspect" : "evaluate"} } from "@attest-ai/vitest";`,
     `import { describe, ${expectFail ? "expect, " : ""}it } from "vitest";`,
     "",
-    `const FIXTURE = loadFixture(new URL(${ts(rel.startsWith(".") ? rel : `./${rel}`)}, import.meta.url));`,
+    `const FIXTURE = loadFixture(${relUrl(fixturePath, testPath)});`,
+    ...skippedLines(skipped),
+    "",
+    ...chainLines(calls, "FIXTURE.trace", ""),
   ];
-  if (skipped.length > 0) {
-    lines.push("", "// Drafted contracts without a TypeScript DSL call (left out):");
-    for (const s of skipped) lines.push(`// - ${comment(s)}`);
-  }
-  lines.push("", "function contracts(): ExpectChain {", "  return attestExpect(FIXTURE.trace)");
-  for (const [c, dsl] of calls) {
-    lines.push(`    // ${comment(`${c.id}: ${c.description}`)}`, `    ${dsl}`);
-  }
-  lines[lines.length - 1] += ";";
-  lines.push("}");
   if (expectFail) {
     lines.push("", "// Status of each contract on the captured incident, in contracts() order.");
     lines.push("const EXPECTED: Array<[string, string]> = [");
@@ -297,16 +387,17 @@ export function renderVitest(fixture: Fixture, fixturePath: string, testPath: st
 /**
  * Write the drafted Vitest file for a fixture unless it already exists. Returns the path
  * written, or null when a test file is already there (re-capturing never overwrites an
- * edited test).
+ * edited test). `rerun` makes the test of a command fixture re-run the command under strict
+ * replay (see `renderVitest`).
  */
-export function emitVitest(fixturePath: string): string | null {
+export function emitVitest(fixturePath: string, rerun?: Rerun): string | null {
   const testPath = testPathFor(fixturePath);
   const existing = fs.lstatSync(testPath, { throwIfNoEntry: false });
   if (existing?.isSymbolicLink()) {
     throw new CaptureError(`${testPath} is a symbolic link; refusing to draft a test through it`);
   }
   if (existing !== undefined) return null;
-  const source = renderVitest(loadFixture(fixturePath), fixturePath, testPath);
+  const source = renderVitest(loadFixture(fixturePath), fixturePath, testPath, rerun);
   fs.mkdirSync(path.dirname(testPath), { recursive: true });
   // Create exclusively: "wx" fails on any existing path, a link planted after
   // the check included, and never writes through it.
@@ -319,6 +410,107 @@ export function emitVitest(fixturePath: string): string | null {
     throw err;
   }
   return testPath;
+}
+
+// ------------------------------------------------------------------------ replayRun()
+
+const OTHER_PROVIDER_KEYS = ["ANTHROPIC_API_KEY", "GOOGLE_API_KEY", "GEMINI_API_KEY"];
+const REPLAY_TIMEOUT_MS = 300_000;
+const STDERR_TAIL = 4000;
+
+export interface ReplayRunOptions {
+  /** Directory to run the command in (the one the capture ran in). */
+  cwd?: string | URL;
+  /** World file the capture hosted, when the fixture has a `world` section. */
+  world?: string | URL;
+  /** Engine binary; default is the SDK's discovery order. */
+  enginePath?: string;
+  /** Milliseconds before the run is abandoned (default 300000). */
+  timeoutMs?: number;
+}
+
+/**
+ * Re-run a fixture's source command under strict replay and return the new run's trace.
+ *
+ * Runs `attest-engine replay --mode strict --no-live --trace-out ... -- <command>`: the
+ * command's model calls are answered from the fixture's recorded exchanges, a call that
+ * matches no recording fails, and nothing reaches a provider (`--no-live`, the other
+ * providers' keys removed, `OPENAI_API_KEY` a placeholder, `ATTEST_EGRESS=block` for any
+ * attest guard inside the command).
+ *
+ * Rejects with `CaptureError` when the fixture has no replayable source command, the
+ * command failed, a request matched no recording, or no trace came out.
+ */
+export async function replayRun(fixture: string | URL, options: ReplayRunOptions = {}): Promise<Trace> {
+  const fp = path.resolve(toPath(fixture));
+  const doc = loadFixture(fp);
+  const command = doc.source.command;
+  if (doc.source.kind !== "command" || !doc.source.replay_capable || !command || command.length === 0) {
+    throw new CaptureError(`${fp}: not a command capture with recorded exchanges; cannot replay`);
+  }
+  if (doc.world !== null && options.world === undefined) {
+    throw new CaptureError(`${fp}: captured with a world; pass the world file the capture ran with`);
+  }
+  const env: NodeJS.ProcessEnv = { ...process.env, OPENAI_API_KEY: "replay-needs-no-key", ATTEST_EGRESS: "block" };
+  for (const key of OTHER_PROVIDER_KEYS) delete env[key];
+  const engine = await resolveEngine(options.enginePath);
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "attest-replay-"));
+  try {
+    const traceFile = path.join(tmp, "trace.json");
+    const argv = ["replay", "--fixture", fp, "--mode", "strict", "--no-live", "--trace-out", traceFile];
+    if (options.world !== undefined) argv.push("--world", path.resolve(toPath(options.world)));
+    argv.push("--", ...command);
+    const timeoutMs = options.timeoutMs ?? REPLAY_TIMEOUT_MS;
+    const run = await runEngine(engine, argv, {
+      cwd: options.cwd === undefined ? undefined : toPath(options.cwd),
+      env,
+      timeoutMs,
+    });
+    if (run.error !== null) throw new CaptureError(`${fp}: ${run.error}`);
+    if (run.timedOut) throw new CaptureError(`${fp}: replay run exceeded ${timeoutMs}ms`);
+    if (run.code !== 0) {
+      throw new CaptureError(`${fp}: replay run exited ${run.code ?? run.signal}\n${run.stderr.slice(-STDERR_TAIL)}`);
+    }
+    return JSON.parse(fs.readFileSync(traceFile, "utf8")) as Trace;
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+}
+
+interface EngineRun {
+  code: number | null;
+  signal: NodeJS.Signals | null;
+  stderr: string;
+  timedOut: boolean;
+  error: string | null;
+}
+
+function runEngine(
+  engine: string,
+  argv: string[],
+  opts: { cwd: string | undefined; env: NodeJS.ProcessEnv; timeoutMs: number },
+): Promise<EngineRun> {
+  return new Promise((resolve) => {
+    const child = spawn(engine, argv, { cwd: opts.cwd, env: opts.env, stdio: ["ignore", "pipe", "pipe"] });
+    let stderr = "";
+    let timedOut = false;
+    child.stdout.resume();
+    child.stderr.setEncoding("utf8").on("data", (chunk: string) => {
+      stderr += chunk;
+    });
+    const timer = setTimeout(() => {
+      timedOut = true;
+      child.kill("SIGKILL");
+    }, opts.timeoutMs);
+    child.on("error", (err) => {
+      clearTimeout(timer);
+      resolve({ code: null, signal: null, stderr, timedOut, error: `could not start the replay run: ${err.message}` });
+    });
+    child.on("close", (code, signal) => {
+      clearTimeout(timer);
+      resolve({ code, signal, stderr, timedOut, error: null });
+    });
+  });
 }
 
 // ---------------------------------------------------------------------------- record()
