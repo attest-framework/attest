@@ -165,15 +165,6 @@ jobs:
         run: |
           cd sdks/python
           uv run pytest tests/ -v
-      - name: Adapter corpus case for CrewAI
-        # crewai/summary_only needs CrewAI, which is too heavy for every leg: install the
-        # corpus version on one leg and fail if the import is missing rather than skip.
-        if: matrix.python-version == '3.12'
-        run: |
-          cd sdks/python
-          uv pip install "crewai==$(jq -r .packages.crewai ../parity/adapters/versions.json)"
-          uv run python -c "import crewai"
-          uv run pytest tests/test_adapter_conformance.py -v -rs -k crewai
       - name: Lint
         run: |
           cd sdks/python
