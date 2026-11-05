@@ -3,7 +3,9 @@ package cache
 import (
 	"database/sql"
 	"fmt"
+	"log/slog"
 	"math"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -16,17 +18,16 @@ import (
 type HistoryStore struct {
 	db           *sql.DB
 	insertCount  atomic.Int64
+	pruning      atomic.Bool
+	pruneWG      sync.WaitGroup
 	pruneMaxRows int
 	pruneMaxDays int
 }
 
 // NewHistoryStore creates the assertion_history table and index if they don't exist,
-// then returns a HistoryStore backed by the provided *sql.DB.
+// then returns a HistoryStore backed by the provided *sql.DB. Production
+// callers pass the handle from Open, which carries WAL and busy_timeout.
 func NewHistoryStore(db *sql.DB) (*HistoryStore, error) {
-	if _, err := db.Exec(`PRAGMA journal_mode=WAL`); err != nil {
-		return nil, fmt.Errorf("set WAL mode: %w", err)
-	}
-
 	if _, err := db.Exec(`
 		CREATE TABLE IF NOT EXISTS assertion_history (
 			id             INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -68,7 +69,8 @@ func (h *HistoryStore) SetPruneConfig(maxRows, maxAgeDays int) {
 }
 
 // Record inserts a single assertion result row into assertion_history.
-// Every 100th insert triggers a background prune using the configured limits.
+// Every 100th insert starts a background prune using the configured limits; a
+// prune already running absorbs the trigger, and Record never waits for it.
 // not_evaluated rows carry no score and are not recorded, so outages and
 // simulation runs never skew drift baselines.
 func (h *HistoryStore) Record(traceID, assertionID, assertionType string, score float64, status string) error {
@@ -85,12 +87,24 @@ func (h *HistoryStore) Record(traceID, assertionID, assertionType string, score 
 	}
 
 	n := h.insertCount.Add(1)
-	if n%100 == 0 {
-		// Non-fatal: prune errors are logged by callers if needed.
-		_ = h.Prune(h.pruneMaxRows, h.pruneMaxDays)
+	if n%100 == 0 && h.pruning.CompareAndSwap(false, true) {
+		h.pruneWG.Add(1)
+		go func() {
+			defer h.pruneWG.Done()
+			defer h.pruning.Store(false)
+			if err := h.Prune(h.pruneMaxRows, h.pruneMaxDays); err != nil {
+				slog.Error("history prune failed", "err", err)
+			}
+		}()
 	}
 
 	return nil
+}
+
+// WaitForPrune blocks until any background prune has finished. Callers that
+// close the database or assert on row counts use it; Record never does.
+func (h *HistoryStore) WaitForPrune() {
+	h.pruneWG.Wait()
 }
 
 // Prune removes stale and excess rows from assertion_history.
@@ -105,14 +119,17 @@ func (h *HistoryStore) Prune(maxRows int, maxAgeDays int) error {
 		return fmt.Errorf("prune by age: %w", err)
 	}
 
-	// Per assertion_id, delete rows not in the most-recent maxRows set.
+	// Per assertion_id, delete every row ranked past the maxRows most recent.
+	// The (assertion_id, created_at) index serves the window without a sort.
 	if _, err := h.db.Exec(
 		`DELETE FROM assertion_history
-		 WHERE id NOT IN (
-		   SELECT id FROM assertion_history a2
-		   WHERE a2.assertion_id = assertion_history.assertion_id
-		   ORDER BY a2.created_at DESC
-		   LIMIT ?
+		 WHERE id IN (
+		   SELECT id FROM (
+		     SELECT id, ROW_NUMBER() OVER (
+		       PARTITION BY assertion_id ORDER BY created_at DESC, id DESC
+		     ) AS rn
+		     FROM assertion_history
+		   ) WHERE rn > ?
 		 )`,
 		maxRows,
 	); err != nil {

@@ -2,7 +2,6 @@ package server
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"fmt"
 	"github.com/segmentio/encoding/json"
@@ -171,24 +170,24 @@ func buildRegistryOptions(logger *slog.Logger) ([]assertion.RegistryOption, []st
 		if err := os.MkdirAll(cacheDir, 0o755); err != nil {
 			logger.Warn("failed to create cache dir for history store", "dir", cacheDir, "err", err)
 		} else {
-			db, err := openHistoryDB(dbPath)
+			db, release, err := cache.Open(dbPath)
 			if err != nil {
 				logger.Warn("failed to open history db", "err", err)
 			} else {
 				hs, err := cache.NewHistoryStore(db)
 				if err != nil {
 					logger.Warn("failed to create history store", "err", err)
-					db.Close()
+					release()
 				} else {
 					// Configure retention from env vars.
 					maxRows, envErr := envInt("ATTEST_HISTORY_MAX_ROWS", 0)
 					if envErr != nil {
-						db.Close()
+						release()
 						return nil, nil, providers{}, nil, envErr
 					}
 					maxDays, envErr := envInt("ATTEST_HISTORY_MAX_AGE_DAYS", 0)
 					if envErr != nil {
-						db.Close()
+						release()
 						return nil, nil, providers{}, nil, envErr
 					}
 					if maxRows > 0 || maxDays > 0 {
@@ -208,15 +207,6 @@ func buildRegistryOptions(logger *slog.Logger) ([]assertion.RegistryOption, []st
 	}
 
 	return opts, caps, provs, historyStore, nil
-}
-
-// openHistoryDB opens the SQLite database at dbPath for the history store.
-func openHistoryDB(dbPath string) (*sql.DB, error) {
-	db, err := sql.Open("sqlite", dbPath)
-	if err != nil {
-		return nil, fmt.Errorf("open sqlite: %w", err)
-	}
-	return db, nil
 }
 
 // cacheDirectory returns the cache directory from env or default.

@@ -21,6 +21,7 @@ type JudgeCacheEntry struct {
 // model name never share scores.
 type JudgeCache struct {
 	db       *sql.DB
+	release  func() error
 	maxMB    int
 	endpoint string
 }
@@ -32,14 +33,9 @@ func NewJudgeCache(dbPath string, maxMB int, endpoint string) (*JudgeCache, erro
 	if endpoint == "" {
 		return nil, fmt.Errorf("judge cache: endpoint is required")
 	}
-	db, err := sql.Open("sqlite", dbPath)
+	db, release, err := Open(dbPath)
 	if err != nil {
-		return nil, fmt.Errorf("open sqlite: %w", err)
-	}
-
-	if _, err := db.Exec(`PRAGMA journal_mode=WAL`); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("set WAL mode: %w", err)
+		return nil, err
 	}
 
 	if _, err := db.Exec(`
@@ -54,16 +50,16 @@ func NewJudgeCache(dbPath string, maxMB int, endpoint string) (*JudgeCache, erro
 			PRIMARY KEY (content_hash, rubric, model)
 		)
 	`); err != nil {
-		db.Close()
+		release()
 		return nil, fmt.Errorf("create table: %w", err)
 	}
 
 	if _, err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_judge_accessed ON judge_cache(accessed_at)`); err != nil {
-		db.Close()
+		release()
 		return nil, fmt.Errorf("create index: %w", err)
 	}
 
-	return &JudgeCache{db: db, maxMB: maxMB, endpoint: endpoint}, nil
+	return &JudgeCache{db: db, release: release, maxMB: maxMB, endpoint: endpoint}, nil
 }
 
 // JudgePromptKey returns the SHA-256 hex digest of everything that shapes
@@ -146,7 +142,7 @@ func (c *JudgeCache) Clear() error {
 
 // Close releases the database connection.
 func (c *JudgeCache) Close() error {
-	return c.db.Close()
+	return c.release()
 }
 
 func (c *JudgeCache) evictIfNeeded() error {
