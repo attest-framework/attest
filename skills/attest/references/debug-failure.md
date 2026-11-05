@@ -57,6 +57,8 @@ Attest diagnostic — 1 of 4 assertions failed:
 
 Failure classes on `hard_fail` / `soft_fail` rows: `broken_code`, `flaky_judge`, `bad_rubric`, `missing_trace_data`, `stochastic_variance` (a judge or embedding score within 0.05 of the assertion's own threshold) and `spec_error` (the assertion spec is invalid: unknown rubric, `repeat` outside 1–16, unknown bias probe, missing `target`; fix the test, not the agent).
 
+A `hard_fail` whose explanation starts `dynamic threshold: score … < bar …` (`threshold_source: "dynamic"`, with `drift` on the row) is a `threshold="dynamic"` assertion scoring below `max(0.8, mean − 2·max(σ, 0.02))` of its last 50 passing or soft runs, even above 0.8. It is a regression against the assertion's own history, not a missed static bar: compare the score with the `drift` mean, check what changed in the agent or the judge model, and do not lower the threshold to make it pass. With fewer than 10 such runs the static threshold applies and the row has no `drift`. See `attest guide judges`; production alerts are in `attest guide continuous-eval`.
+
 ## 4. Replay misses
 
 A strict miss fails the test with the first component that changed (example fixture: `checkout-timeout`):

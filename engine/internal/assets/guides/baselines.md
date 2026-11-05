@@ -51,6 +51,8 @@ Reordering assertions keeps every id, so it passes. An id is a hash of the test 
 
 Reports and baselines carry `id_scheme: 2`. A baseline pinned before 1.1 uses scheme 1 (ordinal ids); `attest policy evaluate --baseline` refuses to compare against it and exits 3 with `baseline uses id scheme 1; re-pin it on 1.1`, rather than reporting every assertion as removed. The check applies to the head report too: a report without `id_scheme: 2` (written by an SDK older than 1.1) exits 3 with `report uses id scheme 1; re-run with an SDK on 1.1`. Re-pin the tag from a 1.1 report. Rolling back to 1.0 orphans baselines pinned on 1.1.
 
+The same ids key the result history behind `threshold="dynamic"` and drift alerts. History written before 1.1 under ordinal ids matches no assertion, so each baseline restarts at the 10-run cold start ([continuous eval](continuous-eval.md#upgrading)).
+
 ## Trials and the regression rule
 
 A baseline pinned from a fixed-N run (`pytest --attest-trials=N`, Vitest `trials()`) keeps each assertion's pass tally. A policy with a `regression` rule compares the new tally with the baseline tally using a Wilson interval and returns `pass`, `regressed` or `inconclusive`, so one flaky trial in twenty does not read as a regression. See [statistical verdicts](statistical-verdicts.md).
