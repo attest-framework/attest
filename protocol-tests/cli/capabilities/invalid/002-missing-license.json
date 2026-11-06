@@ -56,7 +56,7 @@
       "assertion_types": [
         "embedding"
       ],
-      "cost": "paid",
+      "cost": "provider_dependent",
       "deterministic": false
     },
     {
@@ -66,7 +66,7 @@
       "assertion_types": [
         "llm_judge"
       ],
-      "cost": "paid",
+      "cost": "provider_dependent",
       "deterministic": false
     },
     {
@@ -76,7 +76,7 @@
       "assertion_types": [
         "plugin"
       ],
-      "cost": "free",
+      "cost": "plugin_defined",
       "deterministic": false
     }
   ],
