@@ -145,7 +145,7 @@ func TestSkills_EverySkillHasNameAndDescription(t *testing.T) {
 	}
 }
 
-var refreshWithYes = regexp.MustCompile("capture --refresh\\s+\\S+\\s+--yes")
+var refreshWithYes = regexp.MustCompile(`capture --refresh\s+\S+\s+--yes`)
 
 func TestSkills_RefreshNeverAutoConfirmed(t *testing.T) {
 	root := assets.SkillsFS()
