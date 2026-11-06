@@ -52,16 +52,19 @@ export interface TraceSpec {
 
 export interface EffectSpec {
   readonly type: "effect";
-  readonly check: "count" | "unique" | "idempotent";
+  readonly check: "count" | "unique" | "idempotent" | "sum" | "matches";
   /** A world-v1 snapshot, or `null` when the test ran without a world helper. */
   readonly world: Record<string, unknown> | null;
   readonly resource: string;
   readonly where?: Record<string, unknown>;
   readonly equals?: number;
-  readonly at_most?: number;
+  /** A count or sum bound; a sum bound may be a `related` reference. */
+  readonly at_most?: number | { readonly related: { readonly resource: string; readonly field: string; readonly on: string } };
   readonly at_least?: number;
   readonly fields?: string[];
   readonly field?: string;
+  /** The `matches` target. */
+  readonly related?: { readonly resource: string; readonly field: string; readonly on: string };
 }
 
 export interface ContentSpec {

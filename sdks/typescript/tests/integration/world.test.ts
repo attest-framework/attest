@@ -14,6 +14,7 @@ import {
   attestExpect,
   startWorld,
 } from "../../packages/core/src/index.js";
+import { related } from "../../packages/core/src/expect.js";
 import type { WorldSnapshot } from "../../packages/core/src/index.js";
 import type { AssertionResult, Trace } from "../../packages/core/src/proto/types.js";
 
@@ -128,6 +129,46 @@ describe.skipIf(!existsSync(enginePath))("world (real engine)", { timeout: 30_00
     const noKey = await check(doubled, (w) => w.idempotent("refunds", { where: { order_id: "O-1042" } }));
     expect(noKey.status).toBe("hard_fail");
     expect(noKey.explanation).toMatch(/^effect violated:/);
+  });
+
+  it("sum and matches report relational violations from the engine", async () => {
+    const snapshot = (refunds: unknown[], notifications: unknown[]): WorldSnapshot => ({
+      world_version: 1,
+      definition_sha256: "0".repeat(64),
+      state: {
+        orders: [{ order_id: "O-2077", customer_id: "C-0311", amount_cents: 12600 }],
+        refunds,
+        notifications,
+      },
+      faults_fired: [],
+      faults_fired_count: 0,
+    });
+    const bound = related("orders", "amount_cents", { on: "order_id" });
+    const sumCheck = (w: Parameters<Parameters<typeof check>[1]>[0]) =>
+      w.sum("refunds", "amount_cents", { atMost: bound });
+    const refund = (cents: number) => ({ order_id: "O-2077", amount_cents: cents });
+
+    const over = await check(snapshot([refund(1200), refund(12600)], []), sumCheck);
+    expect(over.status).toBe("hard_fail");
+    expect(over.explanation).toBe(
+      "effect violated: refunds amount_cents sum 13800 for O-2077 exceeds orders.amount_cents 12600",
+    );
+    expect((await check(snapshot([refund(1200), refund(11400)], []), sumCheck)).status).toBe("pass");
+
+    const customer = related("orders", "customer_id", { on: "order_id" });
+    const matchCheck = (w: Parameters<Parameters<typeof check>[1]>[0]) =>
+      w.matches("notifications", "customer_id", customer);
+    const misdirected = await check(
+      snapshot([], [{ order_id: "O-2077", customer_id: "C-0520" }]),
+      matchCheck,
+    );
+    expect(misdirected.status).toBe("hard_fail");
+    expect(misdirected.explanation).toBe(
+      "effect violated: notifications customer_id C-0520 for O-2077 does not match orders.customer_id C-0311",
+    );
+    expect(
+      (await check(snapshot([], [{ order_id: "O-2077", customer_id: "C-0311" }]), matchCheck)).status,
+    ).toBe("pass");
   });
 
   it("a null snapshot is not evaluated with reason missing_evidence", async () => {
