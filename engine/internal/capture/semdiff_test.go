@@ -3,6 +3,7 @@ package capture
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -230,5 +231,90 @@ func TestDiffWriteText_NewlineInToolName_CannotForgeLines(t *testing.T) {
 
 	if strings.Contains(buf.String(), "\n      + forged") {
 		t.Fatalf("forged line:\n%s", buf.String())
+	}
+}
+
+func diffJSON(t *testing.T, d *Diff) string {
+	t.Helper()
+	b, err := json.Marshal(d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(b)
+}
+
+func TestSemanticDiff_AnthropicToolResultIsErrorFlip_ReportsFieldPath(t *testing.T) {
+	const tmpl = `{"model":"m","messages":[{"role":"user","content":"go"},{"role":"assistant","content":[{"type":"tool_use","id":"tu1","name":"t","input":{}}]},{"role":"user","content":[{"type":"tool_result","tool_use_id":"tu1","content":"boom","is_error":%s}]}]}`
+	oldF := fixtureOf("messages", fmt.Sprintf(tmpl, "false"))
+	newF := fixtureOf("messages", fmt.Sprintf(tmpl, "true"))
+
+	d := diffOf(t, oldF, newF)
+
+	if !d.Changed {
+		t.Fatalf("is_error flip reported as no change: %s", diffJSON(t, d))
+	}
+	if got := diffJSON(t, d); !strings.Contains(got, `"path":"$.messages[2].content[0].is_error"`) || !strings.Contains(got, `"old":"false"`) || !strings.Contains(got, `"new":"true"`) {
+		t.Fatalf("diff = %s", got)
+	}
+}
+
+func TestSemanticDiff_ResponsesReasoningSummaryChange_Reported(t *testing.T) {
+	const tmpl = `{"model":"m","input":[{"role":"user","content":"hi"},{"type":"reasoning","id":"rs1","summary":[{"type":"summary_text","text":"%s"}]}]}`
+	d := diffOf(t, fixtureOf("responses", fmt.Sprintf(tmpl, "old")), fixtureOf("responses", fmt.Sprintf(tmpl, "new")))
+
+	if !d.Changed {
+		t.Fatalf("reasoning summary change reported as no change")
+	}
+	if got := diffJSON(t, d); !strings.Contains(got, `$.input[1].summary[0].text`) {
+		t.Fatalf("diff = %s", got)
+	}
+}
+
+func TestSemanticDiff_ResponsesFunctionCallFieldsChange_Reported(t *testing.T) {
+	const tmpl = `{"model":"m","input":[{"type":"function_call","name":"refund","call_id":"c1","arguments":"%s"},{"type":"function_call_output","call_id":"c1","output":"ok","status":"%s"}]}`
+	oldF := fixtureOf("responses", fmt.Sprintf(tmpl, `{\"n\":1}`, "completed"))
+
+	args := diffOf(t, oldF, fixtureOf("responses", fmt.Sprintf(tmpl, `{\"n\":2}`, "completed")))
+	status := diffOf(t, oldF, fixtureOf("responses", fmt.Sprintf(tmpl, `{\"n\":1}`, "incomplete")))
+
+	if !args.Changed || !strings.Contains(diffJSON(t, args), `refund({\"n\":2})`) {
+		t.Fatalf("function_call arguments change = %s", diffJSON(t, args))
+	}
+	if !status.Changed || !strings.Contains(diffJSON(t, status), `$.input[1].status`) {
+		t.Fatalf("function_call_output status change = %s", diffJSON(t, status))
+	}
+}
+
+func TestSemanticDiff_UnknownBlockTypeFieldChange_Reported(t *testing.T) {
+	const tmpl = `{"model":"m","messages":[{"role":"user","content":[{"type":"text","text":"hi"},{"type":"future_block","text":"cited","citation":{"level":%d}}]}]}`
+	d := diffOf(t, fixtureOf("messages", fmt.Sprintf(tmpl, 1)), fixtureOf("messages", fmt.Sprintf(tmpl, 2)))
+
+	if !d.Changed {
+		t.Fatalf("unknown block field change reported as no change")
+	}
+}
+
+func TestSemanticDiff_FieldOnlyInUncoveredPlace_ReportedAsOther(t *testing.T) {
+	oldF := fixtureOf("chat_completions", `{"model":"m","messages":[{"role":"system","name":"a","content":"s"},{"role":"user","content":"hi"}]}`)
+	newF := fixtureOf("chat_completions", `{"model":"m","messages":[{"role":"system","name":"b","content":"s"},{"role":"user","content":"hi"}]}`)
+
+	d := diffOf(t, oldF, newF)
+
+	if got := diffJSON(t, d); !d.Changed || !strings.Contains(got, `"other":[{"path":"$.messages[0].name"`) {
+		t.Fatalf("diff = %s", diffJSON(t, d))
+	}
+	var buf bytes.Buffer
+	d.WriteText(&buf, "x", 1)
+	if !strings.Contains(buf.String(), "other request fields changed:") || !strings.Contains(buf.String(), "$.messages[0].name") {
+		t.Fatalf("text = %q", buf.String())
+	}
+}
+
+func TestSemanticDiff_KeyOrderOnlyDifference_NoChange(t *testing.T) {
+	oldF := fixtureOf("messages", `{"model":"m","messages":[{"role":"user","content":[{"type":"tool_result","tool_use_id":"a","content":"x","is_error":false}]}]}`)
+	newF := fixtureOf("messages", `{"messages":[{"content":[{"is_error":false,"content":"x","tool_use_id":"a","type":"tool_result"}],"role":"user"}],"model":"m"}`)
+
+	if d := diffOf(t, oldF, newF); d.Changed {
+		t.Fatalf("reordered keys reported as change: %s", diffJSON(t, d))
 	}
 }

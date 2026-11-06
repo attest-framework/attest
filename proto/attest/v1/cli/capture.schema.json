@@ -191,6 +191,13 @@
                     "items": {
                       "$ref": "#/$defs/message_change"
                     }
+                  },
+                  "other": {
+                    "type": "array",
+                    "items": {
+                      "$ref": "#/$defs/path_change"
+                    },
+                    "description": "Request fields the other sections do not cover, as JSON paths rooted at $. Present only when no other section differs, so a changed request never reads as no change."
                   }
                 }
               }
@@ -365,6 +372,13 @@
             "$ref": "#/$defs/line_change"
           },
           "description": "Changed lines only: - for old text, + for new text."
+        },
+        "fields": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/path_change"
+          },
+          "description": "Changed message fields the lines do not show (is_error, call_id, summary, ...), as JSON paths rooted at $ of the request."
         }
       }
     }

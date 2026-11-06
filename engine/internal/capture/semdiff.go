@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"reflect"
+	"slices"
 	"sort"
 	"strings"
 )
@@ -38,6 +39,9 @@ type ExchangeDiff struct {
 	Tools       *ToolsDiff      `json:"tools,omitempty"`
 	Messages    []MessageChange `json:"messages,omitempty"`
 	ToolResults []MessageChange `json:"tool_results,omitempty"`
+	// Other lists request fields no other section covers; set only when every
+	// other section is empty, so a changed request never reads as unchanged.
+	Other []PathChange `json:"other,omitempty"`
 }
 
 // ValueChange is a scalar's old and new value.
@@ -84,6 +88,9 @@ type MessageChange struct {
 	Role   string       `json:"role"`
 	Ref    string       `json:"ref,omitempty"`
 	Lines  []LineChange `json:"lines"`
+	// Fields are the changed message fields the lines do not show (is_error,
+	// call_id, summary, ...), as JSON paths of the request.
+	Fields []PathChange `json:"fields,omitempty"`
 }
 
 // SemanticDiff compares old and new exchange by exchange. Both fixtures are
@@ -149,7 +156,12 @@ func (d *differ) exchange(oldEx, newEx *Exchange) (*ExchangeDiff, error) {
 	ed.Tools = d.tools(o.tools, n.tools)
 	ed.Messages, ed.ToolResults = d.entries(o.entries, n.entries)
 	if ed.Model == nil && ed.Params == nil && ed.System == nil && ed.Tools == nil && ed.Messages == nil && ed.ToolResults == nil {
-		return nil, nil
+		// The sections above read a request through its provider's shape;
+		// "no semantic change" holds only when the requests are equal.
+		if reflect.DeepEqual(o.req, n.req) {
+			return nil, nil
+		}
+		ed.Other = d.paths("$", o.req, n.req)
 	}
 	return ed, nil
 }
@@ -162,6 +174,7 @@ type normalized struct {
 	system  []string
 	tools   map[string]any
 	entries []entry
+	req     map[string]any
 }
 
 const (
@@ -169,14 +182,43 @@ const (
 	kindToolResult = "tool_result"
 )
 
-// entry is one conversation message or tool result as text lines.
+// entry is one conversation message or tool result as text lines. extra holds
+// every field of it the lines do not show, keyed by its path relative to base
+// (the entry's JSON path in the request), so no field is lost to the
+// normalization.
 type entry struct {
 	role, kind, ref string
 	lines           []string
+	base            string
+	extra           map[string]any
 }
 
 func (e entry) key() string {
-	return e.kind + "\x00" + e.role + "\x00" + e.ref + "\x00" + strings.Join(e.lines, "\n")
+	return e.kind + "\x00" + e.role + "\x00" + e.ref + "\x00" + strings.Join(e.lines, "\n") + "\x00" + compactJSON(e.extra)
+}
+
+// addExtra records the fields of m not in consumed under prefix.
+func (e *entry) addExtra(prefix string, m map[string]any, consumed ...string) {
+	for k, v := range m {
+		if !slices.Contains(consumed, k) {
+			if e.extra == nil {
+				e.extra = map[string]any{}
+			}
+			e.extra[prefix+k] = v
+		}
+	}
+}
+
+// addContentExtra records the fields of the text blocks in a content list that
+// the text lines do not show; blocks without text are shown whole already.
+func (e *entry) addContentExtra(prefix string, content any) {
+	for i, b := range anySlice(content) {
+		if blk, ok := b.(map[string]any); ok {
+			if _, hasText := blk["text"].(string); hasText {
+				e.addExtra(fmt.Sprintf("%s[%d].", prefix, i), blk, "text")
+			}
+		}
+	}
 }
 
 func normalize(ex *Exchange) (*normalized, error) {
@@ -186,7 +228,7 @@ func normalize(ex *Exchange) (*normalized, error) {
 	if err := dec.Decode(&req); err != nil {
 		return nil, fmt.Errorf("request is not a JSON object: %w", err)
 	}
-	n := &normalized{params: map[string]any{}, tools: map[string]any{}}
+	n := &normalized{params: map[string]any{}, tools: map[string]any{}, req: req}
 	n.model, _ = req["model"].(string)
 	used := map[string]bool{"model": true, "tools": true}
 	switch ex.API {
@@ -226,86 +268,115 @@ func toolName(t any, i int) string {
 	return fmt.Sprintf("tools[%d]", i)
 }
 
-func (n *normalized) add(role, kind, ref string, lines []string) {
-	n.entries = append(n.entries, entry{role: role, kind: kind, ref: ref, lines: lines})
-}
+func (n *normalized) add(e entry) { n.entries = append(n.entries, e) }
 
 func (n *normalized) chatMessages(v any) {
-	msgs, _ := v.([]any)
-	for _, raw := range msgs {
+	for i, raw := range anySlice(v) {
 		m, _ := raw.(map[string]any)
 		role, _ := m["role"].(string)
 		lines := textLines(m["content"])
+		e := entry{role: role, kind: kindMessage, base: fmt.Sprintf("$.messages[%d]", i)}
 		switch {
 		case systemRole(role):
 			n.system = append(n.system, lines...)
+			continue
 		case role == "tool":
-			ref, _ := m["tool_call_id"].(string)
-			n.add(role, kindToolResult, ref, lines)
+			e.kind = kindToolResult
+			e.ref, _ = m["tool_call_id"].(string)
+			e.addExtra("", m, "role", "content", "tool_call_id")
 		default:
-			for _, c := range anySlice(m["tool_calls"]) {
+			e.addExtra("", m, "role", "content", "tool_calls")
+			for j, c := range anySlice(m["tool_calls"]) {
 				call, _ := c.(map[string]any)
 				fn, _ := call["function"].(map[string]any)
 				name, _ := fn["name"].(string)
 				lines = append(lines, "tool_call "+name+"("+compact(fn["arguments"])+")")
+				e.addExtra(fmt.Sprintf("tool_calls[%d].", j), call, "function")
+				e.addExtra(fmt.Sprintf("tool_calls[%d].function.", j), fn, "name", "arguments")
 			}
-			n.add(role, kindMessage, "", lines)
 		}
+		e.addContentExtra("content", m["content"])
+		e.lines = lines
+		n.add(e)
 	}
 }
 
 func (n *normalized) responsesInput(v any) {
 	if s, ok := v.(string); ok {
-		n.add("user", kindMessage, "", splitLines(s))
+		n.add(entry{role: "user", kind: kindMessage, lines: splitLines(s), base: "$.input"})
 		return
 	}
-	for _, raw := range anySlice(v) {
+	for i, raw := range anySlice(v) {
 		m, _ := raw.(map[string]any)
 		typ, _ := m["type"].(string)
 		role, _ := m["role"].(string)
+		e := entry{role: role, kind: kindMessage, base: fmt.Sprintf("$.input[%d]", i)}
 		switch {
 		case typ == "function_call":
 			name, _ := m["name"].(string)
-			n.add("assistant", kindMessage, "", []string{"tool_call " + name + "(" + compact(m["arguments"]) + ")"})
+			e.role = "assistant"
+			e.lines = []string{"tool_call " + name + "(" + compact(m["arguments"]) + ")"}
+			e.addExtra("", m, "type", "name", "arguments")
 		case typ == "function_call_output":
-			ref, _ := m["call_id"].(string)
-			n.add("tool", kindToolResult, ref, textLines(m["output"]))
+			e.role, e.kind = "tool", kindToolResult
+			e.ref, _ = m["call_id"].(string)
+			e.lines = textLines(m["output"])
+			e.addExtra("", m, "type", "call_id", "output")
 		case systemRole(role):
 			n.system = append(n.system, textLines(m["content"])...)
+			continue
 		default:
-			n.add(role, kindMessage, "", textLines(m["content"]))
+			if role == "" {
+				e.role = typ
+			}
+			e.lines = textLines(m["content"])
+			e.addExtra("", m, "role", "content")
+			e.addContentExtra("content", m["content"])
 		}
+		n.add(e)
 	}
 }
 
 func (n *normalized) anthropicMessages(v any) {
-	for _, raw := range anySlice(v) {
+	for i, raw := range anySlice(v) {
 		m, _ := raw.(map[string]any)
 		role, _ := m["role"].(string)
+		base := fmt.Sprintf("$.messages[%d]", i)
+		cur := entry{role: role, kind: kindMessage, base: base}
+		cur.addExtra("", m, "role", "content")
 		blocks, isBlocks := m["content"].([]any)
 		if !isBlocks {
-			n.add(role, kindMessage, "", textLines(m["content"]))
+			cur.lines = textLines(m["content"])
+			n.add(cur)
 			continue
 		}
-		var lines []string
 		flush := func() {
-			if len(lines) > 0 {
-				n.add(role, kindMessage, "", lines)
-				lines = nil
+			if len(cur.lines) > 0 || len(cur.extra) > 0 {
+				n.add(cur)
 			}
+			cur = entry{role: role, kind: kindMessage, base: base}
 		}
-		for _, b := range blocks {
+		for j, b := range blocks {
 			blk, _ := b.(map[string]any)
+			prefix := fmt.Sprintf("content[%d].", j)
 			switch blk["type"] {
 			case "tool_use":
 				name, _ := blk["name"].(string)
-				lines = append(lines, "tool_use "+name+"("+compact(blk["input"])+")")
+				cur.lines = append(cur.lines, "tool_use "+name+"("+compact(blk["input"])+")")
+				cur.addExtra(prefix, blk, "name", "input")
 			case "tool_result":
 				flush()
-				ref, _ := blk["tool_use_id"].(string)
-				n.add("tool", kindToolResult, ref, textLines(blk["content"]))
+				res := entry{role: "tool", kind: kindToolResult, base: base}
+				res.ref, _ = blk["tool_use_id"].(string)
+				res.lines = textLines(blk["content"])
+				res.addExtra(prefix, blk, "tool_use_id", "content")
+				res.addContentExtra(prefix+"content", blk["content"])
+				n.add(res)
 			default:
-				lines = append(lines, textLines(b)...)
+				cur.lines = append(cur.lines, textLines(b)...)
+				if _, hasText := blk["text"].(string); hasText {
+					cur.addExtra(prefix, blk, "text")
+				}
 			}
 		}
 		flush()
@@ -563,7 +634,11 @@ func (d *differ) entries(oldE, newE []entry) (msgs, results []MessageChange) {
 		p := 0
 		for ; p < len(dels) && p < len(inss) && pairable(oldE[dels[p]], newE[inss[p]]); p++ {
 			o, n := oldE[dels[p]], newE[inss[p]]
-			emit(MessageChange{Index: newPos[inss[p]], Change: ChangeChanged, Role: d.s(n.role), Ref: d.s(n.ref), Lines: d.lines(o.lines, n.lines)}, n.kind)
+			lines := d.lines(o.lines, n.lines)
+			if lines == nil {
+				lines = []LineChange{}
+			}
+			emit(MessageChange{Index: newPos[inss[p]], Change: ChangeChanged, Role: d.s(n.role), Ref: d.s(n.ref), Lines: lines, Fields: d.extras(o, n)}, n.kind)
 		}
 		for _, i := range dels[p:] {
 			e := oldE[i]
@@ -575,6 +650,30 @@ func (d *differ) entries(oldE, newE []entry) (msgs, results []MessageChange) {
 		}
 	}
 	return msgs, results
+}
+
+// extras diffs the fields two paired entries carry besides their lines; paths
+// are rooted at the request, under the new entry's position.
+func (d *differ) extras(o, n entry) []PathChange {
+	keys := map[string]bool{}
+	for k := range o.extra {
+		keys[k] = true
+	}
+	for k := range n.extra {
+		keys[k] = true
+	}
+	sorted := make([]string, 0, len(keys))
+	for k := range keys {
+		sorted = append(sorted, k)
+	}
+	sort.Strings(sorted)
+	var out []PathChange
+	for _, k := range sorted {
+		ov, inOld := o.extra[k]
+		nv, inNew := n.extra[k]
+		d.step(n.base+"."+k, ov, inOld, nv, inNew, &out)
+	}
+	return out
 }
 
 func pairable(a, b entry) bool { return a.kind == b.kind && a.role == b.role }
@@ -619,6 +718,7 @@ func (df *Diff) WriteText(w io.Writer, fixtureName string, total int) {
 		writeTools(w, e.Tools)
 		writeMessages(w, "    messages:", e.Messages)
 		writeMessages(w, "    tool results:", e.ToolResults)
+		writePaths(w, "    other request fields changed:", e.Other)
 	}
 }
 
@@ -706,6 +806,9 @@ func writeMessages(w io.Writer, head string, ms []MessageChange) {
 		}
 		fmt.Fprintf(w, "      %s %s%s [%d]\n", sym[m.Change], oneLine(m.Role), ref, m.Index)
 		writeLines(w, "", "        ", m.Lines)
+		for _, p := range m.Fields {
+			fmt.Fprintf(w, "        %s\n", pathLine(p))
+		}
 	}
 }
 
