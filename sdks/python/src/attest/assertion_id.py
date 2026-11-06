@@ -127,9 +127,15 @@ def _utf16_key(key: str) -> bytes:
         ) from exc
 
 
-def canonical_spec(spec: dict[str, Any] | None) -> str:
-    """The JCS text of an assertion spec; no spec is ``{}``."""
-    return canonicalize({} if spec is None else _serialize(spec))
+def canonical_spec(assertion_type: str, spec: dict[str, Any] | None) -> str:
+    """The JCS identity spec, excluding only effect's top-level runtime world.
+
+    The original spec remains untouched for wire serialization and validation.
+    """
+    identity_spec = {} if spec is None else spec
+    if assertion_type == "effect":
+        identity_spec = {key: value for key, value in identity_spec.items() if key != "world"}
+    return canonicalize(_serialize(identity_spec))
 
 
 def canonical_input(
@@ -142,7 +148,7 @@ def canonical_input(
             (
                 _string(scope_id),
                 _string(assertion_type),
-                canonical_spec(spec),
+                canonical_spec(assertion_type, spec),
                 str(occurrence_index),
             )
         )
@@ -187,7 +193,7 @@ class OccurrenceCounter:
     def assign(self, assertion: Assertion) -> None:
         """Set ``assertion.assertion_id`` and ``assertion.scope_id`` in evaluation order."""
         try:
-            key = (assertion.type, canonical_spec(assertion.spec))
+            key = (assertion.type, canonical_spec(assertion.type, assertion.spec))
         except AssertionIdError as exc:
             raise AssertionIdError(
                 f"assertion {assertion.type!r} in scope {self.scope_id!r}: {exc}"

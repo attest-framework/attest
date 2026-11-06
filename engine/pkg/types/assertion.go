@@ -162,10 +162,10 @@ type AssertionResult struct {
 	RequestID   string  `json:"request_id,omitempty"`
 	// ScopeID echoes Assertion.ScopeID (C3).
 	ScopeID string `json:"scope_id,omitempty"`
-	// SpecHash is the sha256 (hex) of the assertion spec in canonical JSON
-	// (object keys sorted, no insignificant whitespace). Together with Type
-	// and ScopeID it lets a baseline comparison report a spec edit as
-	// changed instead of removed (C4).
+	// SpecHash is the sha256 (hex) of the RFC 8785 canonical identity spec:
+	// effect's top-level world evidence is excluded. Together with Type and
+	// ScopeID it lets a baseline comparison report a spec edit as changed
+	// instead of removed (C4).
 	SpecHash string `json:"spec_hash,omitempty"`
 	// ThresholdSource records how Status was decided: "static" (default
 	// fixed thresholds), "dynamic" (classified against historical

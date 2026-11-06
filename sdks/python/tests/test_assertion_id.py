@@ -3,6 +3,7 @@ rejection and occurrence counting."""
 
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 from typing import Any
@@ -27,7 +28,8 @@ _INVALID: list[dict[str, Any]] = _DOC.get("invalid", [])
 
 
 def test_vectors_file_has_all_vectors() -> None:
-    assert len(_VECTORS) == 29
+    assert len(_VECTORS) == 35
+    assert len(_INVALID) == 7
 
 
 @pytest.mark.parametrize("vector", _VECTORS, ids=lambda v: v["name"])
@@ -38,7 +40,10 @@ def test_golden_vector_canonical_bytes_and_id_match(vector: dict[str, Any]) -> N
         vector["scope_id"], vector["assertion_type"], spec, vector["occurrence_index"]
     )
 
-    assert canonical_spec(spec) == vector["canonical_spec"]
+    identity_spec = canonical_spec(vector["assertion_type"], spec)
+    assert identity_spec == vector["canonical_spec"]
+    if "spec_hash" in vector:
+        assert hashlib.sha256(identity_spec.encode("utf-8")).hexdigest() == vector["spec_hash"]
     assert text == vector["canonical_input"]
     assert text.encode("utf-8") == vector["canonical_input"].encode("utf-8")
     assert (
@@ -147,3 +152,68 @@ def test_assign_reset_restarts_the_counts() -> None:
     counter.assign(b)
 
     assert a.assertion_id == b.assertion_id
+
+
+def test_effect_world_is_evidence_only_without_mutating_wire_spec() -> None:
+    baseline = {"predicate": {"world": {"expected": 1}}, "world": {"actual": 1}}
+    changed = {**baseline, "world": {"actual": 2}}
+    assert canonical_spec("effect", baseline) == canonical_spec("effect", changed)
+    assert compute_assertion_id("s", "effect", baseline, 0) == compute_assertion_id(
+        "s", "effect", changed, 0
+    )
+    assert baseline["world"] == {"actual": 1}
+    assert changed["world"] == {"actual": 2}
+    assert canonical_spec("effect", baseline) == '{"predicate":{"world":{"expected":1}}}'
+    assert canonical_spec("effect", {"world": None}) == canonical_spec("effect", None)
+    assert canonical_spec("other", baseline) != canonical_spec("other", changed)
+    assert canonical_spec("effect", baseline) != canonical_spec(
+        "effect", {**baseline, "predicate": {"world": {"expected": 2}}}
+    )
+
+
+def test_effect_occurrences_count_contract_not_world() -> None:
+    counter = OccurrenceCounter("s")
+    first = Assertion(assertion_id="", type="effect", spec={"world": {"actual": 1}})
+    second = Assertion(assertion_id="", type="effect", spec={"world": {"actual": 2}})
+    counter.assign(first)
+    counter.assign(second)
+    assert first.assertion_id == compute_assertion_id("s", "effect", {}, 0)
+    assert second.assertion_id == compute_assertion_id("s", "effect", {}, 1)
+    assert first.spec == {"world": {"actual": 1}}
+    assert second.spec == {"world": {"actual": 2}}
+    counter.reset()
+    counter.assign(second)
+    assert second.assertion_id == first.assertion_id
+
+
+@pytest.mark.parametrize(
+    "assertion_type",
+    ["schema", "constraint", "trace", "content", "embedding", "llm_judge", "trace_tree", "plugin"],
+)
+def test_other_types_keep_top_level_world_in_identity(assertion_type: str) -> None:
+    assert compute_assertion_id("s", assertion_type, {"world": {"value": 1}}, 0) != (
+        compute_assertion_id("s", assertion_type, {"world": {"value": 2}}, 0)
+    )
+
+
+@pytest.mark.parametrize(
+    ("field", "before", "after"),
+    [
+        ("check", "count", "sum"),
+        ("resource", "refunds", "orders"),
+        ("where", {"world": 1}, {"world": 2}),
+        ("equals", 1, 2),
+        ("soft", False, True),
+        ("extension", {"world": 1}, {"world": 2}),
+    ],
+)
+def test_effect_contract_fields_remain_identity(field: str, before: Any, after: Any) -> None:
+    assert compute_assertion_id("s", "effect", {field: before, "world": {}}, 0) != (
+        compute_assertion_id("s", "effect", {field: after, "world": {}}, 0)
+    )
+
+
+def test_excluded_effect_world_is_not_canonicalized() -> None:
+    assert canonical_spec("effect", {"world": {"runtime": float("nan")}}) == "{}"
+    with pytest.raises(AssertionIdError, match="not finite"):
+        canonical_spec("effect", {"contract": {"world": float("nan")}})

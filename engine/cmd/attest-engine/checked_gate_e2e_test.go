@@ -1,12 +1,17 @@
 package main_test
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/attest-framework/attest/engine/internal/assertion"
+	"github.com/attest-framework/attest/engine/internal/report/assertionid"
+	"github.com/attest-framework/attest/engine/pkg/types"
 )
 
 type gateRow struct {
@@ -207,5 +212,48 @@ func TestPolicyEvaluate_SchemeOneHeadReport_ExitsThreeWithRerunMessage(t *testin
 	}
 	if !strings.Contains(r.stderr, "report uses id scheme 1; re-run with an SDK on 1.1") {
 		t.Errorf("stderr = %q, want the re-run message", r.stderr)
+	}
+}
+
+func TestPolicyEvaluate_EffectWorldChangeIsRegressionNotSpecChange(t *testing.T) {
+	const scope = "refunds::test_count"
+	var ids, hashes []string
+	evaluate := func(name, records, wantStatus string) func(string) string {
+		return func(dir string) string {
+			spec := json.RawMessage(`{"check":"count","resource":"refunds","equals":1,"world":{"world_version":1,"definition_sha256":"` + strings.Repeat("0", 64) + `","state":{"refunds":` + records + `},"faults_fired":[],"faults_fired_count":0}}`)
+			id, err := assertionid.ID(scope, types.TypeEffect, spec, 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			pipeline := assertion.NewPipeline(assertion.NewRegistry())
+			batch, err := pipeline.EvaluateBatch(context.Background(), &types.Trace{TraceID: name},
+				[]types.Assertion{{AssertionID: id, ScopeID: scope, Type: types.TypeEffect, Spec: spec}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(batch.Results) != 1 || batch.Results[0].Status != wantStatus {
+				t.Fatalf("%s: results = %+v, want %s", name, batch.Results, wantStatus)
+			}
+			row := batch.Results[0]
+			ids = append(ids, row.AssertionID)
+			hashes = append(hashes, row.SpecHash)
+			return writeGateReport(t, dir, name+".json", 2, false, []gateRow{{
+				ID: row.AssertionID, Scope: row.ScopeID, Type: row.Type, Spec: row.SpecHash, Status: row.Status,
+			}})
+		}
+	}
+	r := gateEvaluate(t, "block_on_regression: true\n",
+		evaluate("baseline", `[{"id":"r1"}]`, types.StatusPass),
+		evaluate("head", `[{"id":"r1"},{"id":"r2"}]`, types.StatusHardFail))
+	if ids[0] != ids[1] || hashes[0] != hashes[1] {
+		t.Errorf("world changed identity: ids=%v spec_hashes=%v", ids, hashes)
+	}
+	if r.code != 1 || len(r.out.Violations) != 1 ||
+		r.out.Violations[0].Rule != "block_on_regression" ||
+		!strings.Contains(r.out.Violations[0].Detail, "regressions vs main: "+ids[0]) {
+		t.Errorf("exit=%d output=%s, want block_on_regression naming stable id", r.code, r.stdout)
+	}
+	if len(r.out.Changed) != 0 {
+		t.Errorf("runtime world change reported as spec edit: %+v", r.out.Changed)
 	}
 }

@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import os
 import socket
+import subprocess
 import textwrap
 import urllib.error
 import urllib.request
@@ -299,6 +300,20 @@ def test_record_with_world_saves_the_world_in_the_fixture(
     fixture = load_fixture(out_dir / "inc-9.attest.json")
     assert fixture.world is not None
     assert len(fixture.world["state"]["refunds"]) == 2
+    from attest.assertion_id import OccurrenceCounter
+
+    # Check an effect contract against recorded and replay-time evidence from
+    # the loaded fixture. Capture without resource relations drafts trace-only
+    # contracts, so build the effect through the same SDK path replay uses.
+    recorded = expect(fixture.trace).world(fixture.world).count("refunds", equals=1)
+    replayed = (
+        expect(fixture.trace)
+        .world({**fixture.world, "state": {"refunds": []}})
+        .count("refunds", equals=1)
+    )
+    OccurrenceCounter("replay:inc-9").assign(recorded.assertions[0])
+    OccurrenceCounter("replay:inc-9").assign(replayed.assertions[0])
+    assert recorded.assertions[0].assertion_id == replayed.assertions[0].assertion_id
 
 
 @pytest.mark.integration
@@ -402,3 +417,75 @@ def test_matches_notification_to_the_orders_customer_passes(engine: AttestEngine
     )
 
     assert row.status == STATUS_PASS
+
+
+@pytest.mark.integration
+def test_effect_world_change_is_a_baseline_regression(
+    engine: AttestEngineFixture,
+    engine_env: str,  # noqa: F811
+    tmp_path: Path,
+) -> None:
+    from attest._proto.types import Usage
+    from attest.report_v2 import TestRecord, build_report
+    from attest.trials import current_run
+
+    run = current_run()
+    assert run is not None
+    reports = []
+    ids = []
+    for trial, amounts in enumerate(((100,), (100, 100)), start=1):
+        run.start_trial(trial)
+        snapshot = _order_world(*amounts)
+        chain = expect(Trace.from_dict(json.loads(_TRACE.read_text())))
+        chain.world(snapshot).count("refunds", order_id="O-2077", equals=1)
+        result = engine.inspect(chain)
+        [row] = result.assertion_results
+        assert row.status == (STATUS_PASS if trial == 1 else STATUS_HARD_FAIL)
+        assert chain.assertions[0].spec["world"] == snapshot
+        ids.append(row.assertion_id)
+        record = TestRecord(
+            test_id=run.test_id,
+            name="effect",
+            file=__file__,
+            line=1,
+            outcome="passed" if trial == 1 else "failed",
+            agent_results=[result],
+        )
+        path = tmp_path / f"report-{trial}.json"
+        path.write_text(json.dumps(build_report([record], simulated=False, usage=Usage())))
+        reports.append(path)
+    assert ids[0] == ids[1]
+    policy = tmp_path / "policy.yaml"
+    policy.write_text("block_on_regression: true\n")
+    env = {**os.environ, "ATTEST_CACHE_DIR": str(tmp_path / "cache")}
+    pinned = subprocess.run(
+        [engine_env, "baseline", "pin", "--tag", "effect-baseline", "--report", str(reports[0])],
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+    assert pinned.returncode == 0, pinned.stdout + pinned.stderr
+    verdict = subprocess.run(
+        [
+            engine_env,
+            "policy",
+            "evaluate",
+            "--policy",
+            str(policy),
+            "--report",
+            str(reports[1]),
+            "--baseline",
+            "effect-baseline",
+        ],
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+    assert verdict.returncode == 1, verdict.stdout + verdict.stderr
+    output = json.loads(verdict.stdout)
+    assert any(
+        item["rule"] == "block_on_regression"
+        and f"regressions vs effect-baseline: {ids[0]}" in item["detail"]
+        for item in output["violations"]
+    )
+    assert not output.get("changed")

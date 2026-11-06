@@ -3,7 +3,11 @@
  * world, then effect assertions read the world's state. Skipped when the engine binary has
  * not been built (`make engine`).
  */
-import { existsSync, readFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { AssertionIdAssigner, canonicalSpec } from "../../packages/core/src/assertion-id.js";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -77,6 +81,79 @@ describe.skipIf(!existsSync(enginePath))("world (real engine)", { timeout: 30_00
     expect(result.results).toHaveLength(1);
     return result.results[0] as AssertionResult;
   }
+
+  it("keeps the effect contract identity through passing and failing worlds and baseline policy", async () => {
+    const keyed = await startWorld(worldFile, { enginePath });
+    let single: WorldSnapshot;
+    try {
+      await doubleRefund(keyed.baseUrl, "stable-contract");
+      single = await keyed.state();
+    } finally {
+      await keyed.stop();
+    }
+    const keyless = await startWorld(worldFile, { enginePath });
+    let doubled: WorldSnapshot;
+    try {
+      await doubleRefund(keyless.baseUrl);
+      doubled = await keyless.state();
+    } finally {
+      await keyless.stop();
+    }
+    const scopeId = "effect baseline contract";
+    const evaluate = async (world: WorldSnapshot) => {
+      const chain = attestExpect(trace).world(world).count("refunds", { equals: 1 });
+      const source = chain.assertions[0]!;
+      const assertion = {
+        ...source,
+        scope_id: scopeId,
+        assertion_id: new AssertionIdAssigner(scopeId).next(source.type, source.spec),
+      };
+      expect(assertion.spec["world"]).toEqual(world);
+      const result = await client.evaluateBatch(trace, [assertion]);
+      const row = result.results[0]!;
+      const canonical = canonicalSpec(assertion.spec, { scopeId, type: assertion.type, spec: assertion.spec });
+      expect(row.spec_hash).toBe(createHash("sha256").update(canonical).digest("hex"));
+      return row;
+    };
+    const baseline = await evaluate(single);
+    const current = await evaluate(doubled);
+    expect([baseline.status, current.status]).toEqual(["pass", "hard_fail"]);
+    expect(current.assertion_id).toBe(baseline.assertion_id);
+    expect(current.spec_hash).toBe(baseline.spec_hash);
+
+    const dir = mkdtempSync(join(tmpdir(), "attest-effect-identity-"));
+    try {
+      const report = (name: string, row: AssertionResult) => {
+        const file = join(dir, name);
+        writeFileSync(file, JSON.stringify({
+          report_version: 2, id_scheme: 2, timestamp: "2026-11-07T00:00:00Z",
+          summary: { total: 1, passed: row.status === "pass" ? 1 : 0, hard_fail: row.status === "hard_fail" ? 1 : 0, soft_fail: 0, not_evaluated: 0 },
+          results: [row], tests: [], total_cost: 0, total_duration_ms: 0,
+        }));
+        return file;
+      };
+      const run = (...args: string[]) => spawnSync(enginePath, args, {
+        encoding: "utf8", env: { ...process.env, ATTEST_CACHE_DIR: join(dir, "cache") },
+      });
+      const pin = run("baseline", "pin", "--tag", "effect-good", "--report", report("baseline.json", baseline));
+      expect(pin.status, pin.stderr).toBe(0);
+      const policy = join(dir, "policy.yaml");
+      writeFileSync(policy, "block_on_regression: true\n");
+      const evaluated = run("policy", "evaluate", "--policy", policy, "--report", report("current.json", current), "--baseline", "effect-good");
+      expect(evaluated.status, evaluated.stderr).toBe(1);
+      const output = JSON.parse(evaluated.stdout) as {
+        violations: Array<{ rule: string; detail: string }>;
+        changed?: unknown[];
+      };
+      expect(output.violations).toContainEqual(expect.objectContaining({
+        rule: "block_on_regression",
+        detail: `regressions vs effect-good: ${current.assertion_id}`,
+      }));
+      expect(output.changed ?? []).toEqual([]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
 
   it("count: a double refund without a key fails with the violation text", async () => {
     const world = await startWorld(worldFile, { enginePath });
