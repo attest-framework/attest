@@ -168,9 +168,11 @@ func (r *Redactor) With(values ...string) *Redactor {
 }
 
 // jsonForms returns the forms a secret takes inside a JSON string, which is
-// how tool-call arguments reach a fixture (JSON text inside a string): standard
-// escaping, escaping with <, > and & as \uXXXX, and ASCII-only escaping as
-// Python's json.dumps writes it. Forms equal to v are omitted.
+// how tool-call arguments reach a fixture (JSON text inside a string):
+// standard escaping, escaping with <, > and & as \uXXXX, and ASCII-only
+// escaping as Python's json.dumps writes it. A tool-call arguments string is
+// itself JSON text inside the raw JSON of a span attribute, so every form is
+// escaped a second time as well. Forms equal to v are omitted.
 func jsonForms(v string) []string {
 	var forms []string
 	add := func(f string) {
@@ -178,11 +180,26 @@ func jsonForms(v string) []string {
 			forms = append(forms, f)
 		}
 	}
-	add(jsonEscape(v, false))
-	add(jsonEscape(v, true))
-	add(asciiEscape(jsonEscape(v, false)))
-	add(asciiEscape(jsonEscape(v, true)))
+	once := escapeForms(v)
+	for _, f := range once {
+		add(f)
+	}
+	for _, f := range once {
+		for _, g := range escapeForms(f) {
+			add(g)
+		}
+	}
 	return forms
+}
+
+// escapeForms returns the four single-level JSON string escapings of v.
+func escapeForms(v string) []string {
+	return []string{
+		jsonEscape(v, false),
+		jsonEscape(v, true),
+		asciiEscape(jsonEscape(v, false)),
+		asciiEscape(jsonEscape(v, true)),
+	}
 }
 
 // jsonEscape returns v as the inside of a JSON string literal.
@@ -301,30 +318,32 @@ func cutLine(s string) (line, rest string) {
 
 // dotenvValue parses the value starting at rest (the text after `=` on the
 // current line) and returns it with the text left to parse. A quoted value
-// continues onto following lines until its closing quote.
+// continues onto following lines until its closing quote; with none, the value
+// is the rest of its own line.
 func dotenvValue(rest, remaining string) (value, left string) {
 	if rest == "" || (rest[0] != '"' && rest[0] != '\'') {
 		return stripInlineComment(rest), remaining
 	}
 	quote := rest[0]
 	body := rest[1:]
+	tail := remaining
 	for {
 		if end := closingQuote(body, quote); end >= 0 {
 			// Text after the closing quote on the same line is a comment or noise.
 			if quote == '"' {
-				return unescapeDouble(body[:end]), remaining
+				return unescapeDouble(body[:end]), tail
 			}
-			return body[:end], remaining
+			return body[:end], tail
 		}
-		if remaining == "" {
-			// Unterminated: the rest of the file is the value, quote dropped.
-			break
+		if tail == "" {
+			// Unterminated, as python-dotenv reads it: this line's text is the
+			// value and parsing resumes on the next line.
+			return strings.TrimSpace(rest), remaining
 		}
 		var next string
-		next, remaining = cutLine(remaining)
+		next, tail = cutLine(tail)
 		body += "\n" + next
 	}
-	return strings.TrimSpace(body), ""
 }
 
 // closingQuote returns the index of the first unescaped quote in body (a

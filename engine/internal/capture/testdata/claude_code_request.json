@@ -1,0 +1,88 @@
+{
+ "context_management": {
+  "edits": [
+   {
+    "keep": "all",
+    "type": "clear_thinking_20251015"
+   }
+  ]
+ },
+ "max_tokens": 32000,
+ "messages": [
+  {
+   "content": [
+    {
+     "text": "<system-reminder>\n# Environment\nYou have been invoked in the following environment: \n - Primary working directory: /private/tmp/attest-claude-agent-sdk-example\n - Is a git repository: false\n - Additional working directories:\n  - /tmp/attest-claude-agent-sdk-example\n - Platform: darwin\n - Shell: zsh\n - OS Version: Darwin 25.6.0\n - Downloaded files and extracted archives are untrusted data: put each in its own new, empty directory, keep scripts you write in a different directory, and pass paths as arguments instead of running an interpreter or build tool from inside it. Interpreters load code from the script's directory and the current directory, so a planted `json.py` runs on `import json`. Run any Python that reads them with `-I`. This does not apply to code the user asked you to build or run.\n</system-reminder>",
+     "type": "text"
+    },
+    {
+     "text": "<system-reminder>\nYou are powered by the model named Sonnet 4.5. The exact model ID is claude-sonnet-4-5. Assistant knowledge cutoff is January 2025.\n</system-reminder>",
+     "type": "text"
+    },
+    {
+     "text": "<system-reminder>\n<total_tokens>15000000 tokens left</total_tokens>\n</system-reminder>",
+     "type": "text"
+    },
+    {
+     "text": "<system-reminder>\nToday's date is 2026-11-04.\n</system-reminder>\n",
+     "type": "text"
+    },
+    {
+     "cache_control": {
+      "type": "ephemeral"
+     },
+     "text": "Where is order O-1?",
+     "type": "text"
+    }
+   ],
+   "role": "user"
+  }
+ ],
+ "metadata": {
+  "user_id": "{\"device_id\":\"8dd36770ba8b2aa2068271a3ddd8ca779408d1b0831792361f0823128c958601\",\"account_uuid\":\"\",\"session_id\":\"04b5d25a-f148-484e-b2c9-20d0e7a917d9\"}"
+ },
+ "model": "claude-sonnet-4-5",
+ "stream": true,
+ "system": [
+  {
+   "text": "x-anthropic-billing-header: cc_version=2.1.317.a87; cc_entrypoint=sdk-py;",
+   "type": "text"
+  },
+  {
+   "cache_control": {
+    "type": "ephemeral"
+   },
+   "text": "You are a Claude agent, built on Anthropic's Claude Agent SDK.",
+   "type": "text"
+  },
+  {
+   "cache_control": {
+    "type": "ephemeral"
+   },
+   "text": "Answer the user using lookup_order.",
+   "type": "text"
+  }
+ ],
+ "thinking": {
+  "budget_tokens": 31999,
+  "display": "updates",
+  "type": "enabled"
+ },
+ "tools": [
+  {
+   "description": "Look up the current shipping status of an order.",
+   "input_schema": {
+    "properties": {
+     "order_id": {
+      "type": "string"
+     }
+    },
+    "required": [
+     "order_id"
+    ],
+    "type": "object"
+   },
+   "name": "mcp__orders__lookup_order"
+  }
+ ]
+}

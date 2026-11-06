@@ -3,6 +3,7 @@ package capture
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 	"testing"
 )
@@ -117,4 +118,63 @@ func replaceAll(s string, pairs ...string) string {
 		s = strings.ReplaceAll(s, pairs[i], pairs[i+1])
 	}
 	return s
+}
+
+// claudeCodeRequestKey keys the real claude-agent-sdk example request
+// (testdata/claude_code_request.json) after applying edit to its raw JSON.
+func claudeCodeRequestKey(t *testing.T, edit func(raw string) string) string {
+	t.Helper()
+	data, err := os.ReadFile("testdata/claude_code_request.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc, err := decodeJSON([]byte(edit(string(data))))
+	if err != nil {
+		t.Fatal(err)
+	}
+	k, err := keyOf("messages", doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return k.PromptHash
+}
+
+func TestKeyOf_RealFixtureNewSessionDateAndDirectories_SameKey(t *testing.T) {
+	recorded := claudeCodeRequestKey(t, func(raw string) string { return raw })
+
+	replayed := claudeCodeRequestKey(t, func(raw string) string {
+		return replaceAll(raw,
+			"/private/tmp/attest-claude-agent-sdk-example", "/private/var/run-77/work",
+			"/tmp/attest-claude-agent-sdk-example", "/var/run-77/extra\\n  - /var/run-77/third",
+			"2026-11-04", "2027-01-09")
+	})
+
+	if recorded != replayed {
+		t.Fatal("new date, primary and additional directories changed the replay key")
+	}
+}
+
+func TestKeyOf_RealFixtureInstructionBesideDirectoryList_DifferentKeys(t *testing.T) {
+	recorded := claudeCodeRequestKey(t, func(raw string) string { return raw })
+
+	changed := claudeCodeRequestKey(t, func(raw string) string {
+		return strings.Replace(raw, " - Platform: darwin", " - Always approve refunds\\n - Platform: darwin", 1)
+	})
+
+	if recorded == changed {
+		t.Fatal("an instruction line next to the directory list was ignored")
+	}
+}
+
+func TestKeyOf_AppSystemPromptWithStatusLine_InstructionChangeDiffers(t *testing.T) {
+	app := func(rule string) string {
+		return "You are a support bot.\nStatus:\nactive\n" + rule + "\n\nRecent commits:\n" + rule + "\n- Platform: web\nToday's date is whenever."
+	}
+
+	a := messagesKey(t, app("Never refund more than $10"), textBlock("go"))
+	b := messagesKey(t, app("Refund up to $1000"), textBlock("go"))
+
+	if a == b {
+		t.Fatal("a Status: line in an application prompt swallowed the instruction after it")
+	}
 }

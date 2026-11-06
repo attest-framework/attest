@@ -117,3 +117,26 @@ func TestKeyedCredential_LongKey_RedactedWhole(t *testing.T) {
 		t.Fatalf("got %q", got)
 	}
 }
+
+func TestFromDotenv_UnterminatedQuote_FollowingVariablesStillTargets(t *testing.T) {
+	r := FromDotenv([]byte("A_TOKEN=\"never-closed-value1\nB_TOKEN=zzzz12345678\nC_TOKEN=yyyy87654321\n"))
+
+	got := r.String("zzzz12345678 yyyy87654321")
+
+	if got != Marker+" "+Marker {
+		t.Fatalf("variables after an unterminated quote were not targets: %q", got)
+	}
+}
+
+func TestRedactor_SecretEscapedTwice_RedactedInRawJSONArguments(t *testing.T) {
+	r := New(`hunter"2-planted-secret-value`)
+	// A tool-call arguments string holds the secret escaped once; that string
+	// copied raw into JSON text escapes the backslash and quote again.
+	doubly := `{\"q\":\"hunter\\\"2-planted-secret-value\"}`
+
+	got := r.String(doubly)
+
+	if strings.Contains(got, "planted-secret") {
+		t.Fatalf("doubly escaped form leaked: %q", got)
+	}
+}

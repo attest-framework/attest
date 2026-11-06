@@ -1,6 +1,9 @@
 package capture
 
-import "regexp"
+import (
+	"regexp"
+	"strings"
+)
 
 // Claude Code describes the run to the model in the system prompt
 // (# Environment) and in <system-reminder> blocks of the user turn: the
@@ -12,34 +15,139 @@ import "regexp"
 
 const volatileValue = "[volatile]"
 
-var volatileLines = []struct {
+type lineRule struct {
 	pattern *regexp.Regexp
 	repl    string
-}{
-	{regexp.MustCompile(`(?m)^([ \t]*Today's date is ).*?\.?[ \t]*$`), "${1}" + volatileValue},
-	{regexp.MustCompile(`(?m)^([ \t]*- (?:Primary working directory|Additional working directories|Is a git repository|Platform|Shell|OS Version): ).*$`), "${1}" + volatileValue},
-	{regexp.MustCompile(`(?m)^([ \t]*(?:- )?You are powered by the model named ).*$`), "${1}" + volatileValue},
-	{regexp.MustCompile(`(?m)^([ \t]*(?:- )?(?:The most recent Claude model|Assistant knowledge cutoff is)).*$`), "${1} " + volatileValue},
-	{regexp.MustCompile(`(?m)^(Current branch: |Main branch[^\n:]*: |Git user: ).*$`), "${1}" + volatileValue},
-	{regexp.MustCompile(`(?m)^(Status:|Recent commits:)\n(?:[^<\n][^\n]*(?:\n|$))*`), "${1}\n" + volatileValue + "\n"},
-	{regexp.MustCompile(`(?m)^([ \t]*<total_tokens>).*$`), "${1}" + volatileValue},
 }
+
+// envRules apply inside Claude Code's own environment sections: a
+// "# Environment" section or an <env> block.
+var envRules = []lineRule{
+	{regexp.MustCompile(`^([ \t]*- (?:Primary working directory|Is a git repository|Platform|Shell|OS Version): ).*$`), "${1}" + volatileValue},
+}
+
+// modelRules apply inside an environment section and, wherever they stand,
+// inside a <system-reminder> of a user turn, where Claude Code states the
+// model on its own.
+var modelRules = []lineRule{
+	{regexp.MustCompile(`^([ \t]*(?:- )?You are powered by the model named ).*$`), "${1}" + volatileValue},
+	{regexp.MustCompile(`^([ \t]*(?:- )?(?:The most recent Claude model|Assistant knowledge cutoff is)).*$`), "${1} " + volatileValue},
+}
+
+// gitRules apply inside a gitStatus: block.
+var gitRules = []lineRule{
+	{regexp.MustCompile(`^(Current branch: |Main branch[^:]*: |Git user: ).*$`), "${1}" + volatileValue},
+}
+
+var (
+	dateRule        = lineRule{regexp.MustCompile(`^([ \t]*Today's date is ).*?\.?[ \t]*$`), "${1}" + volatileValue}
+	additionalDirs  = regexp.MustCompile(`^([ \t]*)- Additional working directories:.*$`)
+	listEntry       = regexp.MustCompile(`^([ \t]+)- `)
+	totalTokensRule = lineRule{regexp.MustCompile(`^([ \t]*<total_tokens>).*$`), "${1}" + volatileValue}
+	heading         = regexp.MustCompile(`^#{1,6} `)
+)
+
+type volatileScope int
+
+const (
+	scopeNone volatileScope = iota
+	scopeEnv
+	scopeDate
+	scopeGit
+)
 
 var reminderBlock = regexp.MustCompile(`(?s)<system-reminder>.*?</system-reminder>`)
 
-// normalizeVolatileLines neutralizes the volatile run values in s.
-func normalizeVolatileLines(s string) string {
-	for _, l := range volatileLines {
-		s = l.pattern.ReplaceAllString(s, l.repl)
+func applyRule(r lineRule, line string) string {
+	return r.pattern.ReplaceAllString(line, r.repl)
+}
+
+func applyRules(rules []lineRule, line string) string {
+	for _, r := range rules {
+		line = applyRule(r, line)
 	}
-	return s
+	return line
+}
+
+// enterScope returns the scope a line opens, and whether it opens one. A
+// scope ends at the next heading or at the end of the <env> block or
+// reminder; other lines never close it.
+func enterScope(trimmed string, cur volatileScope) volatileScope {
+	switch {
+	case trimmed == "# Environment" || trimmed == "<env>":
+		return scopeEnv
+	case trimmed == "# currentDate":
+		return scopeDate
+	case strings.HasPrefix(trimmed, "gitStatus:"):
+		return scopeGit
+	case trimmed == "</env>" || trimmed == "</system-reminder>" || heading.MatchString(trimmed):
+		return scopeNone
+	}
+	return cur
+}
+
+// normalizeVolatileLines neutralizes the volatile run values in s, but only
+// inside the sections Claude Code writes them in: "# Environment" and <env>
+// (working directories, platform, shell, OS, model, cutoff), "# currentDate"
+// (today's date) and gitStatus: (branch, status, commits). A line of any other
+// prompt that looks like one of them is the application's own and stays. In a
+// <system-reminder> of a user turn (reminder), the date and model lines are
+// Claude Code's own wherever they stand.
+func normalizeVolatileLines(s string, reminder bool) string {
+	lines := strings.Split(s, "\n")
+	out := make([]string, 0, len(lines))
+	scope := scopeNone
+	listIndent := -1 // indent of an Additional working directories header whose entries are being dropped
+	for i := 0; i < len(lines); i++ {
+		line := lines[i]
+		if listIndent >= 0 {
+			if m := listEntry.FindStringSubmatch(line); m != nil && len(m[1]) > listIndent {
+				continue
+			}
+			listIndent = -1
+		}
+		trimmed := strings.TrimSpace(line)
+		scope = enterScope(trimmed, scope)
+		line = applyRule(totalTokensRule, line)
+		switch scope {
+		case scopeEnv:
+			if m := additionalDirs.FindStringSubmatch(line); m != nil {
+				out = append(out, m[1]+"- Additional working directories: "+volatileValue)
+				listIndent = len(m[1])
+				continue
+			}
+			line = applyRules(envRules, line)
+			line = applyRules(modelRules, line)
+			line = applyRule(dateRule, line)
+		case scopeDate:
+			line = applyRule(dateRule, line)
+		case scopeGit:
+			line = applyRules(gitRules, line)
+			if trimmed == "Status:" || trimmed == "Recent commits:" {
+				out = append(out, line, volatileValue)
+				for i+1 < len(lines) && lines[i+1] != "" && lines[i+1][0] != '<' {
+					i++
+				}
+				continue
+			}
+		default:
+			if reminder {
+				line = applyRules(modelRules, line)
+				line = applyRule(dateRule, line)
+			}
+		}
+		out = append(out, line)
+	}
+	return strings.Join(out, "\n")
 }
 
 // normalizeUserText neutralizes the volatile values inside the
 // <system-reminder> blocks of a user turn. Text outside a reminder is the
 // user's own and stays.
 func normalizeUserText(s string) string {
-	return reminderBlock.ReplaceAllStringFunc(s, normalizeVolatileLines)
+	return reminderBlock.ReplaceAllStringFunc(s, func(block string) string {
+		return normalizeVolatileLines(block, true)
+	})
 }
 
 // normalizeSystem neutralizes the volatile values in every string of a system
@@ -59,7 +167,7 @@ func normalizeSystem(v any) any {
 		}
 		return out
 	case string:
-		return normalizeVolatileLines(x)
+		return normalizeVolatileLines(x, false)
 	default:
 		return v
 	}

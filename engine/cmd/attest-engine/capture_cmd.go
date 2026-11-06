@@ -547,19 +547,10 @@ const maxDotenvBytes = 1 << 20
 // errors, so a capture never runs with secrets it could not load. The values
 // are only redaction targets: they are never written anywhere.
 func cwdDotenvRedactor() (*redact.Redactor, error) {
-	if _, err := os.Lstat(".env"); errors.Is(err, fs.ErrNotExist) {
+	f, err := capture.OpenRegular(".env")
+	if errors.Is(err, fs.ErrNotExist) {
 		return redact.New(), nil
-	} else if err != nil {
-		return nil, fmt.Errorf("read .env: %w", err)
 	}
-	info, err := os.Stat(".env")
-	if err != nil {
-		return nil, fmt.Errorf("read .env: %w", err)
-	}
-	if !info.Mode().IsRegular() {
-		return nil, fmt.Errorf("read .env: not a regular file (%s)", info.Mode().Type())
-	}
-	f, err := os.Open(".env")
 	if err != nil {
 		return nil, fmt.Errorf("read .env: %w", err)
 	}
