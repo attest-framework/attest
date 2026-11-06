@@ -5,6 +5,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -141,5 +142,34 @@ func TestSkills_EverySkillHasNameAndDescription(t *testing.T) {
 	}
 	if len(skills) == 0 {
 		t.Fatal("no embedded skills")
+	}
+}
+
+var refreshWithYes = regexp.MustCompile("capture --refresh\\s+\\S+\\s+--yes")
+
+func TestSkills_RefreshNeverAutoConfirmed(t *testing.T) {
+	root := assets.SkillsFS()
+	err := fs.WalkDir(root, ".", func(path string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() || !strings.HasSuffix(path, ".md") {
+			return err
+		}
+		data, err := fs.ReadFile(root, path)
+		if err != nil {
+			return err
+		}
+		if m := refreshWithYes.Find(data); m != nil {
+			t.Errorf("%s tells the agent to run %q", path, m)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walk skills: %v", err)
+	}
+	data, err := fs.ReadFile(root, "attest/references/capture-incident.md")
+	if err != nil {
+		t.Fatalf("read capture-incident.md: %v", err)
+	}
+	if !strings.Contains(string(data), "shasum -a 256") {
+		t.Error("capture-incident.md must hash source.command for the human before a refresh")
 	}
 }

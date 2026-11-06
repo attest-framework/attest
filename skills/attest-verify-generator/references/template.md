@@ -48,7 +48,7 @@ Expected: <`N passed`> and `attest replay: N replayed · 0 live model calls · $
 - **New rule on tool calls:** add a method to the chain in `<test file>` (`attest guide behavior-contracts`), rerun the Run commands.
 - **New rule on side effects (optional):** add `.world(state).count|unique|idempotent(...)` in `<test file>` against `<world path>` (`attest guide world-fixtures`).
 - **New incident:** `<uv run|npx> attest capture --name <id> --expect-fail <--world path> -- <command>`; it calls <capture upstream>, so <get approval / start the local server first>. Then add the guarding contract next to `<test file>`.
-- **Intended prompt, tool or model change:** strict replay fails with `replay miss: … changed`. Review `source.command` in `<fixture path>`, then `<uv run|npx> attest capture --refresh <name> --yes`, review the fixture diff and rerun.
+- **Intended prompt, tool or model change:** strict replay fails with `replay miss: … changed`. Show the human `source.command` from `<fixture path>` with its SHA-256 (`capture-incident.md` step 5) and stop for their confirmation; never pass `--yes` from a skill. After the human refreshes, review the fixture diff and rerun.
 
 ## Rules
 

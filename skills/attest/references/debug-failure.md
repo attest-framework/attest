@@ -70,7 +70,7 @@ replay miss: system prompt changed (hash a1b2c3d→e4f5a6b); re-record with `att
 Other forms: `messages changed`, `tools changed`, `params changed`, `model changed ("gpt-4.1"→"gpt-5.4")`, `the agent made more model calls than the 3 recorded`, `the agent made an extra identical call`.
 
 - The change is unintended (a test input differs from the captured run, a prompt edit slipped in): revert it.
-- The change is intended: re-record with `capture-incident.md` step 5 (`attest capture --refresh <name> --yes` after reviewing the command; that run calls the upstream model, so get approval).
+- The change is intended: re-record with `capture-incident.md` step 5: show the human the recorded command and its SHA-256, then stop for their confirmation (never `--yes` from a skill; that run calls the upstream model).
 - `attest egress guard: connection to … blocked`: a client was built before the replay started or with a hard-coded base URL.
 
 ## 5. Policy exit codes
