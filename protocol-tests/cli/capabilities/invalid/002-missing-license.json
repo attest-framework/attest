@@ -1,0 +1,229 @@
+{
+  "schema_version": 1,
+  "engine_version": "1.1.0-rc.4",
+  "protocol_version": 1,
+  "sdk_languages": [
+    "python",
+    "typescript"
+  ],
+  "layers": [
+    {
+      "id": 1,
+      "name": "Schema validation",
+      "description": "Checks the output against a JSON Schema.",
+      "assertion_types": [
+        "schema"
+      ],
+      "cost": "free",
+      "deterministic": true
+    },
+    {
+      "id": 2,
+      "name": "Constraint checks",
+      "description": "Checks cost, token, latency and step-count limits.",
+      "assertion_types": [
+        "constraint"
+      ],
+      "cost": "free",
+      "deterministic": true
+    },
+    {
+      "id": 3,
+      "name": "Trace and behavioral checks",
+      "description": "Checks which tools ran, in which order, with which arguments, how often per business key, across the agent tree and against the world's final state.",
+      "assertion_types": [
+        "trace",
+        "trace_tree",
+        "effect"
+      ],
+      "cost": "free",
+      "deterministic": true
+    },
+    {
+      "id": 4,
+      "name": "Content pattern matching",
+      "description": "Checks the output text against substrings, patterns and keywords.",
+      "assertion_types": [
+        "content"
+      ],
+      "cost": "free",
+      "deterministic": true
+    },
+    {
+      "id": 5,
+      "name": "Embedding similarity",
+      "description": "Scores semantic similarity against a reference with an embedding model.",
+      "assertion_types": [
+        "embedding"
+      ],
+      "cost": "paid",
+      "deterministic": false
+    },
+    {
+      "id": 6,
+      "name": "LLM-as-judge",
+      "description": "Scores the output against a rubric with a judge model.",
+      "assertion_types": [
+        "llm_judge"
+      ],
+      "cost": "paid",
+      "deterministic": false
+    },
+    {
+      "id": 8,
+      "name": "Plugins",
+      "description": "Custom assertions that run in the SDK process; cost and determinism are the plugin's.",
+      "assertion_types": [
+        "plugin"
+      ],
+      "cost": "free",
+      "deterministic": false
+    }
+  ],
+  "adapters": {
+    "python": [
+      {
+        "name": "OpenAI",
+        "module": "openai",
+        "maturity": "stable"
+      },
+      {
+        "name": "Anthropic",
+        "module": "anthropic",
+        "maturity": "stable"
+      },
+      {
+        "name": "Manual",
+        "module": "manual",
+        "maturity": "stable"
+      },
+      {
+        "name": "Gemini",
+        "module": "gemini",
+        "maturity": "beta"
+      },
+      {
+        "name": "Ollama",
+        "module": "ollama",
+        "maturity": "beta"
+      },
+      {
+        "name": "LangChain",
+        "module": "langchain",
+        "maturity": "beta"
+      },
+      {
+        "name": "CrewAI",
+        "module": "crewai",
+        "maturity": "beta"
+      },
+      {
+        "name": "OpenTelemetry",
+        "module": "otel",
+        "maturity": "beta"
+      },
+      {
+        "name": "Google ADK",
+        "module": "google_adk",
+        "maturity": "experimental"
+      },
+      {
+        "name": "LlamaIndex",
+        "module": "llamaindex",
+        "maturity": "experimental"
+      }
+    ],
+    "typescript": [
+      {
+        "name": "OpenAI",
+        "module": "openai",
+        "maturity": "stable"
+      },
+      {
+        "name": "Anthropic",
+        "module": "anthropic",
+        "maturity": "stable"
+      },
+      {
+        "name": "Manual",
+        "module": "manual",
+        "maturity": "stable"
+      },
+      {
+        "name": "Gemini",
+        "module": "gemini",
+        "maturity": "beta"
+      },
+      {
+        "name": "Ollama",
+        "module": "ollama",
+        "maturity": "beta"
+      },
+      {
+        "name": "LangChain.js",
+        "module": "langchain",
+        "maturity": "beta"
+      },
+      {
+        "name": "OpenTelemetry",
+        "module": "otel",
+        "maturity": "beta"
+      }
+    ]
+  },
+  "features": [
+    {
+      "name": "Capture, replay and merge gate",
+      "maturity": "stable"
+    },
+    {
+      "name": "Behavior and world-effect contracts",
+      "maturity": "stable"
+    },
+    {
+      "name": "CI policy, baselines and reports",
+      "maturity": "stable"
+    },
+    {
+      "name": "Failure viewer",
+      "maturity": "beta"
+    },
+    {
+      "name": "Mutation testing",
+      "maturity": "beta"
+    },
+    {
+      "name": "MCP server and agent skills",
+      "maturity": "beta"
+    },
+    {
+      "name": "LLM judges on four provider families",
+      "maturity": "beta"
+    },
+    {
+      "name": "Multi-agent trace trees",
+      "maturity": "beta"
+    },
+    {
+      "name": "Simulation runtime",
+      "maturity": "beta"
+    },
+    {
+      "name": "Plugin assertions",
+      "maturity": "beta"
+    },
+    {
+      "name": "Local ONNX embeddings",
+      "maturity": "experimental"
+    },
+    {
+      "name": "Continuous eval and drift detection",
+      "maturity": "experimental"
+    }
+  ],
+  "maturity_definitions": {
+    "beta": "Shipped and tested, but the interface or behavior can still change in a minor release.",
+    "experimental": "Shipped without a stability commitment and without demonstrated demand; it can change or be removed in any release.",
+    "stable": "Covered by the parity and conformance suites; a change in behavior is a breaking change."
+  }
+}

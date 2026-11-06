@@ -1,0 +1,104 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://attest-framework.github.io/schemas/v1/cli/capabilities.schema.json",
+  "title": "attest-engine capabilities --json",
+  "description": "What attest ships: evaluated layers with their assertion types, SDK languages, adapters per SDK, features, each with a maturity tier, the licence and the engine and protocol versions. The README and guide tables are generated from this document.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "engine_version",
+    "protocol_version",
+    "license",
+    "sdk_languages",
+    "layers",
+    "adapters",
+    "features",
+    "maturity_definitions"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "engine_version": { "type": "string", "minLength": 1 },
+    "protocol_version": { "type": "integer", "minimum": 1 },
+    "license": { "type": "string", "minLength": 1 },
+    "sdk_languages": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "layers": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/layer" }
+    },
+    "adapters": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["python", "typescript"],
+      "properties": {
+        "python": { "$ref": "#/$defs/adapters" },
+        "typescript": { "$ref": "#/$defs/adapters" }
+      }
+    },
+    "features": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/feature" }
+    },
+    "maturity_definitions": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["stable", "beta", "experimental"],
+      "properties": {
+        "stable": { "type": "string", "minLength": 1 },
+        "beta": { "type": "string", "minLength": 1 },
+        "experimental": { "type": "string", "minLength": 1 }
+      }
+    }
+  },
+  "$defs": {
+    "maturity": { "enum": ["stable", "beta", "experimental"] },
+    "layer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "name", "description", "assertion_types", "cost", "deterministic"],
+      "properties": {
+        "id": { "type": "integer", "minimum": 1 },
+        "name": { "type": "string", "minLength": 1 },
+        "description": { "type": "string", "minLength": 1 },
+        "assertion_types": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "cost": { "enum": ["free", "paid"] },
+        "deterministic": { "type": "boolean" }
+      }
+    },
+    "adapters": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "module", "maturity"],
+        "properties": {
+          "name": { "type": "string", "minLength": 1 },
+          "module": { "type": "string", "minLength": 1 },
+          "maturity": { "$ref": "#/$defs/maturity" }
+        }
+      }
+    },
+    "feature": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "maturity"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "maturity": { "$ref": "#/$defs/maturity" }
+      }
+    }
+  }
+}
