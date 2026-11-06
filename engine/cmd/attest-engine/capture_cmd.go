@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -66,7 +67,10 @@ options:
                          with --serve)
   --refresh <name>       re-run the fixture's recorded command with its
                          original flags (--expect-fail included) and overwrite
-                         it; refuses when the command's arguments were
+                         it, then print what changed per exchange (system
+                         prompt, tool schemas, messages, tool results,
+                         model, params; --json adds a "diff" object);
+                         refuses when the command's arguments were
                          redacted or templated, or the fixture has no
                          command (--from, in-process)
   --world <world.yaml>   also host the world the agent acts on (its base URL
@@ -91,6 +95,7 @@ type captureOptions struct {
 	serve          bool
 	checkRedaction string
 	refresh        string
+	oldFixture     *capture.Fixture // with --refresh: the fixture before the re-run
 	world          string
 	yes            bool
 	json           bool
@@ -385,10 +390,22 @@ func finishCapture(o *captureOptions, in capture.BuildInput, stdout, stderr io.W
 			return 1
 		}
 	}
+	var diff *capture.Diff
+	if o.oldFixture != nil {
+		if diff, err = refreshDiff(o.oldFixture, data, in.Redactor.String); err != nil {
+			fmt.Fprintf(stderr, "capture: comparing with the previous fixture: %s\n", terminalSafe(in.Redactor.String(err.Error())))
+			return 1
+		}
+	}
 	summary := stderr
 	if o.json {
 		writeCaptureSummary(stderr, path, f)
-		if err := writeJSON(stdout, captureJSONResult(path, f)); err != nil {
+		writeRefreshDiff(stderr, f, diff)
+		res := captureJSONResult(path, f)
+		if diff != nil {
+			res["diff"] = diff
+		}
+		if err := writeJSON(stdout, res); err != nil {
 			fmt.Fprintf(stderr, "capture: %s\n", terminalSafe(err.Error()))
 			return 1
 		}
@@ -403,7 +420,33 @@ func finishCapture(o *captureOptions, in capture.BuildInput, stdout, stderr io.W
 		summary = stdout
 	}
 	writeCaptureSummary(summary, path, f)
+	writeRefreshDiff(summary, f, diff)
 	return verifiedExit(f)
+}
+
+// refreshDiff compares the fixture a refresh replaced with the one it wrote.
+// The new fixture is read back from its written bytes, so the diff covers
+// what is on disk: redacted and templated. scrub is applied to every string
+// the diff carries.
+func refreshDiff(old *capture.Fixture, written []byte, scrub func(string) string) (*capture.Diff, error) {
+	newF, err := capture.Unmarshal(written)
+	if err != nil {
+		return nil, err
+	}
+	return capture.SemanticDiff(old, newF, scrub)
+}
+
+// writeRefreshDiff prints the per-exchange diff of a --refresh; a no-op for
+// any other capture.
+func writeRefreshDiff(w io.Writer, f *capture.Fixture, diff *capture.Diff) {
+	if diff == nil {
+		return
+	}
+	var buf bytes.Buffer
+	diff.WriteText(&buf, f.Name, len(f.Exchanges))
+	for _, line := range strings.Split(strings.TrimSuffix(buf.String(), "\n"), "\n") {
+		fmt.Fprintln(w, terminalSafe(line))
+	}
 }
 
 // verifiedExit is 1 only for a not_verified capture: a healthy run with
@@ -633,6 +676,7 @@ func resolveRefresh(o *captureOptions) error {
 		}
 	}
 	o.name, o.command, o.expectFail = o.refresh, f.Source.Command, f.Verification.ExpectFail
+	o.oldFixture = f
 	if o.agentID == "" {
 		o.agentID = f.Trace.AgentID
 	}
