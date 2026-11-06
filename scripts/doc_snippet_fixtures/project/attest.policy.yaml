@@ -1,0 +1,4 @@
+severity: block
+max_cost_usd: 0.50
+layers:
+  3: { max_hard_fails: 0 }
