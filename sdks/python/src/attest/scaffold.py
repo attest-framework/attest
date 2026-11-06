@@ -99,6 +99,14 @@ ANNOTATE_ACTION = "attest-framework/attest/.github/actions/pr-annotate"
 # pr-annotate reads the engine from ~/.attest/bin/<version>/ and never downloads it, so the
 # annotate job fetches exactly the release the pr-annotate pin's tag names.
 ANNOTATE_ENGINE_VERSION = ACTION_PINS[ANNOTATE_ACTION][1].removeprefix("v")
+# The annotate job holds a write token, so the install resolves attest-ai's dependencies as of one
+# day after the ANNOTATE_ENGINE_VERSION release (attest-ai 1.0.1 was uploaded 2026-11-05) instead of
+# whatever is newest on the runner. Move it with the version.
+ANNOTATE_EXCLUDE_NEWER = "2026-11-06"
+_ANNOTATE_FETCH_COMMAND = (
+    f"uvx --no-config --exclude-newer {ANNOTATE_EXCLUDE_NEWER} "
+    f'--from "attest-ai=={ANNOTATE_ENGINE_VERSION}" attest doctor'
+)
 
 
 def _uses(action: str) -> str:
@@ -199,7 +207,7 @@ jobs:
         # the pinned release fetches it into ~/.attest/bin/<version>/. Run from the runner's temp
         # directory without project config, so nothing the pull request controls steers the install.
         working-directory: ${{{{ runner.temp }}}}
-        run: uvx --no-config --from "attest-ai=={ANNOTATE_ENGINE_VERSION}" attest doctor
+        run: {_ANNOTATE_FETCH_COMMAND}
       - uses: {_uses(ANNOTATE_ACTION)}
         with:
           report: attest-report.json

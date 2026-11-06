@@ -18,6 +18,7 @@ from attest.scaffold import (
     ACTION_PINS,
     ANNOTATE_ACTION,
     ANNOTATE_ENGINE_VERSION,
+    ANNOTATE_EXCLUDE_NEWER,
     DEMO_MARKER,
     scaffold_project,
 )
@@ -491,6 +492,13 @@ def test_scaffold_pins_equal_the_typescript_scaffold_pins() -> None:
         assert ACTION_PINS[action] == ts_pins[action], action
 
 
+def test_scaffolds_agree_on_the_exclude_newer_date() -> None:
+    source = (_REPO / "sdks/typescript/packages/core/src/scaffold.ts").read_text()
+    match = re.search(r'ANNOTATE_EXCLUDE_NEWER = "(\d{4}-\d{2}-\d{2})"', source)
+    assert match is not None
+    assert match[1] == ANNOTATE_EXCLUDE_NEWER
+
+
 def _jobs(workflow: str) -> tuple[str, str]:
     head, _, annotate = workflow.partition("\n  annotate:\n")
     return head, annotate
@@ -507,7 +515,10 @@ def test_scaffold_annotate_job_fetches_the_engine_before_pr_annotate(tmp_path: P
     assert "enable-cache: false" in annotate[setup_uv:fetch]
     step = annotate[fetch:pr_annotate]
     assert "working-directory: ${{ runner.temp }}" in step
-    assert f'uvx --no-config --from "attest-ai=={ANNOTATE_ENGINE_VERSION}" attest doctor' in step
+    assert (
+        f"uvx --no-config --exclude-newer {ANNOTATE_EXCLUDE_NEWER} "
+        f'--from "attest-ai=={ANNOTATE_ENGINE_VERSION}" attest doctor'
+    ) in step
     assert f"engine-version: {ANNOTATE_ENGINE_VERSION}\n" in annotate[pr_annotate:]
     assert "uvx" not in test_job  # the job that runs pull request code never installs the engine
 

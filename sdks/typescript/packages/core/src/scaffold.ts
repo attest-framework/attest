@@ -97,6 +97,13 @@ const ANNOTATE_ACTION = "attest-framework/attest/.github/actions/pr-annotate";
  */
 export const ANNOTATE_ENGINE_VERSION = ACTION_PINS[ANNOTATE_ACTION].version.replace(/^v/, "");
 
+/**
+ * The annotate job holds a write token, so the install resolves attest-ai's dependencies as of one
+ * day after the ANNOTATE_ENGINE_VERSION release (attest-ai 1.0.1 was uploaded 2026-11-05) instead
+ * of whatever is newest on the runner. Move it with the version.
+ */
+export const ANNOTATE_EXCLUDE_NEWER = "2026-11-06";
+
 function uses(action: keyof typeof ACTION_PINS): string {
   const { sha, version } = ACTION_PINS[action];
   return `${action}@${sha} # ${version}`;
@@ -197,7 +204,7 @@ jobs:
         # does that and exits 0 (\`npx @attest-ai/core attest doctor\` fails on 1.0.1). Run from the runner's temp
         # directory without project config, so nothing the pull request controls steers the install.
         working-directory: \${{ runner.temp }}
-        run: uvx --no-config --from "attest-ai==${ANNOTATE_ENGINE_VERSION}" attest doctor
+        run: uvx --no-config --exclude-newer ${ANNOTATE_EXCLUDE_NEWER} --from "attest-ai==${ANNOTATE_ENGINE_VERSION}" attest doctor
       - uses: ${uses(ANNOTATE_ACTION)}
         with:
           report: attest-report.json
