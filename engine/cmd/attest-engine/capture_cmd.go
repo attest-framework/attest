@@ -7,6 +7,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -178,13 +179,17 @@ func runCapture(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		}
 	}
 	environ := os.Environ()
+	dotenv, err := cwdDotenvRedactor()
+	if err != nil {
+		fmt.Fprintf(stderr, "capture: %s\n", terminalSafe(err.Error()))
+		return 1
+	}
 	in := capture.BuildInput{
 		Name:       o.name,
 		ExpectFail: o.expectFail,
 		AgentID:    o.agentID,
-		Redactor:   redact.FromEnviron(environ),
+		Redactor:   redact.FromEnviron(environ).Merge(dotenv),
 	}
-	var err error
 	var opts []capture.Option
 	if o.world != "" {
 		w, werr := loadWorld(o.world)
@@ -532,6 +537,34 @@ func writeJSONFile(path string, v any) error {
 	return f.Close()
 }
 
+// maxDotenvBytes bounds the .env file read into the redactor.
+const maxDotenvBytes = 1 << 20
+
+// cwdDotenvRedactor returns a Redactor holding the secrets of the .env file in
+// the working directory, which the agent under capture usually loads itself.
+// A missing file is no secrets; an unreadable one, one that is not a regular
+// file (a symlink to a regular file is followed) and one over 1 MiB are
+// errors, so a capture never runs with secrets it could not load. The values
+// are only redaction targets: they are never written anywhere.
+func cwdDotenvRedactor() (*redact.Redactor, error) {
+	f, err := capture.OpenRegular(".env")
+	if errors.Is(err, fs.ErrNotExist) {
+		return redact.New(), nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("read .env: %w", err)
+	}
+	defer f.Close()
+	data, err := io.ReadAll(io.LimitReader(f, maxDotenvBytes+1))
+	if err != nil {
+		return nil, fmt.Errorf("read .env: %w", err)
+	}
+	if len(data) > maxDotenvBytes {
+		return nil, fmt.Errorf("read .env: larger than %d bytes", maxDotenvBytes)
+	}
+	return redact.FromDotenv(data), nil
+}
+
 // runCheckRedaction scans a fixture for secrets: values of environment
 // variables whose names end in KEY, TOKEN, SECRET or PASSWORD, and
 // key-shaped strings. It prints where each hit is, never the secret.
@@ -541,7 +574,12 @@ func runCheckRedaction(path string, asJSON bool, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "capture --check-redaction: %s\n", terminalSafe(err.Error()))
 		return 1
 	}
-	hits, err := capture.CheckRedaction(data, redact.FromProcessEnv())
+	dotenv, err := cwdDotenvRedactor()
+	if err != nil {
+		fmt.Fprintf(stderr, "capture --check-redaction: %s\n", terminalSafe(err.Error()))
+		return 1
+	}
+	hits, err := capture.CheckRedaction(data, redact.FromProcessEnv().Merge(dotenv))
 	if err != nil {
 		fmt.Fprintf(stderr, "capture --check-redaction: %s: %s\n", terminalSafe(path), terminalSafe(err.Error()))
 		return 1

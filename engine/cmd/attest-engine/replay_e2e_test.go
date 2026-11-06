@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 )
 
@@ -361,5 +362,45 @@ func TestReplayCommand_TraceOut_NonZeroExitStillWritesTrace(t *testing.T) {
 	}
 	if _, err := os.Stat(traceFile); err != nil {
 		t.Fatalf("no trace for a command that served every request and exited 1: %v", err)
+	}
+}
+
+func TestReplayCommand_DotenvOnlySecretInRequest_StrictHits(t *testing.T) {
+	bin := buildEngineBinary(t)
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, ".env"), []byte("VENDOR_TOKEN=dotenv-only-secret-9876\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	system := "You refund once. Vendor token dotenv-only-secret-9876."
+	captureWithSystem(t, bin, dir, system)
+
+	run := engineRun(t, bin, dir, replayEnv(system), replayArgs(dir)...)
+
+	if run.code != 0 {
+		t.Fatalf("exit %d\n%s", run.code, run.stderr)
+	}
+	if !strings.Contains(run.stderr, "1 replayed · 0 live model calls · $0.00") {
+		t.Fatalf("summary:\n%s", run.stderr)
+	}
+}
+
+func TestReplayCommand_DotenvIsFIFO_WarnsOnceAndReplays(t *testing.T) {
+	bin := buildEngineBinary(t)
+	dir := t.TempDir()
+	captureWithSystem(t, bin, dir, "You refund once.")
+	if err := syscall.Mkfifo(filepath.Join(dir, ".env"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	run := engineRun(t, bin, dir, replayEnv("You refund once."), replayArgs(dir)...)
+
+	if run.code != 0 {
+		t.Fatalf("exit %d\n%s", run.code, run.stderr)
+	}
+	if n := strings.Count(run.stderr, "warning: ignoring .env: read .env: not a regular file"); n != 1 {
+		t.Fatalf("warning count %d\n%s", n, run.stderr)
+	}
+	if !strings.Contains(run.stderr, "1 replayed · 0 live model calls · $0.00") {
+		t.Fatalf("summary:\n%s", run.stderr)
 	}
 }

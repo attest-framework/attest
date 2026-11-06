@@ -366,3 +366,19 @@ func TestExchangeDoc_StreamRequestedErrorPages_KeptAndRedacted(t *testing.T) {
 		}
 	}
 }
+
+func TestRedactPath_ApiKeyAndSubscriptionKeyParams_Redacted(t *testing.T) {
+	got, err := redactPath("/openai/deployments/x/chat?api-version=1&api-key=abc123&subscription-key=def456&client_secret=ghi789&x-api-key=jkl&access-key=mno")
+
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, v := range []string{"abc123", "def456", "ghi789", "jkl", "mno"} {
+		if strings.Contains(got, "="+v) {
+			t.Errorf("%q still holds %s", got, v)
+		}
+	}
+	if !strings.Contains(got, "api-version=1") {
+		t.Errorf("api-version lost: %q", got)
+	}
+}

@@ -83,6 +83,7 @@ type templater struct {
 	spanIDs  map[string]string
 	strs     map[string]string // provider id or email → placeholder
 	knownIDs map[string]bool   // provider ids seen in id fields
+	sessions map[string]string // device, account and session values from metadata.user_id → placeholder
 	counts   map[string]int
 }
 
@@ -97,6 +98,7 @@ func newTemplater() *templater {
 		spanIDs:  map[string]string{},
 		strs:     map[string]string{},
 		knownIDs: map[string]bool{},
+		sessions: map[string]string{},
 		counts:   map[string]int{},
 	}
 }
@@ -179,6 +181,9 @@ func walkKeys(m map[string]any) []string {
 func (t *templater) collect(v any, key string) {
 	switch x := v.(type) {
 	case map[string]any:
+		if uid, ok := x["user_id"].(string); ok && key == "metadata" {
+			t.collectSession(uid)
+		}
 		for _, k := range walkKeys(x) {
 			t.collect(x[k], k)
 		}
@@ -201,6 +206,65 @@ func (t *templater) collect(v any, key string) {
 			t.knownIDs[sub[1]] = true
 		}
 	}
+}
+
+// legacyUserID matches the user_<device>_account_<uuid>_session_<uuid> form
+// of a Claude Code metadata.user_id used by earlier releases.
+var legacyUserID = regexp.MustCompile(`^user_([^_]+)_account_(.*)_session_(.+)$`)
+
+// sessionIDParts finds the device, account and session values of a Claude
+// Code metadata.user_id: a JSON object with device_id, account_uuid and
+// session_id, or the legacy form. Empty and short parts are skipped.
+func sessionIDParts(uid string) [][2]string {
+	var device, account, session string
+	var obj map[string]any
+	if json.Unmarshal([]byte(uid), &obj) == nil {
+		device, _ = obj["device_id"].(string)
+		account, _ = obj["account_uuid"].(string)
+		session, _ = obj["session_id"].(string)
+	} else if m := legacyUserID.FindStringSubmatch(uid); m != nil {
+		device, account, session = m[1], m[2], m[3]
+	}
+	var parts [][2]string
+	for _, p := range [][2]string{{"device", device}, {"account", account}, {"session", session}} {
+		if len(p[1]) >= minSessionValueLen {
+			parts = append(parts, p)
+		}
+	}
+	return parts
+}
+
+// minSessionValueLen is the shortest identifier replaced everywhere in the
+// document; a shorter value would erase ordinary words.
+const minSessionValueLen = 8
+
+// collectSession registers the identifiers in a user_id. They are replaced
+// wherever they appear in the document, so a session id echoed into a prompt
+// or a log does not survive either.
+func (t *templater) collectSession(uid string) {
+	for _, p := range sessionIDParts(uid) {
+		if _, seen := t.sessions[p[1]]; !seen {
+			t.sessions[p[1]] = t.placeholder(p[0], p[1])
+		}
+	}
+}
+
+// replaceSessions replaces every registered identifier in s, longest first.
+func (t *templater) replaceSessions(s string) string {
+	if len(t.sessions) == 0 {
+		return s
+	}
+	vals := make([]string, 0, len(t.sessions))
+	for v := range t.sessions {
+		vals = append(vals, v)
+	}
+	sort.Slice(vals, func(i, j int) bool {
+		return len(vals[i]) > len(vals[j]) || (len(vals[i]) == len(vals[j]) && vals[i] < vals[j])
+	})
+	for _, v := range vals {
+		s = strings.ReplaceAll(s, v, t.sessions[v])
+	}
+	return s
 }
 
 // idFor returns the placeholder for id v. A hex id keeps its width; an id
@@ -250,7 +314,7 @@ func (t *templater) rewrite(v any, key string) any {
 		}
 		return x
 	case string:
-		return t.rewriteString(x, key)
+		return t.rewriteString(t.replaceSessions(x), key)
 	default:
 		return v
 	}

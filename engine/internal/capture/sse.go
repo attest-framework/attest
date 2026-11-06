@@ -1,6 +1,7 @@
 package capture
 
 import (
+	"bytes"
 	"fmt"
 	"mime"
 	"strings"
@@ -214,7 +215,39 @@ func redactSSE(body string, r *redact.Redactor) (string, error) {
 	for _, id := range order {
 		redactPieces(streams[id], r)
 	}
+	if err := s.redactEvents(r); err != nil {
+		return "", err
+	}
 	return s.String()
+}
+
+// redactEvents decodes every event's JSON and redacts all of its strings, so
+// a secret in a non-delta event (response.completed, message_start, an error
+// event) is found in its decoded form, where a secret holding a quote or a
+// backslash is no longer JSON-escaped. Events with nothing to redact keep
+// their original bytes.
+func (s *sseStream) redactEvents(r *redact.Redactor) error {
+	for i, ev := range s.events {
+		if ev.obj == nil {
+			continue
+		}
+		before, err := canonical(ev.obj)
+		if err != nil {
+			return fmt.Errorf("event %d: %w", i, err)
+		}
+		red, err := redactTree(ev.obj, r)
+		if err != nil {
+			return fmt.Errorf("event %d: %w", i, err)
+		}
+		after, err := canonical(red)
+		if err != nil {
+			return fmt.Errorf("event %d: %w", i, err)
+		}
+		if !bytes.Equal(before, after) {
+			ev.obj, ev.changed = red.(map[string]any), true
+		}
+	}
+	return nil
 }
 
 // redactPieces finds secrets in the concatenated text of pieces and rewrites

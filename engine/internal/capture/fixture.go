@@ -190,6 +190,8 @@ func exchangeDoc(ex rawExchange, r *redact.Redactor) (map[string]any, error) {
 // secretQueryParams are query parameters that carry credentials.
 var secretQueryParams = map[string]bool{
 	"key": true, "api_key": true, "apikey": true, "token": true, "access_token": true, "sig": true, "signature": true,
+	"api-key": true, "x-api-key": true, "subscription-key": true, "subscription_key": true,
+	"access-key": true, "access_key": true, "client_secret": true, "client-secret": true,
 }
 
 // redactPath takes an exchange path as recorded, still percent-escaped,
@@ -291,6 +293,27 @@ func decodeJSON(data []byte) (any, error) {
 	return v, nil
 }
 
+// identityParam reports whether a request parameter counts toward the replay
+// key, and the value that does. metadata.user_id names the device, account
+// and session of the caller, which change with every run; the rest of
+// metadata stays.
+func identityParam(name string, v any) (any, bool) {
+	if name != "metadata" {
+		return v, true
+	}
+	m, ok := v.(map[string]any)
+	if !ok {
+		return v, true
+	}
+	rest := make(map[string]any, len(m))
+	for k, e := range m {
+		if k != "user_id" {
+			rest[k] = e
+		}
+	}
+	return rest, len(rest) > 0
+}
+
 // keyOf computes an exchange's replay key from its templated request.
 func keyOf(api string, request any) (Key, error) {
 	body, _ := request.(map[string]any)
@@ -311,9 +334,11 @@ func keyOf(api string, request any) (Key, error) {
 		switch {
 		case name == "model" || name == "tools":
 		case !known || contains(fields, name):
-			prompt[name] = v
+			prompt[name] = normalizePromptField(name, v)
 		default:
-			params[name] = v
+			if v, keep := identityParam(name, v); keep {
+				params[name] = v
+			}
 		}
 	}
 	var err error

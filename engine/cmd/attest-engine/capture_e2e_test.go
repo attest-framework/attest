@@ -536,3 +536,116 @@ func TestCaptureServe_SecretInFinalizeEnviron_Redacted(t *testing.T) {
 		t.Fatalf("late secret not redacted:\n%s", data)
 	}
 }
+
+func TestCaptureCheckRedaction_SecretWithQuoteInSSEEvent_ExitsOneWithoutPrintingIt(t *testing.T) {
+	bin := buildEngineBinary(t)
+	const secret = `hunter"2-planted-secret-value`
+	body := "event: response.completed\ndata: {\"type\":\"response.completed\",\"note\":\"hunter\\\"2-planted-secret-value\"}\n\n"
+	doc, _ := json.Marshal(map[string]any{"exchanges": []any{map[string]any{
+		"response": map[string]any{"content_type": "text/event-stream", "status": 200, "body": body},
+	}}})
+	path := filepath.Join(t.TempDir(), "quote.attest.json")
+	os.WriteFile(path, doc, 0o644)
+	cmd := exec.Command(bin, "capture", "--check-redaction", path)
+	cmd.Env = append(os.Environ(), "SERVICE_API_KEY="+secret)
+
+	out, err := cmd.CombinedOutput()
+
+	exitErr, ok := err.(*exec.ExitError)
+	if !ok || exitErr.ExitCode() != 1 || !strings.Contains(string(out), "event 0") || strings.Contains(string(out), "planted-secret-value") {
+		t.Fatalf("err %v\n%s", err, out)
+	}
+}
+
+func TestCaptureCheckRedaction_SecretOnlyInCwdDotenv_Flagged(t *testing.T) {
+	bin := buildEngineBinary(t)
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, ".env"), []byte("VENDOR_TOKEN=dotenv-only-secret-9876\n"), 0o644)
+	path := filepath.Join(dir, "leak.attest.json")
+	os.WriteFile(path, []byte(`{"a":{"note":"dotenv-only-secret-9876"}}`), 0o644)
+	cmd := exec.Command(bin, "capture", "--check-redaction", path)
+	cmd.Dir = dir
+
+	out, err := cmd.CombinedOutput()
+
+	exitErr, ok := err.(*exec.ExitError)
+	if !ok || exitErr.ExitCode() != 1 || !strings.Contains(string(out), "$.a.note") || strings.Contains(string(out), "dotenv-only-secret") {
+		t.Fatalf("err %v\n%s", err, out)
+	}
+}
+
+// checkRedactionWithDotenv runs `capture --check-redaction` on a clean fixture
+// in a directory prepared by setup, which creates .env.
+func checkRedactionWithDotenv(t *testing.T, setup func(dir string)) (string, int) {
+	t.Helper()
+	bin := buildEngineBinary(t)
+	dir := t.TempDir()
+	setup(dir)
+	path := filepath.Join(dir, "clean.attest.json")
+	if err := os.WriteFile(path, []byte(`{"a":{"note":"nothing secret"}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	run := engineRun(t, bin, dir, nil, "capture", "--check-redaction", path)
+	return run.stdout + run.stderr, run.code
+}
+
+func TestCaptureCheckRedaction_DotenvIsFIFO_ErrorsWithoutBlocking(t *testing.T) {
+	out, code := checkRedactionWithDotenv(t, func(dir string) {
+		if err := syscall.Mkfifo(filepath.Join(dir, ".env"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	})
+
+	if code != 1 || !strings.Contains(out, ".env: not a regular file") {
+		t.Fatalf("exit %d\n%s", code, out)
+	}
+}
+
+func TestCaptureCheckRedaction_DotenvSymlinkToDirectory_Errors(t *testing.T) {
+	out, code := checkRedactionWithDotenv(t, func(dir string) {
+		if err := os.Mkdir(filepath.Join(dir, "d"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink("d", filepath.Join(dir, ".env")); err != nil {
+			t.Fatal(err)
+		}
+	})
+
+	if code != 1 || !strings.Contains(out, ".env: not a regular file") {
+		t.Fatalf("exit %d\n%s", code, out)
+	}
+}
+
+func TestCaptureCheckRedaction_DotenvOverOneMiB_Errors(t *testing.T) {
+	out, code := checkRedactionWithDotenv(t, func(dir string) {
+		big := strings.Repeat("A=1\n", (1<<20)/4+1)
+		if err := os.WriteFile(filepath.Join(dir, ".env"), []byte(big), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	})
+
+	if code != 1 || !strings.Contains(out, ".env: larger than 1048576 bytes") {
+		t.Fatalf("exit %d\n%s", code, out)
+	}
+}
+
+func TestCaptureCheckRedaction_DotenvSymlinkToRegularFile_Loaded(t *testing.T) {
+	bin := buildEngineBinary(t)
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "real.env"), []byte("VENDOR_TOKEN=dotenv-only-secret-9876\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("real.env", filepath.Join(dir, ".env")); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "leak.attest.json")
+	if err := os.WriteFile(path, []byte(`{"a":{"note":"dotenv-only-secret-9876"}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	run := engineRun(t, bin, dir, nil, "capture", "--check-redaction", path)
+
+	if run.code != 1 || !strings.Contains(run.stdout+run.stderr, "$.a.note") {
+		t.Fatalf("exit %d\n%s%s", run.code, run.stdout, run.stderr)
+	}
+}

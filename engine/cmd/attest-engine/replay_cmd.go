@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/attest-framework/attest/engine/internal/capture"
+	"github.com/attest-framework/attest/engine/internal/redact"
 )
 
 func init() {
@@ -130,6 +131,12 @@ func runReplay(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return 1
 	}
 	environ := os.Environ()
+	dotenv, err := cwdDotenvRedactor()
+	if err != nil {
+		// Replay never needed .env; a bad one only costs its redaction targets.
+		fmt.Fprintf(stderr, "replay: warning: ignoring .env: %s\n", terminalSafe(err.Error()))
+		dotenv = redact.New()
+	}
 	var opts []capture.Option
 	if o.world != "" {
 		w, werr := loadWorld(o.world)
@@ -140,7 +147,7 @@ func runReplay(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		opts = append(opts, capture.WithWorld(w))
 	}
 	s, err := capture.StartReplay(capture.ReplayOptions{
-		Mode: o.mode, Fixture: f, Environ: environ, Upstreams: capture.UpstreamsFromEnv(environ), NoLive: o.noLive,
+		Mode: o.mode, Fixture: f, Environ: environ, Redactor: dotenv, Upstreams: capture.UpstreamsFromEnv(environ), NoLive: o.noLive,
 	}, opts...)
 	if err != nil {
 		fmt.Fprintf(stderr, "replay: %s\n", terminalSafe(err.Error()))
