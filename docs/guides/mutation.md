@@ -19,8 +19,10 @@ Mutants are enumerated in this fixed order, so the same fixtures give the same m
 | `reorder_tool_calls` | Swaps two neighbouring tool calls | `tool_order` |
 | `perturb_argument` | Changes one scalar argument: a string gets a suffix, a number doubles, a bool flips | `arg_predicate` pinning the argument to the captured values |
 | `inject_tool_error` | Marks a tool call failed with an error message (trace-v2 fixtures) | `failure_streak` with `max` set to the fixture's longest existing failure streak (0 when it has none) |
-| `alter_world_effect` | In the fixture's world snapshot: duplicates a record, drops a record, or changes one field | an effect `idempotent` or `count` check |
+| `alter_world_effect` | In the fixture's world snapshot: duplicates a record, drops a record, changes one field, raises a numeric field one above the bound of its related record (exceed), or points a shared `*_id` field away from its related record's value (redirect) | an effect `idempotent` or `count` check; for exceed, `sum(... at_most=related(...))`; for redirect, `matches(... related(...))` |
 | `truncate_output` | Cuts a string in the final output to its first half | a `content` `contains` check on the cut text |
+
+The exceed and redirect mutants exist only where the world has a relation: a `<name>_id` field whose target resource (`<name>`, `<name>s`, `<name>es`, or the `y`→`ies` plural) holds exactly one record with that key. A world without one generates exactly the mutants it did before. Their ids end in the relation, `refunds.0.exceed.orders.order_id.amount_cents`, and their descriptions read `raise refunds record 0 (order_id=O-1042): amount_cents 8400 -> 8401, above orders.amount_cents 8400`. A suite with no `sum` or `matches` check leaves them alive, and the report suggests the contract that kills them.
 
 A mutant identical to the original, or to an earlier mutant, is dropped. Each mutant has a stable id, `<fixture>:<operator>:<site>`, and a description such as `duplicate issue_refund (order_id=O-1042)`.
 
@@ -63,9 +65,35 @@ survivors:
     (issue_refund is called at most 1× per order_id)
 ```
 
-`--json` prints [`cli/mutate.schema.json`](../../proto/attest/v1/cli/mutate.schema.json): `score`, `seed`, `fixtures`, `mutants` (`id`, `fixture`, `operator`, `description`, `status`, `killed_by` with the assertion id, test id and spec), `survivors_suggestions`, `skipped_specs` and `applicable_specs`.
+`--json` prints [`cli/mutate.schema.json`](../../proto/attest/v1/cli/mutate.schema.json): `score`, `seed`, `fixtures`, `mutants` (`id`, `fixture`, `operator`, `description`, `status`, `killed_by` with the assertion id, test id and spec), `survivors_suggestions`, `skipped_specs` and `applicable_specs`, `operators` and `excluded` (below).
 
 Each suggested contract was checked before it was reported: it passes on the unmutated fixture and hard-fails on the survivor. An effect suggestion leaves out the world snapshot; the test supplies it through the world helper. A survivor the operator table cannot express has no suggestion.
+
+## Read the score per operator
+
+One score hides which kinds of change the suite misses. The report breaks it down by operator, in enumeration order, for the refund-desk INC-1042 fixture:
+
+```text
+mutation score: 33% (10 killed, 20 survived)
+fixtures: inc-1042 | seed 0 | 30 mutants
+contracts: 38 applicable, 4 skipped (not deterministic)
+
+operator               generated  killed  survived   n/a  score
+drop_tool_call                 3       3         0     0   100%
+duplicate_tool_call            3       3         0     0   100%
+reorder_tool_calls             2       2         0     0   100%
+perturb_argument               6       0         6     0     0%
+inject_tool_error              3       0         3     0     0%
+alter_world_effect            13       2        11     0    15%
+
+excluded from the score: 0 mutant(s) with no applicable contract; 4 spec(s): llm_judge specs are not deterministic
+```
+
+The columns are the mutants the operator generated, how many a contract killed, how many survived, how many had no applicable spec (counted outside the score), and `killed / (killed + survived)`. Operators that generated no mutant are left out. Here the suite catches every trace change to the tool calls and none of the argument, error or most world changes, which is where to add contracts.
+
+The score leaves two populations out, and the line under the table counts them: specs that were not run, grouped by reason (a judge spec is not deterministic), and mutants of fixtures none of whose specs pass unmutated.
+
+`attest mutate --json` carries the same numbers. `operators` lists `{operator, generated, killed, survived, no_applicable_specs, score}` (`score` is `null` when no mutant of the operator had an applicable spec), and `excluded` holds `skipped_specs` as `{reason, specs}` rows and `mutants_no_applicable_specs`. `attest view` renders the table and the excluded line next to the score and the survivors list. A report written by an older engine, with no `operators`, renders as before.
 
 ## Example: the double refund
 

@@ -46,7 +46,7 @@ Every path argument is relative to the project root or absolute inside it.
 | `trace_check` | `path` | The `attest trace check --json` report for an OTLP/JSON export or a capture fixture. |
 | `evaluate` | one of `trace_path`, `fixture_path`, `trace` (inline trace-v2), and `assertions`: `[{assertion_id, type, spec}]` | One result per assertion with a status of `pass`, `soft_fail`, `hard_fail` or `not_evaluated`. |
 | `explain_failure` | `report_path`, optional `test_id` | Every failing or not-evaluated row of a report-v2 file: status, reason, explanation, failure class, file and line, the `attest guide <topic>` to read and a one-line next step. |
-| `draft_contract` | `fixture_path` or `trace_path`, optional `expect_fail` | Contracts drafted from the run and verified on it, each as a `run_contract` statement with its spec, status and the Python and TypeScript test lines. |
+| `draft_contract` | `fixture_path` or `trace_path`, optional `expect_fail`, optional `world_path` | Contracts drafted from the run and verified on it, each as a `run_contract` statement with its spec, status and the Python and TypeScript test lines. With a world (`world_path`, else the fixture's own) it also drafts relational `sum` and `matches` contracts, below. |
 | `run_contract` | `statements`, one of `fixture_path` / `trace_path`, optional `world_path` | Per statement: status, explanation, spec, and the Python and TypeScript test lines (effect lines start with `.world(FIXTURE.world)`, also returned as `chain_prefix`). |
 | `fixture_info` | `path` | Name, how the fixture was captured, trace and exchange counts, contracts, world summary, verification and a redaction check. |
 
@@ -96,6 +96,39 @@ A tool failure (a path outside the root, an unknown field, a statement list that
 
 A statement that does not parse is an `error` row for that statement, not a protocol error; the other statements still run. Paste the `python` or `typescript` line of a passing row into the contract chain of a test.
 
+### Example: relational contracts from a world
+
+`draft_contract` with a `world_path` reads the world snapshot and drafts the invariants it can join. A resource relates to another when it carries a `<name>_id` field and the other resource is named `<name>`, `<name>s`, `<name>es` (or the `y`→`ies` plural) and holds a distinct value of that field in every record. For each other field both resources carry, a numeric field drafts `sum(..., at_most=related(...))` and a `*_id` string field drafts `matches(..., related(...))`. On the INC-1077 world (`refunds`, `notifications` and `orders`, all keyed by `order_id`) the call returns, next to the trace contracts:
+
+```json
+{
+  "id": "relational-sum-refunds-amount_cents-per-order_id",
+  "kind": "relational",
+  "status": "hard_fail",
+  "explanation": "effect violated: refunds amount_cents sum 13800 for O-2077 exceeds orders.amount_cents 12600",
+  "statement": "sum(\"refunds\", \"amount_cents\", at_most=related(\"orders\", \"amount_cents\", on=\"order_id\"))",
+  "chain_prefix": ".world(FIXTURE.world)",
+  "python": ".world(FIXTURE.world).sum(\"refunds\", \"amount_cents\", at_most=related(\"orders\", \"amount_cents\", on=\"order_id\"))",
+  "typescript": ".world(FIXTURE.world).sum(\"refunds\", \"amount_cents\", { atMost: related(\"orders\", \"amount_cents\", { on: \"order_id\" }) })"
+}
+```
+
+The contract is drafted from the world it is checked on, so the status shows whether that world satisfies it; a relational draft does not count toward `verified`, which covers the trace contracts a fixture stores. A drafted `matches` for `notifications.customer_id` is returned the same way. Pass the statements to `run_contract` with a fixed world to see them pass:
+
+```json
+{"trace_path": "trace.json", "world_path": "fixed-world.json", "statements": [
+  "sum(\"refunds\", \"amount_cents\", at_most=related(\"orders\", \"amount_cents\", on=\"order_id\"))",
+  "matches(\"notifications\", \"customer_id\", related(\"orders\", \"customer_id\", on=\"order_id\"))"
+]}
+```
+
+```text
+pass | effect holds: refunds amount_cents sum within orders.amount_cents for 1 order_id values
+pass | effect holds: 1 notifications customer_id match orders.customer_id
+```
+
+A call drafts at most 50 relational contracts, the number of statements `run_contract` takes at once. When a world relates more resources than that, the response carries a `relational_capped` notice (`the world relates more resources than one contract run takes; only the first 50 relational contracts are drafted`) and the rest are not drafted. Each draft scans the snapshot, so the snapshot size times the number of drafted contracts is limited to 32 MiB; a larger world is a tool error that says so.
+
 ## Contract statements
 
 A statement is one call in Python call syntax with literal arguments. The parser is a hand-written lexer and recursive-descent parser; nothing is evaluated.
@@ -122,6 +155,10 @@ The methods are a closed catalog. Each is accepted under its Python name or its 
 | `count` | `resource`, `equals` or `at_most` / `at_least`, filters | effect |
 | `unique` | `resource`, `by`, filters | effect |
 | `idempotent` | `resource`, `key`, filters | effect |
+| `sum` | `resource`, `field`, `at_most` (a number or `related(...)`), filters | effect |
+| `matches` | `resource`, `field`, `related(...)`, filters | effect |
+
+`related(resource, field, on=key)` is the one call a statement may carry inside an argument: as `at_most=` of `sum` or the third argument of `matches`, with string literals for all three parts. It is rejected anywhere else (in a list or map, nested, with an operator) with a position.
 
 Effect methods check the world: the fixture's own, or the snapshot in `world_path` (a world-v1 file, or another fixture). Extra keyword arguments on an effect method are exact-match record filters, as in the SDKs (`count("refunds", equals=1, order_id="O-1042")`); use `where={...}` for a filter named like a parameter. Without a world they return `not_evaluated` with reason `missing_evidence`.
 
