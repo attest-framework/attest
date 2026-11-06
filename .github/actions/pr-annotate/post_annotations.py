@@ -7,7 +7,10 @@ written by `pytest --attest-report` or the Vitest AttestReporter and drives
 
   1. `policy evaluate` on each report when a policy is given; the worst exit
      wins (any code other than 0/1/2 is an evaluator error and outranks 1,
-     then 1 > 2 > 0).
+     then 1 > 2 > 0). With several reports the summary's policy line is the
+     aggregate: the worst exit, every report's violations (each rule prefixed
+     with its report), and a "Policy by report" list with each report's own
+     exit and violation count.
   2. `report summary` renders the Markdown summary. It is appended to
      $GITHUB_STEP_SUMMARY always, and on same-repo pull requests posted as
      ONE issue comment, found by a hidden marker and updated in place.
@@ -182,23 +185,81 @@ def _relay_stderr(label: str, raw: bytes) -> None:
             print(f"{label}: {_one_line(line, 500)}", file=sys.stderr)
 
 
+PolicyRow = tuple[str, int, int | None]
+
+
+def _parse_outcome(out: bytes) -> dict[str, object] | None:
+    try:
+        parsed = json.loads(out)
+    except ValueError:
+        return None
+    return parsed if isinstance(parsed, dict) else None
+
+
+def _violations_of(outcome: dict[str, object] | None) -> list[dict[str, object]]:
+    raw = outcome.get("violations") if outcome else None
+    if not isinstance(raw, list):
+        return []
+    return [v for v in raw if isinstance(v, dict)]
+
+
+def aggregate_outcome(
+    results: list[tuple[str, int, bytes]], worst_code: int
+) -> tuple[bytes, list[PolicyRow]]:
+    """Merge per-report `policy evaluate` outputs into one outcome and a per-report table.
+
+    The merged outcome carries the worst exit, every violation with its rule prefixed by the
+    report it came from, and the per-report regression verdicts. A report whose evaluator
+    printed nothing usable still contributes one violation, so a failing report is never
+    invisible. The table rows are ``(report, exit code, violation count or None)``.
+    """
+    violations: list[dict[str, object]] = []
+    verdicts: list[str] = []
+    rows: list[PolicyRow] = []
+    for report, code, out in results:
+        outcome = _parse_outcome(out)
+        own = _violations_of(outcome)
+        if outcome is None and code != 0:
+            own = [
+                {
+                    "severity": "error",
+                    "rule": "policy evaluate",
+                    "detail": f"exited {code} without a result",
+                }
+            ]
+        rows.append((report, code, len(own) if outcome is not None or own else None))
+        violations += [{**v, "rule": f"{report}: {v.get('rule', '')}"} for v in own]
+        verdict = outcome.get("verdict") if outcome else None
+        if isinstance(verdict, str) and verdict:
+            verdicts.append(f"{report}={verdict}")
+    merged: dict[str, object] = {
+        "violations": violations,
+        "exit_code": worst_code,
+        "passed": worst_code == 0,
+    }
+    if verdicts:
+        merged["verdict"] = "; ".join(verdicts)
+    return json.dumps(merged).encode(), rows
+
+
 def evaluate_policies(
     engine: str | None,
     reports: list[str],
     policy: str,
     baseline: str,
     env: dict[str, str],
-) -> tuple[int, Path | None]:
-    """Run `policy evaluate` on each report; return (worst exit, result file of that report).
+) -> tuple[int, Path | None, list[PolicyRow]]:
+    """Run `policy evaluate` on each report; return (worst exit, result file, per-report rows).
 
-    No policy gives (0, None). The worst report's result (the first one on a
-    tie) is written to a file under RUNNER_TEMP, never the workspace; it feeds
-    the summary and is not echoed to the log.
+    No policy gives (0, None, []). One report's result is written as the engine printed it;
+    with several, the file holds the aggregate (see `aggregate_outcome`) and the rows list
+    each report's own exit. The file goes under RUNNER_TEMP, never the workspace; it feeds the
+    summary and is not echoed to the log.
     """
     if not policy:
-        return 0, None
+        return 0, None, []
     worst_code: int | None = None
-    worst_out = b""
+    results: list[tuple[str, int, bytes]] = []
     for report in reports:
         if engine is None:
             code, out = 127, b""
@@ -215,15 +276,34 @@ def evaluate_policies(
             _relay_stderr("policy evaluate", proc.stderr)
         if len(reports) > 1:
             print(f"policy evaluate {_one_line(report, 200)}: exit {code}")
+        results.append((report, code, out))
         if worst_code is None or _exit_rank(code) > _exit_rank(worst_code):
-            worst_code, worst_out = code, out
+            worst_code = code
     assert worst_code is not None
-    if not worst_out.strip():
-        return worst_code, None
+    rows: list[PolicyRow] = []
+    if len(results) == 1:
+        result_out = results[0][2]
+    else:
+        result_out, rows = aggregate_outcome(results, worst_code)
+    if not result_out.strip():
+        return worst_code, None, rows
     out_dir = tempfile.mkdtemp(prefix="attest-policy-", dir=env.get("RUNNER_TEMP") or None)
     result = Path(out_dir) / "policy-result.json"
-    result.write_bytes(worst_out)
-    return worst_code, result
+    result.write_bytes(result_out)
+    return worst_code, result, rows
+
+
+def policy_table(rows: list[PolicyRow]) -> str:
+    """The "Policy by report" Markdown list; empty when fewer than two reports ran."""
+    if len(rows) < 2:
+        return ""
+    lines = ["**Policy by report:**"]
+    for report, code, count in rows:
+        verdict = {0: "pass", 2: "warn"}.get(code, "fail")
+        label = _one_line(report, 200).replace("`", "'")
+        detail = f", {count} violation(s)" if count is not None else ""
+        lines.append(f"- `{label}`: {verdict} (exit {code}){detail}")
+    return "\n".join(lines)
 
 
 # --- annotations ----------------------------------------------------------
@@ -380,6 +460,7 @@ def render_summary(
     policy_result: Path | None,
     run_url: str,
     env: dict[str, str],
+    policy_by_report: str = "",
 ) -> str:
     args = ["report", "summary"]
     for report in reports:
@@ -394,7 +475,9 @@ def render_summary(
             + f": {_one_line(proc.stderr.decode('utf-8', 'replace'), 300)}"
         )
     summary = proc.stdout.decode("utf-8", "replace").replace("\x00", "").rstrip()
-    suffix = f"\n\n[Workflow run]({run_url})" if run_url else ""
+    suffix = (f"\n\n{policy_by_report}" if policy_by_report else "") + (
+        f"\n\n[Workflow run]({run_url})" if run_url else ""
+    )
     return cut_summary(summary, MAX_COMMENT_CHARS - len(suffix)) + suffix
 
 
@@ -558,7 +641,7 @@ def run(args: argparse.Namespace, env: dict[str, str]) -> int:
     # The engine never needs the token: it is used only by publish_comment.
     engine_env = {k: v for k, v in env.items() if k not in _TOKEN_VARS}
     engine = resolve_engine(args.engine, args.engine_version, engine_env)
-    code, result = evaluate_policies(
+    code, result, policy_rows = evaluate_policies(
         engine, reports, args.policy, args.baseline_tag, engine_env
     )
     output = env.get("GITHUB_OUTPUT")
@@ -577,7 +660,9 @@ def run(args: argparse.Namespace, env: dict[str, str]) -> int:
         run_url = (
             f"{env['GITHUB_SERVER_URL']}/{env['GITHUB_REPOSITORY']}/actions/runs/{env['GITHUB_RUN_ID']}"
         )
-    summary = render_summary(engine, reports, result, run_url, engine_env)
+    summary = render_summary(
+        engine, reports, result, run_url, engine_env, policy_table(policy_rows)
+    )
     write_step_summary(summary, env)
     for command in build_annotations(collect_rows(engine, reports, workspace, engine_env)):
         print(command)
