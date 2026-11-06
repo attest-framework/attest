@@ -347,6 +347,9 @@ func (m *Method) Signature() string {
 // coerce checks v against the parameter and returns its normalized value.
 func (p param) coerce(v any) (any, error) {
 	bad := func() (any, error) { return nil, fmt.Errorf("argument %q must be %s", p.name, p.kind) }
+	if _, isRelated := v.(Related); isRelated && p.kind != kRelated && p.kind != kBound {
+		return nil, fmt.Errorf("argument %q cannot be a related(...) reference; it takes %s", p.name, p.kind)
+	}
 	switch p.kind {
 	case kString:
 		s, ok := v.(string)
@@ -569,6 +572,9 @@ func bind(m *Method, raw *rawCall) (*Call, error) {
 		case m.Effect:
 			if _, dup := c.Filters[kw.name]; dup {
 				return nil, fail(kw.pos, "filter %q is given twice", kw.name)
+			}
+			if _, isRelated := kw.value.(Related); isRelated {
+				return nil, fail(kw.pos, "filter %q cannot be a related(...) reference; filters are literals", kw.name)
 			}
 			c.Filters[kw.name] = kw.value
 		default:

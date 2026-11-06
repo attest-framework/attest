@@ -150,6 +150,7 @@ const draftOutput = `{
     "expect_fail": {"type": "boolean"},
     "verified": {"type": "boolean"},
     "trace_check": {"type": "object", "required": ["ok", "errors", "warnings"]},
+    "relational_capped": {"type": "string", "description": "Present when the world relates more fields than one run_contract call takes; says how many relational contracts were drafted."},
     "contracts": {
       "type": "array",
       "items": {

@@ -73,6 +73,11 @@ func TestParse_RelatedRejectsEverythingButTheClosedForm(t *testing.T) {
 		"sum without bound":   `sum("r", "f")`,
 		"related not a call":  `matches("r", "f", related)`,
 		"number bound string": `sum("r", "f", at_most="12")`,
+		"effect filter":       `count("refunds", at_most=1, order_id=related("o", "f", on="k"))`,
+		"filter on sum":       `sum("r", "f", at_most=1, k=related("o", "f", on="k"))`,
+		"value parameter":     `tool_arg_satisfies("t", "a", "ne", related("o", "f", on="k"))`,
+		"value keyword":       `tool_arg_satisfies("t", "a", "ne", value=related("o", "f", on="k"))`,
+		"where parameter":     `count("refunds", at_most=1, where=related("o", "f", on="k"))`,
 	} {
 		t.Run(name, func(t *testing.T) {
 			if _, err := contractdsl.Parse(stmt); err == nil {

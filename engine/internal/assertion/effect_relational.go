@@ -141,14 +141,48 @@ func numeric(resource, field string, record map[string]any, position int) (*big.
 	return r, nil
 }
 
-// formatRat prints an exact decimal without a trailing fraction when whole.
+// formatRat prints an exact rational losslessly: whole numbers as integers,
+// terminating decimals digit for digit, and any other value as num/den, so two
+// different values never print the same.
 func formatRat(r *big.Rat) string {
 	if r.IsInt() {
 		return r.Num().String()
 	}
-	s := r.FloatString(12)
-	s = strings.TrimRight(s, "0")
-	return strings.TrimSuffix(s, ".")
+	digits, ok := terminatingDigits(r.Denom())
+	if !ok {
+		return r.Num().String() + "/" + r.Denom().String()
+	}
+	return r.FloatString(digits)
+}
+
+// terminatingDigits returns the fraction digits needed to print 1/den exactly,
+// and false when den has a prime factor other than 2 or 5.
+func terminatingDigits(den *big.Int) (int, bool) {
+	rest := new(big.Int).Set(den)
+	two, five := big.NewInt(2), big.NewInt(5)
+	twos, fives := 0, 0
+	rem := new(big.Int)
+	quo := new(big.Int)
+	for {
+		quo.DivMod(rest, two, rem)
+		if rem.Sign() != 0 {
+			break
+		}
+		rest.Set(quo)
+		twos++
+	}
+	for {
+		quo.DivMod(rest, five, rem)
+		if rem.Sign() != 0 {
+			break
+		}
+		rest.Set(quo)
+		fives++
+	}
+	if rest.Cmp(big.NewInt(1)) != 0 {
+		return 0, false
+	}
+	return max(twos, fives), true
 }
 
 func checkSum(spec *effectSpec, records []map[string]any, state map[string][]map[string]any) (*effectViolation, string, error) {
@@ -222,7 +256,13 @@ func sumAgainstRelated(spec *effectSpec, records []map[string]any, state map[str
 		}
 		totals[k].Add(totals[k], n)
 	}
-	for k, total := range totals {
+	keys := make([]string, 0, len(totals))
+	for k := range totals {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		total := totals[k]
 		owner, ok := index[k]
 		if !ok {
 			found = append(found, relationalViolation{

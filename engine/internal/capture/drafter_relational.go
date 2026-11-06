@@ -2,12 +2,15 @@ package capture
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
 
 	"github.com/attest-framework/attest/engine/internal/assertion"
+	"github.com/attest-framework/attest/engine/internal/contractdsl"
+	"github.com/attest-framework/attest/engine/internal/llm"
 	"github.com/attest-framework/attest/engine/pkg/types"
 )
 
@@ -34,14 +37,17 @@ const KindRelational = "relational"
 //
 // A field name has to match in both resources: the draft does not guess
 // which of two differently named fields should be compared.
-func DraftRelational(snapshot json.RawMessage) ([]Contract, error) {
+//
+// At most contractdsl.MaxStatements contracts are returned, the number
+// run_contract accepts in one call; the bool reports that more were found.
+func DraftRelational(snapshot json.RawMessage) ([]Contract, bool, error) {
 	var snap struct {
 		State map[string][]map[string]any `json:"state"`
 	}
 	dec := json.NewDecoder(bytes.NewReader(snapshot))
 	dec.UseNumber()
 	if err := dec.Decode(&snap); err != nil {
-		return nil, fmt.Errorf("world snapshot: %w", err)
+		return nil, false, fmt.Errorf("world snapshot: %w", err)
 	}
 	var out []Contract
 	for _, res := range sortedResourceNames(snap.State) {
@@ -53,15 +59,33 @@ func DraftRelational(snapshot json.RawMessage) ([]Contract, error) {
 			for _, field := range sharedFields(snap.State[res], snap.State[target], key) {
 				c, err := relationalContract(res, target, field, key, snap.State)
 				if err != nil {
-					return nil, err
+					return nil, false, err
 				}
-				if c != nil {
-					out = append(out, *c)
+				if c == nil {
+					continue
 				}
+				if len(out) == contractdsl.MaxStatements {
+					return out, true, nil
+				}
+				out = append(out, *c)
 			}
 		}
 	}
-	return out, nil
+	return out, false, nil
+}
+
+// maxDisplayName bounds a world name quoted in a contract id or description.
+const maxDisplayName = 64
+
+// displayName makes a world resource or field name safe to quote in an id or
+// description: control characters are removed and the length is capped. The
+// spec keeps the raw name, which the evaluator needs to find the data.
+func displayName(name string) string {
+	clean := llm.StripControl(name)
+	if r := []rune(clean); len(r) > maxDisplayName {
+		return string(r[:maxDisplayName]) + "..."
+	}
+	return clean
 }
 
 func sortedResourceNames(state map[string][]map[string]any) []string {
@@ -166,15 +190,16 @@ func relationalContract(res, target, field, key string, state map[string][]map[s
 	identifier := strings.HasSuffix(field, "_id") && allValues(state[res], field, isString) && allValues(state[target], field, isString)
 	var spec map[string]any
 	var id, desc string
+	dRes, dTarget, dField, dKey := displayName(res), displayName(target), displayName(field), displayName(key)
 	switch {
 	case numeric:
 		spec = map[string]any{"check": "sum", "resource": res, "field": field, "at_most": map[string]any{"related": related}}
-		id = fmt.Sprintf("relational-sum-%s-%s-per-%s", res, field, key)
-		desc = fmt.Sprintf("%s %s sums to at most %s.%s for each %s", res, field, target, field, key)
+		id = fmt.Sprintf("relational-sum-%s-%s-per-%s", dRes, dField, dKey)
+		desc = fmt.Sprintf("%s %s sums to at most %s.%s for each %s", dRes, dField, dTarget, dField, dKey)
 	case identifier:
 		spec = map[string]any{"check": "matches", "resource": res, "field": field, "related": related}
-		id = fmt.Sprintf("relational-matches-%s-%s-per-%s", res, field, key)
-		desc = fmt.Sprintf("%s %s equals %s.%s for the same %s", res, field, target, field, key)
+		id = fmt.Sprintf("relational-matches-%s-%s-per-%s", dRes, dField, dKey)
+		desc = fmt.Sprintf("%s %s equals %s.%s for the same %s", dRes, dField, dTarget, dField, dKey)
 	default:
 		return nil, nil
 	}
@@ -186,21 +211,20 @@ func relationalContract(res, target, field, key string, state map[string][]map[s
 }
 
 // VerifyRelational evaluates drafted relational contracts against the world
-// they were drafted from.
-func VerifyRelational(snapshot json.RawMessage, contracts []Contract) ([]ContractResult, error) {
+// they were drafted from. The snapshot is validated and decoded once, and ctx
+// is checked between contracts.
+func VerifyRelational(ctx context.Context, snapshot json.RawMessage, contracts []Contract) ([]ContractResult, error) {
+	w, err := assertion.LoadEffectWorld(snapshot)
+	if err != nil {
+		return nil, err
+	}
 	ev := &assertion.EffectEvaluator{}
 	out := make([]ContractResult, 0, len(contracts))
 	for _, c := range contracts {
-		var spec map[string]json.RawMessage
-		if err := json.Unmarshal(c.Spec, &spec); err != nil {
-			return nil, fmt.Errorf("contract %s: %w", c.ID, err)
+		if err := ctx.Err(); err != nil {
+			return nil, err
 		}
-		spec["world"] = snapshot
-		raw, err := json.Marshal(spec)
-		if err != nil {
-			return nil, fmt.Errorf("contract %s: %w", c.ID, err)
-		}
-		r := ev.Evaluate(&types.Trace{}, &types.Assertion{AssertionID: c.ID, Type: c.Type, Spec: raw})
+		r := ev.EvaluateIn(w, &types.Assertion{AssertionID: c.ID, Type: c.Type, Spec: c.Spec})
 		out = append(out, ContractResult{Contract: c.ID, Status: r.Status, Explanation: r.Explanation})
 	}
 	return out, nil

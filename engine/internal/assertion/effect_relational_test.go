@@ -1,6 +1,7 @@
 package assertion
 
 import (
+	"math/big"
 	"strings"
 	"testing"
 
@@ -173,5 +174,48 @@ func TestEffectRelationalRejectsMalformedSpecs(t *testing.T) {
 				t.Fatalf("status %s: %s", r.Status, r.Explanation)
 			}
 		})
+	}
+}
+
+func TestEffectSumRelatedMalformedBoundsReportTheSortedFirstKeyEveryRun(t *testing.T) {
+	orders := `[{"order_id":"B","amount_cents":"x"},{"order_id":"A","amount_cents":"y"},{"order_id":"C","amount_cents":null},{"order_id":"D","amount_cents":true}]`
+	refunds := `[{"order_id":"D","amount_cents":1},{"order_id":"C","amount_cents":1},{"order_id":"B","amount_cents":1},{"order_id":"A","amount_cents":1}]`
+	spec := `{` + sumRelated + `,"world":` + relationalSnapshot(orders, refunds, `[]`) + `}`
+	want := evalEffect(spec).Explanation
+	if !strings.Contains(want, "for order_id A ") {
+		t.Fatalf("explanation %q does not name the sorted-first key A", want)
+	}
+	for i := 0; i < 100; i++ {
+		if got := evalEffect(spec).Explanation; got != want {
+			t.Fatalf("run %d explanation %q, want %q", i, got, want)
+		}
+	}
+}
+
+func TestEffectSumDisplaysDistinctValuesLosslessly(t *testing.T) {
+	orders := `[{"order_id":"O-1","amount_cents":0}]`
+	refunds := `[{"order_id":"O-1","amount_cents":1e-13}]`
+	spec := `{` + sumRelated + `,"world":` + relationalSnapshot(orders, refunds, `[]`) + `}`
+	r := evalEffect(spec)
+	want := "effect violated: refunds amount_cents sum 0.0000000000001 for O-1 exceeds orders.amount_cents 0"
+	if r.Status != types.StatusHardFail || r.Explanation != want {
+		t.Fatalf("status %s explanation %q, want %q", r.Status, r.Explanation, want)
+	}
+}
+
+func TestFormatRatIsLossless(t *testing.T) {
+	cases := map[string]string{
+		"13800": "13800", "0": "0", "-5": "-5", "12.50": "12.5", "0.1": "0.1",
+		"1e-13": "0.0000000000001", "0.000000000000123456789": "0.000000000000123456789",
+		"1.25": "1.25", "1/3": "1/3", "-2/7": "-2/7",
+	}
+	for in, want := range cases {
+		r, ok := new(big.Rat).SetString(in)
+		if !ok {
+			t.Fatalf("bad case %q", in)
+		}
+		if got := formatRat(r); got != want {
+			t.Errorf("formatRat(%s) = %q, want %q", in, got, want)
+		}
 	}
 }

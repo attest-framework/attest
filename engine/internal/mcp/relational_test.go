@@ -2,6 +2,7 @@ package mcp_test
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -144,5 +145,48 @@ func TestDraftContract_DraftsRelationalChecksFromTheWorld(t *testing.T) {
 	})
 	if got, want := statuses(t, run), []string{"hard_fail", "pass"}; !reflect.DeepEqual(got, want) {
 		t.Errorf("statuses %v, want %v", got, want)
+	}
+}
+
+func TestDraftContract_ManySharedFieldsAreCappedAndReported(t *testing.T) {
+	root := relationalProject(t, []map[string]any{{"refund_id": "R-1", "order_id": "O-2077", "amount_cents": 1}}, "C-0311")
+	path := filepath.Join(root, "fixtures", "relational.attest.json")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fx map[string]any
+	if err := json.Unmarshal(data, &fx); err != nil {
+		t.Fatal(err)
+	}
+	state := fx["world"].(map[string]any)["state"].(map[string]any)
+	for _, res := range []string{"orders", "refunds"} {
+		rec := state[res].([]any)[0].(map[string]any)
+		for i := 0; i < 500; i++ {
+			rec[fmt.Sprintf("f%04d", i)] = 1
+		}
+	}
+	out, err := json.Marshal(fx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, out, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	r := call(t, connect(t, root), "draft_contract", map[string]any{"fixture_path": "fixtures/relational.attest.json"})
+	if r.IsError {
+		t.Fatal(r.Text)
+	}
+	relational := 0
+	for _, c := range r.Doc["contracts"].([]any) {
+		if c.(map[string]any)["kind"] == "relational" {
+			relational++
+		}
+	}
+	if relational != 50 {
+		t.Errorf("%d relational contracts, want the cap of 50", relational)
+	}
+	if _, ok := r.Doc["relational_capped"].(string); !ok {
+		t.Errorf("result does not say the relational drafts were capped: %v", r.Doc)
 	}
 }

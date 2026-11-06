@@ -73,9 +73,51 @@ func (e *EffectEvaluator) Evaluate(_ *types.Trace, assertion *types.Assertion) *
 	if err := sdec.Decode(&snap); err != nil {
 		return failResult(assertion, start, fmt.Sprintf("invalid effect spec: %v", err))
 	}
-	records, ok := snap.State[spec.Resource]
+	return e.run(assertion, start, &spec, snap.State)
+}
+
+// EffectWorld is a world-v1 snapshot validated and decoded once, so many
+// effect specs can be checked against it without re-reading the snapshot.
+type EffectWorld struct {
+	state map[string][]map[string]any
+}
+
+// LoadEffectWorld validates a world-v1 snapshot and decodes its state.
+func LoadEffectWorld(snapshot json.RawMessage) (*EffectWorld, error) {
+	if err := world.ValidateSnapshot(snapshot); err != nil {
+		return nil, fmt.Errorf("world is not a world-v1 snapshot: %w", err)
+	}
+	var snap struct {
+		State map[string][]map[string]any `json:"state"`
+	}
+	dec := json.NewDecoder(bytes.NewReader(snapshot))
+	dec.UseNumber()
+	if err := dec.Decode(&snap); err != nil {
+		return nil, fmt.Errorf("world snapshot: %w", err)
+	}
+	return &EffectWorld{state: snap.State}, nil
+}
+
+// EvaluateIn checks an effect spec that carries no world against a world
+// loaded by LoadEffectWorld.
+func (e *EffectEvaluator) EvaluateIn(w *EffectWorld, assertion *types.Assertion) *types.AssertionResult {
+	start := time.Now()
+	var spec effectSpec
+	dec := json.NewDecoder(bytes.NewReader(assertion.Spec))
+	dec.UseNumber()
+	if err := dec.Decode(&spec); err != nil {
+		return failResult(assertion, start, fmt.Sprintf("invalid effect spec: %v", err))
+	}
+	if spec.Check == "" || spec.Resource == "" {
+		return failResult(assertion, start, "effect spec missing required field: check and resource")
+	}
+	return e.run(assertion, start, &spec, w.state)
+}
+
+func (e *EffectEvaluator) run(assertion *types.Assertion, start time.Time, spec *effectSpec, state map[string][]map[string]any) *types.AssertionResult {
+	records, ok := state[spec.Resource]
 	if !ok {
-		return failResult(assertion, start, fmt.Sprintf("effect spec: resource %q is not in the world (resources: %s)", spec.Resource, strings.Join(sortedKeys(snap.State), ", ")))
+		return failResult(assertion, start, fmt.Sprintf("effect spec: resource %q is not in the world (resources: %s)", spec.Resource, strings.Join(sortedKeys(state), ", ")))
 	}
 
 	var v *effectViolation
@@ -83,15 +125,15 @@ func (e *EffectEvaluator) Evaluate(_ *types.Trace, assertion *types.Assertion) *
 	var err error
 	switch spec.Check {
 	case "count":
-		v, pass, err = checkCount(&spec, records)
+		v, pass, err = checkCount(spec, records)
 	case "unique":
-		v, pass, err = checkUnique(&spec, records)
+		v, pass, err = checkUnique(spec, records)
 	case "idempotent":
-		v, pass, err = checkIdempotent(&spec, records)
+		v, pass, err = checkIdempotent(spec, records)
 	case "sum":
-		v, pass, err = checkSum(&spec, records, snap.State)
+		v, pass, err = checkSum(spec, records, state)
 	case "matches":
-		v, pass, err = checkMatches(&spec, records, snap.State)
+		v, pass, err = checkMatches(spec, records, state)
 	default:
 		err = fmt.Errorf("unsupported effect check: %s", spec.Check)
 	}
