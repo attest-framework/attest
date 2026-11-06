@@ -73,7 +73,7 @@
           "uniqueItems": true,
           "items": { "type": "string", "minLength": 1 }
         },
-        "cost": { "enum": ["free", "paid"] },
+        "cost": { "enum": ["free", "provider_dependent", "plugin_defined"] },
         "deterministic": { "type": "boolean" }
       }
     },

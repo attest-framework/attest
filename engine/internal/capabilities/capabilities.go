@@ -87,14 +87,22 @@ type layerSpec struct {
 	deterministic bool
 }
 
+// Cost classes of a layer. Layers 5 and 6 depend on the configured provider,
+// and a plugin owns its own cost, so neither is labelled free or paid.
+const (
+	costFree              = "free"
+	costProviderDependent = "provider_dependent"
+	costPluginDefined     = "plugin_defined"
+)
+
 var layerSpecs = []layerSpec{
-	{1, "Schema validation", "Checks the output against a JSON Schema.", "free", true},
-	{2, "Constraint checks", "Checks cost, token, latency and step-count limits.", "free", true},
-	{3, "Trace and behavioral checks", "Checks which tools ran, in which order, with which arguments, how often per business key, across the agent tree and against the world's final state.", "free", true},
-	{4, "Content pattern matching", "Checks the output text against substrings, patterns and keywords.", "free", true},
-	{5, "Embedding similarity", "Scores semantic similarity against a reference with an embedding model.", "paid", false},
-	{6, "LLM-as-judge", "Scores the output against a rubric with a judge model.", "paid", false},
-	{types.LayerForType(types.TypePlugin), "Plugins", "Custom assertions that run in the SDK process; cost and determinism are the plugin's.", "free", false},
+	{1, "Schema validation", "Checks the output against a JSON Schema.", costFree, true},
+	{2, "Constraint checks", "Checks cost, token, latency and step-count limits.", costFree, true},
+	{3, "Trace and behavioral checks", "Checks which tools ran, in which order, with which arguments, how often per business key, across the agent tree and against the world's final state.", costFree, true},
+	{4, "Content pattern matching", "Checks the output text against substrings, patterns and keywords.", costFree, true},
+	{5, "Embedding similarity", "Scores semantic similarity against a reference with an embedding model: OpenAI embeddings are paid, the local ONNX model is free.", costProviderDependent, false},
+	{6, "LLM-as-judge", "Scores the output against a rubric with a judge model: OpenAI, Anthropic and Gemini judges are paid, a local ACP agent or an OpenAI-compatible local endpoint is not.", costProviderDependent, false},
+	{types.LayerForType(types.TypePlugin), "Plugins", "Custom assertions that run in the SDK process; cost and determinism are the plugin's.", costPluginDefined, false},
 }
 
 // assertionTypes lists every assertion type constant in pkg/types. A test

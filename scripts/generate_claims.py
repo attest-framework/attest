@@ -68,6 +68,13 @@ def tick(items: list[str]) -> str:
     return ", ".join(f"`{i}`" for i in items)
 
 
+COST_LABELS = {
+    "free": "free",
+    "provider_dependent": "depends on provider",
+    "plugin_defined": "plugin-defined",
+}
+
+
 def render_layers(doc: dict[str, Any]) -> str:
     rows = [
         "| Layer | Name | Checks | Assertion types | Cost | Deterministic |",
@@ -77,7 +84,7 @@ def render_layers(doc: dict[str, Any]) -> str:
         label = "plugins" if layer["name"] == "Plugins" else str(layer["id"])
         rows.append(
             f"| {label} | {layer['name']} | {layer['description']} | "
-            f"{tick(layer['assertion_types'])} | {layer['cost']} | "
+            f"{tick(layer['assertion_types'])} | {COST_LABELS[layer['cost']]} | "
             f"{'yes' if layer['deterministic'] else 'no'} |"
         )
     return "\n".join(rows)

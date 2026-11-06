@@ -159,3 +159,40 @@ func TestBuild_FeaturesHaveKnownMaturity(t *testing.T) {
 		}
 	}
 }
+
+func TestBuild_LayerCostClassification(t *testing.T) {
+	// Arrange
+	want := map[string]struct {
+		cost          string
+		deterministic bool
+	}{
+		"Schema validation":           {"free", true},
+		"Constraint checks":           {"free", true},
+		"Trace and behavioral checks": {"free", true},
+		"Content pattern matching":    {"free", true},
+		"Embedding similarity":        {"provider_dependent", false},
+		"LLM-as-judge":                {"provider_dependent", false},
+		"Plugins":                     {"plugin_defined", false},
+	}
+
+	// Act
+	doc, err := Build()
+
+	// Assert
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(doc.Layers) != len(want) {
+		t.Fatalf("%d layers, want %d", len(doc.Layers), len(want))
+	}
+	for _, l := range doc.Layers {
+		w, ok := want[l.Name]
+		if !ok {
+			t.Errorf("unexpected layer %q", l.Name)
+			continue
+		}
+		if l.Cost != w.cost || l.Deterministic != w.deterministic {
+			t.Errorf("%s: cost %q deterministic %t, want %q %t", l.Name, l.Cost, l.Deterministic, w.cost, w.deterministic)
+		}
+	}
+}

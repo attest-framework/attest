@@ -105,7 +105,7 @@ Sent by the SDK immediately after spawning the engine. Establishes the session a
     "sdk_name": "attest-python",
     "sdk_version": "1.1.0-rc.3",
     "protocol_version": 1,
-    "required_capabilities": ["layers_1_4", "soft_failures"],
+    "required_capabilities": ["layers_1_4"],
     "preferred_encoding": "json"
   }
 }
@@ -130,7 +130,7 @@ Sent by the SDK immediately after spawning the engine. Establishes the session a
   "result": {
     "engine_version": "1.1.0-rc.3",
     "protocol_version": 1,
-    "capabilities": ["layers_1_4", "soft_failures"],
+    "capabilities": ["layers_1_4", "trace_tree", "continuous_eval", "plugins", "embedding", "llm_judge"],
     "missing": [],
     "compatible": true,
     "encoding": "json",

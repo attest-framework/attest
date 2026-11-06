@@ -28,7 +28,7 @@ _DOC = {
             "name": "Plugins",
             "description": "Custom assertions.",
             "assertion_types": ["plugin"],
-            "cost": "free",
+            "cost": "plugin_defined",
             "deterministic": False,
         },
     ],
@@ -128,3 +128,21 @@ def test_check_missing_marker_exits(repo: tuple[Path, Path]) -> None:
 
     with pytest.raises(SystemExit):
         _run(root, engine, "--check")
+
+
+def test_render_layers_labels_each_cost_class() -> None:
+    module = _load_script()
+    doc = {
+        "layers": [
+            {**_DOC["layers"][0]},
+            {**_DOC["layers"][0], "id": 5, "name": "Embedding", "cost": "provider_dependent"},
+            {**_DOC["layers"][1]},
+        ]
+    }
+
+    rendered = module.render_layers(doc)
+
+    assert "| free | yes |" in rendered
+    assert "| depends on provider | yes |" in rendered
+    assert "| plugin-defined | no |" in rendered
+    assert "paid" not in rendered

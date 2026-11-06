@@ -23,7 +23,7 @@ Attest is an open-source testing framework purpose-built for AI agents and LLM-p
 
 ## Why Attest
 
-The current ecosystem defaults to LLM-as-judge for everything. This creates cost explosion, flaky tests, and slow suites. Attest provides six evaluated layers plus plugins, ordered from free and deterministic to paid and probabilistic, and reaches for the cheapest valid assertion first. The table below is generated from `attest-engine capabilities --json`.
+The current ecosystem defaults to LLM-as-judge for everything. This creates cost explosion, flaky tests, and slow suites. Attest provides six evaluated layers plus plugins, ordered from free and deterministic (layers 1–4) to model-scored (layers 5–6, whose cost depends on the configured provider), and reaches for the cheapest valid assertion first. The table below is generated from `attest-engine capabilities --json`.
 
 <!-- claims:layers:start -->
 | Layer | Name | Checks | Assertion types | Cost | Deterministic |
@@ -32,9 +32,9 @@ The current ecosystem defaults to LLM-as-judge for everything. This creates cost
 | 2 | Constraint checks | Checks cost, token, latency and step-count limits. | `constraint` | free | yes |
 | 3 | Trace and behavioral checks | Checks which tools ran, in which order, with which arguments, how often per business key, across the agent tree and against the world's final state. | `trace`, `trace_tree`, `effect` | free | yes |
 | 4 | Content pattern matching | Checks the output text against substrings, patterns and keywords. | `content` | free | yes |
-| 5 | Embedding similarity | Scores semantic similarity against a reference with an embedding model. | `embedding` | paid | no |
-| 6 | LLM-as-judge | Scores the output against a rubric with a judge model. | `llm_judge` | paid | no |
-| plugins | Plugins | Custom assertions that run in the SDK process; cost and determinism are the plugin's. | `plugin` | free | no |
+| 5 | Embedding similarity | Scores semantic similarity against a reference with an embedding model: OpenAI embeddings are paid, the local ONNX model is free. | `embedding` | depends on provider | no |
+| 6 | LLM-as-judge | Scores the output against a rubric with a judge model: OpenAI, Anthropic and Gemini judges are paid, a local ACP agent or an OpenAI-compatible local endpoint is not. | `llm_judge` | depends on provider | no |
+| plugins | Plugins | Custom assertions that run in the SDK process; cost and determinism are the plugin's. | `plugin` | plugin-defined | no |
 <!-- claims:layers:end -->
 
 ## What It Looks Like
@@ -125,7 +125,7 @@ Each feature carries a maturity tier; the table is generated from `attest-engine
 - **experimental**: Shipped without a stability commitment and without demonstrated demand; it can change or be removed in any release.
 <!-- claims:features:end -->
 
-- **Six evaluated layers plus plugins** — graduated from free/deterministic to paid/probabilistic
+- **Six evaluated layers plus plugins** — layers 1–4 are free and deterministic; layers 5–6 are model-scored and cost what their provider costs
 <!-- claims:adapters:start -->
 - **10 Python adapters** — OpenAI (stable), Anthropic (stable), Manual (stable), Gemini (beta), Ollama (beta), LangChain (beta), CrewAI (beta), OpenTelemetry (beta), Google ADK (experimental), LlamaIndex (experimental)
 - **7 TypeScript adapters** — OpenAI (stable), Anthropic (stable), Manual (stable), Gemini (beta), Ollama (beta), LangChain.js (beta), OpenTelemetry (beta)
