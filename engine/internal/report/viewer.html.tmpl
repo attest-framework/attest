@@ -129,6 +129,14 @@ ul.tree { padding-left:0; }
 {{with .Mutation}}
 <h2 id="mutants">Mutation testing</h2>
 <p>Score {{.Score}}: {{.Killed}} killed, {{.Survived}} survived.</p>
+{{if .Operators}}
+<table>
+  <tr><th>Operator</th><th>Generated</th><th>Killed</th><th>Survived</th><th>No applicable contract</th><th>Score</th></tr>
+  {{range .Operators}}<tr><td class="mono">{{.Operator}}</td><td>{{.Generated}}</td><td>{{.Killed}}</td><td>{{.Survived}}</td><td>{{.NoApplicableSpecs}}</td><td>{{.Score}}</td></tr>
+  {{end}}
+</table>
+<p class="muted">Excluded from the score: {{.NoApplicable}} mutant(s) with no applicable contract{{range .SkippedSpecs}}; {{.Specs}} spec(s): {{.Reason}}{{end}}.</p>
+{{end}}
 {{if .Survivors}}
 <table>
   <tr><th>Surviving mutant</th><th>Fixture</th><th>Operator</th><th>Suggested contract</th></tr>

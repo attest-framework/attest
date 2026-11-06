@@ -4,6 +4,7 @@ import (
 	"math/big"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/attest-framework/attest/engine/pkg/types"
 )
@@ -217,5 +218,72 @@ func TestFormatRatIsLossless(t *testing.T) {
 		if got := formatRat(r); got != want {
 			t.Errorf("formatRat(%s) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+func TestFormatRatHugeNegativeExponent_BoundsTheWorkDeterministically(t *testing.T) {
+	r, ok := new(big.Rat).SetString("1e-1000000")
+	if !ok {
+		t.Fatal("parse")
+	}
+	_, steps, exact := terminatingDigitsSteps(r.Denom())
+	if exact {
+		t.Fatal("a 10^1000000 denominator must not print as digits")
+	}
+	if steps > maxExactDigits {
+		t.Fatalf("terminatingDigits ran %d divisions, want at most %d", steps, maxExactDigits)
+	}
+	done := make(chan string, 1)
+	go func() { done <- formatRat(r) }()
+	select {
+	case got := <-done:
+		if want := "1/" + r.Denom().String(); got != want {
+			t.Fatalf("formatRat form wrong: got %d chars, want num/den", len(got))
+		}
+	case <-time.After(30 * time.Second):
+		t.Fatal("formatRat did not finish")
+	}
+}
+
+func TestEffectSumAtMostLiteralHugeExponent_IsASpecError(t *testing.T) {
+	for _, lit := range []string{"1e1000000", "1e-1000000"} {
+		var b atMostBound
+		err := b.UnmarshalJSON([]byte(lit))
+		if err == nil || !strings.Contains(err.Error(), "at_most") {
+			t.Errorf("literal at_most %s: err %v, want an at_most spec error", lit, err)
+		}
+	}
+}
+
+func TestFormatRatNormalValuesStayExact(t *testing.T) {
+	cases := map[string]string{"12600": "12600", "0.5": "0.5", "12.25": "12.25", "0.001": "0.001", "1/3": "1/3", "0.125": "0.125"}
+	for in, want := range cases {
+		r, ok := new(big.Rat).SetString(in)
+		if !ok {
+			t.Fatalf("parse %s", in)
+		}
+		if got := formatRat(r); got != want {
+			t.Errorf("formatRat(%s) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestEffectSumRelatedRejectsHugeExponentValues(t *testing.T) {
+	for _, amount := range []string{"1e-1000000", "1e-401"} {
+		start := time.Now()
+		r := evalEffect(sumSpec(`[{"order_id":"O-2077","amount_cents":`+amount+`}]`, ""))
+		if elapsed := time.Since(start); elapsed > time.Second {
+			t.Errorf("%s took %s", amount, elapsed)
+		}
+		if r.Status != types.StatusHardFail || !strings.Contains(r.Explanation, "decimal exponent") {
+			t.Errorf("%s: status %s explanation %q", amount, r.Status, r.Explanation)
+		}
+	}
+}
+
+func TestEffectSumRelatedAcceptsExponentAtTheLimit(t *testing.T) {
+	r := evalEffect(sumSpec(`[{"order_id":"O-2077","amount_cents":1e2}]`, ""))
+	if r.Status != types.StatusPass {
+		t.Fatalf("status %s: %s", r.Status, r.Explanation)
 	}
 }

@@ -65,6 +65,68 @@ type Report struct {
 	SurvivorsSuggestions []Suggestion   `json:"survivors_suggestions"`
 	SkippedSpecs         int            `json:"skipped_specs"`
 	ApplicableSpecs      int            `json:"applicable_specs"`
+	// Operators scores each operator that generated mutants, in enumeration
+	// order.
+	Operators []OperatorStats `json:"operators"`
+	// Excluded names what the score leaves out.
+	Excluded Excluded `json:"excluded"`
+}
+
+// OperatorStats is the tally of one operator's mutants. Score is nil when none
+// of its mutants has an applicable spec.
+type OperatorStats struct {
+	Operator          Operator `json:"operator"`
+	Generated         int      `json:"generated"`
+	Killed            int      `json:"killed"`
+	Survived          int      `json:"survived"`
+	NoApplicableSpecs int      `json:"no_applicable_specs"`
+	Score             *float64 `json:"score"`
+}
+
+// Excluded is the population the score does not cover.
+type Excluded struct {
+	// SkippedSpecs counts specs that were not run, by reason.
+	SkippedSpecs []SkipReason `json:"skipped_specs"`
+	// MutantsNoApplicableSpecs counts mutants of fixtures none of whose specs
+	// pass unmutated.
+	MutantsNoApplicableSpecs int `json:"mutants_no_applicable_specs"`
+}
+
+// SkipReason counts specs skipped for one reason.
+type SkipReason struct {
+	Reason string `json:"reason"`
+	Specs  int    `json:"specs"`
+}
+
+// operatorStats tallies mutants per operator in enumeration order.
+func operatorStats(mutants []MutantResult) []OperatorStats {
+	out := []OperatorStats{}
+	for _, op := range Operators {
+		st := OperatorStats{Operator: op}
+		for _, m := range mutants {
+			if m.Operator != op {
+				continue
+			}
+			st.Generated++
+			switch m.Status {
+			case StatusKilled:
+				st.Killed++
+			case StatusSurvived:
+				st.Survived++
+			case StatusNoApplicableSpecs:
+				st.NoApplicableSpecs++
+			}
+		}
+		if st.Generated == 0 {
+			continue
+		}
+		if st.Killed+st.Survived > 0 {
+			score := float64(st.Killed) / float64(st.Killed+st.Survived)
+			st.Score = &score
+		}
+		out = append(out, st)
+	}
+	return out
 }
 
 // Counts returns how many mutants were killed and how many survived.
@@ -102,17 +164,25 @@ func Run(subjects []Subject, specs []Spec, opts Options) (*Report, error) {
 	reg := assertion.NewRegistry()
 	var runnable []Spec
 	skipped := 0
+	skipTypes := map[string]int{}
 	for _, sp := range specs {
 		if reg.HasEvaluator(sp.Type) {
 			runnable = append(runnable, sp)
 		} else {
 			skipped++
+			skipTypes[sp.Type]++
 		}
 	}
 
 	rep := &Report{
 		Seed: opts.Seed, SkippedSpecs: skipped,
 		Fixtures: []string{}, Mutants: []MutantResult{}, SurvivorsSuggestions: []Suggestion{},
+		Excluded: Excluded{SkippedSpecs: []SkipReason{}},
+	}
+	for _, t := range sortedKeys(skipTypes) {
+		rep.Excluded.SkippedSpecs = append(rep.Excluded.SkippedSpecs, SkipReason{
+			Reason: fmt.Sprintf("%s specs are not deterministic", t), Specs: skipTypes[t],
+		})
 	}
 	subj := map[string]Subject{}
 	for _, s := range subjects {
@@ -160,6 +230,7 @@ func Run(subjects []Subject, specs []Spec, opts Options) (*Report, error) {
 		switch {
 		case len(list) == 0:
 			res.Status = StatusNoApplicableSpecs
+			rep.Excluded.MutantsNoApplicableSpecs++
 		case len(res.KilledBy) > 0:
 			res.Status = StatusKilled
 		default:
@@ -178,6 +249,7 @@ func Run(subjects []Subject, specs []Spec, opts Options) (*Report, error) {
 		score := float64(killed) / float64(killed+survived)
 		rep.Score = &score
 	}
+	rep.Operators = operatorStats(rep.Mutants)
 	return rep, nil
 }
 

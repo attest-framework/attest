@@ -7,6 +7,8 @@ import (
 	"math/big"
 	"sort"
 	"strings"
+
+	"github.com/attest-framework/attest/engine/internal/world"
 )
 
 // relatedRef names the record another resource holds for a key: the record in
@@ -53,6 +55,9 @@ func (b *atMostBound) UnmarshalJSON(data []byte) error {
 	var n json.Number
 	if err := json.Unmarshal(trimmed, &n); err != nil {
 		return fmt.Errorf("at_most must be a number or {\"related\": {resource, field, on}}")
+	}
+	if err := world.CheckExponent(n.String()); err != nil {
+		return fmt.Errorf("at_most: %w", err)
 	}
 	r, ok := new(big.Rat).SetString(n.String())
 	if !ok {
@@ -134,6 +139,9 @@ func numeric(resource, field string, record map[string]any, position int) (*big.
 		}
 		return nil, evidencef("%s %s is not a number in record %d (%s); a sum needs numeric values", resource, field, position, got)
 	}
+	if err := world.CheckExponent(n.String()); err != nil {
+		return nil, evidencef("%s %s in record %d: %v", resource, field, position, err)
+	}
 	r, ok := new(big.Rat).SetString(n.String())
 	if !ok {
 		return nil, evidencef("%s %s is not a finite number in record %d (%s)", resource, field, position, n.String())
@@ -156,34 +164,42 @@ func formatRat(r *big.Rat) string {
 }
 
 // terminatingDigits returns the fraction digits needed to print 1/den exactly,
-// and false when den has a prime factor other than 2 or 5.
+// and false when den has a prime factor other than 2 or 5 or needs more than
+// maxExactDigits digits.
 func terminatingDigits(den *big.Int) (int, bool) {
-	rest := new(big.Int).Set(den)
-	two, five := big.NewInt(2), big.NewInt(5)
-	twos, fives := 0, 0
+	digits, _, ok := terminatingDigitsSteps(den)
+	return digits, ok
+}
+
+// terminatingDigitsSteps is terminatingDigits that also reports how many
+// divisions by 5 it ran, which never exceeds maxExactDigits.
+func terminatingDigitsSteps(den *big.Int) (digits, steps int, ok bool) {
+	twos := int(den.TrailingZeroBits())
+	rest := new(big.Int).Rsh(den, uint(twos))
+	five := big.NewInt(5)
 	rem := new(big.Int)
 	quo := new(big.Int)
-	for {
-		quo.DivMod(rest, two, rem)
-		if rem.Sign() != 0 {
-			break
+	fives := 0
+	for rest.Cmp(big.NewInt(1)) != 0 {
+		if fives >= maxExactDigits {
+			return 0, fives, false
 		}
-		rest.Set(quo)
-		twos++
-	}
-	for {
 		quo.DivMod(rest, five, rem)
 		if rem.Sign() != 0 {
-			break
+			return 0, fives, false
 		}
-		rest.Set(quo)
+		rest, quo = quo, rest
 		fives++
 	}
-	if rest.Cmp(big.NewInt(1)) != 0 {
-		return 0, false
+	if twos > maxExactDigits {
+		return 0, fives, false
 	}
-	return max(twos, fives), true
+	return max(twos, fives), fives, true
 }
+
+// maxExactDigits bounds the fraction digits formatRat prints; a value that
+// needs more prints as num/den.
+const maxExactDigits = 1024
 
 func checkSum(spec *effectSpec, records []map[string]any, state map[string][]map[string]any) (*effectViolation, string, error) {
 	if spec.Field == "" {

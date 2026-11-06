@@ -39,5 +39,13 @@
     }
   ],
   "skipped_specs": 1,
-  "applicable_specs": 2
+  "applicable_specs": 2,
+  "operators": [
+    {"operator": "duplicate_tool_call", "generated": 1, "killed": 1, "survived": 0, "no_applicable_specs": 0, "score": 1},
+    {"operator": "alter_world_effect", "generated": 1, "killed": 0, "survived": 1, "no_applicable_specs": 0, "score": 0}
+  ],
+  "excluded": {
+    "skipped_specs": [{"reason": "judge specs are not deterministic", "specs": 1}],
+    "mutants_no_applicable_specs": 0
+  }
 }

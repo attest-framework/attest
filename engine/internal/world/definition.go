@@ -17,6 +17,7 @@ import (
 	"os"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -44,11 +45,34 @@ func checkInt(n int64, path string, v any) (any, error) {
 	return v, nil
 }
 
+// MaxDecimalExponent bounds the exponent of a number written in scientific
+// notation. Larger exponents expand into numbers with millions of digits when
+// parsed exactly.
+const MaxDecimalExponent = 400
+
+// CheckExponent rejects a JSON number whose decimal exponent lies outside
+// ±MaxDecimalExponent.
+func CheckExponent(n string) error {
+	i := strings.IndexAny(n, "eE")
+	if i < 0 {
+		return nil
+	}
+	exp, err := strconv.Atoi(strings.TrimPrefix(n[i+1:], "+"))
+	if err != nil || exp > MaxDecimalExponent || exp < -MaxDecimalExponent {
+		return fmt.Errorf("number %s has a decimal exponent outside ±%d", n, MaxDecimalExponent)
+	}
+	return nil
+}
+
 // CheckNumbers rejects numbers in a decoded JSON value (decoded with
-// UseNumber) that are not finite or are integers beyond 2^53-1.
+// UseNumber) that are not finite, have a decimal exponent outside
+// ±MaxDecimalExponent, or are integers beyond 2^53-1.
 func CheckNumbers(v any) error {
 	switch t := v.(type) {
 	case json.Number:
+		if err := CheckExponent(string(t)); err != nil {
+			return err
+		}
 		f, err := t.Float64()
 		if err != nil || math.IsInf(f, 0) || math.IsNaN(f) {
 			return fmt.Errorf("number %s is out of range", t)

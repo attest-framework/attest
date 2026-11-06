@@ -184,6 +184,27 @@ type MutationView struct {
 	Killed    int
 	Survived  int
 	Survivors []SurvivorView
+	// Operators scores each operator; empty for a report from an older engine.
+	Operators []OperatorView
+	// SkippedSpecs and NoApplicable are the populations the score leaves out.
+	SkippedSpecs []SkippedView
+	NoApplicable int
+}
+
+// OperatorView is one row of the per-operator table.
+type OperatorView struct {
+	Operator          string
+	Generated         int
+	Killed            int
+	Survived          int
+	NoApplicableSpecs int
+	Score             string
+}
+
+// SkippedView counts specs skipped for one reason.
+type SkippedView struct {
+	Reason string
+	Specs  int
 }
 
 // SurvivorView is a surviving mutant and the contract that would kill it.
@@ -811,6 +832,28 @@ func (b *viewBuilder) mutation(m *mutate.Report) *MutationView {
 	mv := &MutationView{Killed: killed, Survived: survived, Score: "n/a"}
 	if m.Score != nil {
 		mv.Score = fmt.Sprintf("%.1f%%", 100**m.Score)
+	}
+	mv.NoApplicable = m.Excluded.MutantsNoApplicableSpecs
+	for _, st := range m.Operators {
+		if len(mv.Operators) >= viewMaxListed {
+			b.notef("%d operator row(s) in total; the first %d are shown", len(m.Operators), viewMaxListed)
+			break
+		}
+		ov := OperatorView{
+			Operator: b.text(string(st.Operator)), Generated: st.Generated, Killed: st.Killed,
+			Survived: st.Survived, NoApplicableSpecs: st.NoApplicableSpecs, Score: "n/a",
+		}
+		if st.Score != nil {
+			ov.Score = fmt.Sprintf("%.1f%%", 100**st.Score)
+		}
+		mv.Operators = append(mv.Operators, ov)
+	}
+	for _, sk := range m.Excluded.SkippedSpecs {
+		if len(mv.SkippedSpecs) >= viewMaxListed {
+			b.notef("%d skipped-spec reason(s) in total; the first %d are shown", len(m.Excluded.SkippedSpecs), viewMaxListed)
+			break
+		}
+		mv.SkippedSpecs = append(mv.SkippedSpecs, SkippedView{Reason: b.text(sk.Reason), Specs: sk.Specs})
 	}
 	suggestions := map[string]mutate.Suggestion{}
 	for _, s := range m.SurvivorsSuggestions {

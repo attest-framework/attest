@@ -145,25 +145,19 @@ func printMutationReport(w io.Writer, rep *mutate.Report) {
 	}
 	fmt.Fprintf(w, "\ncontracts: %d applicable, %d skipped (not deterministic)\n\n", rep.ApplicableSpecs, rep.SkippedSpecs)
 
-	fmt.Fprintf(w, "%-22s %7s %7s %9s\n", "operator", "mutants", "killed", "survived")
-	for _, op := range mutate.Operators {
-		var total, k, s int
-		for _, m := range rep.Mutants {
-			if m.Operator != op {
-				continue
-			}
-			total++
-			switch m.Status {
-			case mutate.StatusKilled:
-				k++
-			case mutate.StatusSurvived:
-				s++
-			}
+	fmt.Fprintf(w, "%-22s %9s %7s %9s %5s %6s\n", "operator", "generated", "killed", "survived", "n/a", "score")
+	for _, st := range rep.Operators {
+		score := "n/a"
+		if st.Score != nil {
+			score = fmt.Sprintf("%.0f%%", *st.Score*100)
 		}
-		if total > 0 {
-			fmt.Fprintf(w, "%-22s %7d %7d %9d\n", op, total, k, s)
-		}
+		fmt.Fprintf(w, "%-22s %9d %7d %9d %5d %6s\n", terminalSafe(string(st.Operator)), st.Generated, st.Killed, st.Survived, st.NoApplicableSpecs, score)
 	}
+	fmt.Fprintf(w, "\nexcluded from the score: %d mutant(s) with no applicable contract", rep.Excluded.MutantsNoApplicableSpecs)
+	for _, sk := range rep.Excluded.SkippedSpecs {
+		fmt.Fprintf(w, "; %d spec(s): %s", sk.Specs, terminalSafe(sk.Reason))
+	}
+	fmt.Fprintln(w)
 
 	if survived == 0 {
 		return
