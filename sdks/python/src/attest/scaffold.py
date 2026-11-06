@@ -12,8 +12,6 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from attest import __version__
-
 # The line a new user edits to see a failure. README.md and the generated-project
 # tests point at it by this marker.
 DEMO_MARKER = "ATTEST-DEMO"
@@ -80,11 +78,33 @@ layers:
 not_evaluated: warn
 """
 
+# Every action the generated workflow uses, pinned to a commit SHA with its release tag in a
+# trailing comment (a tag can be moved; a SHA cannot). The TypeScript scaffold carries the same
+# table and a test keeps the two equal. Dependabot's github-actions ecosystem bumps both the SHA
+# and the comment in the generated project.
+ACTION_PINS: dict[str, tuple[str, str]] = {
+    "actions/checkout": ("d23441a48e516b6c34aea4fa41551a30e30af803", "v6.1.0"),
+    "astral-sh/setup-uv": ("37802adc94f370d6bfd71619e3f0bf239e1f3b78", "v7.6.0"),
+    "actions/upload-artifact": ("cf430e030ddbb5b0abf93d22962f4752f3646cd9", "v7.0.2"),
+    "actions/download-artifact": ("9000827ccba6bdab643e8b6fd33ac0654aef8333", "v8.0.2"),
+    "attest-framework/attest/.github/actions/pr-annotate": (
+        "5d5b748b13da7ba034b3acfce631cee8fcae720c",
+        "v1.0.1",
+    ),
+}
+
+
+def _uses(action: str) -> str:
+    sha, version = ACTION_PINS[action]
+    return f"{action}@{sha} # {version}"
+
+
 GITHUB_WORKFLOW_TEMPLATE = f"""\
 # Written by `attest init --ci github`.
 # The test step records its outcome and continues so the report is always uploaded,
 # the JUnit file written, the policy evaluated and the pull request summarised; the last
 # step fails the job when the tests failed. A policy warning (exit 2) does not fail the job.
+# Only the annotate job can write to the pull request; the job that runs your tests cannot.
 name: attest
 
 on:
@@ -100,12 +120,11 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      pull-requests: write
     steps:
-      - uses: actions/checkout@v6
+      - uses: {_uses("actions/checkout")}
         with:
           persist-credentials: false
-      - uses: astral-sh/setup-uv@v7
+      - uses: {_uses("astral-sh/setup-uv")}
       - name: Install dependencies
         run: uv sync --locked
       - name: Run tests
@@ -124,7 +143,7 @@ jobs:
         run: uv run attest view attest-report.json --no-open --out attest-report.html
       - name: Upload the Attest report
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: {_uses("actions/upload-artifact")}
         with:
           name: attest-report
           path: |
@@ -143,21 +162,30 @@ jobs:
             exit 0
           fi
           exit "$code"
-      - name: Annotate the pull request
-        # Posts one summary comment (updated on every run) and annotates failures at their
-        # file and line. Fork pull requests get a read-only token that cannot comment; the
-        # last step still fails the job when tests failed.
-        if: >-
-          always() && github.event_name == 'pull_request' &&
-          github.event.pull_request.head.repo.full_name == github.repository
-        uses: attest-framework/attest/.github/actions/pr-annotate@v{__version__}
-        with:
-          report: attest-report.json
       - name: Fail the job when tests failed
         if: always() && steps.tests.outcome == 'failure'
         run: |
           echo "::error::pytest failed; see the Run tests step"
           exit 1
+
+  annotate:
+    # Posts one summary comment (updated on every run) and annotates failures at their
+    # file and line. Fork pull requests get a read-only token that cannot comment.
+    needs: attest
+    if: >-
+      always() && github.event_name == 'pull_request' &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: {_uses("actions/download-artifact")}
+        with:
+          name: attest-report
+      - uses: {_uses("attest-framework/attest/.github/actions/pr-annotate")}
+        with:
+          report: attest-report.json
 """
 
 CI_PROVIDERS = ("github",)

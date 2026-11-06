@@ -8,7 +8,7 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { engineCommands, exitStatus, main } from "../../packages/core/src/cli.js";
 import { ENGINE_VERSION, VERSION } from "../../packages/core/src/version.js";
-import { DEMO_MARKER } from "../../packages/core/src/scaffold.js";
+import { ACTION_PINS, DEMO_MARKER } from "../../packages/core/src/scaffold.js";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import {
   forwardedCalls,
@@ -137,7 +137,8 @@ describe("attest init", () => {
     async (args) => {
       await expect(main(["init", ...args])).resolves.toBe(0);
 
-      const steps = fs.readFileSync(workflow(), "utf-8").split("      - ").slice(1);
+      const [attestJob, annotateJob] = fs.readFileSync(workflow(), "utf-8").split("\n  annotate:\n");
+      const steps = (attestJob ?? "").split("      - ").slice(1);
       const byName = new Map(steps.map((s) => [s.split("\n")[0]!.replace(/^name: /, ""), s]));
       expect(byName.get("Run tests")).toContain("continue-on-error: true");
       expect(byName.get("Run tests")).toContain(
@@ -162,14 +163,27 @@ describe("attest init", () => {
       expect(byName.get("Upload the Attest report")).toContain("attest-junit.xml");
       const text = fs.readFileSync(workflow(), "utf-8");
       expect(text).toContain("\npermissions:\n  contents: read\n\njobs:");
-      expect(text).toContain("    permissions:\n      contents: read\n      pull-requests: write\n");
+      expect(attestJob).not.toContain("pull-requests");
+      expect(attestJob).toContain("    permissions:\n      contents: read\n    steps:");
+      expect(annotateJob).toContain("    permissions:\n      contents: read\n      pull-requests: write\n");
+      expect(text.split("pull-requests: write")).toHaveLength(2);
       expect(byName.get("Evaluate the merge policy")).toContain("if: always()");
       expect(byName.get("Evaluate the merge policy")).toContain('"$code" -eq 2');
-      expect(byName.get("Annotate the pull request")).toContain(`pr-annotate@v${VERSION}`);
-      expect(byName.get("Annotate the pull request")).toContain(
+      expect(annotateJob).toContain("needs: attest");
+      expect(annotateJob).toContain(
+        "pr-annotate@5d5b748b13da7ba034b3acfce631cee8fcae720c # v1.0.1",
+      );
+      expect(annotateJob).toContain(
         "github.event.pull_request.head.repo.full_name == github.repository",
       );
+      expect(annotateJob).toContain("name: attest-report");
       expect(steps.at(-1)).toContain("if: always() && steps.tests.outcome == 'failure'");
+      const uses = text.split("\n").filter((line) => /^\s*(- )?uses:/.test(line));
+      expect(uses.length).toBeGreaterThan(0);
+      for (const line of uses) expect(line).toMatch(/@[0-9a-f]{40} # v\d+\.\d+\.\d+$/);
+      for (const [action, { sha, version }] of Object.entries(ACTION_PINS)) {
+        if (text.includes(`${action}@`)) expect(text).toContain(`${action}@${sha} # ${version}`);
+      }
     },
   );
 

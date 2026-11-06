@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import importlib.util
 import json
+import re
 import stat
 from pathlib import Path
 from typing import Any
@@ -10,11 +12,17 @@ from typing import Any
 import jsonschema
 import pytest
 
-from attest import __version__
 from attest.cli.admin import main
-from attest.scaffold import DEMO_MARKER, scaffold_project
+from attest.scaffold import ACTION_PINS, DEMO_MARKER, scaffold_project
 from tests.conftest import ScriptedEngine
 
+_REPO = Path(__file__).resolve().parents[3]
+_spec = importlib.util.spec_from_file_location(
+    "check_action_pins", _REPO / "scripts" / "check-action-pins.py"
+)
+assert _spec is not None and _spec.loader is not None
+check_pins = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(check_pins)
 _SAMPLE_FILES = ("tests/test_my_agent.py", "attest.policy.yaml")
 _WORKFLOW = ".github/workflows/attest.yml"
 
@@ -60,7 +68,8 @@ def test_scaffold_project_ci_github_writes_merge_gate_workflow(tmp_path: Path) -
     scaffold_project(tmp_path, ci="github")
 
     workflow = (tmp_path / _WORKFLOW).read_text()
-    steps = workflow.split("      - ")[1:]
+    attest_job, annotate_job = workflow.split("\n  annotate:\n")
+    steps = attest_job.split("      - ")[1:]
     by_name = {s.split("\n")[0].removeprefix("name: "): s for s in steps}
     run_tests = by_name["Run tests"]
     assert "continue-on-error: true" in run_tests
@@ -87,12 +96,16 @@ def test_scaffold_project_ci_github_writes_merge_gate_workflow(tmp_path: Path) -
     assert "attest-report.json\n" in upload and "attest-junit.xml" in upload
     assert "attest-report.html" in upload
     assert "\npermissions:\n  contents: read\n\njobs:" in workflow
-    assert "    permissions:\n      contents: read\n      pull-requests: write\n" in workflow
+    assert attest_job.count("pull-requests") == 0
+    assert "    permissions:\n      contents: read\n    steps:" in attest_job
+    assert "    permissions:\n      contents: read\n      pull-requests: write\n" in annotate_job
+    assert workflow.count("pull-requests: write") == 1
     assert '"$code" -eq 2' in by_name["Evaluate the merge policy"]
-    annotate = by_name["Annotate the pull request"]
-    assert "always() && github.event_name == 'pull_request' &&" in annotate
-    assert "github.event.pull_request.head.repo.full_name == github.repository" in annotate
-    assert f"pr-annotate@v{__version__}" in annotate
+    assert "needs: attest" in annotate_job
+    assert "always() && github.event_name == 'pull_request' &&" in annotate_job
+    assert "github.event.pull_request.head.repo.full_name == github.repository" in annotate_job
+    assert "pr-annotate@5d5b748b13da7ba034b3acfce631cee8fcae720c # v1.0.1" in annotate_job
+    assert "name: attest-report" in annotate_job
     final = steps[-1]
     assert "if: always() && steps.tests.outcome == 'failure'" in final
     assert "exit 1" in final
@@ -431,3 +444,40 @@ def test_main_init_skills_without_engine_exits_1(
 
     assert capsys.readouterr().out == ""
     assert not (project / "tests").exists()
+
+
+def test_scaffold_project_ci_github_pins_every_action_by_sha(tmp_path: Path) -> None:
+    scaffold_project(tmp_path, ci="github")
+
+    assert check_pins.violations(tmp_path / _WORKFLOW) == []
+    workflow = (tmp_path / _WORKFLOW).read_text()
+    for action, (sha, version) in ACTION_PINS.items():
+        if f"{action}@" in workflow:
+            assert f"{action}@{sha} # {version}" in workflow
+
+
+def test_scaffold_pin_checker_rejects_a_tag_pinned_action(tmp_path: Path) -> None:
+    scaffold_project(tmp_path, ci="github")
+    sha, version = ACTION_PINS["actions/checkout"]
+    path = tmp_path / _WORKFLOW
+    path.write_text(path.read_text().replace(f"@{sha} # {version}", "@v6"))
+
+    (problem,) = check_pins.violations(path)
+    assert "actions/checkout@v6" in problem
+
+
+def test_scaffold_pins_equal_the_typescript_scaffold_pins() -> None:
+    source = (_REPO / "sdks/typescript/packages/core/src/scaffold.ts").read_text()
+    ts_pins = {
+        m["action"]: (m["sha"], m["version"])
+        for m in re.finditer(
+            r'"(?P<action>[^"]+)": \{\s*sha: "(?P<sha>[0-9a-f]{40})",'
+            r'\s*version: "(?P<version>[^"]+)"',
+            source,
+        )
+    }
+    shared = ts_pins.keys() & ACTION_PINS.keys()
+    assert shared >= {"actions/checkout", "actions/upload-artifact", "actions/download-artifact"}
+    assert "attest-framework/attest/.github/actions/pr-annotate" in shared
+    for action in shared:
+        assert ACTION_PINS[action] == ts_pins[action], action
