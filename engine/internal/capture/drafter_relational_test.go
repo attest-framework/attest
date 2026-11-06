@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode"
 
 	"github.com/attest-framework/attest/engine/internal/contractdsl"
 	"github.com/attest-framework/attest/engine/pkg/types"
@@ -155,5 +156,75 @@ func TestDraftRelational_IdAndDescriptionSanitizeWorldNames(t *testing.T) {
 	}
 	if !strings.Contains(string(cs[0].Spec), long[:50]) {
 		t.Fatalf("spec lost the raw field name: %s", cs[0].Spec)
+	}
+}
+
+func draftedIDs(t *testing.T, state string) []string {
+	t.Helper()
+	cs, _, err := DraftRelational(worldOf(state))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ids := make([]string, len(cs))
+	for i, c := range cs {
+		ids[i] = c.ID
+	}
+	return ids
+}
+
+func TestDraftRelational_NamesThatCollideAfterSanitizing_GetDistinctIDs(t *testing.T) {
+	// "amount" and "amo\u0001unt" both display as "amount".
+	ids := draftedIDs(t, `{
+  "orders":[{"order_id":"O-1","amount":10,"amo\u0001unt":10}],
+  "refunds":[{"refund_id":"R-1","order_id":"O-1","amount":1,"amo\u0001unt":1}]
+}`)
+
+	seen := map[string]bool{}
+	for _, id := range ids {
+		if seen[id] {
+			t.Errorf("duplicate contract id %q in %q", id, ids)
+		}
+		seen[id] = true
+	}
+	if len(ids) != 2 {
+		t.Fatalf("%d contracts drafted, want 2: %q", len(ids), ids)
+	}
+}
+
+func TestDraftRelational_HyphenAmbiguousNames_GetDistinctIDs(t *testing.T) {
+	// ("a-b", "c") and ("a", "b-c") both render relational-sum-a-b-c-per-k_id.
+	ids := draftedIDs(t, `{
+  "ks":[{"k_id":"K1","c":5,"b-c":5}],
+  "a-b":[{"k_id":"K1","c":1}],
+  "a":[{"k_id":"K1","b-c":1}]
+}`)
+
+	if len(ids) != 2 || ids[0] == ids[1] {
+		t.Fatalf("ids %q, want two distinct", ids)
+	}
+}
+
+func TestDraftRelational_WhitespaceInNames_IDsHaveNone(t *testing.T) {
+	ids := draftedIDs(t, "{"+
+		`"orders":[{"order_id":"O-1","amount cents":10,"tab\tfield":10,"nb space":10}],`+
+		`"refunds":[{"refund_id":"R-1","order_id":"O-1","amount cents":1,"tab\tfield":1,"nb space":1}]}`)
+
+	if len(ids) != 3 {
+		t.Fatalf("%d contracts, want 3: %q", len(ids), ids)
+	}
+	for _, id := range ids {
+		if strings.IndexFunc(id, func(r rune) bool { return unicode.IsSpace(r) || r == 0xFEFF }) >= 0 {
+			t.Errorf("id %q contains whitespace", id)
+		}
+	}
+}
+
+func TestDraftRelational_CleanNames_KeepTheirPlainID(t *testing.T) {
+	ids := draftedIDs(t, refundDeskState)
+
+	for _, id := range ids {
+		if strings.Contains(id, "~") {
+			t.Errorf("clean names got a hash suffix: %q", id)
+		}
 	}
 }
