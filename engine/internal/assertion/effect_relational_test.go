@@ -4,6 +4,7 @@ import (
 	"math/big"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/attest-framework/attest/engine/pkg/types"
 )
@@ -217,5 +218,53 @@ func TestFormatRatIsLossless(t *testing.T) {
 		if got := formatRat(r); got != want {
 			t.Errorf("formatRat(%s) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+func TestFormatRatHugeNegativeExponentIsFast(t *testing.T) {
+	r, ok := new(big.Rat).SetString("1e-1000000")
+	if !ok {
+		t.Fatal("parse")
+	}
+	start := time.Now()
+	got := formatRat(r)
+	if elapsed := time.Since(start); elapsed > 500*time.Millisecond {
+		t.Fatalf("formatRat took %s", elapsed)
+	}
+	if strings.HasPrefix(got, "0.") && len(got) > 1000 {
+		t.Fatalf("formatRat printed %d characters", len(got))
+	}
+}
+
+func TestFormatRatNormalValuesStayExact(t *testing.T) {
+	cases := map[string]string{"12600": "12600", "0.5": "0.5", "12.25": "12.25", "0.001": "0.001", "1/3": "1/3", "0.125": "0.125"}
+	for in, want := range cases {
+		r, ok := new(big.Rat).SetString(in)
+		if !ok {
+			t.Fatalf("parse %s", in)
+		}
+		if got := formatRat(r); got != want {
+			t.Errorf("formatRat(%s) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestEffectSumRelatedRejectsHugeExponentValues(t *testing.T) {
+	for _, amount := range []string{"1e-1000000", "1e-401"} {
+		start := time.Now()
+		r := evalEffect(sumSpec(`[{"order_id":"O-2077","amount_cents":`+amount+`}]`, ""))
+		if elapsed := time.Since(start); elapsed > time.Second {
+			t.Errorf("%s took %s", amount, elapsed)
+		}
+		if r.Status != types.StatusHardFail || !strings.Contains(r.Explanation, "decimal exponent") {
+			t.Errorf("%s: status %s explanation %q", amount, r.Status, r.Explanation)
+		}
+	}
+}
+
+func TestEffectSumRelatedAcceptsExponentAtTheLimit(t *testing.T) {
+	r := evalEffect(sumSpec(`[{"order_id":"O-2077","amount_cents":1e2}]`, ""))
+	if r.Status != types.StatusPass {
+		t.Fatalf("status %s: %s", r.Status, r.Explanation)
 	}
 }

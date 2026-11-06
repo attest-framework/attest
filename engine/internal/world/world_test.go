@@ -511,3 +511,16 @@ func TestFaultsFiredIsCappedWithAnExactCount(t *testing.T) {
 		t.Fatalf("capped snapshot rejected: %v", err)
 	}
 }
+
+func TestCheckNumbersRejectsDecimalExponentBeyondLimit(t *testing.T) {
+	for _, n := range []string{"1e401", "1e-401", "1e-1000000", "1E1000000"} {
+		if err := CheckNumbers(json.Number(n)); err == nil || !strings.Contains(err.Error(), "decimal exponent") {
+			t.Errorf("%s: err %v", n, err)
+		}
+	}
+	for _, n := range []string{"1e300", "1e-400", "12.5", "3"} {
+		if err := CheckNumbers(json.Number(n)); err != nil {
+			t.Errorf("%s: %v", n, err)
+		}
+	}
+}
