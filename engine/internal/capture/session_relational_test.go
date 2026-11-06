@@ -1,12 +1,14 @@
 package capture
 
 import (
+	"bytes"
 	"fmt"
 	"testing"
 
 	"github.com/attest-framework/attest/engine/internal/contractdsl"
 	"github.com/attest-framework/attest/engine/internal/world"
 	"github.com/attest-framework/attest/engine/pkg/types"
+	"github.com/santhosh-tekuri/jsonschema/v6"
 )
 
 func buildWithWorld(t *testing.T, snap *world.Snapshot, expectFail bool) (*Fixture, BuildReport) {
@@ -99,5 +101,21 @@ func TestVerifyIn_EffectContractWithoutWorld_Errors(t *testing.T) {
 
 	if _, err := VerifyIn(&types.Trace{}, nil, []Contract{c}, false, TraceCheckResult{OK: true}); err == nil {
 		t.Fatal("effect contract verified with no world")
+	}
+}
+
+func TestFixtureV1Schema_CaptureWithRelationalDrafts_Valid(t *testing.T) {
+	s := compileFixtureV1Schema(t)
+	f, _ := buildWithWorld(t, overRefundedWorld(), true)
+	data, err := Marshal(f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc, err := jsonschema.UnmarshalJSON(bytes.NewReader(data))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Validate(doc); err != nil {
+		t.Fatalf("capture with relational drafts fails the schema: %v", err)
 	}
 }

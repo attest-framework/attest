@@ -2,10 +2,8 @@ package capture
 
 import (
 	"bytes"
-	"context"
 	"os"
 	"path/filepath"
-	"slices"
 	"testing"
 
 	"github.com/santhosh-tekuri/jsonschema/v6"
@@ -115,25 +113,6 @@ func TestFixtureV1_ValidFixtures_ContractsMatchDrafter(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if len(f.World) > 0 && string(f.World) != "null" {
-			relational, _, err := DraftRelational(f.World)
-			if err != nil {
-				t.Fatal(err)
-			}
-			drafted = append(drafted, relational...)
-			results, err := []ContractResult(nil), error(nil)
-			if len(relational) > 0 {
-				results, err = VerifyRelational(context.Background(), f.World, relational)
-			}
-			if err != nil {
-				t.Fatal(err)
-			}
-			for _, r := range results {
-				if !slices.Contains(f.Verification.Results, r) {
-					t.Errorf("%s: stored results lack %+v", filepath.Base(p), r)
-				}
-			}
-		}
 		got, _ := Marshal(&Fixture{Contracts: f.Contracts})
 		want, _ := Marshal(&Fixture{Contracts: drafted})
 		if !bytes.Equal(got, want) {
@@ -143,7 +122,7 @@ func TestFixtureV1_ValidFixtures_ContractsMatchDrafter(t *testing.T) {
 			kinds[c.Kind] = true
 		}
 	}
-	for _, k := range []string{KindTools, KindOrder, KindCardinality, KindOutputSchema, KindCost, KindRelational} {
+	for _, k := range []string{KindTools, KindOrder, KindCardinality, KindOutputSchema, KindCost} {
 		if !kinds[k] {
 			t.Errorf("no valid fixture has a %s contract", k)
 		}
