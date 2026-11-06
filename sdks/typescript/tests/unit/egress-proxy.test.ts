@@ -707,3 +707,93 @@ describe("egress guard identifies the proxy by its connected address", () => {
     }
   });
 });
+
+describe("egress guard follows proxy DNS rotation", () => {
+  /** Dual-stack sink: one port reachable as 127.0.0.1 and ::1. */
+  async function startDualSink(): Promise<{
+    port: number;
+    received: () => Buffer;
+    close: () => void;
+  }> {
+    const chunks: Buffer[] = [];
+    const sockets = new Set<net.Socket>();
+    const server = net.createServer((sock) => {
+      sockets.add(sock);
+      sock.on("error", () => undefined);
+      sock.on("data", (d: Buffer) => chunks.push(d));
+    });
+    await new Promise<void>((r) => server.listen(0, "::", r));
+    return {
+      port: (server.address() as net.AddressInfo).port,
+      received: () => Buffer.concat(chunks),
+      close: () => {
+        for (const s of sockets) s.destroy();
+        server.close();
+      },
+    };
+  }
+
+  async function sendVia(host: string, port: number, part: string) {
+    const sock = net.connect({ host, port });
+    let failure: Error | null = null;
+    sock.on("error", (e) => {
+      failure = e;
+    });
+    await new Promise<void>((r) => sock.once("connect", r));
+    sock.write(part);
+    await tick(100);
+    sock.destroy();
+    return failure as Error | null;
+  }
+
+  it("blocks a provider CONNECT via ::1 after the proxy name rotated from 127.0.0.1", async () => {
+    const sink = await startDualSink();
+    process.env.HTTP_PROXY = `http://proxy.rotate.test:${sink.port}`;
+    const answers = [[{ address: "127.0.0.1", family: 4 }], [{ address: "::1", family: 6 }]];
+    let call = 0;
+    stubLookup(() => answers[Math.min(call++, answers.length - 1)] as never);
+    installEgressGuard();
+    try {
+      const first = await sendVia("127.0.0.1", sink.port, CONNECT_PROVIDER);
+      expect(first).toBeInstanceOf(EgressBlockedError);
+      const second = await sendVia("::1", sink.port, CONNECT_PROVIDER);
+      expect(second).toBeInstanceOf(EgressBlockedError);
+      expect(sink.received().length).toBe(0);
+    } finally {
+      sink.close();
+    }
+  });
+
+  it("delivers intact on the proxy port from an address in neither answer", async () => {
+    const sink = await startDualSink();
+    process.env.HTTP_PROXY = `http://proxy.rotate.test:${sink.port}`;
+    stubLookup(() => [{ address: "10.255.255.1", family: 4 }]);
+    installEgressGuard();
+    try {
+      const err = await sendVia("127.0.0.1", sink.port, CONNECT_PROVIDER);
+      expect(err).toBeNull();
+      expect(sink.received().toString("latin1")).toBe(CONNECT_PROVIDER);
+    } finally {
+      sink.close();
+    }
+  });
+
+  it("blocks when the fresh lookup for an uncached address throws", async () => {
+    const sink = await startDualSink();
+    process.env.HTTP_PROXY = `http://proxy.rotate.test:${sink.port}`;
+    let call = 0;
+    vi.spyOn(dns.promises, "lookup").mockImplementation((async () => {
+      if (call++ === 0) return [{ address: "127.0.0.1", family: 4 }];
+      throw new Error("ENOTFOUND");
+    }) as never);
+    installEgressGuard();
+    try {
+      await sendVia("127.0.0.1", sink.port, ALLOWED);
+      const err = await sendVia("::1", sink.port, CONNECT_PROVIDER);
+      expect(err).toBeInstanceOf(EgressBlockedError);
+      expect(sink.received().toString("latin1")).toBe(ALLOWED);
+    } finally {
+      sink.close();
+    }
+  });
+});

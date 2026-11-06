@@ -13,20 +13,23 @@
  * touched (stdout/stderr pipes, sockets to any other peer).
  *
  * A socket is a proxy when its connected `remoteAddress`/`remotePort` match the proxy host's
- * `dns.lookup(all)` addresses (IPv4-mapped IPv6 normalized, cached per proxy URL), so
+ * `dns.lookup(all)` addresses (IPv4-mapped IPv6 normalized, cached per proxy URL; a peer
+ * address missing from the cache triggers a fresh lookup that replaces it), so
  * `localhost.` or a multi-address name match a pre-resolved connect. The decision is taken on
  * `connect` and the socket's writes are held until then. A failed lookup on a port a proxy is
  * configured on counts as a proxy (fail closed).
  *
- * After an allowed `CONNECT` the framer waits for the first bytes the client writes. A TLS
- * record header (0x16 0x03 0x00-0x04) means the tunnel is in use and the connection goes
- * opaque; anything else (the proxy refused the CONNECT, e.g. 407, and the client sent another
- * request, or the tunnel carries plain HTTP) returns to request framing with full screening.
- * The proxy's response is not read, so a non-HTTP, non-TLS protocol inside a tunnel is refused.
+ * After an allowed `CONNECT` the guard goes opaque on a three-byte TLS record prefix (0x16
+ * 0x03 0x00-0x04); the tunnel itself is not verified. Anything else (the proxy refused the
+ * CONNECT, e.g. 407, and the client sent another request, or the tunnel carries plain HTTP)
+ * returns to request framing with full screening. A client that forges that prefix and then
+ * writes plaintext is not inspected. The proxy's response is not read, so a non-HTTP,
+ * non-TLS protocol inside a tunnel is refused. This is a best-effort guard for trusted test
+ * code, not an isolation boundary.
  *
  * Not covered: child processes (the engine, anything the agent spawns), SOCKS proxies, an
  * `https://` proxy (TLS hides the request line), a proxy named only through a client option
- * rather than the environment, and the contents of a tunnel that starts with a TLS record.
+ * rather than the environment, and the contents of a tunnel after the TLS record prefix.
  */
 
 import * as dns from "node:dns";
@@ -198,18 +201,28 @@ function normalizeAddress(address: string): string {
 // Resolved addresses per proxy URL; failures are not cached.
 const proxyAddresses = new Map<string, Set<string>>();
 
-async function resolveProxy(p: { host: string; port: number }): Promise<Set<string> | null> {
-  const key = `http://${p.host}:${p.port}`;
-  const cached = proxyAddresses.get(key);
-  if (cached !== undefined) return cached;
+/** Fresh `dns.lookup(all)` answer for a proxy host, or null when the lookup fails. */
+async function lookupProxy(host: string): Promise<Set<string> | null> {
   try {
-    const infos = await dns.promises.lookup(p.host, { all: true });
-    const set = new Set(infos.map((i) => normalizeAddress(i.address)));
-    proxyAddresses.set(key, set);
-    return set;
+    const infos = await dns.promises.lookup(host, { all: true });
+    return new Set(infos.map((i) => normalizeAddress(i.address)));
   } catch {
     return null;
   }
+}
+
+/**
+ * Whether `peer` is an address of the proxy. A cached hit answers at once; a miss bypasses
+ * the cache, replaces it with the fresh answer and decides on that (a rotated proxy address
+ * must not be classified as a non-proxy). A failed lookup counts as a proxy (fail closed).
+ */
+async function isProxyAddress(p: { host: string; port: number }, peer: string): Promise<boolean> {
+  const key = `http://${p.host}:${p.port}`;
+  if (proxyAddresses.get(key)?.has(peer) === true) return true;
+  const fresh = await lookupProxy(p.host);
+  if (fresh === null) return true;
+  proxyAddresses.set(key, fresh);
+  return fresh.has(peer);
 }
 
 /** Whether a connected socket's peer is a configured proxy (fail closed on a lookup error). */
@@ -218,8 +231,7 @@ async function isProxyPeer(sock: net.Socket): Promise<boolean> {
   if (remoteAddress === undefined || remotePort === undefined) return false;
   const peer = normalizeAddress(remoteAddress);
   for (const p of configuredProxies().filter((c) => c.port === remotePort)) {
-    const addresses = await resolveProxy(p);
-    if (addresses === null || addresses.has(peer)) return true;
+    if (await isProxyAddress(p, peer)) return true;
   }
   return false;
 }
