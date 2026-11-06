@@ -71,6 +71,10 @@ options:
                          it, then print what changed per exchange (system
                          prompt, tool schemas, messages, tool results,
                          model, params; --json adds a "diff" object);
+                         a fixture with a world is re-run in that world,
+                         hosted again from the --world file the fixture
+                         records (repo-relative); refuses when its
+                         definition_sha256 changed or the file is missing;
                          refuses when the command's arguments were
                          redacted or templated, or the fixture has no
                          command (--from, in-process)
@@ -98,6 +102,7 @@ type captureOptions struct {
 	refresh        string
 	oldFixture     *capture.Fixture // with --refresh: the fixture before the re-run
 	world          string
+	worldFile      string // the --world file as the fixture records it: repo-relative, slash separated; empty when outside the repo root
 	yes            bool
 	json           bool
 	command        []string
@@ -204,6 +209,15 @@ func runCapture(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 			return 2
 		}
 		opts = append(opts, capture.WithWorld(w))
+		if o.refresh == "" {
+			if o.worldFile, err = repoRelative(o.outDir, o.world); err != nil {
+				fmt.Fprintf(stderr, "capture: %s\n", terminalSafe(err.Error()))
+				return 1
+			}
+			if o.worldFile == "" {
+				fmt.Fprintf(stderr, "capture: note: %s is outside the repository root, so the fixture cannot record it and --refresh will not be able to host the world again\n", terminalSafe(o.world))
+			}
+		}
 	}
 	switch {
 	case o.from != "":
@@ -220,6 +234,9 @@ func runCapture(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if err != nil {
 		fmt.Fprintf(stderr, "capture: %s\n", terminalSafe(in.Redactor.String(err.Error())))
 		return 1
+	}
+	if o.world != "" {
+		in.Source.World = &capture.SourceWorld{File: o.worldFile}
 	}
 	return finishCapture(o, in, stdout, stderr)
 }
@@ -403,8 +420,8 @@ func finishCapture(o *captureOptions, in capture.BuildInput, stdout, stderr io.W
 		writeCaptureSummary(stderr, path, f)
 		writeRefreshDiff(stderr, f, diff)
 		res := captureJSONResult(path, f)
-		if built.RelationalCapped {
-			res["relational_capped"] = relationalCappedText
+		if note := relationalCappedNote(built); note != "" {
+			res["relational_capped"] = note
 		}
 		if diff != nil {
 			res["diff"] = diff
@@ -424,16 +441,25 @@ func finishCapture(o *captureOptions, in capture.BuildInput, stdout, stderr io.W
 		summary = stdout
 	}
 	writeCaptureSummary(summary, path, f)
-	if built.RelationalCapped {
-		fmt.Fprintf(summary, "  %s\n", relationalCappedText)
+	if note := relationalCappedNote(built); note != "" {
+		fmt.Fprintf(summary, "  %s\n", note)
 	}
 	writeRefreshDiff(summary, f, diff)
 	return verifiedExit(f)
 }
 
-// relationalCappedText reports a world whose relations outnumber what one
-// contract run takes.
-var relationalCappedText = fmt.Sprintf("the world relates more resources than one contract run takes; only the first %d relational contracts are drafted", contractdsl.MaxStatements)
+// relationalCappedNote says which drafted relational contracts were cut and
+// why; empty when none were.
+func relationalCappedNote(r capture.BuildReport) string {
+	var notes []string
+	if r.RelationalCapped {
+		notes = append(notes, fmt.Sprintf("the world relates more resources than one contract run takes; only the first %d relational contracts are drafted", contractdsl.MaxStatements))
+	}
+	if r.RelationalTrimmed {
+		notes = append(notes, fmt.Sprintf("the world snapshot is too large to check every drafted relational contract; only the first %d are kept", r.RelationalKept))
+	}
+	return strings.Join(notes, "; ")
+}
 
 // refreshDiff compares the fixture a refresh replaced with the one it wrote.
 // The new fixture is read back from its written bytes, so the diff covers
@@ -676,7 +702,9 @@ func resolveRefresh(o *captureOptions) error {
 		return fmt.Errorf("--refresh %s: the fixture was captured from %s, not from a command; re-run the capture that produced it", o.refresh, f.Source.Kind)
 	}
 	if len(f.World) > 0 && string(f.World) != "null" {
-		return fmt.Errorf("--refresh %s: the fixture carries a world section, which a refresh would drop; re-run `attest capture --name %s --world <world.yaml> -- <command>` yourself", o.refresh, o.refresh)
+		if err := resolveRefreshWorld(o, f); err != nil {
+			return err
+		}
 	}
 	for _, a := range f.Source.Command {
 		switch {
@@ -694,6 +722,81 @@ func resolveRefresh(o *captureOptions) error {
 	return nil
 }
 
+// resolveRefreshWorld finds the world file a world fixture was captured with
+// and checks it still defines the same world, so a refresh never drops the
+// world and never hosts a different one.
+func resolveRefreshWorld(o *captureOptions, f *capture.Fixture) error {
+	redo := func() string {
+		return fmt.Sprintf("re-run `attest capture --name %s%s --world <world.yaml> -- <command>` yourself", o.refresh, expectFailFlag(f.Verification.ExpectFail))
+	}
+	if f.Source.World == nil || f.Source.World.File == "" {
+		return fmt.Errorf("--refresh %s: the fixture carries a world section but does not record the --world file it came from (captured before worlds were recorded, or the file lay outside the repository root); %s", o.refresh, redo())
+	}
+	file := f.Source.World.File
+	if !filepath.IsLocal(filepath.FromSlash(file)) {
+		return fmt.Errorf("--refresh %s: the recorded world file %q is not inside the repository; %s", o.refresh, file, redo())
+	}
+	root, err := repoRoot(o.outDir)
+	if err != nil {
+		return fmt.Errorf("--refresh %s: %w", o.refresh, err)
+	}
+	path := filepath.Join(root, filepath.FromSlash(file))
+	if _, err := os.Stat(path); errors.Is(err, fs.ErrNotExist) {
+		return fmt.Errorf("--refresh %s: the recorded world file %s is missing; restore it or %s", o.refresh, file, redo())
+	}
+	w, err := loadWorld(path)
+	if err != nil {
+		return fmt.Errorf("--refresh %s: the recorded world file %s does not load: %w", o.refresh, file, err)
+	}
+	var recorded struct {
+		DefinitionSHA256 string `json:"definition_sha256"`
+	}
+	if err := json.Unmarshal(f.World, &recorded); err != nil {
+		return fmt.Errorf("--refresh %s: the fixture's world section: %w", o.refresh, err)
+	}
+	if now := w.Snapshot().DefinitionSHA256; now != recorded.DefinitionSHA256 {
+		return fmt.Errorf("--refresh %s: the world file %s changed since the fixture was recorded (definition_sha256 %s, now %s); %s so the new world is reviewed", o.refresh, file, recorded.DefinitionSHA256, now, redo())
+	}
+	o.world, o.worldFile = path, file
+	return nil
+}
+
+// repoRoot is the directory a fixture's world file path is relative to: the
+// nearest ancestor of the fixtures directory holding a .git entry, else the
+// working directory.
+func repoRoot(outDir string) (string, error) {
+	dir, err := filepath.Abs(outDir)
+	if err != nil {
+		return "", err
+	}
+	for d := dir; ; d = filepath.Dir(d) {
+		if _, err := os.Stat(filepath.Join(d, ".git")); err == nil {
+			return d, nil
+		}
+		if filepath.Dir(d) == d {
+			return os.Getwd()
+		}
+	}
+}
+
+// repoRelative is path relative to the repo root as a slash-separated path;
+// empty when path lies outside the root.
+func repoRelative(outDir, path string) (string, error) {
+	root, err := repoRoot(outDir)
+	if err != nil {
+		return "", err
+	}
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	rel, err := filepath.Rel(root, abs)
+	if err != nil || !filepath.IsLocal(rel) {
+		return "", nil
+	}
+	return filepath.ToSlash(rel), nil
+}
+
 func expectFailFlag(on bool) string {
 	if on {
 		return " --expect-fail"
@@ -708,6 +811,9 @@ func expectFailFlag(on bool) string {
 // (CI set), with --json, or when stdin is not a terminal.
 func confirmRefresh(o *captureOptions, stdin io.Reader, stderr io.Writer) (int, bool) {
 	fmt.Fprintf(stderr, "capture: --refresh %s will run, from the fixture's source.command:\n  %s\n", terminalSafe(o.refresh), terminalSafe(shellQuote(o.command)))
+	if o.world != "" {
+		fmt.Fprintf(stderr, "capture: in the world %s (definition unchanged)\n", terminalSafe(o.worldFile))
+	}
 	if o.yes {
 		return 0, true
 	}

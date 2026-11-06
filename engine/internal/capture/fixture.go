@@ -46,6 +46,17 @@ type Source struct {
 	ReplayCapable bool     `json:"replay_capable"`
 	Command       []string `json:"command,omitempty"`
 	ExitCode      *int     `json:"exit_code,omitempty"`
+	// World records where the hosted world came from; nil when the capture
+	// hosted none.
+	World *SourceWorld `json:"world,omitempty"`
+}
+
+// SourceWorld is the world a capture hosted. Its definition_sha256 is in the
+// fixture's world section.
+type SourceWorld struct {
+	// File is the --world file relative to the repository root, slash
+	// separated; empty when the file lay outside that root.
+	File string `json:"file,omitempty"`
 }
 
 // Exchange is one recorded model call.

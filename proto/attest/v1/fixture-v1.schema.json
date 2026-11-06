@@ -20,7 +20,15 @@
         },
         "replay_capable": { "type": "boolean", "description": "True when model exchanges were recorded through the capture proxy." },
         "command": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
-        "exit_code": { "type": "integer" }
+        "exit_code": { "type": "integer" },
+        "world": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "The world a world capture hosted, so `attest capture --refresh` can host it again. The world's definition_sha256 is in the fixture's `world` section.",
+          "properties": {
+            "file": { "type": "string", "minLength": 1, "description": "The --world file, as a slash-separated path relative to the repository root (the nearest ancestor of the fixtures directory holding .git, else the working directory). Absent when the file lay outside that root; --refresh then refuses." }
+          }
+        }
       },
       "if": { "properties": { "kind": { "const": "otlp_file" } } },
       "then": { "properties": { "replay_capable": { "const": false } } }
