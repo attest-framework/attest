@@ -573,3 +573,79 @@ func TestCaptureCheckRedaction_SecretOnlyInCwdDotenv_Flagged(t *testing.T) {
 		t.Fatalf("err %v\n%s", err, out)
 	}
 }
+
+// checkRedactionWithDotenv runs `capture --check-redaction` on a clean fixture
+// in a directory prepared by setup, which creates .env.
+func checkRedactionWithDotenv(t *testing.T, setup func(dir string)) (string, int) {
+	t.Helper()
+	bin := buildEngineBinary(t)
+	dir := t.TempDir()
+	setup(dir)
+	path := filepath.Join(dir, "clean.attest.json")
+	if err := os.WriteFile(path, []byte(`{"a":{"note":"nothing secret"}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	run := engineRun(t, bin, dir, nil, "capture", "--check-redaction", path)
+	return run.stdout + run.stderr, run.code
+}
+
+func TestCaptureCheckRedaction_DotenvIsFIFO_ErrorsWithoutBlocking(t *testing.T) {
+	out, code := checkRedactionWithDotenv(t, func(dir string) {
+		if err := syscall.Mkfifo(filepath.Join(dir, ".env"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	})
+
+	if code != 1 || !strings.Contains(out, ".env: not a regular file") {
+		t.Fatalf("exit %d\n%s", code, out)
+	}
+}
+
+func TestCaptureCheckRedaction_DotenvSymlinkToDirectory_Errors(t *testing.T) {
+	out, code := checkRedactionWithDotenv(t, func(dir string) {
+		if err := os.Mkdir(filepath.Join(dir, "d"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink("d", filepath.Join(dir, ".env")); err != nil {
+			t.Fatal(err)
+		}
+	})
+
+	if code != 1 || !strings.Contains(out, ".env: not a regular file") {
+		t.Fatalf("exit %d\n%s", code, out)
+	}
+}
+
+func TestCaptureCheckRedaction_DotenvOverOneMiB_Errors(t *testing.T) {
+	out, code := checkRedactionWithDotenv(t, func(dir string) {
+		big := strings.Repeat("A=1\n", (1<<20)/4+1)
+		if err := os.WriteFile(filepath.Join(dir, ".env"), []byte(big), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	})
+
+	if code != 1 || !strings.Contains(out, ".env: larger than 1048576 bytes") {
+		t.Fatalf("exit %d\n%s", code, out)
+	}
+}
+
+func TestCaptureCheckRedaction_DotenvSymlinkToRegularFile_Loaded(t *testing.T) {
+	bin := buildEngineBinary(t)
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "real.env"), []byte("VENDOR_TOKEN=dotenv-only-secret-9876\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("real.env", filepath.Join(dir, ".env")); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "leak.attest.json")
+	if err := os.WriteFile(path, []byte(`{"a":{"note":"dotenv-only-secret-9876"}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	run := engineRun(t, bin, dir, nil, "capture", "--check-redaction", path)
+
+	if run.code != 1 || !strings.Contains(run.stdout+run.stderr, "$.a.note") {
+		t.Fatalf("exit %d\n%s%s", run.code, run.stdout, run.stderr)
+	}
+}

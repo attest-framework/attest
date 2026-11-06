@@ -537,18 +537,39 @@ func writeJSONFile(path string, v any) error {
 	return f.Close()
 }
 
+// maxDotenvBytes bounds the .env file read into the redactor.
+const maxDotenvBytes = 1 << 20
+
 // cwdDotenvRedactor returns a Redactor holding the secrets of the .env file in
 // the working directory, which the agent under capture usually loads itself.
-// A missing file is no secrets; an unreadable one is an error, so a capture
-// never runs with secrets it could not load. The values are only redaction
-// targets: they are never written anywhere.
+// A missing file is no secrets; an unreadable one, one that is not a regular
+// file (a symlink to a regular file is followed) and one over 1 MiB are
+// errors, so a capture never runs with secrets it could not load. The values
+// are only redaction targets: they are never written anywhere.
 func cwdDotenvRedactor() (*redact.Redactor, error) {
-	data, err := os.ReadFile(".env")
-	if errors.Is(err, fs.ErrNotExist) {
+	if _, err := os.Lstat(".env"); errors.Is(err, fs.ErrNotExist) {
 		return redact.New(), nil
+	} else if err != nil {
+		return nil, fmt.Errorf("read .env: %w", err)
 	}
+	info, err := os.Stat(".env")
 	if err != nil {
 		return nil, fmt.Errorf("read .env: %w", err)
+	}
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("read .env: not a regular file (%s)", info.Mode().Type())
+	}
+	f, err := os.Open(".env")
+	if err != nil {
+		return nil, fmt.Errorf("read .env: %w", err)
+	}
+	defer f.Close()
+	data, err := io.ReadAll(io.LimitReader(f, maxDotenvBytes+1))
+	if err != nil {
+		return nil, fmt.Errorf("read .env: %w", err)
+	}
+	if len(data) > maxDotenvBytes {
+		return nil, fmt.Errorf("read .env: larger than %d bytes", maxDotenvBytes)
 	}
 	return redact.FromDotenv(data), nil
 }
