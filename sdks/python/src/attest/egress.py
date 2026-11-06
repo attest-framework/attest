@@ -6,10 +6,14 @@ resolving a provider host name raises :class:`EgressBlockedError`; loopback and 
 host are untouched. The guard covers connections made by this process (the agent's own HTTP
 clients), including calls through the proxy named by ``HTTP(S)_PROXY`` / ``ALL_PROXY``: only
 sockets whose connect target is that proxy are screened, request by request (every
-``CONNECT`` target and absolute-URI host, plus ``Host``), until an allowed ``CONNECT`` turns
-the connection into an opaque tunnel. Every other socket is left alone. Child processes are
-not covered: the engine subprocess and anything the agent spawns keep their own network
-access.
+``CONNECT`` target and absolute-URI host, plus ``Host``). After an allowed ``CONNECT`` the
+framer waits for the client's next bytes: a TLS record header (0x16 0x03 0x00-0x04) means the
+tunnel is in use and the connection goes opaque; anything else (the proxy refused the CONNECT,
+for example with 407, and the client sent another request, or the tunnel carries plain HTTP)
+returns to request framing with full screening. The proxy's response is not read, so a
+non-HTTP, non-TLS protocol inside a tunnel is refused. Every other socket is left alone.
+Child processes are not covered: the engine subprocess and anything the agent spawns keep
+their own network access.
 """
 
 from __future__ import annotations
@@ -134,6 +138,15 @@ def _could_be_request_line(buffer: bytes) -> bool | None:
     return buffer[end : end + 1] == b" "
 
 
+def _tls_record_start(buffer: bytes) -> bool | None:
+    """``True`` for a TLS record header (0x16 0x03 0x00-0x04), ``False`` when ``buffer`` cannot be
+    one, ``None`` when more bytes are needed."""
+    for index, byte in enumerate(buffer[:3]):
+        if byte != (0x16, 0x03)[index] if index < 2 else byte > 0x04:
+            return False
+    return True if len(buffer) >= 3 else None
+
+
 class _Framer:
     """Frames the HTTP/1.1 requests an application writes to a proxy socket.
 
@@ -143,7 +156,7 @@ class _Framer:
     follow, raises :class:`EgressBlockedError` and forwards nothing from that write.
     """
 
-    HEAD, BODY, CHUNK_SIZE, CHUNK_DATA, CHUNK_END, TRAILER, TUNNEL = range(7)
+    HEAD, BODY, CHUNK_SIZE, CHUNK_DATA, CHUNK_END, TRAILER, TUNNEL, AWAIT_TUNNEL = range(8)
 
     def __init__(self) -> None:
         self.state = self.HEAD
@@ -194,6 +207,12 @@ class _Framer:
     def _step(self) -> bytes | None:
         if self.state == self.TUNNEL:
             return self._release(self._take(len(self.buffer)))
+        if self.state == self.AWAIT_TUNNEL:
+            starts_tls = _tls_record_start(self.buffer)
+            if starts_tls is None:
+                return None
+            self.state = self.TUNNEL if starts_tls else self.HEAD
+            return b""
         if self.state in (self.BODY, self.CHUNK_DATA):
             unit = self._take(self.remaining)
             self.remaining -= len(unit)
@@ -265,7 +284,7 @@ class _Framer:
         if lengths and encodings:
             raise _refusal("both Content-Length and Transfer-Encoding")
         if method == b"CONNECT":
-            self.state = self.TUNNEL
+            self.state = self.AWAIT_TUNNEL
         elif encodings:
             codings = [c.strip().lower() for v in encodings for c in v.split(b",")]
             if codings[-1] != b"chunked":

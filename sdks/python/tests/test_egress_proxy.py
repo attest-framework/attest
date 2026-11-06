@@ -545,8 +545,9 @@ def test_non_http_exchange_with_a_non_proxy_server_is_untouched(
 class TunnelProxy:
     """Loopback CONNECT proxy that forwards the tunnel to the requested local port."""
 
-    def __init__(self) -> None:
+    def __init__(self, reject_first: bool = False) -> None:
         self.connect_lines: list[bytes] = []
+        self._reject_first = reject_first
         self._server = socket.socket()
         self._server.bind(("127.0.0.1", 0))
         self._server.listen(4)
@@ -566,11 +567,13 @@ class TunnelProxy:
 
     def _tunnel(self, client: socket.socket) -> None:
         with client:
-            head = b""
-            while b"\r\n\r\n" not in head:
-                head += client.recv(4096)
-            line = head.split(b"\r\n", 1)[0]
-            self.connect_lines.append(line)
+            line = self._read_connect(client)
+            if self._reject_first:
+                # Refuse the first CONNECT and keep the connection open for the next one.
+                client.sendall(
+                    b"HTTP/1.1 407 Proxy Authentication Required\r\nContent-Length: 0\r\n\r\n"
+                )
+                line = self._read_connect(client)
             port = int(line.split()[1].rsplit(b":", 1)[1])
             with socket.create_connection(("127.0.0.1", port), timeout=3) as upstream:
                 client.sendall(b"HTTP/1.1 200 Connection established\r\n\r\n")
@@ -578,6 +581,14 @@ class TunnelProxy:
                 relay.start()
                 _pipe(client, upstream)
                 relay.join(3)
+
+    def _read_connect(self, client: socket.socket) -> bytes:
+        head = b""
+        while b"\r\n\r\n" not in head:
+            head += client.recv(4096)
+        line = head.split(b"\r\n", 1)[0]
+        self.connect_lines.append(line)
+        return line
 
     def close(self) -> None:
         self._server.close()
@@ -592,8 +603,9 @@ def _pipe(source: socket.socket, target: socket.socket) -> None:
         pass
 
 
+@pytest.mark.parametrize("rejected_first", [False, True])
 def test_allowed_connect_then_tls_through_the_tunnel_works(
-    guard: None, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    guard: None, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, rejected_first: bool
 ) -> None:
     cert, key = tmp_path / "cert.pem", tmp_path / "key.pem"
     subprocess.run(
@@ -631,7 +643,7 @@ def test_allowed_connect_then_tls_through_the_tunnel_works(
 
     thread = threading.Thread(target=serve, daemon=True)
     thread.start()
-    tunnel = TunnelProxy()
+    tunnel = TunnelProxy(reject_first=rejected_first)
     monkeypatch.setenv("HTTPS_PROXY", f"http://127.0.0.1:{tunnel.port}")
     target_port = origin.getsockname()[1]
     client_ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
@@ -640,6 +652,9 @@ def test_allowed_connect_then_tls_through_the_tunnel_works(
 
     with socket.create_connection(("127.0.0.1", tunnel.port), timeout=3) as raw:
         authority = f"localhost:{target_port}"
+        if rejected_first:
+            raw.sendall(b"CONNECT example.com:443 HTTP/1.1\r\nHost: example.com:443\r\n\r\n")
+            assert raw.recv(4096).startswith(b"HTTP/1.1 407")
         raw.sendall(f"CONNECT {authority} HTTP/1.1\r\nHost: {authority}\r\n\r\n".encode())
         assert raw.recv(4096).startswith(b"HTTP/1.1 200")
         with client_ctx.wrap_socket(raw, server_hostname="localhost") as tls:
@@ -649,7 +664,10 @@ def test_allowed_connect_then_tls_through_the_tunnel_works(
     origin.close()
     tunnel.close()
 
-    assert tunnel.connect_lines == [f"CONNECT localhost:{target_port} HTTP/1.1".encode()]
+    expected = [f"CONNECT localhost:{target_port} HTTP/1.1".encode()]
+    if rejected_first:
+        expected.insert(0, b"CONNECT example.com:443 HTTP/1.1")
+    assert tunnel.connect_lines == expected
 
 
 def test_bytes_after_an_allowed_connect_are_opaque(guard: None, sink: ByteSink) -> None:
@@ -661,3 +679,35 @@ def test_bytes_after_an_allowed_connect_are_opaque(guard: None, sink: ByteSink) 
     sock.close()
 
     assert sink.wait_closed() == connect + tunnelled
+
+
+def test_rejected_connect_then_provider_connect_is_blocked_before_the_proxy(
+    guard: None, sink: ByteSink
+) -> None:
+    allowed = b"CONNECT example.com:443 HTTP/1.1\r\nHost: example.com:443\r\n\r\n"
+    sock = _connect(sink)
+    sock.sendall(allowed)
+    # The proxy answers 407 and keeps the connection open; the client sends another CONNECT.
+    with pytest.raises(egress.EgressBlockedError):
+        sock.sendall(PROVIDER_CONNECT)
+    sock.close()
+
+    assert sink.wait_closed() == allowed
+
+
+def test_plain_http_after_an_allowed_connect_is_screened_and_delivered(
+    guard: None, sink: ByteSink, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    tunnel = TunnelProxy()
+    monkeypatch.setenv("HTTPS_PROXY", f"http://127.0.0.1:{tunnel.port}")
+    request = b"GET / HTTP/1.1\r\nHost: example.com\r\n\r\n"
+
+    with socket.create_connection(("127.0.0.1", tunnel.port), timeout=3) as raw:
+        raw.sendall(f"CONNECT localhost:{sink.port} HTTP/1.1\r\nHost: localhost\r\n\r\n".encode())
+        assert raw.recv(4096).startswith(b"HTTP/1.1 200")
+        raw.sendall(request)
+        with pytest.raises(egress.EgressBlockedError):
+            raw.sendall(PROVIDER_GET)
+    tunnel.close()
+
+    assert sink.wait_closed() == request
