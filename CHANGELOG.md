@@ -4,6 +4,22 @@ All notable changes to Attest are documented in this file. The format follows [K
 
 ## [Unreleased]
 
+## [1.1.0-rc.3] — 2026-11-06
+
+Third release candidate of 1.1.0, themed "Trusted supply chain". Every GitHub Actions reference in the repository and in the `attest init --ci github` scaffold is pinned to a commit SHA and checked in CI, the scaffolded workflow gives pull-request write access only to a separate `annotate` job, and `pr-annotate` reports every report's policy result. `@attest-ai/vitest` also loads on Vitest 5. Changes that alter results are marked **Behavior change** below.
+
+### Changed
+
+- Every GitHub Actions `uses:` in this repository's workflows and composite actions is pinned to a commit SHA with a version comment; Dependabot's `github-actions` ecosystem now covers the workflows and both composite actions, grouped. `scripts/check-action-pins.py` runs in the `GitHub config` CI job.
+- `attest init --ci github` (Python and TypeScript) writes a workflow with SHA-pinned actions and two jobs: the test job holds `contents: read`, and a separate `annotate` job holds `pull-requests: write`. The annotate step pins the `pr-annotate` `v1.0.1` commit instead of `@v<sdk version>`.
+- **Behavior change:** a workflow or action that references an action by tag now fails the `GitHub config` check.
+
+### Fixed
+
+- `pr-annotate`: with several reports the policy line now shows the worst exit, every report's violations (each prefixed with its report) and a per-report list instead of only the worst report.
+- CI: removed the `notify-docs-python` and `notify-docs-typescript` jobs, which passed an empty `DOCS_DEPLOY_TOKEN` on push to main; the release workflow dispatches the website sync from the `website-sync` environment.
+- `@attest-ai/vitest` now supports Vitest 5 (peer `>=3.0.0 <6`); it previously failed to load there.
+
 ## [1.1.0-rc.2] — 2026-11-06
 
 Second release candidate of 1.1.0, themed "Real adapters, real parity". The runner integrations behave the same on every supported version: `@attest-ai/vitest` loads and reports cost on Vitest 3 and 4, and the Python helpers keep trace metadata, accept plain agents and fail an offline run in one line. Safe defaults landed early: shipped skills no longer auto-confirm a recorded command, `--attest-egress=block` covers provider calls through HTTP proxies, and `attest capture` templates session identifiers and redacts every server-sent event. Changes that alter results are marked **Behavior change** below.
@@ -470,7 +486,8 @@ Tagged, not published to registries. No GitHub release was created.
 
 Versions 0.1.0 through 0.6.0 are described in their [GitHub releases](https://github.com/attest-framework/attest/releases); 0.6.1 exists only as a tag. 0.1.0–0.6.0 were published to PyPI; 0.3.0–0.6.0 were also published to npm.
 
-[Unreleased]: https://github.com/attest-framework/attest/compare/v1.1.0-rc.2...HEAD
+[Unreleased]: https://github.com/attest-framework/attest/compare/v1.1.0-rc.3...HEAD
+[1.1.0-rc.3]: https://github.com/attest-framework/attest/releases/tag/v1.1.0-rc.3
 [1.1.0-rc.2]: https://github.com/attest-framework/attest/releases/tag/v1.1.0-rc.2
 [1.1.0-rc.1]: https://github.com/attest-framework/attest/releases/tag/v1.1.0-rc.1
 [1.0.1]: https://github.com/attest-framework/attest/releases/tag/v1.0.1
