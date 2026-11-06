@@ -3,6 +3,7 @@
 
 Behaviour is driven by files next to each report path P:
   P.policy-exit  exit code of `policy evaluate` (default 0)
+  P.policy-violations  JSON list of violations `policy evaluate` prints (default [])
   P.rows.json    stdout of `report rows` (default [])
   P.rows-exit    exit code of `report rows` (default 0)
 Every call appends its argv as one JSON line to $STUB_LOG.
@@ -32,8 +33,9 @@ def side(report: str, suffix: str, default: str) -> str:
 
 if argv[:2] == ["policy", "evaluate"]:
     report = reports()[0]
-    print(json.dumps({"report": report}))
     code = side(report, ".policy-exit", "0")
+    violations = json.loads(side(report, ".policy-violations", "[]"))
+    print(json.dumps({"exit_code": int(code) if code != "kill" else -9, "violations": violations}))
     if code == "kill":
         os.kill(os.getpid(), signal.SIGKILL)
     sys.exit(int(code))

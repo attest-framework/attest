@@ -8,7 +8,7 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { engineCommands, exitStatus, main } from "../../packages/core/src/cli.js";
 import { ENGINE_VERSION, VERSION } from "../../packages/core/src/version.js";
-import { DEMO_MARKER } from "../../packages/core/src/scaffold.js";
+import { ACTION_PINS, ANNOTATE_ENGINE_VERSION, ANNOTATE_EXCLUDE_NEWER, DEMO_MARKER } from "../../packages/core/src/scaffold.js";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import {
   forwardedCalls,
@@ -137,7 +137,8 @@ describe("attest init", () => {
     async (args) => {
       await expect(main(["init", ...args])).resolves.toBe(0);
 
-      const steps = fs.readFileSync(workflow(), "utf-8").split("      - ").slice(1);
+      const [attestJob, annotateJob] = fs.readFileSync(workflow(), "utf-8").split("\n  annotate:\n");
+      const steps = (attestJob ?? "").split("      - ").slice(1);
       const byName = new Map(steps.map((s) => [s.split("\n")[0]!.replace(/^name: /, ""), s]));
       expect(byName.get("Run tests")).toContain("continue-on-error: true");
       expect(byName.get("Run tests")).toContain(
@@ -162,14 +163,27 @@ describe("attest init", () => {
       expect(byName.get("Upload the Attest report")).toContain("attest-junit.xml");
       const text = fs.readFileSync(workflow(), "utf-8");
       expect(text).toContain("\npermissions:\n  contents: read\n\njobs:");
-      expect(text).toContain("    permissions:\n      contents: read\n      pull-requests: write\n");
+      expect(attestJob).not.toContain("pull-requests");
+      expect(attestJob).toContain("    permissions:\n      contents: read\n    steps:");
+      expect(annotateJob).toContain("    permissions:\n      contents: read\n      pull-requests: write\n");
+      expect(text.split("pull-requests: write")).toHaveLength(2);
       expect(byName.get("Evaluate the merge policy")).toContain("if: always()");
       expect(byName.get("Evaluate the merge policy")).toContain('"$code" -eq 2');
-      expect(byName.get("Annotate the pull request")).toContain(`pr-annotate@v${VERSION}`);
-      expect(byName.get("Annotate the pull request")).toContain(
+      expect(annotateJob).toContain("needs: attest");
+      expect(annotateJob).toContain(
+        "pr-annotate@5d5b748b13da7ba034b3acfce631cee8fcae720c # v1.0.1",
+      );
+      expect(annotateJob).toContain(
         "github.event.pull_request.head.repo.full_name == github.repository",
       );
+      expect(annotateJob).toContain("name: attest-report");
       expect(steps.at(-1)).toContain("if: always() && steps.tests.outcome == 'failure'");
+      const uses = text.split("\n").filter((line) => /^\s*(- )?uses:/.test(line));
+      expect(uses.length).toBeGreaterThan(0);
+      for (const line of uses) expect(line).toMatch(/@[0-9a-f]{40} # v\d+\.\d+\.\d+$/);
+      for (const [action, { sha, version }] of Object.entries(ACTION_PINS)) {
+        if (text.includes(`${action}@`)) expect(text).toContain(`${action}@${sha} # ${version}`);
+      }
     },
   );
 
@@ -188,6 +202,56 @@ describe("attest init", () => {
       expect(fs.existsSync(path.join(env.root, "tests"))).toBe(false);
     },
   );
+
+  it("fetches the engine in the annotate job, before pr-annotate and never in the test job", async () => {
+    await expect(main(["init", "--ci", "github"])).resolves.toBe(0);
+
+    const [testJob, annotate] = fs.readFileSync(workflow(), "utf-8").split("\n  annotate:\n");
+    const setupUv = annotate.indexOf("astral-sh/setup-uv@");
+    const fetch = annotate.indexOf("name: Fetch the attest engine");
+    const prAnnotate = annotate.indexOf("pr-annotate@");
+    expect(setupUv).toBeGreaterThanOrEqual(0);
+    expect(setupUv).toBeLessThan(fetch);
+    expect(fetch).toBeLessThan(prAnnotate);
+    expect(annotate.slice(setupUv, fetch)).toContain("enable-cache: false");
+    const step = annotate.slice(fetch, prAnnotate);
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: GitHub Actions expression, not a JS template
+    expect(step).toContain("working-directory: ${{ runner.temp }}");
+    expect(step).toContain(
+      `uvx --no-config --exclude-newer ${ANNOTATE_EXCLUDE_NEWER} --from "attest-ai==${ANNOTATE_ENGINE_VERSION}" attest doctor`,
+    );
+    expect(annotate.slice(prAnnotate)).toContain(`engine-version: ${ANNOTATE_ENGINE_VERSION}\n`);
+    expect(testJob).not.toContain("uvx");
+  });
+
+  it("derives the engine version from the pr-annotate pin tag", () => {
+    expect(ACTION_PINS["attest-framework/attest/.github/actions/pr-annotate"].version).toBe(
+      `v${ANNOTATE_ENGINE_VERSION}`,
+    );
+  });
+
+  it("pins the same SHAs attest's own workflows use", () => {
+    const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../../..");
+    const files = [
+      ...fs.readdirSync(path.join(root, ".github", "workflows")).map((f) => path.join(".github", "workflows", f)),
+      path.join(".github", "actions", "setup-attest", "action.yml"),
+    ];
+    const used = new Map<string, Set<string>>();
+    for (const file of files) {
+      const text = fs.readFileSync(path.join(root, file), "utf-8");
+      for (const m of text.matchAll(/uses:\s*([\w.-]+\/[\w.-]+)(?:\/\S*)?@([0-9a-f]{40})/g)) {
+        used.set(m[1], (used.get(m[1]) ?? new Set()).add(m[2]));
+      }
+    }
+    const shared = Object.keys(ACTION_PINS).filter((action) => used.has(action));
+    expect(shared).toEqual(
+      expect.arrayContaining(["actions/checkout", "actions/setup-node", "astral-sh/setup-uv"]),
+    );
+    for (const action of shared) {
+      const { sha } = ACTION_PINS[action as keyof typeof ACTION_PINS];
+      expect([...used.get(action)!], action).toContain(sha);
+    }
+  });
 
   it("does not overwrite existing files", async () => {
     for (const file of [sample(), workflow()]) {

@@ -12,8 +12,6 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from attest import __version__
-
 # The line a new user edits to see a failure. README.md and the generated-project
 # tests point at it by this marker.
 DEMO_MARKER = "ATTEST-DEMO"
@@ -80,11 +78,48 @@ layers:
 not_evaluated: warn
 """
 
+# Every action the generated workflow uses, pinned to a commit SHA with its release tag in a
+# trailing comment (a tag can be moved; a SHA cannot). The TypeScript scaffold carries the same
+# table and a test keeps the two equal. The SHAs are the ones attest's own workflows use, and a
+# test keeps those equal too: Dependabot bumps the workflows, that test fails until this table
+# follows, so a new release ships current pins. The pins are then fixed in a generated project;
+# its own Dependabot config (not written by `attest init`) would bump them from there.
+ACTION_PINS: dict[str, tuple[str, str]] = {
+    "actions/checkout": ("d23441a48e516b6c34aea4fa41551a30e30af803", "v6.1.0"),
+    "astral-sh/setup-uv": ("37802adc94f370d6bfd71619e3f0bf239e1f3b78", "v7.6.0"),
+    "actions/upload-artifact": ("cf430e030ddbb5b0abf93d22962f4752f3646cd9", "v7.0.2"),
+    "actions/download-artifact": ("9000827ccba6bdab643e8b6fd33ac0654aef8333", "v8.0.2"),
+    "attest-framework/attest/.github/actions/pr-annotate": (
+        "5d5b748b13da7ba034b3acfce631cee8fcae720c",
+        "v1.0.1",
+    ),
+}
+
+ANNOTATE_ACTION = "attest-framework/attest/.github/actions/pr-annotate"
+# pr-annotate reads the engine from ~/.attest/bin/<version>/ and never downloads it, so the
+# annotate job fetches exactly the release the pr-annotate pin's tag names.
+ANNOTATE_ENGINE_VERSION = ACTION_PINS[ANNOTATE_ACTION][1].removeprefix("v")
+# The annotate job holds a write token, so the install resolves attest-ai's dependencies as of one
+# day after the ANNOTATE_ENGINE_VERSION release (attest-ai 1.0.1 was uploaded 2026-11-05) instead of
+# whatever is newest on the runner. Move it with the version.
+ANNOTATE_EXCLUDE_NEWER = "2026-11-06"
+_ANNOTATE_FETCH_COMMAND = (
+    f"uvx --no-config --exclude-newer {ANNOTATE_EXCLUDE_NEWER} "
+    f'--from "attest-ai=={ANNOTATE_ENGINE_VERSION}" attest doctor'
+)
+
+
+def _uses(action: str) -> str:
+    sha, version = ACTION_PINS[action]
+    return f"{action}@{sha} # {version}"
+
+
 GITHUB_WORKFLOW_TEMPLATE = f"""\
 # Written by `attest init --ci github`.
 # The test step records its outcome and continues so the report is always uploaded,
 # the JUnit file written, the policy evaluated and the pull request summarised; the last
 # step fails the job when the tests failed. A policy warning (exit 2) does not fail the job.
+# Only the annotate job can write to the pull request; the job that runs your tests cannot.
 name: attest
 
 on:
@@ -100,12 +135,11 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      pull-requests: write
     steps:
-      - uses: actions/checkout@v6
+      - uses: {_uses("actions/checkout")}
         with:
           persist-credentials: false
-      - uses: astral-sh/setup-uv@v7
+      - uses: {_uses("astral-sh/setup-uv")}
       - name: Install dependencies
         run: uv sync --locked
       - name: Run tests
@@ -124,7 +158,7 @@ jobs:
         run: uv run attest view attest-report.json --no-open --out attest-report.html
       - name: Upload the Attest report
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: {_uses("actions/upload-artifact")}
         with:
           name: attest-report
           path: |
@@ -143,21 +177,41 @@ jobs:
             exit 0
           fi
           exit "$code"
-      - name: Annotate the pull request
-        # Posts one summary comment (updated on every run) and annotates failures at their
-        # file and line. Fork pull requests get a read-only token that cannot comment; the
-        # last step still fails the job when tests failed.
-        if: >-
-          always() && github.event_name == 'pull_request' &&
-          github.event.pull_request.head.repo.full_name == github.repository
-        uses: attest-framework/attest/.github/actions/pr-annotate@v{__version__}
-        with:
-          report: attest-report.json
       - name: Fail the job when tests failed
         if: always() && steps.tests.outcome == 'failure'
         run: |
           echo "::error::pytest failed; see the Run tests step"
           exit 1
+
+  annotate:
+    # Posts one summary comment (updated on every run) and annotates failures at their
+    # file and line. Fork pull requests get a read-only token that cannot comment.
+    needs: attest
+    if: >-
+      always() && github.event_name == 'pull_request' &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: {_uses("actions/download-artifact")}
+        with:
+          name: attest-report
+      - uses: {_uses("astral-sh/setup-uv")}
+        with:
+          # This job holds the write token and must not restore a cache the test job filled.
+          enable-cache: false
+      - name: Fetch the attest engine
+        # pr-annotate only finds an engine, it never downloads one. The first `attest` command of
+        # the pinned release fetches it into ~/.attest/bin/<version>/. Run from the runner's temp
+        # directory without project config, so nothing the pull request controls steers the install.
+        working-directory: ${{{{ runner.temp }}}}
+        run: {_ANNOTATE_FETCH_COMMAND}
+      - uses: {_uses(ANNOTATE_ACTION)}
+        with:
+          report: attest-report.json
+          engine-version: {ANNOTATE_ENGINE_VERSION}
 """
 
 CI_PROVIDERS = ("github",)

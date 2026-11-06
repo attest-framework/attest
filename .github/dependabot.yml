@@ -20,7 +20,15 @@ updates:
       - dependency-name: "typescript"
         update-types: ["version-update:semver-major"]
 
+  # Every action is pinned to a commit SHA with its release in a trailing comment;
+  # Dependabot rewrites both. scripts/check-action-pins.py fails CI on a tag pin.
   - package-ecosystem: "github-actions"
-    directory: "/"
+    directories:
+      - "/"
+      - "/.github/actions/pr-annotate"
+      - "/.github/actions/setup-attest"
     schedule:
       interval: "weekly"
+    groups:
+      github-actions:
+        patterns: ["*"]

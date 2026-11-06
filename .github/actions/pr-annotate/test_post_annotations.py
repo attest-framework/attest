@@ -35,7 +35,12 @@ def _load_module():
 _pa = _load_module()
 _STUB = str(Path(__file__).parent / "testdata" / "stub_engine.py")
 _TOKEN = "ghs_secret_token_value"
-_SIDE_FILES = {"policy_exit": ".policy-exit", "rows_json": ".rows.json", "rows_exit": ".rows-exit"}
+_SIDE_FILES = {
+    "policy_exit": ".policy-exit",
+    "policy_violations": ".policy-violations",
+    "rows_json": ".rows.json",
+    "rows_exit": ".rows-exit",
+}
 
 
 class _FakeGitHub:
@@ -301,11 +306,44 @@ class TestWorstExit(ActionCase):
     def test_signal_killed_evaluator_is_not_overwritten_by_a_later_pass(self) -> None:
         self.assertEqual(self.exit_for("kill", 0), "-9")
 
-    def test_policy_result_of_the_worst_report_goes_to_the_summary(self) -> None:
-        a = self.report("a/attest-report.json", policy_exit="0")
-        b = self.report("b/attest-report.json", policy_exit="1")
-        self.run_action(a, b, policy="p.yaml")
-        self.assertIn(f"policy: {{\"report\": \"{b}\"}}", (self.root / "step-summary.md").read_text())
+    def test_policy_line_aggregates_every_report_not_only_the_worst(self) -> None:
+        a = self.report(
+            "a/attest-report.json",
+            policy_exit="2",
+            policy_violations=[{"severity": "warn", "rule": "not_evaluated", "detail": "3 rows"}],
+        )
+        b = self.report(
+            "b/attest-report.json",
+            policy_exit="1",
+            policy_violations=[
+                {"severity": "error", "rule": "max_hard_fails", "detail": "1 > 0"},
+                {"severity": "error", "rule": "effect_refunds", "detail": "2 refunds"},
+            ],
+        )
+        c = self.report("c/attest-report.json", policy_exit="0")
+        self.run_action(a, b, c, policy="p.yaml")
+
+        summary = (self.root / "step-summary.md").read_text()
+        (result,) = (self.root / "runner-temp").glob("attest-policy-*/policy-result.json")
+        outcome = json.loads(result.read_text())
+        self.assertEqual(outcome["exit_code"], 1)
+        self.assertEqual(
+            [v["rule"] for v in outcome["violations"]],
+            [f"{a}: not_evaluated", f"{b}: max_hard_fails", f"{b}: effect_refunds"],
+        )
+        self.assertFalse(outcome["passed"])
+        self.assertIn("**Policy by report:**", summary)
+        self.assertIn(f"- `{a}`: warn (exit 2), 1 violation(s)", summary)
+        self.assertIn(f"- `{b}`: fail (exit 1), 2 violation(s)", summary)
+        self.assertIn(f"- `{c}`: pass (exit 0), 0 violation(s)", summary)
+
+    def test_single_report_policy_result_is_passed_through_unchanged(self) -> None:
+        a = self.report("a/attest-report.json", policy_exit="1")
+        self.run_action(a, policy="p.yaml")
+
+        summary = (self.root / "step-summary.md").read_text()
+        self.assertNotIn("Policy by report", summary)
+        self.assertIn('policy: {"exit_code": 1, "violations": []}', summary)
 
     def test_policy_result_goes_to_runner_temp_not_the_workspace(self) -> None:
         _, out = self.run_action(self.report(), policy="p.yaml")
@@ -755,6 +793,32 @@ class TestRealEngine(ActionCase):
         self.assertIn("`effect violated: 2 refunds for O-1042 (expected 1)`", comment["body"])
         self.assertIn("[Workflow run]", comment["body"])
         self.assertNotIn(_TOKEN, log)
+
+    def test_two_reports_give_one_aggregate_policy_line_and_a_per_report_list(self) -> None:
+        fixture = _REPO_ROOT / "engine" / "internal" / "report" / "testdata" / "ci" / "mixed.json"
+        reports = []
+        for name in ("py", "ts"):
+            report = self.root / name / "attest-report.json"
+            report.parent.mkdir()
+            report.write_text(fixture.read_text())
+            reports.append(str(report))
+        (self.root / "attest.policy.yaml").write_text(_POLICY)
+        out = io.StringIO()
+
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(out):
+            code = _pa.main(
+                ["--report", "\n".join(reports), "--policy", "attest.policy.yaml", "--engine", self.engine],
+                self.env,
+            )
+
+        self.assertEqual(code, 0, out.getvalue())
+        self.assertEqual(self.exit_code_output(), "1")
+        (comment,) = self.github.comments
+        self.assertIn("**Policy:** fail (exit 1)", comment["body"])
+        self.assertIn("**Policy by report:**", comment["body"])
+        for report in reports:
+            self.assertIn(f"- `{report}`: fail (exit 1)", comment["body"])
+            self.assertIn(f"`{report}: ", comment["body"])
 
 
 if __name__ == "__main__":
