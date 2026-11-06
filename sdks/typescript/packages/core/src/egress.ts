@@ -4,7 +4,10 @@
  * Replay serves model responses from a fixture, so a connection to a provider means the
  * agent bypassed the proxy. `installEgressGuard()` patches `net.Socket.prototype.connect`
  * (which every client reaches: undici `fetch`, `http`, `https`, `tls`), refuses provider
- * hostnames and always allows loopback.
+ * hostnames and always allows loopback. Calls tunnelled through `HTTP(S)_PROXY` connect only
+ * to the proxy, so the guard also reads the `CONNECT host:port` / absolute-URI request line
+ * written to a socket and refuses a provider target. Child processes (the engine, anything
+ * the agent spawns) are not covered, nor are SOCKS proxies or a TLS-wrapped proxy connection.
  */
 
 import * as net from "node:net";
@@ -13,8 +16,36 @@ export const PROVIDER_HOSTS: readonly (string | RegExp)[] = [
   "api.openai.com",
   "api.anthropic.com",
   "generativelanguage.googleapis.com",
+  "aiplatform.googleapis.com",
+  "api.mistral.ai",
+  "api.groq.com",
+  "openrouter.ai",
+  "api.together.xyz",
+  "api.together.ai",
   /\.openai\.azure\.com$/,
+  /-aiplatform\.googleapis\.com$/,
+  /^bedrock-runtime\.[a-z0-9-]+\.amazonaws\.com$/,
 ];
+
+// First line a client sends a forward proxy: `CONNECT host:port` or `METHOD http://host/path`.
+const PROXY_REQUEST_LINE = /^([A-Z]{3,7}) (\S{1,2048}) HTTP\/1\.[01]\r\n/;
+
+/** The origin host a forward-proxy request line names, or null for any other bytes. */
+export function proxiedTargetHost(chunk: unknown): string | null {
+  let head: string;
+  if (typeof chunk === "string") head = chunk.slice(0, 2100);
+  else if (chunk instanceof Uint8Array) head = Buffer.from(chunk.subarray(0, 2100)).toString("latin1");
+  else return null;
+  const m = PROXY_REQUEST_LINE.exec(head);
+  if (m === null) return null;
+  const target = m[2] as string;
+  try {
+    if (m[1] === "CONNECT") return new URL(`http://${target}`).hostname.replace(/^\[|\]$/g, "");
+    return target.includes("://") ? new URL(target).hostname.replace(/^\[|\]$/g, "") : null;
+  } catch {
+    return null;
+  }
+}
 
 export class EgressBlockedError extends Error {
   constructor(readonly host: string) {
@@ -41,7 +72,9 @@ export function egressBlockRequested(env: NodeJS.ProcessEnv = process.env): bool
 }
 
 type Connect = (this: net.Socket, ...args: unknown[]) => net.Socket;
+type Write = (this: net.Socket, ...args: unknown[]) => boolean;
 let original: Connect | null = null;
+let originalWrite: Write | null = null;
 // Installs outstanding; the guard comes off when the last one is released.
 let installs = 0;
 
@@ -78,6 +111,20 @@ export function installEgressGuard(): () => void {
       }
       return orig.apply(this, args);
     };
+    const origWrite = (net.Socket.prototype as unknown as { write: Write }).write;
+    originalWrite = origWrite;
+    (net.Socket.prototype as unknown as { write: Write }).write = function (
+      this: net.Socket,
+      ...args: unknown[]
+    ): boolean {
+      const host = proxiedTargetHost(args[0]);
+      if (host !== null && isProviderHost(host)) {
+        // Nothing is written; the client sees the same error a blocked connect raises.
+        this.destroy(new EgressBlockedError(host));
+        return false;
+      }
+      return origWrite.apply(this, args);
+    };
   }
   let released = false;
   return () => {
@@ -99,4 +146,8 @@ export function uninstallEgressGuard(): void {
   if (original === null) return;
   (net.Socket.prototype as unknown as { connect: Connect }).connect = original;
   original = null;
+  if (originalWrite !== null) {
+    (net.Socket.prototype as unknown as { write: Write }).write = originalWrite;
+    originalWrite = null;
+  }
 }
