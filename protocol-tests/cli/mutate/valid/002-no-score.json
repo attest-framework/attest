@@ -14,5 +14,12 @@
   ],
   "survivors_suggestions": [],
   "skipped_specs": 3,
-  "applicable_specs": 0
+  "applicable_specs": 0,
+  "operators": [
+    {"operator": "drop_tool_call", "generated": 1, "killed": 0, "survived": 0, "no_applicable_specs": 1, "score": null}
+  ],
+  "excluded": {
+    "skipped_specs": [{"reason": "judge specs are not deterministic", "specs": 3}],
+    "mutants_no_applicable_specs": 1
+  }
 }

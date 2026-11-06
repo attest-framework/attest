@@ -1,0 +1,13 @@
+{
+  "score": null,
+  "seed": 0,
+  "fixtures": [],
+  "mutants": [],
+  "survivors_suggestions": [],
+  "skipped_specs": 0,
+  "applicable_specs": 0,
+  "operators": [
+    {"operator": "rewrite_source", "generated": 1, "killed": 0, "survived": 0, "no_applicable_specs": 1, "score": null}
+  ],
+  "excluded": {"skipped_specs": [], "mutants_no_applicable_specs": 0}
+}

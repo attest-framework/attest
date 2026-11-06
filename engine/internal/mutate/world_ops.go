@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"math/big"
 	"strings"
 	"unicode/utf8"
 
@@ -155,6 +156,10 @@ func genWorld(s Subject, add func(Mutant) error) error {
 				return err
 			}
 
+			if err := genRelational(ws, s, res, i, add); err != nil {
+				return err
+			}
+
 			field, nv, ok := changeableField(rec)
 			if !ok {
 				continue
@@ -265,4 +270,126 @@ func lastRunes(s string, n int) string {
 		r = r[len(r)-n:]
 	}
 	return strings.TrimSpace(string(r))
+}
+
+// relatedRecords lists the records of other resources that rec points to
+// through a <name>_id field: resource <name>, <name>s, <name>es or the
+// y -> ies plural holding exactly one record with that key value.
+func relatedRecords(ws *worldState, res string, rec map[string]any) []relation {
+	var out []relation
+	for _, k := range sortedKeys(rec) {
+		if !strings.HasSuffix(k, "_id") || !scalar(rec[k]) {
+			continue
+		}
+		base := strings.TrimSuffix(k, "_id")
+		names := []string{base, base + "s", base + "es"}
+		if strings.HasSuffix(base, "y") {
+			names = append(names, strings.TrimSuffix(base, "y")+"ies")
+		}
+		for _, t := range names {
+			if t == res {
+				continue
+			}
+			var found map[string]any
+			n := 0
+			for _, r := range ws.state[t] {
+				if v, ok := r[k]; ok && show(v) == show(rec[k]) {
+					found = r
+					n++
+				}
+			}
+			if n == 1 {
+				out = append(out, relation{key: k, target: t, record: found})
+				break
+			}
+		}
+	}
+	return out
+}
+
+type relation struct {
+	key    string
+	target string
+	record map[string]any
+}
+
+// plusOne returns n + 1 as a JSON number.
+func plusOne(n json.Number) (json.Number, bool) {
+	r, ok := new(big.Rat).SetString(n.String())
+	if !ok {
+		return "", false
+	}
+	r.Add(r, big.NewRat(1, 1))
+	if r.IsInt() {
+		return json.Number(r.Num().String()), true
+	}
+	return json.Number(strings.TrimRight(strings.TrimRight(r.FloatString(12), "0"), ".")), true
+}
+
+// genRelational mutates a record against the record it relates to: a numeric
+// field shared with the related record is raised one above the related value
+// (a sum bound is exceeded) and a shared *_id string field is redirected (the
+// match breaks). Each is suggested as the sum or matches check that kills it.
+func genRelational(ws *worldState, s Subject, res string, i int, add func(Mutant) error) error {
+	rec := ws.state[res][i]
+	for _, rel := range relatedRecords(ws, res, rec) {
+		for _, f := range sortedKeys(rec) {
+			if f == rel.key {
+				continue
+			}
+			rv, ok := rel.record[f]
+			if !ok {
+				continue
+			}
+			ref := map[string]any{"resource": rel.target, "field": f, "on": rel.key}
+			switch cur := rec[f].(type) {
+			case json.Number:
+				bound, isNum := rv.(json.Number)
+				if !isNum {
+					continue
+				}
+				nv, ok := plusOne(bound)
+				if !ok {
+					continue
+				}
+				m := ws.clone()
+				m.state[res][i][f] = nv
+				spec := map[string]any{"check": "sum", "resource": res, "field": f, "at_most": map[string]any{"related": ref}}
+				if err := add(Mutant{
+					site: fmt.Sprintf("%s.%d.exceed.%s", res, i, f), Operator: AlterWorldEffect,
+					Description: fmt.Sprintf("raise %s record %d%s: %s %s -> %s, above %s.%s %s", res, i, describeRecord(rec), f, show(cur), show(nv), rel.target, f, show(bound)),
+					Trace:       s.Trace, World: m.marshal(),
+					candidates: []Contract{{
+						Type: types.TypeEffect, Spec: rawJSON(spec),
+						Description: fmt.Sprintf("%s %s sums stay within %s.%s per %s", res, f, rel.target, f, rel.key),
+					}},
+				}); err != nil {
+					return err
+				}
+			case string:
+				if !strings.HasSuffix(f, "_id") {
+					continue
+				}
+				if _, isStr := rv.(string); !isStr {
+					continue
+				}
+				nv := cur + "_x"
+				m := ws.clone()
+				m.state[res][i][f] = nv
+				spec := map[string]any{"check": "matches", "resource": res, "field": f, "related": ref}
+				if err := add(Mutant{
+					site: fmt.Sprintf("%s.%d.redirect.%s", res, i, f), Operator: AlterWorldEffect,
+					Description: fmt.Sprintf("redirect %s record %d%s: %s %s -> %s, away from %s.%s", res, i, describeRecord(rec), f, show(cur), show(nv), rel.target, f),
+					Trace:       s.Trace, World: m.marshal(),
+					candidates: []Contract{{
+						Type: types.TypeEffect, Spec: rawJSON(spec),
+						Description: fmt.Sprintf("%s %s matches %s.%s per %s", res, f, rel.target, f, rel.key),
+					}},
+				}); err != nil {
+					return err
+				}
+			}
+		}
+	}
+	return nil
 }

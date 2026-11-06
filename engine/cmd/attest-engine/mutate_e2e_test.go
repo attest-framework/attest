@@ -3,6 +3,7 @@ package main_test
 import (
 	"bufio"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -225,6 +226,21 @@ type mutateDoc struct {
 	} `json:"survivors_suggestions"`
 	Skipped    int `json:"skipped_specs"`
 	Applicable int `json:"applicable_specs"`
+	Operators  []struct {
+		Operator          string   `json:"operator"`
+		Generated         int      `json:"generated"`
+		Killed            int      `json:"killed"`
+		Survived          int      `json:"survived"`
+		NoApplicableSpecs int      `json:"no_applicable_specs"`
+		Score             *float64 `json:"score"`
+	} `json:"operators"`
+	Excluded struct {
+		SkippedSpecs []struct {
+			Reason string `json:"reason"`
+			Specs  int    `json:"specs"`
+		} `json:"skipped_specs"`
+		MutantsNoApplicableSpecs int `json:"mutants_no_applicable_specs"`
+	} `json:"excluded"`
 }
 
 func runMutateJSON(t *testing.T, bin string, wantCode int, args ...string) (mutateDoc, []byte) {
@@ -362,6 +378,38 @@ func TestMutate_HumanOutput_ShowsScoreAndSurvivors(t *testing.T) {
 	for _, want := range []string{"mutation score:", "survivors:", "duplicate issue_refund (order_id=O-1042)", "kill with: trace", "tool_cardinality"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("output lacks %q:\n%s", want, out)
+		}
+	}
+}
+
+func TestMutate_ReportsScoresPerOperatorInJSONAndText(t *testing.T) {
+	bin := buildEngineBinary(t)
+	act1 := filepath.Join(t.TempDir(), "act1")
+	recordBatch(t, bin, act1, nil, act1Specs())
+	fixture := cliAbs(t, mutateFixture)
+	doc, _ := runMutateJSON(t, bin, 0, fixture, "--contracts", act1)
+	if len(doc.Operators) == 0 {
+		t.Fatal("json report has no operators")
+	}
+	var generated int
+	for _, st := range doc.Operators {
+		generated += st.Generated
+		if st.Generated != st.Killed+st.Survived+st.NoApplicableSpecs {
+			t.Errorf("%s: %+v does not add up", st.Operator, st)
+		}
+	}
+	if generated != len(doc.Mutants) {
+		t.Errorf("operators cover %d of %d mutants", generated, len(doc.Mutants))
+	}
+	out := string(cliRun(t, bin, engineEnv(t.TempDir()), t.TempDir(), 0, "mutate", fixture, "--contracts", act1))
+	for _, want := range []string{"operator", "generated", "score", "alter_world_effect", "excluded from the score:"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("text output lacks %q:\n%s", want, out)
+		}
+	}
+	for _, st := range doc.Operators {
+		if st.Score != nil && !strings.Contains(out, fmt.Sprintf("%.0f%%", *st.Score*100)) {
+			t.Errorf("text output lacks the %s score %.0f%%:\n%s", st.Operator, *st.Score*100, out)
 		}
 	}
 }
