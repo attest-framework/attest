@@ -228,3 +228,29 @@ func TestDraftRelational_CleanNames_KeepTheirPlainID(t *testing.T) {
 		}
 	}
 }
+
+func TestUniqueID_SecondCollisionGetsACounter(t *testing.T) {
+	seen := map[string]bool{"relational-x": true}
+
+	first := uniqueID(seen, "relational-x", "a", "b", "c")
+	seen[first] = true
+	second := uniqueID(seen, "relational-x", "a", "b", "c")
+	seen[second] = true
+	third := uniqueID(seen, "relational-x", "a", "b", "c")
+
+	ids := map[string]bool{"relational-x": true, first: true, second: true, third: true}
+	if len(ids) != 4 {
+		t.Fatalf("ids not distinct: %q %q %q", first, second, third)
+	}
+	for _, id := range []string{first, second, third} {
+		if strings.ContainsAny(id, " \t\n") {
+			t.Errorf("id %q has whitespace", id)
+		}
+	}
+}
+
+func TestUniqueID_FreeIDIsUnchanged(t *testing.T) {
+	if got := uniqueID(map[string]bool{}, "relational-x", "a"); got != "relational-x" {
+		t.Errorf("got %q", got)
+	}
+}

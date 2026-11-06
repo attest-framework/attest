@@ -71,21 +71,32 @@ func DraftRelational(snapshot json.RawMessage) ([]Contract, bool, error) {
 				if len(out) == contractdsl.MaxStatements {
 					return out, true, nil
 				}
-				if seen[c.ID] {
-					// Distinct raw names can still render one id: the
-					// hyphens of relational-sum-a-b-c do not say which
-					// part is the resource.
-					c.ID += "~" + shortHash(res, field, key)
-					if seen[c.ID] {
-						return nil, false, fmt.Errorf("relational contract id %q is not unique", c.ID)
-					}
-				}
+				c.ID = uniqueID(seen, c.ID, res, field, key)
 				seen[c.ID] = true
 				out = append(out, *c)
 			}
 		}
 	}
 	return out, false, nil
+}
+
+// uniqueID returns id when unused. Distinct raw names can still render one
+// id (the hyphens of relational-sum-a-b-c do not say which part is the
+// resource), so a taken id gets a short hash of the raw names, then a counter
+// after the hash: a capture never aborts on ids.
+func uniqueID(seen map[string]bool, id string, raw ...string) string {
+	if !seen[id] {
+		return id
+	}
+	hashed := id + "~" + shortHash(raw...)
+	if !seen[hashed] {
+		return hashed
+	}
+	for n := 2; ; n++ {
+		if next := fmt.Sprintf("%s~%d", hashed, n); !seen[next] {
+			return next
+		}
+	}
 }
 
 // maxDisplayName bounds a world name quoted in a contract id or description.
