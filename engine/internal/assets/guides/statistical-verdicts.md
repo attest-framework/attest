@@ -7,7 +7,7 @@ A non-deterministic agent can pass a test once and fail it the next time, so one
 | Runner | How |
 |---|---|
 | pytest | `uv run pytest --attest-trials=20 --attest-report=attest-report.json` runs every test that uses the `attest` fixture 20 times |
-| Vitest | wrap the test body in `trials()` and run `ATTEST_TRIALS=20 npx vitest run` with the `AttestReporter` |
+| Vitest | wrap the test body in `trials()` and run `ATTEST_TRIALS=20 npx vitest run` with the `AttestReporter` (`--reporter=@attest-ai/vitest/reporter`) |
 
 ```python
 def test_refund_reply(attest):
@@ -38,8 +38,19 @@ The minimum pass rate defaults to 1.0: any failing trial fails the test. Lower i
 
 | Scope | pytest | Vitest |
 |---|---|---|
-| Run | `--attest-min-pass-rate=0.8` | `attestGlobalSetup({ minPassRate: 0.8 })` or `ATTEST_MIN_PASS_RATE=0.8` |
+| Run | `--attest-min-pass-rate=0.8` | `ATTEST_MIN_PASS_RATE=0.8`, or `attestGlobalSetup({ minPassRate: 0.8 })` from `@attest-ai/vitest/setup` in a global-setup file (below) |
 | One test (overrides the run) | `@pytest.mark.attest_min_pass_rate(0.8)` | `trials(body, { minPassRate: 0.8 })` |
+
+Vitest takes global setup as a file path, so the factory lives in a file of your own. Import it from the `/setup` subpath, never the package root, so the Vitest 3 config loads:
+
+```ts
+// attest-setup.ts
+import { attestGlobalSetup } from "@attest-ai/vitest/setup";
+
+export const { setup, teardown } = attestGlobalSetup({ minPassRate: 0.8 });
+```
+
+Point `globalSetup: ["./attest-setup.ts"]` in the Vitest config at it. Without options, `globalSetup: ["@attest-ai/vitest/setup"]` does the same with a minimum pass rate of 1.0.
 
 Trials whose assertions were not evaluated are left out of the pass rate. The minimum pass rate decides this run's test outcome; whether the pass rate dropped against the reference version is the policy's question (section 3).
 
