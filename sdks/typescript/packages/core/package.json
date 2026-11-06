@@ -51,7 +51,7 @@
     "url": "https://github.com/attest-framework/attest.git",
     "directory": "sdks/typescript/packages/core"
   },
-  "license": "MIT",
+  "license": "Apache-2.0",
   "keywords": [
     "ai",
     "testing",
