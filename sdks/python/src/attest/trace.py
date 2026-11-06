@@ -137,12 +137,13 @@ class TraceBuilder:
         model: str | None = None,
         timestamp: str | None = None,
     ) -> TraceBuilder:
+        previous = self._metadata or TraceMetadata()
         self._metadata = TraceMetadata(
-            total_tokens=total_tokens,
-            cost_usd=cost_usd,
-            latency_ms=latency_ms,
-            model=model,
-            timestamp=timestamp,
+            total_tokens=total_tokens if total_tokens is not None else previous.total_tokens,
+            cost_usd=cost_usd if cost_usd is not None else previous.cost_usd,
+            latency_ms=latency_ms if latency_ms is not None else previous.latency_ms,
+            model=model if model is not None else previous.model,
+            timestamp=timestamp if timestamp is not None else previous.timestamp,
         )
         return self
 

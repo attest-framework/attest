@@ -204,3 +204,32 @@ def test_pytest_plugin_old_engine_fails_session_cleanly(
     result.assert_outcomes(errors=1)
     result.stdout.fnmatch_lines(["*attest-engine version mismatch*reports version 0.8.0*"])
     assert "Traceback" not in result.stdout.str()
+
+
+def test_pytest_plugin_download_failure_fails_in_one_line(
+    isolated_engine_env: Path,
+    pytester: pytest.Pytester,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("ATTEST_ENGINE_NO_DOWNLOAD")
+    monkeypatch.setenv("HTTPS_PROXY", "http://127.0.0.1:9")
+    # An editable install has no hash table and refuses before any network use; pin one so the
+    # run reaches the proxy.
+    pytester.makeconftest(
+        "import attest.engine_downloader as d\nd._embedded_hash = lambda plat: '0' * 64\n"
+    )
+    pytester.makepyfile("def test_uses_engine(attest):\n    pass\n")
+
+    # -rN: no short test summary, which repeats the error line and would make the count 2.
+    result = pytester.runpytest_subprocess("-rN")
+
+    result.assert_outcomes(errors=1)
+    result.stdout.fnmatch_lines(["*attest-engine download failed*ATTEST_ENGINE_PATH*"])
+    out = result.stdout.str()
+    assert "Traceback" not in out
+    assert "above exception" not in out
+    assert "During handling" not in out
+    assert sum("attest-engine download failed" in line for line in out.splitlines()) == 1
+    assert sum("ATTEST_ENGINE_PATH" in line for line in out.splitlines()) == 1
+    # The download notice is printed outside pytest capture.
+    assert "attest: downloading engine" in result.stderr.str() + result.stdout.str()
