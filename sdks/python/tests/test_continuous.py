@@ -521,6 +521,42 @@ class TestDriftAlerts:
         assert len(errors) == 1
         assert isinstance(errors[0], TimeoutError)
 
+    def test_stop_timeout_discards_the_whole_queue_and_lets_in_flight_finish(self) -> None:
+        client, _ = self._client("pass", "ok")
+        errors: list[Exception] = []
+        evaluated: list[str] = []
+        inner = client.evaluate_batch
+
+        async def slow(trace: Trace, assertions: list[Assertion]) -> EvaluateBatchResult:
+            await asyncio.sleep(0.08)
+            evaluated.append(trace.trace_id)
+            return await inner(trace, assertions)
+
+        client.evaluate_batch = slow
+        runner, _ = self._runner(
+            client, self._assertion(), on_error=errors.append, drain_timeout_s=0.02
+        )
+
+        async def scenario() -> None:
+            await runner.start()
+            for trace_id in ("t1", "t2", "t3", "t4"):
+                await runner.submit(_make_trace(trace_id))
+            await asyncio.sleep(0.01)
+            await runner.stop()
+            assert runner._queue.qsize() == 0
+            await asyncio.sleep(0.2)
+            assert evaluated == ["t1"]
+            await runner.start()
+            await asyncio.sleep(0.2)
+            await runner.stop()
+
+        asyncio.run(scenario())
+
+        assert len(errors) == 1
+        assert isinstance(errors[0], TimeoutError)
+        assert "discarded 3 queued" in str(errors[0])
+        assert evaluated == ["t1"]
+
 
 _PAYLOAD_KEYS = {
     "runner",

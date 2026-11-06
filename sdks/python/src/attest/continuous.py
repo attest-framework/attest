@@ -287,6 +287,9 @@ class ContinuousEvalRunner:
         # query_drift reads an assertion's latest history row, not the evaluated trace's, so
         # evaluate -> query_drift must not interleave across traces (loop and direct calls).
         self._evaluation_lock = asyncio.Lock()
+        # Loop tasks whose stop() timed out mid-evaluation: they exit after the in-flight trace.
+        self._abandoned: set[asyncio.Task[None]] = set()
+        self._loop_evaluating = False
 
     def _emit_error(self, exc: Exception) -> None:
         """Log the error and hand it to ``on_error``; a failing callback is logged, not raised."""
@@ -397,8 +400,10 @@ class ContinuousEvalRunner:
     async def stop(self) -> None:
         """Stop the loop after queued and in-flight evaluations and alerts finish.
 
-        Waits at most ``drain_timeout_s``; work still pending then is cancelled and the
-        timeout is emitted through ``on_error``.
+        Waits at most ``drain_timeout_s``. At the bound the whole remaining queue is discarded
+        (nothing is evaluated after the timeout and nothing is left for a restart), the
+        evaluation already in flight is left to finish, and the timeout with the number of
+        discarded traces is emitted through ``on_error``.
         """
         self._running = False
         task, self._task = self._task, None
@@ -407,21 +412,38 @@ class ContinuousEvalRunner:
         try:
             await asyncio.wait_for(self._queue.join(), timeout=self._drain_timeout_s)
         except asyncio.TimeoutError:
+            discarded = self._discard_queued()
             self._emit_error(
                 TimeoutError(
-                    f"stop() drain exceeded {self._drain_timeout_s}s; cancelling pending work"
+                    f"stop() drain exceeded {self._drain_timeout_s}s; discarded {discarded} "
+                    "queued trace(s) not evaluated"
                 )
             )
+            if self._loop_evaluating:  # an evaluation is in flight: let it finish
+                self._abandoned.add(task)
+                return
         task.cancel()
         try:
             await task
         except asyncio.CancelledError:
             pass
 
+    def _discard_queued(self) -> int:
+        """Drop every queued trace and return how many were dropped."""
+        discarded = 0
+        while True:
+            try:
+                self._queue.get_nowait()
+            except asyncio.QueueEmpty:
+                return discarded
+            self._queue.task_done()
+            discarded += 1
+
     async def _loop(self) -> None:
         """Dequeue and evaluate traces until cancelled by ``stop()``."""
         while True:
             trace = await self._queue.get()
+            self._loop_evaluating = True
             try:
                 await self.evaluate_trace(trace)
             except Exception as exc:
@@ -429,4 +451,9 @@ class ContinuousEvalRunner:
                     RuntimeError(f"evaluation failed for trace {trace.trace_id}: {exc}")
                 )
             finally:
+                self._loop_evaluating = False
                 self._queue.task_done()
+            current = asyncio.current_task()
+            if current in self._abandoned:
+                self._abandoned.discard(current)
+                return

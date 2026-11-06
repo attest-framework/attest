@@ -92,4 +92,52 @@ describe("ContinuousEvalRunner.stop drains queued traces", () => {
     expect(errors.some((e) => String(e).includes("stop() gave up after 100 ms"))).toBe(true);
     expect(vi.mocked(client.evaluateBatch).mock.calls.length).toBeLessThan(5);
   });
+
+  it("discards the whole remaining queue at the timeout, lets the in-flight trace finish, and a restart evaluates nothing old", async () => {
+    vi.useFakeTimers();
+    try {
+      vi.spyOn(console, "error").mockImplementation(() => undefined);
+      const errors: unknown[] = [];
+      const evaluated: string[] = [];
+      const client = {
+        evaluateBatch: vi.fn(
+          (trace: Trace, assertions: readonly Assertion[]) =>
+            new Promise<EvaluateBatchResult>((resolve) =>
+              setTimeout(() => {
+                evaluated.push(trace.trace_id);
+                resolve(failingBatch(trace, assertions));
+              }, 80),
+            ),
+        ),
+        queryDrift: vi.fn(),
+      } as unknown as AttestClient;
+      const runner = new ContinuousEvalRunner(client, [assertion], {
+        name: "drain-discard",
+        drainTimeoutMs: 20,
+        onError: (e) => errors.push(e),
+      });
+
+      for (const id of ["t1", "t2", "t3", "t4"]) runner.submit(makeTrace(id));
+      const stopped = runner.stop();
+      await vi.advanceTimersByTimeAsync(20);
+      await stopped;
+
+      expect(errors).toHaveLength(1);
+      expect(String(errors[0])).toContain("discarded 3 queued trace(s)");
+      expect(runner.queueLength).toBe(0);
+
+      await vi.advanceTimersByTimeAsync(500);
+      expect(evaluated).toEqual(["t1"]);
+      expect(runner.queueLength).toBe(0);
+
+      runner.start();
+      await vi.advanceTimersByTimeAsync(500);
+      const restarted = runner.stop();
+      await vi.advanceTimersByTimeAsync(500);
+      await restarted;
+      expect(evaluated).toEqual(["t1"]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

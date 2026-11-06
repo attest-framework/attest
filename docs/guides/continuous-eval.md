@@ -170,7 +170,7 @@ A failing error callback is logged and ignored. TypeScript also emits `alertErro
 
 `stop()` ends the loop, evaluates and alerts the traces still queued, then waits for the evaluation in flight, all bounded by the drain timeout (`drain_timeout_s` / `drainTimeoutMs`). Traces submitted before `stop()` are therefore not lost in either SDK.
 
-On timeout the runner reports an error through the callback and stops waiting. Work still pending at the bound is dropped: Python cancels it, TypeScript abandons the queued traces (the error message gives the counts).
+On timeout the runner reports an error through the callback with the number of traces not evaluated and discards the entire remaining queue: nothing is evaluated after the timeout and nothing is left for a restart. The evaluation already in flight is left to finish, and no further trace is dequeued. Both SDKs behave identically.
 
 ## Name and ids
 

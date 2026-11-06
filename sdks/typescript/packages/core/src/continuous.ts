@@ -284,8 +284,10 @@ export class ContinuousEvalRunner {
 
   /**
    * Stops the loop, then processes the traces already queued and waits for in-flight evaluations
-   * and dispatches, all bounded by `drainTimeoutMs`. Work still pending at the bound is dropped
-   * and reported through `onError`.
+   * and dispatches, all bounded by `drainTimeoutMs`. At the bound the whole remaining queue is
+   * discarded (nothing is evaluated after the timeout and nothing is left for a restart), the
+   * evaluation already in flight is left to finish, and the timeout with the number of discarded
+   * traces is reported through `onError`.
    */
   async stop(): Promise<void> {
     this.running = false;
@@ -295,10 +297,12 @@ export class ContinuousEvalRunner {
     }
     if (this.inFlight.size === 0 && this.queue.length === 0) return;
     let expired = false;
+    let discarded = 0;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const bound = new Promise<"timeout">((resolve) => {
       timer = setTimeout(() => {
         expired = true;
+        discarded = this.queue.splice(0).length;
         resolve("timeout");
       }, this.drainTimeoutMs);
     });
@@ -308,14 +312,16 @@ export class ContinuousEvalRunner {
     if (outcome === "timeout") {
       this.emitError(
         new Error(
-          `stop() gave up after ${this.drainTimeoutMs} ms with ${this.inFlight.size} evaluation(s) in flight and ${this.queue.length} trace(s) queued`,
+          `stop() gave up after ${this.drainTimeoutMs} ms with ${this.inFlight.size} evaluation(s) in flight; discarded ${discarded} queued trace(s) not evaluated`,
         ),
       );
     }
   }
 
   private async drainQueue(expired: () => boolean): Promise<void> {
-    for (let trace = this.queue.shift(); trace !== undefined && !expired(); trace = this.queue.shift()) {
+    while (!expired()) {
+      const trace = this.queue.shift();
+      if (trace === undefined) break;
       try {
         await this.evaluateTrace(trace);
       } catch (error) {
