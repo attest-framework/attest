@@ -7,11 +7,13 @@ host are untouched. The guard covers connections made by this process (the agent
 clients), including calls through the proxy named by ``HTTP(S)_PROXY`` / ``ALL_PROXY``: only
 sockets whose connect target is that proxy are screened, request by request (every
 ``CONNECT`` target and absolute-URI host, plus ``Host``). After an allowed ``CONNECT`` the
-framer waits for the client's next bytes: a TLS record header (0x16 0x03 0x00-0x04) means the
-tunnel is in use and the connection goes opaque; anything else (the proxy refused the CONNECT,
-for example with 407, and the client sent another request, or the tunnel carries plain HTTP)
-returns to request framing with full screening. The proxy's response is not read, so a
-non-HTTP, non-TLS protocol inside a tunnel is refused. Every other socket is left alone.
+guard goes opaque on a three-byte TLS record prefix (0x16 0x03 0x00-0x04); the tunnel itself
+is not verified. Anything else (the proxy refused the CONNECT, for example with 407, and the
+client sent another request, or the tunnel carries plain HTTP) returns to request framing
+with full screening. A client that forges that prefix and then writes plaintext is not
+inspected. The proxy's response is not read, so a non-HTTP, non-TLS protocol inside a tunnel
+is refused. This is a best-effort guard for trusted test code, not an isolation boundary.
+Every other socket is left alone.
 Child processes are not covered: the engine subprocess and anything the agent spawns keep
 their own network access.
 """
