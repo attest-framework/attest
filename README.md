@@ -184,6 +184,7 @@ No API key, model or network access is needed: the sample test checks a recorded
 
 ### Python
 
+<!-- snippet: skip reason="installs packages or runs npm tooling (network)" -->
 ```bash
 uv init --bare my-agent-tests && cd my-agent-tests
 uv add "attest-ai>=1.0.1" pytest
@@ -259,6 +260,7 @@ Attest diagnostic — 1 of 4 assertions failed:
 
 `--attest-report` writes every test with its outcome, file and line, and every assertion result, as a report-v2 JSON file (`proto/attest/v1/report-v2.schema.json`). `attest policy evaluate` checks it against `attest.policy.yaml`: exit 0 passes, 1 blocks (a hard failure), 2 warns (assertions not evaluated), 3 means the policy or report could not be loaded or the arguments were invalid.
 
+<!-- snippet: setup=project -->
 ```bash
 uv run pytest --attest-report=attest-report.json
 uv run attest policy evaluate --report attest-report.json --policy attest.policy.yaml
@@ -269,6 +271,7 @@ uv run attest init --ci github
 
 ### TypeScript
 
+<!-- snippet: skip reason="installs packages or runs npm tooling (network)" -->
 ```bash
 npm init -y && npm pkg set type=module
 npm install -D "@attest-ai/core@>=1.0.1" "@attest-ai/vitest@>=1.0.1" "vitest@^4"

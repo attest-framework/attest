@@ -2,6 +2,7 @@
 
 A trace records what an agent said and which tools it called. It cannot tell whether the refund API ended up with one refund or two. A *world* is a local, stateful HTTP stand-in for that system. The agent's real HTTP client talks to it, the world keeps the records the agent created, and an `effect` assertion checks the final state.
 
+<!-- snippet: skip reason="installs packages or runs npm tooling (network)" -->
 ```bash
 uv add "attest-ai>=1.0.1"
 npm install -D "@attest-ai/core@>=1.0.1" "@attest-ai/vitest@>=1.0.1" "vitest@^4"
@@ -61,6 +62,7 @@ When a resource declares `idempotency`, the header is authoritative: a request b
 
 ## Run a world
 
+<!-- snippet: skip reason="runs the project's own npm scripts under a world file" -->
 ```bash
 attest-engine world --file world.yaml -- npm run agent       # runs the command with PAYMENTS_BASE_URL set
 attest capture --name inc-1042 --expect-fail --world world.yaml -- npm run incident
@@ -73,6 +75,7 @@ attest-engine replay --name inc-1042 --world world.yaml -- npm run agent
 
 Python (pytest):
 
+<!-- snippet: skip reason="needs tests/payments.world.yaml and the project's agent" -->
 ```python
 from attest import expect
 
@@ -85,6 +88,7 @@ def test_refund_is_applied_once(attest_world):
 
 TypeScript (Vitest):
 
+<!-- snippet: skip reason="needs tests/payments.world.yaml and the project's agent" -->
 ```ts
 import { it } from "vitest";
 import { attestExpect } from "@attest-ai/core";
@@ -126,6 +130,7 @@ A business invariant often compares two resources: the refunds against an order 
 
 Python:
 
+<!-- snippet: skip reason="needs tests/payments.world.yaml and the project's agent" -->
 ```python
 from attest import expect, related
 
@@ -145,6 +150,7 @@ def test_inc_1077_refunds_stay_within_the_order(attest, attest_world):
 
 TypeScript:
 
+<!-- snippet: fragment reason="excerpt: relies on `trace`, defined outside the snippet" -->
 ```ts
 import { attestExpect, related } from "@attest-ai/core";
 
@@ -187,6 +193,7 @@ Sums are exact decimals, so cents never drift. `where` filters (`order_id="O-207
 
 A replay serves recorded model responses; a world serves the system the agent acts on. Use both in one test, with the model calls recorded and the side effects live:
 
+<!-- snippet: skip reason="needs the inc-1042 fixture and its world file" -->
 ```python
 def test_inc_1042_replay(attest_replay, attest_world):
     world = attest_world("tests/payments.world.yaml")
@@ -195,6 +202,7 @@ def test_inc_1042_replay(attest_replay, attest_world):
     expect(trace).world(world.state()).count("refunds", equals=1, order_id="O-1042")
 ```
 
+<!-- snippet: skip reason="needs the inc-1042 fixture and its world file" -->
 ```ts
 const world = await useWorld("tests/payments.world.yaml");
 await useReplay("inc-1042");

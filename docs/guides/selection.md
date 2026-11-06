@@ -2,6 +2,7 @@
 
 `attest select` lists the tests a change needs to run, so a pull request that touches one fixture does not run the whole suite. It reads the git diff and decides from file names alone: no model, no test execution, the same answer for the same diff.
 
+<!-- snippet: skip reason="needs a git checkout with an origin/main to diff against" -->
 ```bash
 uv run attest select --base origin/main
 ```
@@ -38,6 +39,7 @@ A fixture that a `conftest.py` references selects every test file below that `co
 
 ## Run the selection
 
+<!-- snippet: skip reason="needs a git checkout with an origin/main to diff against" -->
 ```bash
 tests=$(uv run attest select --base origin/main)
 if [ "$tests" = "all" ]; then

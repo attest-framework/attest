@@ -60,6 +60,7 @@ trace = parent.build()
 
 `delegate()` raises `RuntimeError` if called outside an active `TraceBuilder` context:
 
+<!-- snippet: fragment reason="excerpt: relies on `delegate`, defined outside the snippet" -->
 ```python
 # This raises RuntimeError:
 # "delegate() must be used within an Agent.run() context. No active TraceBuilder found."
@@ -71,6 +72,7 @@ with delegate("sub-agent") as child:
 
 Build a `TraceTree` from an `AgentResult` or directly from a `Trace`:
 
+<!-- snippet: fragment reason="excerpt: relies on `result`, defined outside the snippet" -->
 ```python
 from attest.trace_tree import TraceTree
 
@@ -87,6 +89,7 @@ tree = TraceTree(root=trace)
 
 All `agent_id` values in the tree, depth-first order:
 
+<!-- snippet: fragment reason="excerpt: relies on `tree`, defined outside the snippet" -->
 ```python
 tree.agents  # ["orchestrator", "researcher", "writer"]
 ```
@@ -95,6 +98,7 @@ tree.agents  # ["orchestrator", "researcher", "writer"]
 
 Maximum nesting depth. Root with no sub-agents = 0:
 
+<!-- snippet: fragment reason="excerpt: relies on `tree`, defined outside the snippet" -->
 ```python
 tree.depth  # 2 (orchestrator -> researcher -> writer)
 ```
@@ -103,6 +107,7 @@ tree.depth  # 2 (orchestrator -> researcher -> writer)
 
 All (parent_agent_id, child_agent_id) delegation pairs:
 
+<!-- snippet: fragment reason="excerpt: relies on `tree`, defined outside the snippet" -->
 ```python
 tree.delegations
 # [("orchestrator", "researcher"), ("researcher", "writer")]
@@ -112,6 +117,7 @@ tree.delegations
 
 Find a sub-trace by agent_id:
 
+<!-- snippet: fragment reason="excerpt: relies on `tree`, defined outside the snippet" -->
 ```python
 researcher = tree.find_agent("researcher")
 researcher.output  # {"message": "Policy found: 30-day window."}
@@ -121,6 +127,7 @@ researcher.output  # {"message": "Policy found: 30-day window."}
 
 All traces in depth-first order:
 
+<!-- snippet: fragment reason="excerpt: relies on `tree`, defined outside the snippet" -->
 ```python
 all_traces = tree.flatten()
 # [orchestrator_trace, researcher_trace, writer_trace]
@@ -130,6 +137,7 @@ all_traces = tree.flatten()
 
 All `tool_call` steps across the entire tree:
 
+<!-- snippet: fragment reason="excerpt: relies on `tree`, defined outside the snippet" -->
 ```python
 tools = tree.all_tool_calls()
 [t.name for t in tools]  # ["fetch_context", "search_web", "write_doc"]
@@ -139,6 +147,7 @@ tools = tree.all_tool_calls()
 
 Sum metrics across all agents in the tree:
 
+<!-- snippet: fragment reason="excerpt: relies on `tree`, defined outside the snippet" -->
 ```python
 tree.aggregate_tokens   # Total tokens across all agents
 tree.aggregate_cost     # Total cost_usd across all agents
@@ -155,6 +164,7 @@ The snippets below run inside a pytest test that takes the `attest` fixture, wit
 
 Assert a specific agent was invoked somewhere in the trace tree:
 
+<!-- snippet: fragment reason="excerpt: relies on `attest`, defined outside the snippet" -->
 ```python
 attest.evaluate(expect(result).agent_called("researcher").agent_called("writer"))
 ```
@@ -163,6 +173,7 @@ attest.evaluate(expect(result).agent_called("researcher").agent_called("writer")
 
 Assert the trace tree does not exceed a maximum nesting depth:
 
+<!-- snippet: fragment reason="excerpt: relies on `attest`, defined outside the snippet" -->
 ```python
 attest.evaluate(expect(result).delegation_depth(3))  # Max 3 levels deep
 ```
@@ -171,6 +182,7 @@ attest.evaluate(expect(result).delegation_depth(3))  # Max 3 levels deep
 
 Assert a sub-agent's output contains a specific string:
 
+<!-- snippet: fragment reason="excerpt: relies on `attest`, defined outside the snippet" -->
 ```python
 attest.evaluate(
     expect(result)
@@ -183,6 +195,7 @@ attest.evaluate(
 
 Assert that a field from one agent's output appears in another agent's input:
 
+<!-- snippet: fragment reason="excerpt: relies on `attest`, defined outside the snippet" -->
 ```python
 attest.evaluate(
     expect(result).cross_agent_data_flow(
@@ -199,6 +212,7 @@ The engine extracts `field` from `from_agent`'s output JSON, serializes it, and 
 
 Assert that all agent delegations in the trace tree match the allowed transition pairs:
 
+<!-- snippet: fragment reason="excerpt: relies on `attest`, defined outside the snippet" -->
 ```python
 attest.evaluate(
     expect(result).follows_transitions([
@@ -217,6 +231,7 @@ This is useful for enforcing choreography — ensuring agents only delegate to a
 
 Assert the total cost across all agents is under a threshold:
 
+<!-- snippet: fragment reason="excerpt: relies on `attest`, defined outside the snippet" -->
 ```python
 attest.evaluate(expect(result).aggregate_cost_under(0.10))
 ```
@@ -225,6 +240,7 @@ attest.evaluate(expect(result).aggregate_cost_under(0.10))
 
 Assert the total token usage across all agents is under a threshold:
 
+<!-- snippet: fragment reason="excerpt: relies on `attest`, defined outside the snippet" -->
 ```python
 attest.evaluate(expect(result).aggregate_tokens_under(5000))
 ```
@@ -233,6 +249,7 @@ attest.evaluate(expect(result).aggregate_tokens_under(5000))
 
 All multi-agent assertions support the `soft` parameter. Soft failures produce `soft_fail` status instead of `hard_fail`, allowing CI to warn without blocking:
 
+<!-- snippet: fragment reason="excerpt: relies on `attest`, defined outside the snippet" -->
 ```python
 attest.evaluate(
     expect(result)
@@ -245,6 +262,7 @@ attest.evaluate(
 
 Choreography validation ensures agents interact according to a defined protocol. Combine `follows_transitions` with other assertions to fully validate multi-agent workflows. `run_my_pipeline` stands for your own agent; for `cross_agent_data_flow` the trace must record the receiving agent's input with the field (`writer.set_input(findings=...)` on a `delegate()` sub-trace):
 
+<!-- snippet: fragment reason="excerpt: relies on `run_my_pipeline`, defined outside the snippet" -->
 ```python
 from attest import expect
 
@@ -379,6 +397,7 @@ Temporal assertions verify the execution order and timing of agents within a tra
 
 Assert that agent `a` completed before agent `b` started. Use this to enforce sequential execution guarantees.
 
+<!-- snippet: fragment reason="excerpt: relies on `attest`, defined outside the snippet" -->
 ```python
 # researcher must complete before writer begins
 attest.evaluate(expect(result).agent_ordered_before("researcher", "writer"))
@@ -393,6 +412,7 @@ Fails if:
 
 Assert that agents `a` and `b` executed concurrently — their time ranges intersect. Use this to verify parallel execution in fan-out pipelines.
 
+<!-- snippet: fragment reason="excerpt: relies on `attest`, defined outside the snippet" -->
 ```python
 # data-fetcher and context-loader must run in parallel
 attest.evaluate(expect(result).agents_overlap("data-fetcher", "context-loader"))
@@ -407,6 +427,7 @@ Fails if:
 
 Assert that a specific agent's wall-clock duration is under `max_ms` milliseconds. Use this to enforce per-agent performance budgets.
 
+<!-- snippet: fragment reason="excerpt: relies on `attest`, defined outside the snippet" -->
 ```python
 # researcher must complete within 3 seconds
 attest.evaluate(
@@ -423,6 +444,7 @@ Wall time is `ended_at - started_at` for the agent's root trace.
 
 Assert that agents executed in a defined pipeline order. `groups` is a list of lists; agents within the same group ran concurrently, and each group completed before the next group started.
 
+<!-- snippet: fragment reason="excerpt: relies on `attest`, defined outside the snippet" -->
 ```python
 # Sequential pipeline: orchestrator → [researcher, context-loader] → writer
 attest.evaluate(

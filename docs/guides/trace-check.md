@@ -6,6 +6,7 @@ Both commands run in `attest-engine`; `uv run attest trace …` and `npx attest 
 
 ## Check an export
 
+<!-- snippet: skip reason="needs the INC-1042 trace export from a real incident capture (the refund-desk demo repository)" -->
 ```bash
 uv run attest trace check incidents/INC-1042/trace.py.otlp.json
 ```
@@ -65,6 +66,7 @@ An assertion whose evidence is absent does not fail: it reports `not_evaluated` 
 
 ## Convert an export
 
+<!-- snippet: skip reason="needs a trace.otlp.json export from a real run" -->
 ```bash
 uv run attest trace convert trace.otlp.json > trace.json
 ```

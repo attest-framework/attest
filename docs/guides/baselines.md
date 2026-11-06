@@ -6,6 +6,7 @@ A baseline is a pinned report-v2: the status, score, cost and duration of every 
 
 Write a report from a run you trust, then pin it:
 
+<!-- snippet: setup=project -->
 ```bash
 uv run pytest --attest-report=attest-report.json
 uv run attest baseline pin --tag main --report attest-report.json
@@ -28,6 +29,7 @@ Baselines are rows in `attest.db` under `ATTEST_CACHE_DIR` (default `~/.attest/c
 
 ## Compare a run with a baseline
 
+<!-- snippet: setup=project -->
 ```bash
 uv run attest policy evaluate --policy attest.policy.yaml --report attest-report.json --baseline main
 ```

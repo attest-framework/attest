@@ -6,6 +6,7 @@ This guide takes a project from no tests to a GitHub Actions job that blocks mer
 
 Python:
 
+<!-- snippet: skip reason="installs packages or runs npm tooling (network)" -->
 ```bash
 uv add "attest-ai>=1.0.1" pytest
 uv run attest init
@@ -14,6 +15,7 @@ uv run pytest            # 1 passed
 
 TypeScript:
 
+<!-- snippet: skip reason="installs packages or runs npm tooling (network)" -->
 ```bash
 npm install -D "@attest-ai/core@>=1.0.1" "@attest-ai/vitest@>=1.0.1" "vitest@^4"
 npx attest init
@@ -76,6 +78,7 @@ The report follows `proto/attest/v1/report-v2.schema.json`:
 
 ## 4. Evaluate the policy
 
+<!-- snippet: setup=project -->
 ```bash
 uv run attest policy evaluate --report attest-report.json --policy attest.policy.yaml
 ```

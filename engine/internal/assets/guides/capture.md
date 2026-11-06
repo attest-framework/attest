@@ -6,6 +6,7 @@ The command runs in `attest-engine`; `uv run attest capture …` and `npx attest
 
 ## Capture a command
 
+<!-- snippet: skip reason="installs packages or runs npm tooling (network)" -->
 ```bash
 uv run attest capture --name inc-1042 --expect-fail -- make incident
 npx attest capture --name inc-1042 --expect-fail -- npm run incident
@@ -77,6 +78,7 @@ For a fixture captured from a command, the test runs the agent again. It writes 
 
 `COMMAND` is what runs, because the fixture is a file a pull request can change: review the literal with the test. The test refuses to run (it fails with a message naming both commands) when the fixture's `source.command` differs from `COMMAND`, and when the command has redacted or templated arguments, as `--refresh` does:
 
+<!-- snippet: fragment reason="excerpt: relies on `Path`, defined outside the snippet" -->
 ```python
 FIXTURE = Path(__file__).parent / "fixtures/inc-1042.attest.json"
 RUN_DIR = Path(__file__).parent / "../.."  # where `attest capture` ran
@@ -147,6 +149,7 @@ The report goes to stderr. With `--json`, the result gains a `diff` object (`cli
 
 When the agent runs inside your own process (a notebook, a script, a test), capture a block of code:
 
+<!-- snippet: fragment reason="excerpt: relies on `OpenAI`, defined outside the snippet" -->
 ```python
 import attest
 
@@ -157,6 +160,7 @@ with attest.record("inc-1042", expect_fail=True) as capture:
 print(capture.result.fixture, capture.result.verified)
 ```
 
+<!-- snippet: fragment reason="excerpt: relies on `OpenAI`, defined outside the snippet" -->
 ```ts
 import { record } from "@attest-ai/core";
 
@@ -178,6 +182,7 @@ Options: `out_dir` / `outDir` (default `tests/attest/fixtures`), `expect_fail` /
 
 ## Capture from an export
 
+<!-- snippet: skip reason="needs the INC-1042 trace export from a real incident capture (the refund-desk demo repository)" -->
 ```bash
 uv run attest capture --name inc-1042 --expect-fail --from incidents/INC-1042/trace.py.otlp.json
 ```
@@ -201,6 +206,7 @@ All of them read `OPENAI_BASE_URL` or `ANTHROPIC_BASE_URL` from the environment,
 
 **Pydantic AI.** Pass the native instrumentation capability an OTLP/HTTP tracer provider and pin the instrumentation version to 5:
 
+<!-- snippet: fragment reason="excerpt: relies on `TracerProvider`, defined outside the snippet" -->
 ```python
 provider = TracerProvider()
 provider.add_span_processor(SimpleSpanProcessor(OTLPSpanExporter()))
@@ -210,6 +216,7 @@ agent = Agent(OpenAIChatModel("gpt-4.1", provider=OpenAIProvider()), capabilitie
 provider.force_flush()
 ```
 
+<!-- snippet: skip reason="installs packages or runs npm tooling (network)" -->
 ```bash
 uv add "pydantic-ai-slim[openai]" opentelemetry-sdk opentelemetry-exporter-otlp-proto-http
 ```
@@ -218,6 +225,7 @@ Version 3 also works. Version 2 names tool spans `running tool` and keeps argume
 
 **Vercel AI SDK.** AI SDK 7 needs the integration registered, in addition to `experimental_telemetry`:
 
+<!-- snippet: fragment reason="excerpt: relies on `NodeTracerProvider`, defined outside the snippet" -->
 ```ts
 const provider = new NodeTracerProvider({ spanProcessors: [new SimpleSpanProcessor(new OTLPTraceExporter())] });
 provider.register();
@@ -226,6 +234,7 @@ registerTelemetry(new OpenTelemetry()); // from @ai-sdk/otel
 await provider.forceFlush();
 ```
 
+<!-- snippet: skip reason="installs packages or runs npm tooling (network)" -->
 ```bash
 npm install ai @ai-sdk/openai @ai-sdk/otel @opentelemetry/sdk-trace-node @opentelemetry/exporter-trace-otlp-http
 ```
@@ -234,6 +243,7 @@ Tested with `@opentelemetry/sdk-trace-node` 2.12.0 and `@opentelemetry/exporter-
 
 **Mastra.** Register an `OtelExporter` with a custom OTLP/HTTP endpoint and flush the observability instance:
 
+<!-- snippet: fragment reason="excerpt: relies on `Observability`, defined outside the snippet" -->
 ```ts
 const observability = new Observability({ configs: { otel: { serviceName: "my-agent", exporters: [new OtelExporter({
   provider: { custom: { endpoints: { traces: process.env.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT }, protocol: "http/json" } },
@@ -244,6 +254,7 @@ const mastra = new Mastra({ agents: { agent }, observability });
 await observability.flush();
 ```
 
+<!-- snippet: skip reason="installs packages or runs npm tooling (network)" -->
 ```bash
 npm install @mastra/core @mastra/observability @mastra/otel-exporter @ai-sdk/openai
 ```
@@ -252,11 +263,13 @@ Use `createOpenAI().chat(...)` for the model, which Mastra's exporter reports as
 
 **OpenAI Agents SDK (Python).** Use the OpenTelemetry project's instrumentation, not OpenInference, and remove the SDK's hosted trace processors first:
 
+<!-- snippet: fragment reason="excerpt: relies on `set_trace_processors`, defined outside the snippet" -->
 ```python
 set_trace_processors([])
 OpenAIAgentsInstrumentor().instrument(tracer_provider=provider, capture_message_content=True)
 ```
 
+<!-- snippet: skip reason="installs packages or runs npm tooling (network)" -->
 ```bash
 uv add openai-agents opentelemetry-instrumentation-openai-agents-v2 opentelemetry-sdk opentelemetry-exporter-otlp-proto-http
 export OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT=true OTEL_INSTRUMENTATION_OPENAI_AGENTS_CAPTURE_METRICS=false
@@ -266,6 +279,7 @@ The instrumentation is alpha. It emits `unknown` spans for SDK internals; they a
 
 **Claude Agent SDK (Python and TypeScript).** The SDK runs Claude Code, whose native traces are in beta and are off unless both switches are set. Set them in the environment of the process that runs the SDK:
 
+<!-- snippet: skip reason="configures Claude Code telemetry export" -->
 ```bash
 export CLAUDE_CODE_ENABLE_TELEMETRY=1 CLAUDE_CODE_ENHANCED_TELEMETRY_BETA=1
 export OTEL_TRACES_EXPORTER=otlp OTEL_EXPORTER_OTLP_PROTOCOL=http/json OTEL_TRACES_EXPORT_INTERVAL=100
@@ -276,6 +290,7 @@ Without `CLAUDE_CODE_ENHANCED_TELEMETRY_BETA` Claude Code exports metrics and lo
 
 **LangGraph (Python).** Use LangSmith in OTel mode with a tracer provider you own, so spans go to the capture receiver and nowhere else:
 
+<!-- snippet: fragment reason="excerpt: relies on `Client`, defined outside the snippet" -->
 ```python
 client = Client(tracing_mode="otel", otel_tracer_provider=provider)
 with tracing_context(enabled=True, client=client):
@@ -283,6 +298,7 @@ with tracing_context(enabled=True, client=client):
 provider.force_flush()
 ```
 
+<!-- snippet: skip reason="installs packages or runs npm tooling (network)" -->
 ```bash
 uv add langgraph langchain-openai langsmith opentelemetry-sdk opentelemetry-exporter-otlp-proto-http
 export LANGSMITH_TRACING=true LANGSMITH_TRACING_MODE=otel LANGSMITH_API_KEY=unused
@@ -326,6 +342,7 @@ Request headers, which carry the API key, are never recorded. Everywhere else in
 
 Check a fixture before committing it, for example in CI with the same secrets in the environment:
 
+<!-- snippet: skip reason="needs a captured fixture (tests/attest/fixtures/inc-1042.attest.json) from a real incident" -->
 ```bash
 uv run attest capture --check-redaction tests/attest/fixtures/inc-1042.attest.json
 ```

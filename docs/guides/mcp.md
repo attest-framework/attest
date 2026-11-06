@@ -4,6 +4,7 @@
 
 ## Set up a client
 
+<!-- snippet: skip reason="installs packages or runs npm tooling (network)" -->
 ```bash
 uv run attest init --mcp      # Python
 npx attest init --mcp         # TypeScript
@@ -24,6 +25,7 @@ Claude Code asks you to approve a project-scoped server before using it. Codex r
 
 ## Run the server
 
+<!-- snippet: fragment reason="usage synopsis with optional-argument brackets, not a command line" -->
 ```bash
 attest-engine mcp [--root DIR]     # serve on stdio; the root defaults to the working directory
 attest-engine mcp --tools --json   # print the fixed tool list and exit

@@ -4,12 +4,14 @@ Test framework for AI agents. Deterministic assertions (schema validation, cost 
 
 ## Install
 
+<!-- snippet: skip reason="installs packages or runs npm tooling (network)" -->
 ```bash
 uv add "attest-ai>=1.0.1" pytest
 ```
 
 With LLM provider support:
 
+<!-- snippet: skip reason="installs packages or runs npm tooling (network)" -->
 ```bash
 uv add "attest-ai[openai]>=1.0.1"      # OpenAI
 uv add "attest-ai[anthropic]>=1.0.1"   # Anthropic
@@ -57,6 +59,7 @@ def test_refund_agent(attest):
     )
 ```
 
+<!-- snippet: setup=project -->
 ```bash
 pytest test_refund_agent.py --attest-report=report.json
 ```
@@ -73,6 +76,7 @@ Change one assertion, for example `.output_contains("refund")` to `.output_conta
 
 Attest registers as a pytest plugin automatically:
 
+<!-- snippet: fragment reason="`/path/to/attest-engine` is a placeholder" -->
 ```bash
 pytest tests/ --attest-engine=/path/to/attest-engine
 ```

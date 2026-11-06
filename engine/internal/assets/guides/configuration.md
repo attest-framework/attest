@@ -27,6 +27,7 @@ Each published `attest-ai` wheel and sdist and the `@attest-ai/core` tarball car
 
 Every release binary also carries a GitHub build-provenance attestation, created by the `attest-engine` job of the release workflow. To check a binary you downloaded yourself, pin the workflow and the tag, not just the repository:
 
+<!-- snippet: skip reason="verifies a release asset with the GitHub CLI (network)" -->
 ```bash
 gh attestation verify attest-engine-linux-amd64 \
   --repo attest-framework/attest \
@@ -38,6 +39,7 @@ Passing means the file's SHA-256 matches an attestation signed by `release.yml` 
 
 The `attest` command (`uv run attest`, `npx attest`) implements `attest init` itself and forwards every other command to the version-checked engine, passing arguments, output and exit code through unchanged:
 
+<!-- snippet: fragment reason="command overview; report.json comes from your own run" -->
 ```bash
 attest --help                     # SDK commands, plus engine commands when one is installed
 attest --version                  # SDK version and the engine version it requires
@@ -84,6 +86,7 @@ The judge runs natively on OpenAI, Anthropic and Gemini, on any OpenAI-compatibl
 
 Point the judge at a local OpenAI-compatible server:
 
+<!-- snippet: skip reason="points the judge at a local Ollama server" -->
 ```bash
 export ATTEST_JUDGE_BASE_URL=http://localhost:11434/v1
 export ATTEST_JUDGE_API_KEY=unused

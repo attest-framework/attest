@@ -54,6 +54,7 @@ Every example below runs inside a pytest test that takes the `attest` fixture. `
 
 ### OpenAI
 
+<!-- snippet: skip reason="calls the OpenAI API (needs OPENAI_API_KEY)" -->
 ```python
 from openai import OpenAI
 from attest import OpenAIAdapter, AgentResult, expect
@@ -80,6 +81,7 @@ def test_explains_recursion(attest):
 
 ### Anthropic
 
+<!-- snippet: skip reason="calls the Anthropic API (needs ANTHROPIC_API_KEY)" -->
 ```python
 from anthropic import Anthropic
 from attest import AnthropicAdapter, AgentResult, expect
@@ -105,6 +107,7 @@ def test_explains_recursion(attest):
 
 ### Gemini
 
+<!-- snippet: fragment reason="excerpt: relies on `response`, defined outside the snippet" -->
 ```python
 from attest import GeminiAdapter
 
@@ -121,6 +124,7 @@ trace = adapter.trace_from_response(
 
 ### Ollama
 
+<!-- snippet: fragment reason="excerpt: relies on `response_dict`, defined outside the snippet" -->
 ```python
 from attest import OllamaAdapter
 
@@ -137,12 +141,14 @@ trace = adapter.trace_from_response(
 
 ### LangChain
 
+<!-- snippet: skip reason="installs packages or runs npm tooling (network)" -->
 ```bash
 uv add 'attest-ai[langchain]>=1.0.1'
 ```
 
 **Context manager usage:**
 
+<!-- snippet: fragment reason="excerpt: relies on `agent`, defined outside the snippet" -->
 ```python
 from attest import LangChainAdapter, AgentResult, expect
 
@@ -162,6 +168,7 @@ def test_research_agent_searches(attest):
 
 **Direct handler usage:**
 
+<!-- snippet: fragment reason="excerpt: relies on `agent`, defined outside the snippet" -->
 ```python
 from attest import LangChainCallbackHandler
 
@@ -184,12 +191,14 @@ trace = handler.build_trace()
 
 ### Google ADK
 
+<!-- snippet: skip reason="installs packages or runs npm tooling (network)" -->
 ```bash
 uv add 'attest-ai[google-adk]>=1.0.1'
 ```
 
 **Async capture:**
 
+<!-- snippet: fragment reason="excerpt: relies on `runner`, defined outside the snippet" -->
 ```python
 import pytest
 from attest import GoogleADKAdapter, AgentResult, expect
@@ -212,6 +221,7 @@ async def test_weather_agent_looks_up_weather(attest):
 
 **From pre-collected events:**
 
+<!-- snippet: fragment reason="excerpt: relies on `GoogleADKAdapter`, defined outside the snippet" -->
 ```python
 trace = GoogleADKAdapter.from_events(
     events=collected_events,
@@ -233,12 +243,14 @@ trace = GoogleADKAdapter.from_events(
 
 ### LlamaIndex
 
+<!-- snippet: skip reason="installs packages or runs npm tooling (network)" -->
 ```bash
 uv add 'attest-ai[llamaindex]>=1.0.1'
 ```
 
 **Context manager usage:**
 
+<!-- snippet: skip reason="needs the llama-index extra and a model provider" -->
 ```python
 from attest import LlamaIndexInstrumentationHandler, AgentResult, expect
 
@@ -257,6 +269,7 @@ def test_rag_agent_answers_paris(attest):
 
 **Manual attach/detach:**
 
+<!-- snippet: fragment reason="excerpt: relies on `LlamaIndexInstrumentationHandler`, defined outside the snippet" -->
 ```python
 handler = LlamaIndexInstrumentationHandler(agent_id="rag-agent")
 handler.attach()
@@ -278,12 +291,14 @@ trace = handler.build_trace(query="...", response="...")
 
 ### OpenTelemetry
 
+<!-- snippet: skip reason="installs packages or runs npm tooling (network)" -->
 ```bash
 uv add 'attest-ai[otel]>=1.0.1'
 ```
 
 **From collected spans or an OTLP/JSON export:**
 
+<!-- snippet: fragment reason="excerpt: relies on `collected_spans`, defined outside the snippet" -->
 ```python
 from pathlib import Path
 
@@ -298,6 +313,7 @@ trace = OTelAdapter.from_otlp(Path("incident.otlp.json"))
 
 TypeScript (`@attest-ai/core`) has the same adapter; both methods are async because they resolve the engine:
 
+<!-- snippet: fragment reason="excerpt: `exporter` is the in-memory span exporter built in the agent's own test setup" -->
 ```typescript
 import { readFileSync } from "node:fs";
 import { OTelAdapter } from "@attest-ai/core";
@@ -314,6 +330,7 @@ The conversion runs in the engine (`attest-engine trace convert`), the same mapp
 
 A framework adapter captures LLM calls internally. Use both tiers only when you need separate assertions at each level:
 
+<!-- snippet: fragment reason="excerpt: relies on `response`, defined outside the snippet" -->
 ```python
 from attest import OpenAIAdapter, LangChainAdapter, AgentResult, expect
 
@@ -374,6 +391,7 @@ class MistralAdapter(BaseProviderAdapter):
 
 **Optional override — `_build_output`:** Customize the trace output dict (default: `{"message": completion_text}`).
 
+<!-- snippet: fragment reason="excerpt: relies on `Any`, defined outside the snippet" -->
 ```python
 def _build_output(
     self, response: Any, completion_text: str, **metadata: Any
