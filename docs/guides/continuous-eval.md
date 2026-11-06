@@ -94,8 +94,7 @@ const runner = new ContinuousEvalRunner(new AttestClient(engine), assertions, {
 });
 runner.start();
 runner.submit(productionTrace(1)); // queued; the loop evaluates it
-while (runner.queueLength > 0) await new Promise((resolve) => setTimeout(resolve, 50));
-await runner.stop(); // waits for the evaluation in flight, then stops
+await runner.stop(); // drains queued traces, waits for the evaluation in flight, then stops
 await engine.stop();
 ```
 
@@ -112,11 +111,15 @@ Judge and embedding assertions need a configured provider like any other run, se
 | Queue bound | `maxsize`, else `ATTEST_CONTINUOUS_QUEUE_SIZE`, else 1000 | `maxSize`, else `ATTEST_CONTINUOUS_QUEUE_SIZE`, else 1000 |
 | Error callback | `on_error` | `onError` |
 | Bound on one alert POST, default 10 s | `dispatch_timeout_s` | `dispatchTimeoutMs` |
-| Bound on `stop()`, default 30 s (Python) / 15 s (TypeScript) | `drain_timeout_s` | `drainTimeoutMs` |
+| Bound on `stop()` (queue drain plus in-flight work), default 30 s (Python) / 15 s (TypeScript) | `drain_timeout_s` | `drainTimeoutMs` |
 
 `start()` and `submit()` are coroutines in Python (`await` both) and plain calls in TypeScript. A full queue drops the trace: Python logs a warning, TypeScript's `submit()` returns `false`. To evaluate one trace right away instead of queueing it, call `evaluate_trace(trace)` (Python) or `evaluateTrace(trace)` (TypeScript). The call returns the batch result, or `None` / `null` when sampling skipped the trace.
 
-Either destination may be omitted. Python reads drift only when a destination is set and skips the read in simulation mode, so an alert in simulation mode carries `null` baseline fields.
+Either destination may be omitted. When the Python runner is given no `alert_webhook` or `alert_slack_url`, it falls back to `attest.config(alert_webhook=..., alert_slack_url=...)`, then to the `ATTEST_ALERT_WEBHOOK` and `ATTEST_ALERT_SLACK_URL` environment variables. An explicit runner argument always wins. TypeScript has no global alert configuration; pass `alertWebhook` and `alertSlackUrl` to the runner.
+
+In both SDKs `stop()` first drains the traces still queued, then waits for the evaluation in flight, and returns when both finish or when `drain_timeout_s` / `drainTimeoutMs` elapses.
+
+Python reads drift only when a destination is set and skips the read in simulation mode, so an alert in simulation mode carries `null` baseline fields.
 
 ## Alert payload
 
@@ -165,12 +168,9 @@ A failing error callback is logged and ignored. TypeScript also emits `alertErro
 
 ## Stop and drain
 
-`stop()` ends the loop and then waits for work that already started, bounded by the drain timeout:
+`stop()` ends the loop, evaluates and alerts the traces still queued, then waits for the evaluation in flight, all bounded by the drain timeout (`drain_timeout_s` / `drainTimeoutMs`). Traces submitted before `stop()` are therefore not lost in either SDK.
 
-- Python waits for the whole queue as well as the evaluation in flight, so traces submitted before `stop()` are evaluated and alerted.
-- TypeScript waits only for evaluations and dispatches already in flight. Traces still in the queue are not evaluated; `queueLength` shows how many remain. Wait for it to reach 0 before calling `stop()` if that matters.
-
-On timeout both runners report an error through the callback and stop waiting; Python also cancels the pending work.
+On timeout the runner reports an error through the callback with the number of traces not evaluated and discards the entire remaining queue: nothing is evaluated after the timeout and nothing is left for a restart. The evaluation already in flight is left to finish, and no further trace is dequeued. Both SDKs behave identically.
 
 ## Name and ids
 

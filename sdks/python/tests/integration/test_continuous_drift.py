@@ -300,3 +300,24 @@ async def test_zero_threshold_resolves_like_the_engine_and_alerts_on_a_soft_rise
     assert alert["status"] == continuous.STATUS_DRIFT_DETECTED
     assert alert["result_status"] == STATUS_SOFT_FAIL
     assert alert["static_threshold"] == 0.8
+
+
+async def test_query_drift_static_threshold_moves_the_bar_in_the_real_engine(
+    client: AttestClient,
+) -> None:
+    runner = ContinuousEvalRunner(
+        client=client,
+        assertions=[_judge_assertion(threshold=0, soft=True)],
+        name="static-threshold",
+    )
+    for n in range(10):
+        await runner.evaluate_trace(_trace("mid", n))
+    await runner.evaluate_trace(_trace("up", 0))
+    assertion_id = runner._assertions[0].assertion_id
+
+    below = await client.query_drift(assertion_id, static_threshold=0.6)
+    above = await client.query_drift(assertion_id, static_threshold=0.95)
+
+    assert below.latest_score == 0.7
+    assert below.status == "ok"
+    assert above.status == continuous.STATUS_DRIFT_DETECTED

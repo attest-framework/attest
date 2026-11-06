@@ -282,26 +282,53 @@ export class ContinuousEvalRunner {
     this.scheduleNext();
   }
 
-  /** Stops the loop, then waits (bounded by `drainTimeoutMs`) for in-flight evaluations and dispatches. */
+  /**
+   * Stops the loop, then processes the traces already queued and waits for in-flight evaluations
+   * and dispatches, all bounded by `drainTimeoutMs`. At the bound the whole remaining queue is
+   * discarded (nothing is evaluated after the timeout and nothing is left for a restart), the
+   * evaluation already in flight is left to finish, and the timeout with the number of discarded
+   * traces is reported through `onError`.
+   */
   async stop(): Promise<void> {
     this.running = false;
     if (this.loopTimer !== null) {
       clearTimeout(this.loopTimer);
       this.loopTimer = null;
     }
-    if (this.inFlight.size === 0) return;
+    if (this.inFlight.size === 0 && this.queue.length === 0) return;
+    let expired = false;
+    let discarded = 0;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const bound = new Promise<"timeout">((resolve) => {
-      timer = setTimeout(() => resolve("timeout"), this.drainTimeoutMs);
+      timer = setTimeout(() => {
+        expired = true;
+        discarded = this.queue.splice(0).length;
+        resolve("timeout");
+      }, this.drainTimeoutMs);
     });
-    const drained = Promise.allSettled([...this.inFlight]).then(() => "drained" as const);
+    const drained = this.drainQueue(() => expired).then(() => "drained" as const);
     const outcome = await Promise.race([drained, bound]);
     clearTimeout(timer);
     if (outcome === "timeout") {
       this.emitError(
-        new Error(`stop() gave up after ${this.drainTimeoutMs} ms with ${this.inFlight.size} evaluation(s) in flight`),
+        new Error(
+          `stop() gave up after ${this.drainTimeoutMs} ms with ${this.inFlight.size} evaluation(s) in flight; discarded ${discarded} queued trace(s) not evaluated`,
+        ),
       );
     }
+  }
+
+  private async drainQueue(expired: () => boolean): Promise<void> {
+    while (!expired()) {
+      const trace = this.queue.shift();
+      if (trace === undefined) break;
+      try {
+        await this.evaluateTrace(trace);
+      } catch (error) {
+        this.reportError(error);
+      }
+    }
+    await Promise.allSettled([...this.inFlight]);
   }
 
   get queueLength(): number {
