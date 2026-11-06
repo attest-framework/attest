@@ -36,7 +36,7 @@ jobs:
       versions: ${{ steps.filter.outputs.versions }}
       release: ${{ steps.filter.outputs.release }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
@@ -85,6 +85,9 @@ jobs:
               - ".github/workflows/ci.yml"
             github_config:
               - ".github/**"
+              - "scripts/check-action-pins.py"
+              - "sdks/python/src/attest/scaffold.py"
+              - "sdks/typescript/packages/core/src/scaffold.ts"
             versions:
               - "VERSION"
               - "engine/internal/buildinfo/**"
@@ -115,10 +118,10 @@ jobs:
     if: needs.changes.outputs.engine == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-go@v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: "1.27"
           cache-dependency-path: engine/go.sum
@@ -148,10 +151,10 @@ jobs:
     needs: engine-test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-go@v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: "1.27"
           cache-dependency-path: engine/go.sum
@@ -159,7 +162,7 @@ jobs:
         run: cd engine && go build -o ../bin/attest-engine ./cmd/attest-engine/
       - name: Verify binary
         run: ./bin/attest-engine version
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: attest-engine-linux-amd64
           path: bin/attest-engine
@@ -173,19 +176,19 @@ jobs:
       matrix:
         python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-python@v7
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: ${{ matrix.python-version }}
-      - uses: astral-sh/setup-uv@v7
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
       - name: Install dependencies
         run: |
           cd sdks/python
           uv venv .venv
           uv pip install -e ".[dev]"
-      - uses: actions/setup-go@v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: "1.27"
           cache-dependency-path: engine/go.sum
@@ -229,18 +232,18 @@ jobs:
       matrix:
         node-version: ["20", "22"]
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: pnpm/action-setup@v6
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
         with:
           package_json_file: sdks/typescript/package.json
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: ${{ matrix.node-version }}
           cache: pnpm
           cache-dependency-path: sdks/typescript/pnpm-lock.yaml
-      - uses: actions/setup-go@v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: "1.27"
           cache-dependency-path: engine/go.sum
@@ -282,16 +285,16 @@ jobs:
       matrix:
         vitest-major: ["3", "4"]
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
         with:
           package_json_file: sdks/typescript/package.json
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "22"
-      - uses: actions/setup-go@v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: "1.27"
           cache: false
@@ -326,18 +329,18 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-python@v7
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.12"
       # No caches: this job runs the most third-party code, and on main a save would be
       # restored by the other jobs.
-      - uses: astral-sh/setup-uv@v7
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
         with:
           enable-cache: false
-      - uses: actions/setup-go@v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: "1.27"
           cache: false
@@ -374,7 +377,7 @@ jobs:
     if: github.event_name == 'pull_request' && needs.changes.outputs.setup_attest == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           path: attest-action
           persist-credentials: false
@@ -401,10 +404,10 @@ jobs:
     if: needs.changes.outputs.github_config == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           persist-credentials: false
-      - uses: actions/setup-go@v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: "1.27"
           cache: false
@@ -414,9 +417,20 @@ jobs:
         run: |
           go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
           "$(go env GOPATH)/bin/actionlint" -color
-      - uses: astral-sh/setup-uv@v7
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
       - name: dependabot.yml schema
         run: uvx check-jsonschema==0.39.0 --builtin-schema vendor.dependabot .github/dependabot.yml
+      - name: Action pins
+        run: python3 scripts/check-action-pins.py
+      - name: Scaffolded workflow (actionlint and action pins)
+        run: |
+          set -euo pipefail
+          actionlint="$(go env GOPATH)/bin/actionlint"
+          scratch="$(mktemp -d)"
+          git init -q "$scratch"
+          (cd "$scratch" && uv run --project "$GITHUB_WORKSPACE/sdks/python" attest init --ci github)
+          python3 scripts/check-action-pins.py "$scratch/.github/workflows"
+          (cd "$scratch" && "$actionlint" -color)
 
   versions:
     name: Version source of truth
@@ -424,10 +438,10 @@ jobs:
     if: needs.changes.outputs.versions == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "20"
       - name: Verify version sources agree
@@ -443,70 +457,6 @@ jobs:
     permissions:
       contents: read
     uses: ./.github/workflows/release-build.yml
-
-  # Notify docs site of SDK changes so it can rebuild
-  # Requires DOCS_DEPLOY_TOKEN secret: GitHub PAT with repo scope
-  # for cross-repo repository_dispatch to attest-framework/attest-framework.github.io
-  notify-docs-python:
-    needs: sdk-python
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          persist-credentials: false
-          fetch-depth: 2
-      - name: Check for SDK source changes
-        id: changes
-        run: |
-          if git diff --name-only HEAD~1 HEAD | grep -qE '^sdks/python/src/attest/'; then
-            echo "sdk_changed=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "sdk_changed=false" >> "$GITHUB_OUTPUT"
-          fi
-      - name: Dispatch docs rebuild
-        if: steps.changes.outputs.sdk_changed == 'true' && env.HAS_TOKEN == 'true'
-        env:
-          HAS_TOKEN: ${{ secrets.DOCS_DEPLOY_TOKEN != '' }}
-        uses: peter-evans/repository-dispatch@v4
-        with:
-          token: ${{ secrets.DOCS_DEPLOY_TOKEN }}
-          repository: attest-framework/attest-framework.github.io
-          event-type: docs-update
-
-  # Notify docs site of SDK changes so it can rebuild
-  # Requires DOCS_DEPLOY_TOKEN secret: GitHub PAT with repo scope
-  # for cross-repo repository_dispatch to attest-framework/attest-framework.github.io
-  notify-docs-typescript:
-    needs: sdk-typescript
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: sdks/typescript
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          persist-credentials: false
-          fetch-depth: 2
-      - name: Check for SDK source changes
-        id: changes
-        working-directory: .
-        run: |
-          if git diff --name-only HEAD~1 HEAD | grep -qE '^sdks/typescript/packages/core/src/'; then
-            echo "sdk_changed=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "sdk_changed=false" >> "$GITHUB_OUTPUT"
-          fi
-      - name: Dispatch docs rebuild
-        if: steps.changes.outputs.sdk_changed == 'true' && env.HAS_TOKEN == 'true'
-        env:
-          HAS_TOKEN: ${{ secrets.DOCS_DEPLOY_TOKEN != '' }}
-        uses: peter-evans/repository-dispatch@v4
-        with:
-          token: ${{ secrets.DOCS_DEPLOY_TOKEN }}
-          repository: attest-framework/attest-framework.github.io
-          event-type: docs-update
 
   required:
     name: required
