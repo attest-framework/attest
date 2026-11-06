@@ -134,6 +134,8 @@ jobs:
               - "proto/**"
               - "scripts/run_doc_snippets*"
               - "scripts/doc_snippet_fixtures/**"
+              - "scripts/doc_snippet_harness/**"
+              - "Makefile"
               - ".github/workflows/ci.yml"
 
   engine-test:
@@ -509,8 +511,9 @@ jobs:
         run: make check-claims
 
   # Runs every runnable code block in the README and the guides (scripts/run_doc_snippets.py)
-  # offline: simulation mode, no provider keys, the locally built engine, the editable Python
-  # SDK and the built TypeScript packages. Blocks that cannot run standalone carry a
+  # in simulation mode with provider keys removed and proxies set to unreachable addresses (not
+  # network isolation), using the locally built engine, the editable Python SDK and the built
+  # TypeScript packages. Blocks that cannot run standalone carry a
   # `<!-- snippet: ... -->` marker with a reason; the job prints each one.
   snippets:
     name: Documentation snippets
