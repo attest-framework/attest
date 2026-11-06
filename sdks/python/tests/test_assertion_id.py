@@ -16,6 +16,7 @@ from attest.assertion_id import (
     OccurrenceCounter,
     canonical_input,
     canonical_spec,
+    canonicalize,
     compute_assertion_id,
 )
 
@@ -28,7 +29,7 @@ _INVALID: list[dict[str, Any]] = _DOC.get("invalid", [])
 
 
 def test_vectors_file_has_all_vectors() -> None:
-    assert len(_VECTORS) == 35
+    assert len(_VECTORS) == 40
     assert len(_INVALID) == 7
 
 
@@ -169,6 +170,12 @@ def test_effect_world_is_evidence_only_without_mutating_wire_spec() -> None:
     assert canonical_spec("effect", baseline) != canonical_spec(
         "effect", {**baseline, "predicate": {"world": {"expected": 2}}}
     )
+
+
+@pytest.mark.parametrize("spec", [[], ["world", {"world": 1}], "world", 7, True, False])
+def test_non_object_effect_spec_is_not_projected(spec: Any) -> None:
+    assert canonical_spec("effect", spec) == canonicalize(spec)
+    assert canonical_input("s", "effect", spec, 0) == (f'["s","effect",{canonicalize(spec)},0]')
 
 
 def test_effect_occurrences_count_contract_not_world() -> None:

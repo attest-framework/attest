@@ -105,6 +105,7 @@ def test_build_report_tags_rows_with_test_location_and_matches_schema() -> None:
     report = build_report([failed, skipped], simulated=False, usage=Usage())
 
     _validate(report)
+    assert report["effect_world_excluded"] is True
     assert report["summary"] == {
         "total": 4,
         "passed": 1,
@@ -160,6 +161,7 @@ def test_attest_report_option_writes_every_test_with_outcome_and_line(
     result.assert_outcomes(passed=2, failed=1, skipped=1, errors=1)
     report = json.loads((pytester.path / "out" / "r.json").read_text())
     _validate(report)
+    assert report["effect_world_excluded"] is True
     by_name = {t["name"]: t for t in report["tests"]}
     assert {n: (t["outcome"], t["line"]) for n, t in by_name.items()} == {
         "test_ok": ("passed", 3),

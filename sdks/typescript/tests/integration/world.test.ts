@@ -126,7 +126,7 @@ describe.skipIf(!existsSync(enginePath))("world (real engine)", { timeout: 30_00
       const report = (name: string, row: AssertionResult) => {
         const file = join(dir, name);
         writeFileSync(file, JSON.stringify({
-          report_version: 2, id_scheme: 2, timestamp: "2026-11-07T00:00:00Z",
+          report_version: 2, id_scheme: 2, effect_world_excluded: true, timestamp: "2026-11-07T00:00:00Z",
           summary: { total: 1, passed: row.status === "pass" ? 1 : 0, hard_fail: row.status === "hard_fail" ? 1 : 0, soft_fail: 0, not_evaluated: 0 },
           results: [row], tests: [], total_cost: 0, total_duration_ms: 0,
         }));

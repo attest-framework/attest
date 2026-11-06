@@ -42,7 +42,7 @@ function decodeHex(hex: string): string {
 
 describe("assertion id scheme 2 golden vectors", () => {
   it("includes published effect evidence vectors and invalid vectors", () => {
-    expect(doc.vectors).toHaveLength(35);
+    expect(doc.vectors).toHaveLength(40);
     expect(doc.invalid).toHaveLength(7);
   });
 
@@ -149,7 +149,9 @@ describe("AssertionIdAssigner", () => {
     // Replay contracts carry the type and spec separately, just like wire assertions.
     const replayContracts = doc.vectors.filter((v) => v.assertion_type === "effect");
     for (const contract of replayContracts) {
-      const spec = JSON.parse(contract.spec_json) as Record<string, unknown>;
+      const spec: unknown = JSON.parse(contract.spec_json);
+      // Non-object vectors exercise identity encoding, not valid replay contracts.
+      if (spec === null || typeof spec !== "object" || Array.isArray(spec)) continue;
       expect(assertionIdOf(contract.scope_id, contract.assertion_type, {
         ...spec, world: { resources: { refunds: [] }, events: [] },
       }, contract.occurrence_index)).toBe(contract.id);

@@ -229,6 +229,9 @@ func TestNewBaselineStore_LegacyTable_MigratesAndReadsOneRun(t *testing.T) {
 	}
 	want := map[string][3]int{"f": {0, 1, 0}, "n": {0, 0, 1}, "p": {1, 1, 0}}
 	for _, e := range got {
+		if e.EffectWorldExcluded {
+			t.Errorf("legacy row %s must retain the missing identity marker", e.AssertionID)
+		}
 		if w := want[e.AssertionID]; [3]int{e.Passes, e.Evaluated, e.NotEvaluated} != w {
 			t.Errorf("%s counts = %d/%d/%d, want %v", e.AssertionID, e.Passes, e.Evaluated, e.NotEvaluated, w)
 		}
@@ -247,5 +250,23 @@ func TestBaselineStore_PinWithCounts_RoundTrips(t *testing.T) {
 
 	if err != nil || len(got) != 1 || got[0].Passes != 18 || got[0].Evaluated != 20 || got[0].NotEvaluated != 1 {
 		t.Fatalf("Get = %+v, %v; want 18/20 with 1 not evaluated", got, err)
+	}
+}
+
+func TestBaselineStore_EffectIdentityMarkerRoundTrips(t *testing.T) {
+	store := newBaselineStore(t)
+	entries := []cache.BaselineEntry{
+		{AssertionID: "legacy", Type: "effect", Status: "pass", IDScheme: 2},
+		{AssertionID: "modern", Type: "effect", Status: "pass", IDScheme: 2, EffectWorldExcluded: true},
+	}
+	if err := store.Pin("effects", entries); err != nil {
+		t.Fatal(err)
+	}
+	got, err := store.Get("effects")
+	if err != nil || len(got) != 2 {
+		t.Fatalf("Get = %+v, %v", got, err)
+	}
+	if got[0].EffectWorldExcluded || !got[1].EffectWorldExcluded {
+		t.Fatalf("identity marker changed across pin/get: %+v", got)
 	}
 }

@@ -79,6 +79,7 @@ def test_xdist_report_four_failing_tests_has_four_hard_fails_and_policy_exits_1(
 
     result.assert_outcomes(failed=4)
     report = json.loads((pytester.path / "r.json").read_text())
+    assert report["effect_world_excluded"] is True
     assert _counts(report) == {
         "total": 4,
         "passed": 0,
@@ -146,6 +147,7 @@ def _worker_doc(*, trace_id: str, trace_value: str, status: str, test_id: str) -
     return {
         "report_version": 2,
         "id_scheme": 2,
+        "effect_world_excluded": True,
         "budget_exceeded": False,
         "timestamp": "2026-01-01T00:00:00Z",
         "simulated": False,
@@ -174,6 +176,9 @@ def test_merge_reports_distinct_traces_sharing_an_id_are_renumbered_with_their_r
     )
 
     merged = merge_reports([first, second], tests_collected=2, usage=Usage(model_calls=3))
+    assert first["effect_world_excluded"] is True
+    assert second["effect_world_excluded"] is True
+    assert merged["effect_world_excluded"] is True
 
     assert merged["traces"] == {
         "trc": {"output": {"message": "x"}},
@@ -203,3 +208,36 @@ def test_merge_reports_equal_traces_share_one_entry() -> None:
 def test_merge_reports_without_documents_raises() -> None:
     with pytest.raises(ValueError, match="at least one"):
         merge_reports([], tests_collected=0, usage=Usage())
+
+
+@pytest.mark.parametrize("marker", [None, False, True])
+def test_merge_reports_preserves_effect_worker_identity_provenance(marker: bool | None) -> None:
+    current = _worker_doc(
+        trace_id="current", trace_value="x", status=STATUS_PASS, test_id="t.py::current"
+    )
+    legacy = _worker_doc(
+        trace_id="legacy", trace_value="y", status=STATUS_PASS, test_id="t.py::legacy"
+    )
+    legacy["results"][0]["type"] = "effect"
+    if marker is None:
+        legacy.pop("effect_world_excluded")
+    else:
+        legacy["effect_world_excluded"] = marker
+
+    merged = merge_reports([current, legacy], tests_collected=2, usage=Usage())
+
+    assert merged["effect_world_excluded"] is (marker is True)
+
+
+@pytest.mark.parametrize("empty", [False, True])
+def test_merge_reports_unmarked_non_effect_workers_remain_compatible(empty: bool) -> None:
+    legacy = _worker_doc(
+        trace_id="legacy", trace_value="x", status=STATUS_PASS, test_id="t.py::legacy"
+    )
+    legacy.pop("effect_world_excluded")
+    if empty:
+        legacy["results"] = []
+
+    merged = merge_reports([legacy], tests_collected=1, usage=Usage())
+
+    assert merged["effect_world_excluded"] is True

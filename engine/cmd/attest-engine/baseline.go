@@ -116,8 +116,9 @@ type reportEnvelope struct {
 	TotalCost       float64                 `json:"total_cost"`
 	TotalDurationMS int64                   `json:"total_duration_ms"`
 	// IDScheme is the report's assertion-id scheme; absent (0) means 1.
-	IDScheme       int  `json:"id_scheme"`
-	BudgetExceeded bool `json:"budget_exceeded"`
+	IDScheme            int  `json:"id_scheme"`
+	EffectWorldExcluded bool `json:"effect_world_excluded"`
+	BudgetExceeded      bool `json:"budget_exceeded"`
 }
 
 // scheme returns the assertion-id scheme, reading an absent field as 1.
@@ -166,6 +167,7 @@ func baselinePin(args []string) {
 	entries := report.BaselineEntries(env.Results)
 	for i := range entries {
 		entries[i].IDScheme = env.scheme()
+		entries[i].EffectWorldExcluded = env.EffectWorldExcluded
 	}
 
 	store, closer, err := openBaselineStore()
@@ -316,6 +318,18 @@ func computeBaselineDelta(tag string, env *reportEnvelope) (*report.BaselineDelt
 	}
 	if got := env.scheme(); got != report.IDSchemeCurrent {
 		return nil, fmt.Errorf("report uses id scheme %d; re-run with an SDK on 1.1", got)
+	}
+	for _, entry := range entries {
+		if entry.Type == types.TypeEffect && !entry.EffectWorldExcluded {
+			return nil, fmt.Errorf("baseline %s holds effect assertions pinned before effect ids excluded the world snapshot; re-pin it from a report written by attest 1.1.0-rc.4 or later", tag)
+		}
+	}
+	if !env.EffectWorldExcluded {
+		for _, row := range env.Results {
+			if row.Type == types.TypeEffect {
+				return nil, fmt.Errorf("report holds effect assertions written before effect ids excluded the world snapshot; re-run it with attest 1.1.0-rc.4 or later")
+			}
+		}
 	}
 	d := report.ComputeBaselineDelta(tag, entries, env.Results)
 	return &d, nil

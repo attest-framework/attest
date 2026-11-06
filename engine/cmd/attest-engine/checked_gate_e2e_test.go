@@ -33,6 +33,7 @@ func writeGateReport(t *testing.T, dir, name string, idScheme int, budgetExceede
 	env := map[string]any{
 		"report_version": 2, "timestamp": "2026-11-05T00:00:00Z", "results": results,
 		"total_cost": 0, "total_duration_ms": 1, "budget_exceeded": budgetExceeded,
+		"effect_world_excluded": true,
 	}
 	if idScheme != 0 {
 		env["id_scheme"] = idScheme
@@ -255,5 +256,62 @@ func TestPolicyEvaluate_EffectWorldChangeIsRegressionNotSpecChange(t *testing.T)
 	}
 	if len(r.out.Changed) != 0 {
 		t.Errorf("runtime world change reported as spec edit: %+v", r.out.Changed)
+	}
+}
+
+func withoutEffectIdentityMarker(t *testing.T, path string) string {
+	t.Helper()
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var report map[string]any
+	if err := json.Unmarshal(raw, &report); err != nil {
+		t.Fatal(err)
+	}
+	delete(report, "effect_world_excluded")
+	raw, err = json.Marshal(report)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, raw, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func TestPolicyEvaluate_LegacyEffectIdentityFailsClosed(t *testing.T) {
+	for _, tc := range []struct {
+		name, typ, hint            string
+		legacyBaseline, legacyHead bool
+		wantCode                   int
+	}{
+		{"legacy effect baseline", "effect", "baseline main holds effect assertions pinned before effect ids excluded the world snapshot; re-pin it from a report written by attest 1.1.0-rc.4 or later", true, false, 3},
+		{"legacy effect head", "effect", "report holds effect assertions written before effect ids excluded the world snapshot; re-run it with attest 1.1.0-rc.4 or later", false, true, 3},
+		{"both legacy effect", "effect", "re-pin it", true, true, 3},
+		{"legacy non-effect baseline", "content", "", true, false, 0},
+		{"legacy non-effect head", "content", "", false, true, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			baseRows := []gateRow{{ID: "old-id", Scope: "effect::test", Type: tc.typ, Spec: "old-hash", Status: types.StatusPass}}
+			headRows := []gateRow{{ID: "new-id", Scope: "effect::test", Type: tc.typ, Spec: "new-hash", Status: types.StatusHardFail}}
+			r := gateEvaluate(t, "block_on_regression: true\n",
+				func(dir string) string {
+					path := writeGateReport(t, dir, "baseline.json", 2, false, baseRows)
+					if tc.legacyBaseline {
+						path = withoutEffectIdentityMarker(t, path)
+					}
+					return path
+				}, func(dir string) string {
+					path := writeGateReport(t, dir, "head.json", 2, false, headRows)
+					if tc.legacyHead {
+						path = withoutEffectIdentityMarker(t, path)
+					}
+					return path
+				})
+			if r.code != tc.wantCode || !strings.Contains(r.stderr, tc.hint) {
+				t.Fatalf("exit %d, want %d; stdout=%s stderr=%s", r.code, tc.wantCode, r.stdout, r.stderr)
+			}
+		})
 	}
 }
