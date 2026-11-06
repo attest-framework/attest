@@ -293,39 +293,6 @@ func decodeJSON(data []byte) (any, error) {
 	return v, nil
 }
 
-// environmentReminder matches the <system-reminder> blocks Claude Code adds
-// to every request to describe the run, not the task: the working directory,
-// platform and shell, the model name, the token budget and today's date.
-// They differ between a recording and its replay, and not in a way that
-// changes the agent's behavior.
-var environmentReminder = regexp.MustCompile(`(?s)<system-reminder>\s*(?:# Environment\b|You are powered by the model named|<total_tokens>|Today's date is).*?</system-reminder>`)
-
-const environmentReminderStub = "<system-reminder>[environment]</system-reminder>"
-
-// normalizeEnvironmentReminders replaces every environment reminder in the
-// strings of v with a fixed stub, for matching only: the stored request is
-// not changed. Reminders that carry instructions or project memory stay.
-func normalizeEnvironmentReminders(v any) any {
-	switch x := v.(type) {
-	case map[string]any:
-		out := make(map[string]any, len(x))
-		for k, e := range x {
-			out[k] = normalizeEnvironmentReminders(e)
-		}
-		return out
-	case []any:
-		out := make([]any, len(x))
-		for i, e := range x {
-			out[i] = normalizeEnvironmentReminders(e)
-		}
-		return out
-	case string:
-		return environmentReminder.ReplaceAllLiteralString(x, environmentReminderStub)
-	default:
-		return v
-	}
-}
-
 // identityParam reports whether a request parameter counts toward the replay
 // key, and the value that does. metadata.user_id names the device, account
 // and session of the caller, which change with every run; the rest of
@@ -367,7 +334,7 @@ func keyOf(api string, request any) (Key, error) {
 		switch {
 		case name == "model" || name == "tools":
 		case !known || contains(fields, name):
-			prompt[name] = normalizeEnvironmentReminders(v)
+			prompt[name] = normalizePromptField(name, v)
 		default:
 			if v, keep := identityParam(name, v); keep {
 				params[name] = v

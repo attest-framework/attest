@@ -291,7 +291,7 @@ func componentsOf(api string, req any) components {
 	// A request to an API without a known prompt split is identified by its
 	// whole body (minus model and tools), reported as one part.
 	if !known {
-		c.messages = normalizeEnvironmentReminders(rest)
+		c.messages = rest
 		return c
 	}
 	c.params = rest
@@ -305,7 +305,7 @@ func componentsOf(api string, req any) components {
 	case "messages":
 		c.system, c.messages = body["system"], body["messages"]
 	}
-	c.system, c.messages = normalizeEnvironmentReminders(c.system), normalizeEnvironmentReminders(c.messages)
+	c.system, c.messages = normalizeSystem(c.system), normalizeConversation(c.messages)
 	return c
 }
 
