@@ -36,7 +36,7 @@ PROVIDER_HOST_SUFFIXES = (".openai.azure.com", "-aiplatform.googleapis.com")
 _BEDROCK_HOST = re.compile(r"^bedrock-runtime\.[a-z0-9-]+\.amazonaws\.com$")
 # First line of a request an HTTP client sends to a forward proxy: ``CONNECT host:port`` for
 # TLS tunnels, or an absolute-URI request line (``GET http://host/path``) for plain HTTP.
-_PROXY_REQUEST_LINE = re.compile(rb"^([A-Z]{3,7}) (\S{1,2048}) HTTP/1\.[01]\r\n")
+_PROXY_REQUEST_LINE = re.compile(rb"^([A-Z]{3,7}) (\S{1,8192}) HTTP/1\.[01]\r\n")
 
 
 class EgressBlockedError(ConnectionError):
@@ -66,7 +66,7 @@ def proxied_target_host(data: object) -> str | None:
     """
     if not isinstance(data, (bytes, bytearray, memoryview)):
         return None
-    match = _PROXY_REQUEST_LINE.match(bytes(data[:2100]))
+    match = _PROXY_REQUEST_LINE.match(bytes(data[:8200]))
     if match is None:
         return None
     method, target = match.group(1), match.group(2).decode("ascii", "replace")
@@ -103,12 +103,93 @@ def _blocked(host: object) -> EgressBlockedError:
     )
 
 
-def _check_proxied(sock: socket.socket, data: object) -> None:
-    host = proxied_target_host(data)
+# Longest first request line a socket may buffer before the guard refuses it.
+_MAX_REQUEST_LINE = 8192
+_OVERSIZED = "an oversized request line"
+_METHOD_PREFIX = re.compile(rb"[A-Z]*")
+
+
+class _Pending:
+    """Outgoing bytes held back on a socket until its first request line is complete."""
+
+    __slots__ = ("buffer",)
+
+    def __init__(self) -> None:
+        self.buffer = bytearray()
+
+
+# Sockets whose first request line is not yet decided. The guard cannot tell which sockets
+# lead to a proxy (HTTP(S)_PROXY, an explicit client ``proxy=`` option), so every socket's
+# first write is screened; bytes that cannot be an HTTP request line pass straight through.
+_pending: weakref.WeakKeyDictionary[socket.socket, _Pending] = weakref.WeakKeyDictionary()
+# Sockets whose first request line was inspected and allowed; their writes pass untouched.
+_cleared: weakref.WeakSet[socket.socket] = weakref.WeakSet()
+
+
+def _could_be_request_line(buffer: bytes) -> bool | None:
+    """``True`` when ``buffer`` can still become an HTTP request line, ``False`` when it
+    cannot (so the connection speaks something else), ``None`` when more bytes are needed."""
+    method = _METHOD_PREFIX.match(buffer)
+    end = method.end() if method is not None else 0
+    if end == 0 or end > 7:
+        return False
+    if end == len(buffer):
+        return None
+    return buffer[end : end + 1] == b" "
+
+
+def _screen_write(sock: socket.socket, data: bytes) -> bytes | None:
+    """Hold ``data`` until ``sock``'s first request line is complete, then decide.
+
+    Returns ``None`` while the line is incomplete (the bytes are buffered and the caller
+    reports them as sent), or every byte to forward once the line was allowed. Raises
+    :class:`EgressBlockedError` when the line names a provider or outgrows the buffer bound.
+    Splitting the line across writes (``CON`` + ``NECT api.openai.com:443``) therefore
+    cannot hide the target.
+    """
+    pending = _pending.get(sock)
+    if pending is None:
+        if sock in _cleared:
+            return data
+        pending = _pending[sock] = _Pending()
+    pending.buffer += data
+    buffer = bytes(pending.buffer)
+    line_end = buffer.find(b"\r\n")
+    if line_end == -1 and len(buffer) > _MAX_REQUEST_LINE:
+        _refuse_oversized(sock)
+    if line_end == -1:
+        if _could_be_request_line(buffer) is False:
+            _release(sock, cleared=True)
+            return buffer
+        return None
+    if line_end + 2 > _MAX_REQUEST_LINE:
+        _refuse_oversized(sock)
+    host = proxied_target_host(buffer)
     if host is not None and is_provider_host(host):
-        err = _blocked(host)
-        _blocked_sockets[sock] = host
-        raise err
+        _refuse(sock, host)
+    _release(sock, cleared=True)
+    return buffer
+
+
+def _release(sock: socket.socket, *, cleared: bool) -> None:
+    _pending.pop(sock, None)
+    if cleared:
+        _cleared.add(sock)
+
+
+def _refuse(sock: socket.socket, target: object) -> None:
+    _pending.pop(sock, None)
+    _blocked_sockets[sock] = str(target)
+    raise _blocked(target)
+
+
+def _refuse_oversized(sock: socket.socket) -> None:
+    _pending.pop(sock, None)
+    _blocked_sockets[sock] = _OVERSIZED
+    raise EgressBlockedError(
+        f"attest egress guard: first request line exceeds {_MAX_REQUEST_LINE} bytes, "
+        "so its target host cannot be checked (--attest-egress=block / ATTEST_EGRESS=block)"
+    )
 
 
 def _wrap_socket_method(name: str, is_write: bool) -> None:
@@ -118,8 +199,24 @@ def _wrap_socket_method(name: str, is_write: bool) -> None:
     if is_write:
 
         def guarded_write(self: socket.socket, data: Any, *args: Any) -> Any:
-            _check_proxied(self, data)
-            return real(self, data, *args)
+            blocked = _blocked_sockets.get(self)
+            if blocked is not None:
+                raise _blocked(blocked)
+            if name == "sendmsg":
+                flat = b"".join(bytes(part) for part in data)
+            elif isinstance(data, (bytes, bytearray, memoryview)):
+                flat = bytes(data)
+            else:
+                return real(self, data, *args)
+            ready = _screen_write(self, flat)
+            if ready is None:
+                return len(flat)
+            if ready is flat:
+                return real(self, data, *args)
+            # Earlier writes were held back and reported as sent: flush them with this one.
+            real_sendall = _socket_originals["sendall"]
+            real_sendall(self, ready)
+            return len(flat)
 
         setattr(socket.socket, name, guarded_write)
         return
@@ -154,7 +251,7 @@ def install() -> None:
         # provider appears solely in the CONNECT / absolute-URI request line, so refuse the
         # write that would carry it. Not covered: child processes (subprocess, the engine),
         # SOCKS proxies, and a TLS-wrapped proxy connection, which hides the request line.
-        for name in ("send", "sendall"):
+        for name in ("send", "sendall", "sendmsg"):
             _wrap_socket_method(name, is_write=True)
         for name in ("recv", "recv_into"):
             _wrap_socket_method(name, is_write=False)
@@ -171,6 +268,8 @@ def uninstall() -> None:
                 setattr(socket.socket, name, real)
             _socket_originals.clear()
             _blocked_sockets.clear()
+            _pending.clear()
+            _cleared.clear()
             _original = None
 
 

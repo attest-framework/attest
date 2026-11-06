@@ -18,6 +18,7 @@ class RecordingProxy:
 
     def __init__(self) -> None:
         self.request_lines: list[str] = []
+        self.raw_requests: list[bytes] = []
         self._server = socket.socket()
         self._server.bind(("127.0.0.1", 0))
         self._server.listen(8)
@@ -37,8 +38,14 @@ class RecordingProxy:
             with conn:
                 conn.settimeout(2)
                 try:
-                    data = conn.recv(4096)
+                    data = b""
+                    while b"\r\n\r\n" not in data:
+                        chunk = conn.recv(4096)
+                        if not chunk:
+                            break
+                        data += chunk
                     if data:
+                        self.raw_requests.append(data)
                         self.request_lines.append(
                             data.split(b"\r\n", 1)[0].decode("ascii", "replace")
                         )
@@ -106,7 +113,7 @@ def test_proxied_non_provider_request_reaches_the_proxy(guard: None, proxy: Reco
 
 
 def test_guard_release_restores_socket_methods() -> None:
-    names = ("send", "sendall", "recv", "recv_into")
+    names = ("send", "sendall", "sendmsg", "recv", "recv_into")
     before = {n: getattr(socket.socket, n) for n in names}
     egress.install()
     egress.uninstall()
@@ -156,3 +163,120 @@ def test_is_provider_host_rejects_lookalikes(host: str) -> None:
 )
 def test_proxied_target_host_parses_request_lines(data: bytes, host: str | None) -> None:
     assert egress.proxied_target_host(data) == host
+
+
+def _proxy_port(proxy: RecordingProxy) -> int:
+    return int(proxy.url.rsplit(":", 1)[1])
+
+
+def _write_fragments(proxy: RecordingProxy, fragments: list[bytes]) -> None:
+    """Write ``fragments`` to the proxy one ``send`` at a time, as a split client would."""
+    with socket.create_connection(("127.0.0.1", _proxy_port(proxy)), timeout=3) as sock:
+        for fragment in fragments:
+            sock.sendall(fragment)
+        sock.settimeout(1)
+        try:
+            sock.recv(4096)
+        except (TimeoutError, OSError):
+            pass
+
+
+@pytest.fixture
+def proxied_env(proxy: RecordingProxy, monkeypatch: pytest.MonkeyPatch) -> RecordingProxy:
+    monkeypatch.setenv("HTTPS_PROXY", proxy.url)
+    monkeypatch.setenv("HTTP_PROXY", proxy.url)
+    monkeypatch.delenv("NO_PROXY", raising=False)
+    monkeypatch.delenv("no_proxy", raising=False)
+    return proxy
+
+
+PROVIDER_CONNECT = b"CONNECT api.openai.com:443 HTTP/1.1\r\nHost: api.openai.com:443\r\n\r\n"
+
+
+def test_split_connect_to_provider_is_blocked_before_the_proxy_sees_it(
+    guard: None, proxied_env: RecordingProxy
+) -> None:
+    with pytest.raises(egress.EgressBlockedError):
+        _write_fragments(proxied_env, [b"CON", PROVIDER_CONNECT[3:]])
+
+    assert proxied_env.raw_requests == []
+
+
+def test_byte_at_a_time_connect_to_provider_is_blocked(
+    guard: None, proxied_env: RecordingProxy
+) -> None:
+    fragments = [PROVIDER_CONNECT[i : i + 1] for i in range(len(PROVIDER_CONNECT))]
+
+    with pytest.raises(egress.EgressBlockedError):
+        _write_fragments(proxied_env, fragments)
+
+    assert proxied_env.raw_requests == []
+
+
+def test_split_absolute_form_provider_get_is_blocked(
+    guard: None, proxied_env: RecordingProxy
+) -> None:
+    request = b"GET http://api.openai.com/v1/models HTTP/1.1\r\nHost: api.openai.com\r\n\r\n"
+
+    with pytest.raises(egress.EgressBlockedError):
+        _write_fragments(proxied_env, [request[:5], request[5:30], request[30:]])
+
+    assert proxied_env.raw_requests == []
+
+
+def test_split_connect_via_sendmsg_to_provider_is_blocked(
+    guard: None, proxied_env: RecordingProxy
+) -> None:
+    with socket.create_connection(("127.0.0.1", _proxy_port(proxied_env)), timeout=3) as sock:
+        with pytest.raises(egress.EgressBlockedError):
+            sock.sendmsg([b"CON", PROVIDER_CONNECT[3:]])
+
+    assert proxied_env.raw_requests == []
+
+
+def test_split_connect_to_non_provider_reaches_the_proxy_intact(
+    guard: None, proxied_env: RecordingProxy
+) -> None:
+    request = b"CONNECT example.com:443 HTTP/1.1\r\nHost: example.com:443\r\n\r\n"
+
+    _write_fragments(proxied_env, [b"CON", request[3:10], request[10:]])
+
+    assert proxied_env.raw_requests == [request]
+
+
+def test_oversized_proxy_request_line_is_refused(guard: None, proxied_env: RecordingProxy) -> None:
+    with pytest.raises(egress.EgressBlockedError):
+        _write_fragments(proxied_env, [b"GET http://example.com/" + b"a" * 9000])
+
+    assert proxied_env.raw_requests == []
+
+
+def test_non_http_bytes_to_proxy_pass_through_immediately(
+    guard: None, proxied_env: RecordingProxy
+) -> None:
+    with socket.create_connection(("127.0.0.1", _proxy_port(proxied_env)), timeout=3) as sock:
+        assert sock.send(b"\x05\x01\x00") == 3
+
+
+def test_no_proxy_provider_host_connects_directly_and_is_blocked(
+    guard: None, proxied_env: RecordingProxy, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("NO_PROXY", "api.openai.com")
+    client = openai.OpenAI(api_key="sk-test-not-real", max_retries=0, timeout=3)
+
+    with pytest.raises(openai.APIConnectionError) as info:
+        client.models.list()
+
+    assert _caused_by_egress_block(info.value)
+    assert proxied_env.raw_requests == []
+
+
+def test_long_absolute_form_provider_request_line_is_blocked(
+    guard: None, proxied_env: RecordingProxy
+) -> None:
+    request = b"GET http://api.openai.com/" + b"a" * 3000 + b" HTTP/1.1\r\n\r\n"
+
+    with pytest.raises(egress.EgressBlockedError):
+        _write_fragments(proxied_env, [request])
+
+    assert proxied_env.raw_requests == []
