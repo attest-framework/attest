@@ -63,7 +63,7 @@ export default defineConfig({
 });
 ```
 
-The reporter collects the cost per test and writes it to the report-v2 file (`total_cost`, `summary.usage`) and prints the `attest usage:` line; `AttestCostReporter` no longer exists, so remove it from the `reporters` list.
+The reporter collects the cost per test and writes it to the report-v2 file (`total_cost`, `summary.usage`) and prints the `attest usage:` line when the run made or refused an Attest model call; `AttestCostReporter` no longer exists, so remove it from the `reporters` list.
 
 The report follows `proto/attest/v1/report-v2.schema.json`:
 
