@@ -190,8 +190,8 @@ func TestCheckRedaction_SecretWithQuoteInSSEBody_HitWithoutSecret(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(hits) != 1 {
-		t.Fatalf("hits = %v; want one", hits)
+	if len(hits) == 0 {
+		t.Fatal("an unredacted event stream was not flagged")
 	}
 	if printed := fmt.Sprint(hits); strings.Contains(printed, "planted-secret-value") {
 		t.Fatalf("hit report prints the secret: %s", printed)

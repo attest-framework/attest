@@ -4,11 +4,16 @@
 package redact
 
 import (
+	"bytes"
+	"encoding/json"
+	"fmt"
 	"net/url"
 	"os"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
+	"unicode/utf16"
 )
 
 // Marker replaces every redacted secret.
@@ -109,7 +114,7 @@ var keyPatterns = []*regexp.Regexp{
 // value (group 1) is redacted. A bare 32-hex string is not a secret: trace
 // ids and content hashes look the same.
 var contextPatterns = []*regexp.Regexp{
-	regexp.MustCompile(`(?i)(?:api[-_ ]?key|subscription[-_ ]?key|access[-_ ]?key|client[-_ ]?secret)(?:\s+is)?[\s"'\\:=]{1,8}([A-Za-z0-9]{32,64})\b`),
+	regexp.MustCompile(`(?i)(?:api[-_ ]?key|subscription[-_ ]?key|access[-_ ]?key|client[-_ ]?secret)(?:\s+is)?[\s"'\\:=]{1,8}([A-Za-z0-9]{32,})`),
 }
 
 // userinfoPattern matches scheme://user:password@ anywhere in text; only the
@@ -128,7 +133,8 @@ type Range struct {
 
 // Redactor replaces known secret values and key-shaped strings.
 type Redactor struct {
-	values []string
+	values  []string // secrets as given
+	targets []string // values plus their JSON-escaped forms
 }
 
 // New returns a Redactor for the given literal secrets. Values shorter than
@@ -149,7 +155,63 @@ func (r *Redactor) With(values ...string) *Redactor {
 		seen[v] = true
 		out.values = append(out.values, v)
 	}
+	seenTarget := map[string]bool{}
+	for _, v := range out.values {
+		for _, t := range append([]string{v}, jsonForms(v)...) {
+			if !seenTarget[t] {
+				seenTarget[t] = true
+				out.targets = append(out.targets, t)
+			}
+		}
+	}
 	return out
+}
+
+// jsonForms returns the forms a secret takes inside a JSON string, which is
+// how tool-call arguments reach a fixture (JSON text inside a string): standard
+// escaping, escaping with <, > and & as \uXXXX, and ASCII-only escaping as
+// Python's json.dumps writes it. Forms equal to v are omitted.
+func jsonForms(v string) []string {
+	var forms []string
+	add := func(f string) {
+		if f != v && !slices.Contains(forms, f) {
+			forms = append(forms, f)
+		}
+	}
+	add(jsonEscape(v, false))
+	add(jsonEscape(v, true))
+	add(asciiEscape(jsonEscape(v, false)))
+	add(asciiEscape(jsonEscape(v, true)))
+	return forms
+}
+
+// jsonEscape returns v as the inside of a JSON string literal.
+func jsonEscape(v string, escapeHTML bool) string {
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(escapeHTML)
+	if err := enc.Encode(v); err != nil {
+		return v // a Go string always encodes; keep the literal form
+	}
+	return strings.TrimSuffix(strings.TrimSpace(buf.String()), "\"")[1:]
+}
+
+// asciiEscape rewrites every non-ASCII rune of an encoded JSON string body as
+// \uXXXX, using surrogate pairs above the BMP.
+func asciiEscape(s string) string {
+	var b strings.Builder
+	for _, r := range s {
+		switch {
+		case r < 0x80:
+			b.WriteRune(r)
+		case r >= 0x10000:
+			hi, lo := utf16.EncodeRune(r)
+			fmt.Fprintf(&b, "\\u%04x\\u%04x", hi, lo)
+		default:
+			fmt.Fprintf(&b, "\\u%04x", r)
+		}
+	}
+	return b.String()
 }
 
 // Merge returns a Redactor holding the secrets of r and o.
@@ -200,27 +262,98 @@ func FromEnviron(environ []string) *Redactor {
 
 // FromDotenv returns a Redactor holding every secret in a dotenv file's
 // contents, by the same rule as the process environment: the value of a
-// variable whose name marks a secret, and the password of a URL value.
-// Blank lines and # comments are skipped; an `export ` prefix is allowed;
-// a value in single or double quotes loses the quotes.
+// variable whose name marks a secret, and the password of a URL value. Values
+// are parsed as python-dotenv and Node dotenv do: blank lines and # comments
+// are skipped, an `export ` prefix is allowed, an unquoted value ends at an
+// inline ` #` comment, a double-quoted value decodes \" \\ \n \r \t and may
+// span lines, a single-quoted value is literal, and text after a closing
+// quote is ignored.
 func FromDotenv(data []byte) *Redactor {
 	var environ []string
-	for _, line := range strings.Split(string(data), "\n") {
-		line = strings.TrimSpace(strings.TrimSuffix(line, "\r"))
+	text := string(data)
+	for len(text) > 0 {
+		var line string
+		line, text = cutLine(text)
+		line = strings.TrimSpace(line)
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
-		name, value, ok := strings.Cut(strings.TrimPrefix(line, "export "), "=")
+		name, rest, ok := strings.Cut(line, "=")
 		if !ok {
 			continue
 		}
-		value = strings.TrimSpace(value)
-		if n := len(value); n >= 2 && (value[0] == '"' || value[0] == '\'') && value[n-1] == value[0] {
-			value = value[1 : n-1]
+		name = strings.TrimSpace(name)
+		if after, found := strings.CutPrefix(name, "export"); found && strings.TrimSpace(after) != after {
+			name = strings.TrimSpace(after)
 		}
-		environ = append(environ, strings.TrimSpace(name)+"="+value)
+		var value string
+		value, text = dotenvValue(strings.TrimLeft(rest, " \t"), text)
+		environ = append(environ, name+"="+value)
 	}
 	return FromEnviron(environ)
+}
+
+// cutLine splits s at the first newline, dropping a trailing carriage return.
+func cutLine(s string) (line, rest string) {
+	line, rest, _ = strings.Cut(s, "\n")
+	return strings.TrimSuffix(line, "\r"), rest
+}
+
+// dotenvValue parses the value starting at rest (the text after `=` on the
+// current line) and returns it with the text left to parse. A quoted value
+// continues onto following lines until its closing quote.
+func dotenvValue(rest, remaining string) (value, left string) {
+	if rest == "" || (rest[0] != '"' && rest[0] != '\'') {
+		return stripInlineComment(rest), remaining
+	}
+	quote := rest[0]
+	body := rest[1:]
+	for {
+		if end := closingQuote(body, quote); end >= 0 {
+			// Text after the closing quote on the same line is a comment or noise.
+			if quote == '"' {
+				return unescapeDouble(body[:end]), remaining
+			}
+			return body[:end], remaining
+		}
+		if remaining == "" {
+			// Unterminated: the rest of the file is the value, quote dropped.
+			break
+		}
+		var next string
+		next, remaining = cutLine(remaining)
+		body += "\n" + next
+	}
+	return strings.TrimSpace(body), ""
+}
+
+// closingQuote returns the index of the first unescaped quote in body (a
+// backslash escapes the next byte in double quotes only), or -1.
+func closingQuote(body string, quote byte) int {
+	for i := 0; i < len(body); i++ {
+		switch {
+		case body[i] == '\\' && quote == '"':
+			i++
+		case body[i] == quote:
+			return i
+		}
+	}
+	return -1
+}
+
+var doubleQuoteEscapes = strings.NewReplacer(`\"`, `"`, `\\`, `\`, `\n`, "\n", `\r`, "\r", `\t`, "\t")
+
+func unescapeDouble(s string) string { return doubleQuoteEscapes.Replace(s) }
+
+// stripInlineComment drops a trailing comment: whitespace followed by #.
+func stripInlineComment(v string) string {
+	for i := 1; i < len(v); i++ {
+		if v[i] == '#' && (v[i-1] == ' ' || v[i-1] == '\t') {
+			v = v[:i]
+			break
+		}
+	}
+	return strings.TrimSpace(v)
 }
 
 // FromProcessEnv is FromEnviron(os.Environ()).
@@ -229,7 +362,7 @@ func FromProcessEnv() *Redactor { return FromEnviron(os.Environ()) }
 // Ranges returns the merged, sorted ranges of every secret in s.
 func (r *Redactor) Ranges(s string) []Range {
 	var rs []Range
-	for _, v := range r.values {
+	for _, v := range r.targets {
 		for off := 0; ; {
 			i := strings.Index(s[off:], v)
 			if i < 0 {
