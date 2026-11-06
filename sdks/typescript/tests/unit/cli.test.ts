@@ -8,7 +8,7 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { engineCommands, exitStatus, main } from "../../packages/core/src/cli.js";
 import { ENGINE_VERSION, VERSION } from "../../packages/core/src/version.js";
-import { ACTION_PINS, ANNOTATE_ENGINE_VERSION, DEMO_MARKER } from "../../packages/core/src/scaffold.js";
+import { ACTION_PINS, ANNOTATE_ENGINE_VERSION, ANNOTATE_EXCLUDE_NEWER, DEMO_MARKER } from "../../packages/core/src/scaffold.js";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import {
   forwardedCalls,
@@ -215,9 +215,10 @@ describe("attest init", () => {
     expect(fetch).toBeLessThan(prAnnotate);
     expect(annotate.slice(setupUv, fetch)).toContain("enable-cache: false");
     const step = annotate.slice(fetch, prAnnotate);
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: GitHub Actions expression, not a JS template
     expect(step).toContain("working-directory: ${{ runner.temp }}");
     expect(step).toContain(
-      `uvx --no-config --from "attest-ai==${ANNOTATE_ENGINE_VERSION}" attest doctor`,
+      `uvx --no-config --exclude-newer ${ANNOTATE_EXCLUDE_NEWER} --from "attest-ai==${ANNOTATE_ENGINE_VERSION}" attest doctor`,
     );
     expect(annotate.slice(prAnnotate)).toContain(`engine-version: ${ANNOTATE_ENGINE_VERSION}\n`);
     expect(testJob).not.toContain("uvx");
