@@ -134,7 +134,7 @@ jobs:
       - name: Vet
         run: cd engine && go vet ./...
       - name: Lint
-        uses: golangci/golangci-lint-action@d583c34f0599d37dbac4a198b9c83201be380893 # v9.3.0
+        uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
         with:
           version: v2.15.0
           working-directory: engine
@@ -421,7 +421,9 @@ jobs:
       - name: dependabot.yml schema
         run: uvx check-jsonschema==0.39.0 --builtin-schema vendor.dependabot .github/dependabot.yml
       - name: Action pins
-        run: python3 scripts/check-action-pins.py
+        # --verify-remote also requires every pinned SHA to be the commit its version comment's
+        # tag peels to on GitHub, so a SHA from a fork or another branch cannot pass.
+        run: python3 scripts/check-action-pins.py --verify-remote
       - name: Scaffolded workflow (actionlint and action pins)
         run: |
           set -euo pipefail
@@ -429,7 +431,7 @@ jobs:
           scratch="$(mktemp -d)"
           git init -q "$scratch"
           (cd "$scratch" && uv run --project "$GITHUB_WORKSPACE/sdks/python" attest init --ci github)
-          python3 scripts/check-action-pins.py "$scratch/.github/workflows"
+          python3 scripts/check-action-pins.py --verify-remote "$scratch/.github/workflows"
           (cd "$scratch" && "$actionlint" -color)
 
   versions:
