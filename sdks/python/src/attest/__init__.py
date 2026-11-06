@@ -42,7 +42,7 @@ from attest.egress import (
     uninstall_egress_guard,
 )
 from attest.exceptions import EngineTimeoutError
-from attest.expect import ExpectChain, expect
+from attest.expect import ExpectChain, Related, expect, related
 from attest.replay import (
     ReplayError,
     ReplayMissError,
@@ -83,7 +83,9 @@ __all__ = [
     "AgentResult",
     # Expect DSL
     "ExpectChain",
+    "Related",
     "expect",
+    "related",
     # Capture
     "CaptureError",
     "ReplayError",

@@ -122,9 +122,9 @@ export class WorldChecks<C> {
   }
 
   /**
-   * Assert that, per `on` key, the sum of `field` over the matching `resource` records stays at
-   * or below `atMost`: a finite number, or a {@link related} reference whose record's field is
-   * the bound. A violation reads
+   * Assert that the sum of `field` over the matching `resource` records stays at or below
+   * `atMost`. A finite number bounds the whole filtered total; a {@link related} reference groups
+   * the sum by its `on` key and bounds each group by the referenced record's field. A violation reads
    * `effect violated: refunds amount_cents sum 13800 for O-2077 exceeds orders.amount_cents 12600`.
    *
    * @throws Error when `field` is empty, or `atMost` is neither a finite number nor `related(...)`.
