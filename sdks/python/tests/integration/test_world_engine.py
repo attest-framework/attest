@@ -23,6 +23,7 @@ from attest._proto.types import (
     Trace,
 )
 from attest.capture import load_fixture
+from attest.expect import related
 from attest.plugin import AttestEngineFixture
 from tests.integration.test_capture_engine import (
     _scripted_agent,
@@ -313,3 +314,91 @@ def test_effect_dsl_fixture_results_match_the_engine(
     assert row.status == case["result"]["status"]
     if "explanation" in case["result"]:
         assert row.explanation == case["result"]["explanation"]
+
+
+def _order_world(*refund_cents: int, notify_customer: str | None = None) -> dict[str, Any]:
+    state: dict[str, Any] = {
+        "orders": [{"order_id": "O-2077", "amount_cents": 12600, "customer_id": "C-0311"}],
+        "refunds": [
+            {"refund_id": f"R-{i}", "order_id": "O-2077", "amount_cents": cents}
+            for i, cents in enumerate(refund_cents, 1)
+        ],
+    }
+    if notify_customer is not None:
+        state["notifications"] = [{"order_id": "O-2077", "customer_id": notify_customer}]
+    return {
+        "world_version": 1,
+        "definition_sha256": "0" * 64,
+        "state": state,
+        "faults_fired": [],
+        "faults_fired_count": 0,
+    }
+
+
+_ORDER_AMOUNT = related("orders", "amount_cents", on="order_id")
+_ORDER_CUSTOMER = related("orders", "customer_id", on="order_id")
+
+
+@pytest.mark.integration
+def test_sum_related_over_the_order_amount_fails_with_the_violation_text(
+    engine: AttestEngineFixture,
+) -> None:
+    row = _check(
+        engine, _order_world(1200, 12600), "sum", "refunds", "amount_cents", at_most=_ORDER_AMOUNT
+    )
+
+    assert row.status == STATUS_HARD_FAIL
+    assert row.explanation == (
+        "effect violated: refunds amount_cents sum 13800 for O-2077 "
+        "exceeds orders.amount_cents 12600"
+    )
+
+
+@pytest.mark.integration
+def test_sum_related_within_the_order_amount_passes(engine: AttestEngineFixture) -> None:
+    row = _check(
+        engine, _order_world(1200, 11400), "sum", "refunds", "amount_cents", at_most=_ORDER_AMOUNT
+    )
+
+    assert row.status == STATUS_PASS
+
+
+@pytest.mark.integration
+def test_sum_number_bound_over_the_limit_fails(engine: AttestEngineFixture) -> None:
+    row = _check(engine, _order_world(1200, 12600), "sum", "refunds", "amount_cents", at_most=13000)
+
+    assert row.status == STATUS_HARD_FAIL
+
+
+@pytest.mark.integration
+def test_matches_misdirected_notification_fails_with_the_violation_text(
+    engine: AttestEngineFixture,
+) -> None:
+    row = _check(
+        engine,
+        _order_world(notify_customer="C-0520"),
+        "matches",
+        "notifications",
+        "customer_id",
+        _ORDER_CUSTOMER,
+    )
+
+    assert row.status == STATUS_HARD_FAIL
+    assert row.explanation == (
+        "effect violated: notifications customer_id C-0520 for O-2077 "
+        "does not match orders.customer_id C-0311"
+    )
+
+
+@pytest.mark.integration
+def test_matches_notification_to_the_orders_customer_passes(engine: AttestEngineFixture) -> None:
+    row = _check(
+        engine,
+        _order_world(notify_customer="C-0311"),
+        "matches",
+        "notifications",
+        "customer_id",
+        _ORDER_CUSTOMER,
+    )
+
+    assert row.status == STATUS_PASS
