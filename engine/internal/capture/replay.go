@@ -42,6 +42,9 @@ type ReplayOptions struct {
 	Mode    string
 	Fixture *Fixture
 	Environ []string // the process environment: redaction secrets and live provider keys
+	// Redactor holds further redaction secrets, such as the working directory's
+	// .env that capture also redacted with; nil adds none.
+	Redactor *redact.Redactor
 	// NoLive refuses every live forward: a miss in auto mode is reported, never sent.
 	NoLive    bool
 	Upstreams Upstreams
@@ -149,6 +152,16 @@ func validateForReplay(f *Fixture) error {
 	return nil
 }
 
+// replayRedactor returns the redactor replay normalizes requests with: the one
+// capture used, so a secret redacted when recording is redacted again.
+func replayRedactor(o ReplayOptions) *redact.Redactor {
+	r := redact.FromEnviron(o.Environ)
+	if o.Redactor != nil {
+		r = r.Merge(o.Redactor)
+	}
+	return r
+}
+
 // NewReplayer builds the matcher for a fixture.
 func NewReplayer(o ReplayOptions) (*Replayer, error) {
 	if o.Mode != ReplayStrict && o.Mode != ReplayAuto {
@@ -163,7 +176,7 @@ func NewReplayer(o ReplayOptions) (*Replayer, error) {
 	r := &Replayer{
 		mode:     o.Mode,
 		name:     o.Fixture.Name,
-		redactor: redact.FromEnviron(o.Environ),
+		redactor: replayRedactor(o),
 		liveKeys: liveKeys(o.Environ, o.NoLive),
 		queues:   map[string][]int{},
 	}

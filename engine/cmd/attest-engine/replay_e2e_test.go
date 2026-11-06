@@ -363,3 +363,22 @@ func TestReplayCommand_TraceOut_NonZeroExitStillWritesTrace(t *testing.T) {
 		t.Fatalf("no trace for a command that served every request and exited 1: %v", err)
 	}
 }
+
+func TestReplayCommand_DotenvOnlySecretInRequest_StrictHits(t *testing.T) {
+	bin := buildEngineBinary(t)
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, ".env"), []byte("VENDOR_TOKEN=dotenv-only-secret-9876\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	system := "You refund once. Vendor token dotenv-only-secret-9876."
+	captureWithSystem(t, bin, dir, system)
+
+	run := engineRun(t, bin, dir, replayEnv(system), replayArgs(dir)...)
+
+	if run.code != 0 {
+		t.Fatalf("exit %d\n%s", run.code, run.stderr)
+	}
+	if !strings.Contains(run.stderr, "1 replayed · 0 live model calls · $0.00") {
+		t.Fatalf("summary:\n%s", run.stderr)
+	}
+}
