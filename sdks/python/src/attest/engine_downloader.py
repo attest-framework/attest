@@ -41,6 +41,10 @@ _PLATFORM_MAP: dict[str, str] = {
 }
 
 
+class EngineDownloadError(RuntimeError):
+    """The engine binary could not be downloaded or verified."""
+
+
 def versioned_bin_dir() -> Path:
     """Return ``~/.attest/bin/<ENGINE_VERSION>/``, the cache directory for this SDK's engine.
 

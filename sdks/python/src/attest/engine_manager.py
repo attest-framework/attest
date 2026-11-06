@@ -20,7 +20,12 @@ from attest._proto.codec import (
     extract_result,
 )
 from attest._proto.types import InitializeParams, InitializeResult
-from attest.engine_downloader import _binary_filename, cached_engine_path, download_engine
+from attest.engine_downloader import (
+    EngineDownloadError,
+    _binary_filename,
+    cached_engine_path,
+    download_engine,
+)
 from attest.exceptions import EngineTimeoutError, EngineVersionMismatchError
 
 if TYPE_CHECKING:
@@ -142,7 +147,10 @@ def _locate_engine(explicit_path: str | None, allow_download: bool) -> tuple[str
             "https://github.com/attest-framework/attest/releases\n"
             "  3. Allow auto-download by unsetting ATTEST_ENGINE_NO_DOWNLOAD"
         )
-    return str(download_engine()), "download"
+    try:
+        return str(download_engine()), "download"
+    except (RuntimeError, OSError) as exc:
+        raise EngineDownloadError(str(exc)) from exc
 
 
 def resolve_engine(explicit_path: str | None = None, *, allow_download: bool = True) -> str:

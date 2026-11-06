@@ -26,6 +26,7 @@ from attest._proto.types import (
 from attest.cli.diagnostics import render_diagnostics
 from attest.client import AttestClient, require_simulation_capability
 from attest.config import is_simulation_mode
+from attest.engine_downloader import EngineDownloadError
 from attest.engine_manager import EngineManager
 from attest.exceptions import EngineVersionMismatchError
 from attest.expect import ExpectChain
@@ -1210,8 +1211,17 @@ def attest_engine(request: pytest.FixtureRequest) -> Generator[AttestEngineFixtu
     )
 
     fixture = AttestEngineFixture(engine_path=engine_path, log_level=log_level, strict=strict)
+    capture = request.config.pluginmanager.getplugin("capturemanager")
     try:
-        fixture.start()
+        # The download notice goes to stderr; show it instead of letting capture swallow it.
+        with capture.global_and_fixture_disabled():
+            fixture.start()
+    except EngineDownloadError as exc:
+        pytest.fail(
+            f"attest-engine download failed: {' '.join(str(exc).split())} "
+            "Set ATTEST_ENGINE_PATH to a local engine binary (make engine) to run offline.",
+            pytrace=False,
+        )
     except FileNotFoundError as exc:
         pytest.fail(
             f"attest-engine binary not found: {exc}\n"

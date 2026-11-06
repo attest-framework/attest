@@ -111,3 +111,17 @@ def test_trace_to_dict_round_trip() -> None:
     assert trace2.agent_id == trace.agent_id
     assert trace2.output == trace.output
     assert len(trace2.steps) == len(trace.steps)
+
+
+def test_set_metadata_merges_fields_across_calls() -> None:
+    trace = (
+        TraceBuilder(agent_id="a")
+        .set_output(message="x")
+        .set_metadata(cost_usd=0.5)
+        .set_metadata(latency_ms=100)
+        .build()
+    )
+
+    assert trace.metadata is not None
+    assert trace.metadata.cost_usd == 0.5
+    assert trace.metadata.latency_ms == 100
