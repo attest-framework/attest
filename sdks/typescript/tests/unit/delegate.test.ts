@@ -13,11 +13,9 @@ describe("delegate()", () => {
 
   it("sets parent_trace_id on child trace", async () => {
     const parent = new TraceBuilder("parent-agent");
-    let capturedChild: TraceBuilder | undefined;
 
     await activeBuilder.run(parent, async () => {
       await delegate("child-agent", async (child: TraceBuilder) => {
-        capturedChild = child;
         child.setOutput({ done: true });
       });
     });

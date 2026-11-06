@@ -120,12 +120,12 @@ function validate(p: string, doc: Record<string, unknown>): void {
     results: "array",
     expected_failures: "array",
   });
-  (doc["contracts"] as unknown[]).forEach((c, i) =>
-    need(`fixture.contracts[${i}]`, c, { id: "string", kind: "string", description: "string", type: "string", spec: "object" }),
-  );
-  (v["results"] as unknown[]).forEach((r, i) =>
-    need(`fixture.verification.results[${i}]`, r, { contract: "string", status: "string", explanation: "string" }),
-  );
+  for (const [i, c] of (doc["contracts"] as unknown[]).entries()) {
+    need(`fixture.contracts[${i}]`, c, { id: "string", kind: "string", description: "string", type: "string", spec: "object" });
+  }
+  for (const [i, r] of (v["results"] as unknown[]).entries()) {
+    need(`fixture.verification.results[${i}]`, r, { contract: "string", status: "string", explanation: "string" });
+  }
 }
 
 // ---------------------------------------------------------------------------- emitter

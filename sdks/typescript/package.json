@@ -6,9 +6,12 @@
     "build": "pnpm -r build",
     "test": "pnpm -r test",
     "test:integration": "pnpm -r test:integration",
-    "lint": "pnpm -r lint"
+    "lint": "biome lint --error-on-warnings ."
   },
   "pnpm": {
     "onlyBuiltDependencies": ["esbuild"]
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.6.5"
   }
 }

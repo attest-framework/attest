@@ -121,7 +121,7 @@ describe("renderVitest with hostile captured text", () => {
     const chain = new Function("chain", `return chain${call};`)(attestExpect({ trace_id: "t", output: {}, steps: [] } as never)) as ExpectChain;
 
     expect(call).toContain('["__proto__"]: { type: "string" }');
-    expect(Object.keys((chain.assertions[0]?.spec as { schema: { properties: object } }).schema.properties)).toEqual(["__proto__"]);
+    expect(Object.keys((chain.assertions[0]!.spec as { schema: { properties: object } }).schema.properties)).toEqual(["__proto__"]);
   });
 });
 

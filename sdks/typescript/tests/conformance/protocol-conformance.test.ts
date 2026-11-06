@@ -64,7 +64,7 @@ describe("Protocol conformance suite", () => {
       const drains: Promise<unknown>[] = [];
       for (const id of fixture.prePending ?? []) {
         const p = new Promise<unknown>((resolve, reject) => {
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          // biome-ignore lint/suspicious/noExplicitAny: the test reaches a private member
           (client as any).pending.set(id, { resolve, reject });
         }).catch(() => {
           /* drained */
@@ -73,7 +73,7 @@ describe("Protocol conformance suite", () => {
       }
 
       for (const line of fixture.lines) {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        // biome-ignore lint/suspicious/noExplicitAny: the test reaches a private member
         (client as any).handleLine(line);
       }
 
@@ -93,13 +93,13 @@ describe("Protocol conformance suite", () => {
         }
       }
 
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      // biome-ignore lint/suspicious/noExplicitAny: the test reaches a private member
       const desynced = (client as any).desynced as boolean;
       expect(desynced, `${fixture.name}: desync flag`).toBe(fixture.expectedDesync);
 
       // Force pending request rejection so unhandled-promise warnings
       // do not bleed across tests.
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      // biome-ignore lint/suspicious/noExplicitAny: the test reaches a private member
       const pending = (client as any).pending as Map<
         number,
         { reject: (e: unknown) => void }

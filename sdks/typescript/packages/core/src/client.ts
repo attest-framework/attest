@@ -252,7 +252,7 @@ export class AttestClient {
   }
 
   private handleLine(line: string): void {
-    let response;
+    let response: ReturnType<typeof decodeResponse>;
     try {
       response = decodeResponse(line);
     } catch (err) {

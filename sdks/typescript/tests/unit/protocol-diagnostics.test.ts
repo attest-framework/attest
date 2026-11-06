@@ -178,7 +178,7 @@ describe("AttestClient protocol diagnostics", () => {
     client.startReader();
 
     const pending = new Promise<unknown>((resolve, reject) => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      // biome-ignore lint/suspicious/noExplicitAny: the test reaches a private member
       (client as any).pending.set(1, { resolve, reject });
     });
 
