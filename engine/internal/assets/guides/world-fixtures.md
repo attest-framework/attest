@@ -166,7 +166,7 @@ Refunding $12.00 and $114.00 passes both (the sum is 12600, within the bound). E
 
 | Bound | `sum` compares |
 | --- | --- |
-| a number (`at_most=15000`) | the total over every record matching the filters, once. The message is `effect violated: refunds amount_cents sum 13800 exceeds 12000`. |
+| a number (`at_most=12000`) | the total over every record matching the filters, once. The message is `effect violated: refunds amount_cents sum 13800 exceeds 12000`. |
 | `related(resource, field, on=key)` | the sum of each `key` value's records against the related record's `field`, one comparison per key. The first violating key (in sorted order) is reported and the rest add `; N more violations`. |
 
 `matches` compares every matching record's `field` with the related record's `field` for the same `key` value.
