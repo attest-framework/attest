@@ -133,6 +133,15 @@ Under pytest-xdist each worker is a separate pytest process with its own engine 
 
 The history is what `threshold="dynamic"` and the [continuous eval runner](continuous-eval.md) read: one row per evaluated assertion id, with `not_evaluated` rows left out. Rows recorded before 1.1 are keyed by ordinal ids and match no assertion, so each assertion rebuilds its baseline (10 passing or soft runs) after the upgrade.
 
+## Egress guard and proxies
+
+| Variable | Purpose |
+|---|---|
+| `ATTEST_EGRESS` | `block` fails connections from the test process to known model-provider hosts; `allow` and unset leave them alone; any other value is an error. Equivalent to `pytest --attest-egress=block` and `useReplay(name, { egress: "block" })`. |
+| `HTTPS_PROXY`, `HTTP_PROXY`, `ALL_PROXY` (either case) | With the guard on, requests a client sends to the named HTTP proxy are screened: a `CONNECT` target or absolute-form request that names a provider host is blocked. `NO_PROXY` is not read. |
+
+The guard is a best-effort check for trusted test code, not an isolation boundary: child processes, SOCKS proxies and `https://` proxy connections are not inspected, and after an allowed `CONNECT` it does not check what the tunnel carries. The provider host list and the full limits are in [replay](replay.md#block-direct-provider-connections).
+
 ## Removed variables
 
 These variables are no longer read. Setting them has no effect.

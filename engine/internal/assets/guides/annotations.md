@@ -2,14 +2,14 @@
 
 `pr-annotate` turns report-v2 files into what a reviewer sees on a pull request: one summary comment, plus an annotation on the file and line of each failing test. `attest init --ci github` wires it into the workflow ([merge gate guide](merge-gate.md)). To use it directly:
 
-`pr-annotate` v2 ships in `1.0.0-rc.3`; pin the tag of the release you use (`attest init --ci github` writes it).
+`pr-annotate` v2 ships in `1.0.0-rc.3`. Pin the commit SHA of the release you use, with the release in a trailing comment, as `attest init --ci github` writes it. A tag can be moved to other code; a SHA cannot, and this action runs with a token that can write to the pull request.
 
 ```yaml
 permissions:
   contents: read
   pull-requests: write
 steps:
-  - uses: attest-framework/attest/.github/actions/pr-annotate@v1.0.1
+  - uses: attest-framework/attest/.github/actions/pr-annotate@5d5b748b13da7ba034b3acfce631cee8fcae720c # v1.0.1
     if: always() && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
     with:
       report: attest-report.json
@@ -21,7 +21,7 @@ steps:
 | `report` | One report-v2 path, or several separated by newlines or spaces (paths cannot contain spaces). |
 | `policy`, `baseline-tag` | Optional. Runs `attest-engine policy evaluate` on each report. |
 | `engine-binary` | The engine. The default name `attest-engine` is resolved as `ATTEST_ENGINE_PATH`, then `PATH`, then `~/.attest/bin/<engine-version>/attest-engine`, the SDK's download cache. Run an `attest` command (for example the JUnit step) before the action so the engine is cached. |
-| `engine-version` | The engine version whose cache directory is used. Defaults to the version of the action itself (the repository `VERSION` at the action's tag). |
+| `engine-version` | The engine version whose cache directory is used. Defaults to the version of the action itself (the repository `VERSION` at the action's commit). Keep it equal to the release in the action's version comment and to the `attest-ai==` version that fetched the engine. |
 | `github-token` | Defaults to the workflow token. Used only to read and write the summary comment. |
 | `comment-author` | The login whose summary comment is updated. Empty (default) means the token's own: `github-actions[bot]` for the workflow token, the user for a personal token. Set `<app-slug>[bot]` when `github-token` is a GitHub App installation token. |
 | `fail-on-violation` | `true` (default) fails the step when the policy exit is 1. |
@@ -64,7 +64,15 @@ Write the report into the directory you run the tests from. If the prefixed path
 
 ## Several reports
 
-With several reports the policy runs on each and the worst exit wins: an evaluator error (any code other than 0, 1 and 2) first, then 1, then 2, then 0. The result of that report feeds the summary. It is written to a temporary file under `RUNNER_TEMP`, not the workspace, and is not echoed to the log.
+With several reports and a `policy`, the policy runs on each and the summary's policy line is the aggregate, not the worst report alone:
+
+- the exit code is the worst one: an evaluator error (any code other than 0, 1 and 2) first, then 1, then 2, then 0;
+- `passed` is false unless every report passed;
+- the violations are those of every report, each rule prefixed with the report it came from (`<report>: max_hard_fails`);
+- the regression verdicts stay per report;
+- a **Policy by report** list under the policy line gives each report's own result, for example `` - `py/attest-report.json`: fail (exit 1), 2 violation(s) ``. A report whose evaluator printed nothing usable still counts as a violation.
+
+A single report is passed through unchanged and has no list. The result of each evaluation is written to a temporary file under `RUNNER_TEMP`, not the workspace, and is not echoed to the log.
 
 ## Changed in v2
 
