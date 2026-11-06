@@ -170,11 +170,21 @@ func (p *parser) parseArg(call *rawCall) error {
 		case p.peek() == '=' && !strings.HasPrefix(p.src[p.i:], "=="):
 			p.i++
 			p.skipSpace()
-			v, err := p.parseValue(0)
+			v, err := p.parseArgValue()
 			if err != nil {
 				return err
 			}
 			call.kwargs = append(call.kwargs, rawKwarg{name: name, pos: start + 1, value: v})
+			return nil
+		case p.peek() == '(' && name == relatedName:
+			v, err := p.parseRelated(start)
+			if err != nil {
+				return err
+			}
+			if len(call.kwargs) > 0 {
+				return p.fail(start, "a positional argument cannot follow a keyword argument")
+			}
+			call.positional = append(call.positional, rawPositional{pos: start + 1, value: v})
 			return nil
 		case p.peek() == '(':
 			return p.fail(p.i, "calls are not allowed in arguments")
@@ -200,6 +210,96 @@ func (p *parser) parseArg(call *rawCall) error {
 	}
 	call.positional = append(call.positional, rawPositional{pos: start + 1, value: v})
 	return nil
+}
+
+// relatedName is the one function the grammar allows inside an argument.
+const relatedName = "related"
+
+// parseArgValue reads a keyword argument's value: a literal, or related(...).
+func (p *parser) parseArgValue() (any, error) {
+	start := p.i
+	if isIdentStart(p.peek()) {
+		save := p.i
+		if name := p.ident(); name == relatedName {
+			p.skipSpace()
+			if p.peek() == '(' {
+				return p.parseRelated(start)
+			}
+		}
+		p.i = save
+	}
+	return p.parseValue(0)
+}
+
+// parseRelated reads related(resource, field, on=key) with the cursor on the
+// '('. Both names are string literals, so nothing is evaluated.
+func (p *parser) parseRelated(start int) (any, error) {
+	p.i++
+	var names []string
+	var on string
+	haveOn := false
+	for {
+		p.skipSpace()
+		if p.peek() == ')' {
+			p.i++
+			break
+		}
+		argStart := p.i
+		if isIdentStart(p.peek()) {
+			kw := p.ident()
+			p.skipSpace()
+			if p.peek() != '=' || kw != "on" {
+				return nil, p.fail(argStart, "related takes two names and on=<key>")
+			}
+			if haveOn {
+				return nil, p.fail(argStart, "argument \"on\" is given twice")
+			}
+			p.i++
+			p.skipSpace()
+			v, err := p.parseRelatedName()
+			if err != nil {
+				return nil, err
+			}
+			on, haveOn = v, true
+		} else {
+			if haveOn {
+				return nil, p.fail(argStart, "a positional argument cannot follow a keyword argument")
+			}
+			v, err := p.parseRelatedName()
+			if err != nil {
+				return nil, err
+			}
+			names = append(names, v)
+		}
+		p.skipSpace()
+		switch p.peek() {
+		case ',':
+			p.i++
+		case ')':
+		default:
+			return nil, p.unexpected("',' or ')'")
+		}
+	}
+	if len(names) != 2 || !haveOn {
+		return nil, p.fail(start, "related takes a resource, a field and on=<key>")
+	}
+	return Related{Resource: names[0], Field: names[1], On: on}, nil
+}
+
+func (p *parser) parseRelatedName() (string, error) {
+	pos := p.i
+	if c := p.peek(); c != '"' && c != '\'' {
+		return "", p.fail(pos, "related names must be string literals")
+	}
+	v, err := p.parseString()
+	if err != nil {
+		return "", err
+	}
+	s, _ := v.(string)
+	if s == "" {
+		return "", p.fail(pos, "related names must not be empty")
+	}
+	return s, nil
 }
 
 func keywordLiteral(name string) (any, bool) {

@@ -288,8 +288,33 @@ func writeLiteral(b *strings.Builder, v any, st style) error {
 		b.WriteByte(']')
 	case map[string]any:
 		return writeMap(b, x, st)
+	case Related:
+		return writeRelated(b, x, st)
 	default:
 		return fmt.Errorf("value of type %T has no literal form", v)
+	}
+	return nil
+}
+
+// writeRelated renders related("orders", "amount_cents", on="order_id") in
+// Python, and the options-object form in TypeScript.
+func writeRelated(b *strings.Builder, r Related, st style) error {
+	b.WriteString("related(")
+	for _, name := range []string{r.Resource, r.Field} {
+		q, err := quote(name, st)
+		if err != nil {
+			return err
+		}
+		b.WriteString(q + ", ")
+	}
+	q, err := quote(r.On, st)
+	if err != nil {
+		return err
+	}
+	if st == tsObject {
+		b.WriteString("{ on: " + q + " })")
+	} else {
+		b.WriteString("on=" + q + ")")
 	}
 	return nil
 }
