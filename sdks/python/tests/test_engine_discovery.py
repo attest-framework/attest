@@ -220,7 +220,8 @@ def test_pytest_plugin_download_failure_fails_in_one_line(
     )
     pytester.makepyfile("def test_uses_engine(attest):\n    pass\n")
 
-    result = pytester.runpytest_subprocess()
+    # -rN: no short test summary, which repeats the error line and would make the count 2.
+    result = pytester.runpytest_subprocess("-rN")
 
     result.assert_outcomes(errors=1)
     result.stdout.fnmatch_lines(["*attest-engine download failed*ATTEST_ENGINE_PATH*"])
