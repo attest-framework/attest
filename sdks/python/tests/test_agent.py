@@ -112,8 +112,49 @@ def test_agent_decorator_rejects_excess_positional_arguments() -> None:
     def positional(builder: TraceBuilder, user_message: str) -> str:
         return user_message
 
-    with pytest.raises(TypeError, match="positional"):
+    with pytest.raises(TypeError):
         positional("a", "b")
+
+
+def test_agent_decorator_accepts_variadic_positional_arguments() -> None:
+    @agent("variadic")
+    def fn(builder: TraceBuilder, *values: str) -> str:
+        return " ".join(values)
+
+    result = fn("a", "b")
+
+    assert result.trace.output == {"message": "a b"}
+    assert result.trace.input == {"values": ["a", "b"]}
+
+
+def test_agent_decorator_accepts_mixed_variadic_arguments() -> None:
+    @agent("mixed")
+    def fn(builder: TraceBuilder, first: str, *rest: str, sep: str = "-", **extra: int) -> str:
+        return sep.join((first, *rest)) + str(sorted(extra.items()))
+
+    result = fn("a", "b", "c", sep="+", n=1)
+
+    assert result.trace.output == {"message": "a+b+c[('n', 1)]"}
+    assert result.trace.input == {"first": "a", "rest": ["b", "c"], "sep": "+", "n": 1}
+
+
+def test_agent_decorator_builder_not_first_parameter_keeps_working() -> None:
+    @agent("late-builder")
+    def fn(user_message: str, builder: TraceBuilder) -> str:
+        return user_message
+
+    assert fn("hi").trace.output == {"message": "hi"}
+
+
+def test_agent_arun_accepts_variadic_positional_arguments() -> None:
+    import asyncio
+
+    async def fn(builder: TraceBuilder, *values: str) -> str:
+        return " ".join(values)
+
+    result = asyncio.run(Agent("variadic-async", fn=fn).arun("a", "b"))
+
+    assert result.trace.output == {"message": "a b"}
 
 
 def test_agent_unsupported_adapter_raises_at_decoration() -> None:

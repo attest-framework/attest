@@ -16,28 +16,48 @@ from attest.result import AgentResult
 from attest.trace import TraceBuilder
 
 
-def _bind_positional(
-    fn: Callable[..., Any], args: tuple[Any, ...], kwargs: dict[str, Any]
-) -> dict[str, Any]:
-    """Name positional ``args`` after the parameters of ``fn`` that follow ``builder``."""
-    if not args:
-        return kwargs
-    names = [
-        p.name
-        for p in inspect.signature(fn).parameters.values()
-        if p.name != "builder"
-        and p.kind in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD)
-    ]
-    if len(args) > len(names):
-        raise TypeError(
-            f"{getattr(fn, '__name__', 'agent')}() takes {len(names)} positional "
-            f"argument(s) besides builder but {len(args)} were given"
+def _call_arguments(
+    fn: Callable[..., Any],
+    builder: TraceBuilder,
+    args: tuple[Any, ...],
+    kwargs: dict[str, Any],
+) -> tuple[tuple[Any, ...], dict[str, Any], dict[str, Any]]:
+    """Inject ``builder`` and return ``(call_args, call_kwargs, recorded_input)``.
+
+    ``builder`` goes first positionally when it is the first parameter (so ``*args`` agents keep
+    native positional semantics) and by keyword otherwise.
+    """
+    sig = inspect.signature(fn)
+    params = list(sig.parameters.values())
+    first = params[0] if params else None
+    builder_first = (
+        first is not None
+        and first.name == "builder"
+        and first.kind
+        in (
+            inspect.Parameter.POSITIONAL_ONLY,
+            inspect.Parameter.POSITIONAL_OR_KEYWORD,
         )
-    bound = dict(zip(names, args, strict=False))
-    clash = bound.keys() & kwargs.keys()
-    if clash:
-        raise TypeError(f"multiple values for argument(s): {', '.join(sorted(clash))}")
-    return {**bound, **kwargs}
+    )
+    if builder_first:
+        call_args: tuple[Any, ...] = (builder, *args)
+        call_kwargs = dict(kwargs)
+    else:
+        call_args = args
+        call_kwargs = {**kwargs, "builder": builder}
+    bound = sig.bind(*call_args, **call_kwargs).arguments
+    recorded: dict[str, Any] = {}
+    for name, value in bound.items():
+        if name == "builder":
+            continue
+        kind = sig.parameters[name].kind
+        if kind is inspect.Parameter.VAR_KEYWORD:
+            recorded.update(value)
+        elif kind is inspect.Parameter.VAR_POSITIONAL:
+            recorded[name] = list(value)
+        else:
+            recorded[name] = value
+    return call_args, call_kwargs, recorded
 
 
 def _record_output(builder: TraceBuilder, output: Any, adapter: BaseAdapter | None) -> None:
@@ -94,13 +114,13 @@ class Agent:
         if self._fn is None:
             raise RuntimeError("No agent function provided. Pass fn= to Agent().")
 
-        kwargs = _bind_positional(self._fn, args, kwargs)
         builder = TraceBuilder(agent_id=self.name)
-        builder.set_input_dict(kwargs)
+        call_args, call_kwargs, recorded = _call_arguments(self._fn, builder, args, kwargs)
+        builder.set_input_dict(recorded)
 
         token = _active_builder.set(builder)
         try:
-            output = self._fn(builder=builder, **kwargs)
+            output = self._fn(*call_args, **call_kwargs)
         finally:
             _active_builder.reset(token)
 
@@ -116,16 +136,16 @@ class Agent:
         if self._fn is None:
             raise RuntimeError("No agent function provided. Pass fn= to Agent().")
 
-        kwargs = _bind_positional(self._fn, args, kwargs)
         builder = TraceBuilder(agent_id=self.name)
-        builder.set_input_dict(kwargs)
+        call_args, call_kwargs, recorded = _call_arguments(self._fn, builder, args, kwargs)
+        builder.set_input_dict(recorded)
 
         token = _active_builder.set(builder)
         try:
             if asyncio.iscoroutinefunction(self._fn):
-                output = await self._fn(builder=builder, **kwargs)
+                output = await self._fn(*call_args, **call_kwargs)
             else:
-                output = self._fn(builder=builder, **kwargs)
+                output = self._fn(*call_args, **call_kwargs)
         finally:
             _active_builder.reset(token)
 
@@ -159,8 +179,8 @@ def agent(
         if inspect.iscoroutinefunction(fn):
 
             @functools.wraps(fn)
-            async def async_wrapper(**kwargs: Any) -> AgentResult:
-                return await wrapped.arun(**kwargs)
+            async def async_wrapper(*args: Any, **kwargs: Any) -> AgentResult:
+                return await wrapped.arun(*args, **kwargs)
 
             async_wrapper.agent = wrapped  # type: ignore[attr-defined]
             return async_wrapper  # type: ignore[return-value]

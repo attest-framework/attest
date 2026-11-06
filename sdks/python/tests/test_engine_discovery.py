@@ -224,6 +224,11 @@ def test_pytest_plugin_download_failure_fails_in_one_line(
 
     result.assert_outcomes(errors=1)
     result.stdout.fnmatch_lines(["*attest-engine download failed*ATTEST_ENGINE_PATH*"])
-    assert "Traceback" not in result.stdout.str()
+    out = result.stdout.str()
+    assert "Traceback" not in out
+    assert "above exception" not in out
+    assert "During handling" not in out
+    assert sum("attest-engine download failed" in line for line in out.splitlines()) == 1
+    assert sum("ATTEST_ENGINE_PATH" in line for line in out.splitlines()) == 1
     # The download notice is printed outside pytest capture.
     assert "attest: downloading engine" in result.stderr.str() + result.stdout.str()

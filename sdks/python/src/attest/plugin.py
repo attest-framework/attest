@@ -1212,24 +1212,25 @@ def attest_engine(request: pytest.FixtureRequest) -> Generator[AttestEngineFixtu
 
     fixture = AttestEngineFixture(engine_path=engine_path, log_level=log_level, strict=strict)
     capture = request.config.pluginmanager.getplugin("capturemanager")
+    failure: str | None = None
     try:
         # The download notice goes to stderr; show it instead of letting capture swallow it.
         with capture.global_and_fixture_disabled():
             fixture.start()
     except EngineDownloadError as exc:
-        pytest.fail(
+        failure = (
             f"attest-engine download failed: {' '.join(str(exc).split())} "
-            "Set ATTEST_ENGINE_PATH to a local engine binary (make engine) to run offline.",
-            pytrace=False,
+            "Set ATTEST_ENGINE_PATH to a local engine binary (make engine) to run offline."
         )
     except FileNotFoundError as exc:
-        pytest.fail(
-            f"attest-engine binary not found: {exc}\n"
-            "Set ATTEST_ENGINE_PATH or allow auto-download.",
-            pytrace=False,
+        failure = (
+            f"attest-engine binary not found: {exc}\nSet ATTEST_ENGINE_PATH or allow auto-download."
         )
     except EngineVersionMismatchError as exc:
-        pytest.fail(f"attest-engine version mismatch: {exc}", pytrace=False)
+        failure = f"attest-engine version mismatch: {exc}"
+    if failure is not None:
+        # Raised outside the except blocks so pytest shows no exception chain.
+        pytest.fail(failure, pytrace=False)
 
     yield fixture
     fixture.stop()
