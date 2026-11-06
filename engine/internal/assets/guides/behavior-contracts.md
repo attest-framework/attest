@@ -2,6 +2,7 @@
 
 A behavior contract states what the agent did, not what it said: how often a tool ran per business key, which tools it must never call, the shape and order of its tool calls, whether it looped, how many tool failures it hit in a row, and what arguments it passed. Contracts are Layer 3 trace checks. They run in the engine, deterministically, with no model calls, so they cost nothing and give the same answer on every run.
 
+<!-- snippet: skip reason="installs packages or runs npm tooling (network)" -->
 ```bash
 uv add "attest-ai>=1.0.1"
 npm install -D "@attest-ai/core@>=1.0.1" "@attest-ai/vitest@>=1.0.1" "vitest@^4"
@@ -13,6 +14,7 @@ The refund-desk incident INC-1042 refunded order `O-1042` twice: `issue_refund` 
 
 Python (pytest, with the `attest` fixture):
 
+<!-- snippet: skip reason="needs the INC-1042 trace export from a real incident capture (the refund-desk demo repository)" -->
 ```python
 from pathlib import Path
 
@@ -33,6 +35,7 @@ def test_inc_1042_refunds_twice(attest):
 
 TypeScript (Vitest, with the Attest plugin):
 
+<!-- snippet: skip reason="needs the INC-1042 trace export from a real incident capture (the refund-desk demo repository)" -->
 ```typescript
 import { readFileSync } from "node:fs";
 import { it, expect } from "vitest";

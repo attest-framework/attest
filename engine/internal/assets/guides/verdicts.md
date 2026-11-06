@@ -43,6 +43,7 @@ test_refund.py::test_judge_only SKIPPED (not evaluated: provider_not_configured)
 
 ## `evaluate()` and `inspect()`
 
+<!-- snippet: fragment reason="excerpt: relies on `refund_agent`, defined outside the snippet" -->
 ```python
 def test_refund(attest):
     result = refund_agent(order_id="ORD-123")
@@ -51,6 +52,7 @@ def test_refund(attest):
 
 `attest.evaluate(chain)` enforces the outcome: it fails or skips the running test. `attest.inspect(chain)` returns the same `AgentResult` without enforcing, for trial loops and custom checks:
 
+<!-- snippet: fragment reason="excerpt: relies on `expect`, defined outside the snippet" -->
 ```python
 from attest.simulation import repeat
 
@@ -67,6 +69,7 @@ def test_refund_reliability(attest):
 
 ### Vitest
 
+<!-- snippet: fragment reason="excerpt: relies on `it`, defined outside the snippet" -->
 ```ts
 import { evaluate, inspect } from "@attest-ai/vitest";
 

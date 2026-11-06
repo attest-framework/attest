@@ -12,6 +12,7 @@ A fixture captured by [`attest capture`](capture.md) holds every model exchange 
 
 Python (pytest):
 
+<!-- snippet: skip reason="needs the inc-1042 fixture recorded by `attest capture`" -->
 ```python
 def test_inc_1042_replay(attest_replay):
     with attest_replay("inc-1042"):
@@ -21,6 +22,7 @@ def test_inc_1042_replay(attest_replay):
 
 TypeScript (Vitest):
 
+<!-- snippet: skip reason="needs the inc-1042 fixture recorded by `attest capture`" -->
 ```ts
 import { it } from "vitest";
 import { useReplay } from "@attest-ai/vitest";

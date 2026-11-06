@@ -6,8 +6,12 @@
 
 ```bash
 uv run attest init --mcp      # Python
-npx attest init --mcp         # TypeScript
 attest-engine mcp install --dir . --command '["attest","mcp"]'   # without an SDK
+```
+
+<!-- snippet: skip reason="npx resolves @attest-ai/core from the npm registry (network)" -->
+```bash
+npx attest init --mcp         # TypeScript
 ```
 
 `init --mcp` calls `attest-engine mcp install` with the launch command for the project: `uv run attest mcp` when `uv.lock` is in the project root, else `attest mcp` (Python); `pnpm exec attest mcp` with `pnpm-lock.yaml`, else `npx --no attest mcp` (TypeScript; `--no` makes a missing local install fail instead of letting npx fetch the unscoped `attest` package from the registry). It writes or merges an `attest` entry into:
@@ -24,6 +28,7 @@ Claude Code asks you to approve a project-scoped server before using it. Codex r
 
 ## Run the server
 
+<!-- snippet: fragment reason="usage synopsis with optional-argument brackets, not a command line" -->
 ```bash
 attest-engine mcp [--root DIR]     # serve on stdio; the root defaults to the working directory
 attest-engine mcp --tools --json   # print the fixed tool list and exit

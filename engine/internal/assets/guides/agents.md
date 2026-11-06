@@ -2,6 +2,7 @@
 
 Attest ships agent skills, in the Agent Skills format (a directory with a `SKILL.md` that has `name` and `description` frontmatter), that teach a coding agent such as Claude Code, Codex or Cursor to write contracts, capture incidents, debug failures, set up the merge gate and migrate eval suites. The skills are embedded in `attest-engine`, so they match the installed version and need no network. They hold procedures only: the reference material stays in these guides, which the agent reads with `attest guide <topic>`.
 
+<!-- snippet: skip reason="installs packages or runs npm tooling (network)" -->
 ```bash
 uv add "attest-ai>=1.0.1"
 npm install -D "@attest-ai/core@>=1.0.1" "@attest-ai/vitest@>=1.0.1" "vitest@^4"
@@ -18,6 +19,10 @@ npm install -D "@attest-ai/core@>=1.0.1" "@attest-ai/vitest@>=1.0.1" "vitest@^4"
 
 ```bash
 uv run attest init --skills
+```
+
+<!-- snippet: skip reason="npx resolves @attest-ai/core from the npm registry (network)" -->
+```bash
 npx attest init --skills
 ```
 

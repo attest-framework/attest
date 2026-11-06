@@ -35,6 +35,8 @@ jobs:
       github_config: ${{ steps.filter.outputs.github_config }}
       versions: ${{ steps.filter.outputs.versions }}
       release: ${{ steps.filter.outputs.release }}
+      claims: ${{ steps.filter.outputs.claims }}
+      snippets: ${{ steps.filter.outputs.snippets }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -111,6 +113,30 @@ jobs:
               - "sdks/python/pyproject.toml"
               - "sdks/typescript/packages/core/package.json"
               - "sdks/typescript/packages/vitest/package.json"
+            claims:
+              - "README.md"
+              - "CONTRIBUTING.md"
+              - "docs/**"
+              - "sdks/*/README*"
+              - "sdks/typescript/packages/*/README*"
+              - "engine/internal/capabilities/**"
+              - "scripts/generate_claims*"
+              - "sdks/*/package.json"
+              - "sdks/typescript/packages/*/package.json"
+              - "Makefile"
+              - "VERSION"
+              - ".github/workflows/ci.yml"
+            snippets:
+              - "README.md"
+              - "docs/**"
+              - "sdks/**"
+              - "engine/**"
+              - "proto/**"
+              - "scripts/run_doc_snippets*"
+              - "scripts/doc_snippet_fixtures/**"
+              - "scripts/doc_snippet_harness/**"
+              - "Makefile"
+              - ".github/workflows/ci.yml"
 
   engine-test:
     name: Engine tests
@@ -460,6 +486,74 @@ jobs:
       contents: read
     uses: ./.github/workflows/release-build.yml
 
+  # The README, CONTRIBUTING and guides state facts that `attest-engine capabilities --json`
+  # owns. This job regenerates those regions and fails on drift or on a retired claim.
+  claims:
+    name: Public claims
+    needs: changes
+    if: needs.changes.outputs.claims == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: "1.27"
+          cache-dependency-path: engine/go.sum
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "20"
+      - name: Check generated claims and retired claims
+        # `make check-claims` builds the engine, then runs scripts/generate_claims.py --check.
+        run: make check-claims
+
+  # Runs every runnable code block in the README and the guides (scripts/run_doc_snippets.py)
+  # in simulation mode with provider keys removed and proxies set to unreachable addresses (not
+  # network isolation), using the locally built engine, the editable Python SDK and the built
+  # TypeScript packages. Blocks that cannot run standalone carry a
+  # `<!-- snippet: ... -->` marker with a reason; the job prints each one.
+  snippets:
+    name: Documentation snippets
+    needs: changes
+    if: needs.changes.outputs.snippets == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: "1.27"
+          cache-dependency-path: engine/go.sum
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.13"
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+        with:
+          package_json_file: sdks/typescript/package.json
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "22"
+          cache: pnpm
+          cache-dependency-path: sdks/typescript/pnpm-lock.yaml
+      - name: Build engine
+        run: make engine
+      - name: Install Python SDK from the lockfile
+        run: uv sync --project sdks/python --frozen --extra dev
+      - name: Build TypeScript packages from the lockfile
+        working-directory: sdks/typescript
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm build
+      - name: Run documentation snippets
+        run: uv run --project sdks/python --frozen python scripts/run_doc_snippets.py --engine bin/attest-engine
+
   required:
     name: required
     if: always()
@@ -475,6 +569,8 @@ jobs:
       - github-config
       - versions
       - release-dry-run
+      - claims
+      - snippets
     runs-on: ubuntu-latest
     permissions: {}
     steps:

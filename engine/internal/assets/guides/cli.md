@@ -4,6 +4,7 @@
 
 ## Discover
 
+<!-- snippet: fragment reason="`<topic>` is a placeholder for a guide name" -->
 ```bash
 attest help --json      # every command, its schema, its exit codes
 attest guide            # list the shipped guides
