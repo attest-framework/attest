@@ -256,6 +256,66 @@ jobs:
         run: pnpm -r test
       - name: Type check
         run: pnpm -r exec tsc --noEmit
+      - name: Lint
+        # Biome fails on any finding (including warnings); a planted `debugger;` exits 1.
+        run: pnpm lint
+
+  # @attest-ai/vitest declares peer vitest >=3.0.0 <5; the lockfile pins one 4.x. This job
+  # runs the package suite (reporter, packaged /reporter and /setup subpaths, plugin) on the
+  # newest 3.x and 4.x. The dev dependency is overridden inside the job with `pnpm add -D
+  # vitest@<major>` after a frozen install: pnpm resolves the newest release of that major,
+  # rewrites package.json and the lockfile in the runner checkout only, and nothing is
+  # committed. The resolved version is printed so the log shows what ran. That tree is not
+  # covered by the lockfile, so this job neither restores nor saves the shared pnpm/Go caches.
+  vitest-range:
+    name: Vitest ${{ matrix.vitest-major }}.x integration
+    needs: changes
+    if: needs.changes.outputs.sdk_typescript == 'true'
+    defaults:
+      run:
+        working-directory: sdks/typescript
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        vitest-major: ["3", "4"]
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+        with:
+          package_json_file: sdks/typescript/package.json
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+      - uses: actions/setup-go@v7
+        with:
+          go-version: "1.27"
+          cache: false
+      - name: Build engine
+        # The packaged-subpath tests run a real engine; they skip without bin/attest-engine.
+        working-directory: .
+        run: make engine
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Build
+        # Built once against the lockfile's Vitest, the way the package is published; the
+        # override below changes only the runtime the built reporter and subpaths load into.
+        run: pnpm -r build
+      - name: Override Vitest to the latest ${{ matrix.vitest-major }}.x
+        run: |
+          pnpm --filter @attest-ai/vitest add -D "vitest@${{ matrix.vitest-major }}"
+          resolved="$(pnpm --filter @attest-ai/vitest exec vitest --version)"
+          echo "resolved: $resolved"
+          case "$resolved" in
+            vitest/${{ matrix.vitest-major }}.*) ;;
+            *) echo "::error::expected vitest ${{ matrix.vitest-major }}.x, got $resolved"; exit 1 ;;
+          esac
+      - name: Test @attest-ai/vitest
+        run: pnpm --filter @attest-ai/vitest test
 
 
   frameworks:
@@ -457,6 +517,7 @@ jobs:
       - engine-build
       - sdk-python
       - sdk-typescript
+      - vitest-range
       - frameworks
       - setup-attest
       - github-config
