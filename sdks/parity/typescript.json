@@ -338,7 +338,6 @@
     "scenario"
   ],
   "test_runner": [
-    "AttestCostReporter",
     "AttestEngineFixture",
     "AttestGlobalSetupOptions",
     "AttestReporter",

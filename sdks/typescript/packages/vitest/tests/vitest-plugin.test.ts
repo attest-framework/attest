@@ -1,14 +1,13 @@
 /**
  * T13 — @attest-ai/vitest unit tests.
  *
- * Tests: AttestEngineFixture, attestGlobalSetup, AttestCostReporter, filterByTier.
+ * Tests: AttestEngineFixture, attestGlobalSetup, filterByTier.
  * All engine interactions are mocked.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { AttestEngineFixture } from "../src/fixtures.js";
 import { attestGlobalSetup } from "../src/plugin.js";
-import { AttestCostReporter } from "../src/reporter.js";
 import { filterByTier } from "../src/tier-filter.js";
 
 // ---------------------------------------------------------------------------
@@ -66,7 +65,6 @@ vi.mock("@attest-ai/core", async (importOriginal) => {
 describe("AttestEngineFixture", () => {
   beforeEach(() => {
     globalThis.__attest_session_cost__ = 0;
-    globalThis.__attest_session_soft_failures__ = 0;
   });
 
   it("starts and stops without error", async () => {
@@ -189,7 +187,6 @@ describe("attestGlobalSetup", () => {
     expect(globalThis.__attest_engine__).toBeDefined();
     expect(globalThis.__attest_client__).toBeDefined();
     expect(globalThis.__attest_session_cost__).toBe(0);
-    expect(globalThis.__attest_session_soft_failures__).toBe(0);
 
     await hooks.teardown();
   });
@@ -359,74 +356,6 @@ describe("evaluate() / inspect() enforcement", () => {
     const result = await fixture.inspect(chain as never);
 
     expect(result.outcome()).toBe("fail");
-  });
-});
-
-// ---------------------------------------------------------------------------
-// AttestCostReporter
-// ---------------------------------------------------------------------------
-
-describe("AttestCostReporter", () => {
-  beforeEach(() => {
-    globalThis.__attest_session_cost__ = 0;
-    globalThis.__attest_session_soft_failures__ = 0;
-  });
-
-  it("outputs cost report with zero cost", () => {
-    const reporter = new AttestCostReporter();
-    let output = "";
-
-    reporter.onFinished([], [], {
-      printInfo: (msg: string) => {
-        output = msg;
-      },
-    });
-
-    expect(output).toContain("Attest Cost Report");
-    expect(output).toContain("$0.000000 USD");
-    expect(output).toContain("Soft failures recorded:");
-  });
-
-  it("outputs cost report with accumulated cost", () => {
-    globalThis.__attest_session_cost__ = 0.042;
-    globalThis.__attest_session_soft_failures__ = 3;
-
-    const reporter = new AttestCostReporter();
-    let output = "";
-
-    reporter.onFinished([], [], {
-      printInfo: (msg: string) => {
-        output = msg;
-      },
-    });
-
-    expect(output).toContain("$0.042000 USD");
-    expect(output).toContain("3");
-  });
-
-  it("falls back to process.stdout.write when no context", () => {
-    const writeSpy = vi.spyOn(process.stdout, "write").mockReturnValue(true);
-
-    const reporter = new AttestCostReporter();
-    reporter.onFinished([], []);
-
-    expect(writeSpy).toHaveBeenCalledTimes(1);
-    expect(writeSpy.mock.calls[0][0]).toContain("Attest Cost Report");
-
-    writeSpy.mockRestore();
-  });
-
-  it("report contains separator lines", () => {
-    const reporter = new AttestCostReporter();
-    let output = "";
-
-    reporter.onFinished([], [], {
-      printInfo: (msg: string) => {
-        output = msg;
-      },
-    });
-
-    expect(output).toContain("=".repeat(50));
   });
 });
 

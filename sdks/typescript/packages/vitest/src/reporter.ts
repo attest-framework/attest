@@ -4,69 +4,12 @@ import { dirname, join, relative, resolve, sep } from "node:path";
 import {
   isSimulationMode,
   parseUsage,
-  renderDiagnostics,
-  renderSummary,
   sumUsage,
   type Usage,
 } from "@attest-ai/core";
 import type { Reporter, TestModule, Vitest } from "vitest/node";
 import { buildReport, reportTracesEnabled, summaryLines, type TestRecord } from "./report.js";
-import { BUDGET_MARKER_EXT, ROOT_ENV, USAGE_DIR_ENV } from "./test-state.js";
-
-interface ReporterContext {
-  printInfo: (message: string) => void;
-}
-
-/**
- * Vitest reporter that prints the cost report and a hierarchical
- * diagnostic block for every failed Attest evaluation in the run.
- *
- * Produces the same shape as the Python pytest plugin's
- * "Attest Diagnostics" section so reviewers see consistent output
- * across both ecosystems.
- */
-export class AttestCostReporter {
-  onFinished(_files: unknown, _errors: unknown, context?: ReporterContext): void {
-    const cost = globalThis.__attest_session_cost__ ?? 0;
-    const softFailures = globalThis.__attest_session_soft_failures__ ?? 0;
-    const failures = globalThis.__attest_session_failures__ ?? [];
-
-    const lines: string[] = [];
-
-    if (failures.length > 0) {
-      lines.push(
-        "",
-        "=".repeat(50),
-        "  Attest Diagnostics",
-        "=".repeat(50),
-      );
-      for (const result of failures) {
-        lines.push(renderDiagnostics(result));
-        lines.push(`  Summary: ${renderSummary(result)}`);
-      }
-    }
-
-    lines.push(
-      "",
-      "=".repeat(50),
-      "  Attest Cost Report",
-      "=".repeat(50),
-      `  Total LLM cost this session: $${cost.toFixed(6)} USD`,
-      `  Soft failures recorded:       ${softFailures}`,
-      `  Failed runs:                  ${failures.length}`,
-      "=".repeat(50),
-      "",
-    );
-
-    const output = lines.join("\n");
-
-    if (context?.printInfo) {
-      context.printInfo(output);
-    } else {
-      process.stdout.write(output);
-    }
-  }
-}
+import { BUDGET_MARKER_EXT, ROOT_ENV, USAGE_DIR_ENV } from "./process-env.js";
 
 export interface AttestReporterOptions {
   /**
