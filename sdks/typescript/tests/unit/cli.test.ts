@@ -8,7 +8,7 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { engineCommands, exitStatus, main } from "../../packages/core/src/cli.js";
 import { ENGINE_VERSION, VERSION } from "../../packages/core/src/version.js";
-import { ACTION_PINS, DEMO_MARKER } from "../../packages/core/src/scaffold.js";
+import { ACTION_PINS, ANNOTATE_ENGINE_VERSION, DEMO_MARKER } from "../../packages/core/src/scaffold.js";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import {
   forwardedCalls,
@@ -202,6 +202,55 @@ describe("attest init", () => {
       expect(fs.existsSync(path.join(env.root, "tests"))).toBe(false);
     },
   );
+
+  it("fetches the engine in the annotate job, before pr-annotate and never in the test job", async () => {
+    await expect(main(["init", "--ci", "github"])).resolves.toBe(0);
+
+    const [testJob, annotate] = fs.readFileSync(workflow(), "utf-8").split("\n  annotate:\n");
+    const setupUv = annotate.indexOf("astral-sh/setup-uv@");
+    const fetch = annotate.indexOf("name: Fetch the attest engine");
+    const prAnnotate = annotate.indexOf("pr-annotate@");
+    expect(setupUv).toBeGreaterThanOrEqual(0);
+    expect(setupUv).toBeLessThan(fetch);
+    expect(fetch).toBeLessThan(prAnnotate);
+    expect(annotate.slice(setupUv, fetch)).toContain("enable-cache: false");
+    const step = annotate.slice(fetch, prAnnotate);
+    expect(step).toContain("working-directory: ${{ runner.temp }}");
+    expect(step).toContain(
+      `uvx --no-config --from "attest-ai==${ANNOTATE_ENGINE_VERSION}" attest doctor`,
+    );
+    expect(annotate.slice(prAnnotate)).toContain(`engine-version: ${ANNOTATE_ENGINE_VERSION}\n`);
+    expect(testJob).not.toContain("uvx");
+  });
+
+  it("derives the engine version from the pr-annotate pin tag", () => {
+    expect(ACTION_PINS["attest-framework/attest/.github/actions/pr-annotate"].version).toBe(
+      `v${ANNOTATE_ENGINE_VERSION}`,
+    );
+  });
+
+  it("pins the same SHAs attest's own workflows use", () => {
+    const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../../..");
+    const files = [
+      ...fs.readdirSync(path.join(root, ".github", "workflows")).map((f) => path.join(".github", "workflows", f)),
+      path.join(".github", "actions", "setup-attest", "action.yml"),
+    ];
+    const used = new Map<string, Set<string>>();
+    for (const file of files) {
+      const text = fs.readFileSync(path.join(root, file), "utf-8");
+      for (const m of text.matchAll(/uses:\s*([\w.-]+\/[\w.-]+)(?:\/\S*)?@([0-9a-f]{40})/g)) {
+        used.set(m[1], (used.get(m[1]) ?? new Set()).add(m[2]));
+      }
+    }
+    const shared = Object.keys(ACTION_PINS).filter((action) => used.has(action));
+    expect(shared).toEqual(
+      expect.arrayContaining(["actions/checkout", "actions/setup-node", "astral-sh/setup-uv"]),
+    );
+    for (const action of shared) {
+      const { sha } = ACTION_PINS[action as keyof typeof ACTION_PINS];
+      expect([...used.get(action)!], action).toContain(sha);
+    }
+  });
 
   it("does not overwrite existing files", async () => {
     for (const file of [sample(), workflow()]) {

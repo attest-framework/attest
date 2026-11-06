@@ -80,8 +80,10 @@ not_evaluated: warn
 
 # Every action the generated workflow uses, pinned to a commit SHA with its release tag in a
 # trailing comment (a tag can be moved; a SHA cannot). The TypeScript scaffold carries the same
-# table and a test keeps the two equal. Dependabot's github-actions ecosystem bumps both the SHA
-# and the comment in the generated project.
+# table and a test keeps the two equal. The SHAs are the ones attest's own workflows use, and a
+# test keeps those equal too: Dependabot bumps the workflows, that test fails until this table
+# follows, so a new release ships current pins. The pins are then fixed in a generated project;
+# its own Dependabot config (not written by `attest init`) would bump them from there.
 ACTION_PINS: dict[str, tuple[str, str]] = {
     "actions/checkout": ("d23441a48e516b6c34aea4fa41551a30e30af803", "v6.1.0"),
     "astral-sh/setup-uv": ("37802adc94f370d6bfd71619e3f0bf239e1f3b78", "v7.6.0"),
@@ -92,6 +94,11 @@ ACTION_PINS: dict[str, tuple[str, str]] = {
         "v1.0.1",
     ),
 }
+
+ANNOTATE_ACTION = "attest-framework/attest/.github/actions/pr-annotate"
+# pr-annotate reads the engine from ~/.attest/bin/<version>/ and never downloads it, so the
+# annotate job fetches exactly the release the pr-annotate pin's tag names.
+ANNOTATE_ENGINE_VERSION = ACTION_PINS[ANNOTATE_ACTION][1].removeprefix("v")
 
 
 def _uses(action: str) -> str:
@@ -183,9 +190,20 @@ jobs:
       - uses: {_uses("actions/download-artifact")}
         with:
           name: attest-report
-      - uses: {_uses("attest-framework/attest/.github/actions/pr-annotate")}
+      - uses: {_uses("astral-sh/setup-uv")}
+        with:
+          # This job holds the write token and must not restore a cache the test job filled.
+          enable-cache: false
+      - name: Fetch the attest engine
+        # pr-annotate only finds an engine, it never downloads one. The first `attest` command of
+        # the pinned release fetches it into ~/.attest/bin/<version>/. Run from the runner's temp
+        # directory without project config, so nothing the pull request controls steers the install.
+        working-directory: ${{{{ runner.temp }}}}
+        run: uvx --no-config --from "attest-ai=={ANNOTATE_ENGINE_VERSION}" attest doctor
+      - uses: {_uses(ANNOTATE_ACTION)}
         with:
           report: attest-report.json
+          engine-version: {ANNOTATE_ENGINE_VERSION}
 """
 
 CI_PROVIDERS = ("github",)

@@ -6,6 +6,7 @@ import importlib.util
 import json
 import re
 import stat
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -13,7 +14,13 @@ import jsonschema
 import pytest
 
 from attest.cli.admin import main
-from attest.scaffold import ACTION_PINS, DEMO_MARKER, scaffold_project
+from attest.scaffold import (
+    ACTION_PINS,
+    ANNOTATE_ACTION,
+    ANNOTATE_ENGINE_VERSION,
+    DEMO_MARKER,
+    scaffold_project,
+)
 from tests.conftest import ScriptedEngine
 
 _REPO = Path(__file__).resolve().parents[3]
@@ -22,6 +29,7 @@ _spec = importlib.util.spec_from_file_location(
 )
 assert _spec is not None and _spec.loader is not None
 check_pins = importlib.util.module_from_spec(_spec)
+sys.modules[_spec.name] = check_pins
 _spec.loader.exec_module(check_pins)
 _SAMPLE_FILES = ("tests/test_my_agent.py", "attest.policy.yaml")
 _WORKFLOW = ".github/workflows/attest.yml"
@@ -481,3 +489,41 @@ def test_scaffold_pins_equal_the_typescript_scaffold_pins() -> None:
     assert "attest-framework/attest/.github/actions/pr-annotate" in shared
     for action in shared:
         assert ACTION_PINS[action] == ts_pins[action], action
+
+
+def _jobs(workflow: str) -> tuple[str, str]:
+    head, _, annotate = workflow.partition("\n  annotate:\n")
+    return head, annotate
+
+
+def test_scaffold_annotate_job_fetches_the_engine_before_pr_annotate(tmp_path: Path) -> None:
+    scaffold_project(tmp_path, ci="github")
+    test_job, annotate = _jobs((tmp_path / _WORKFLOW).read_text())
+
+    setup_uv = annotate.index("astral-sh/setup-uv@")
+    fetch = annotate.index("name: Fetch the attest engine")
+    pr_annotate = annotate.index("pr-annotate@")
+    assert setup_uv < fetch < pr_annotate
+    assert "enable-cache: false" in annotate[setup_uv:fetch]
+    step = annotate[fetch:pr_annotate]
+    assert "working-directory: ${{ runner.temp }}" in step
+    assert f'uvx --no-config --from "attest-ai=={ANNOTATE_ENGINE_VERSION}" attest doctor' in step
+    assert f"engine-version: {ANNOTATE_ENGINE_VERSION}\n" in annotate[pr_annotate:]
+    assert "uvx" not in test_job  # the job that runs pull request code never installs the engine
+
+
+def test_scaffold_engine_version_is_the_pr_annotate_pin_tag() -> None:
+    assert ACTION_PINS[ANNOTATE_ACTION][1] == f"v{ANNOTATE_ENGINE_VERSION}"
+
+
+def test_scaffold_pins_equal_the_pins_attest_workflows_use() -> None:
+    used: dict[str, set[str]] = {}
+    github = _REPO / ".github"
+    for path in [*github.glob("workflows/*.yml"), *github.glob("actions/*/action.yml")]:
+        for pin in check_pins.pins(path):
+            used.setdefault(pin.repo, set()).add(pin.sha)
+
+    shared = used.keys() & ACTION_PINS.keys()
+    assert {"actions/checkout", "actions/upload-artifact", "astral-sh/setup-uv"} <= shared
+    for action in shared:
+        assert ACTION_PINS[action][0] in used[action], f"{action}: not a pin the workflows use"

@@ -69,12 +69,15 @@ not_evaluated: warn
 /**
  * Every action the generated workflow uses, pinned to a commit SHA with its release tag in a
  * trailing comment (a tag can be moved; a SHA cannot). The Python scaffold carries the same
- * table and a test keeps the two equal. Dependabot's github-actions ecosystem bumps both the
- * SHA and the comment in the generated project.
+ * table and a test keeps the two equal. The SHAs are the ones attest's own workflows use, and a
+ * test keeps those equal too: Dependabot bumps the workflows, that test fails until this table
+ * follows, so a new release ships current pins. The pins are then fixed in a generated project;
+ * its own Dependabot config (not written by `attest init`) would bump them from there.
  */
 export const ACTION_PINS = {
   "actions/checkout": { sha: "d23441a48e516b6c34aea4fa41551a30e30af803", version: "v6.1.0" },
   "actions/setup-node": { sha: "249970729cb0ef3589644e2896645e5dc5ba9c38", version: "v6.5.0" },
+  "astral-sh/setup-uv": { sha: "37802adc94f370d6bfd71619e3f0bf239e1f3b78", version: "v7.6.0" },
   "actions/upload-artifact": { sha: "cf430e030ddbb5b0abf93d22962f4752f3646cd9", version: "v7.0.2" },
   "actions/download-artifact": {
     sha: "9000827ccba6bdab643e8b6fd33ac0654aef8333",
@@ -85,6 +88,14 @@ export const ACTION_PINS = {
     version: "v1.0.1",
   },
 } as const;
+
+const ANNOTATE_ACTION = "attest-framework/attest/.github/actions/pr-annotate";
+
+/**
+ * pr-annotate reads the engine from ~/.attest/bin/<version>/ and never downloads it, so the
+ * annotate job fetches exactly the release the pr-annotate pin's tag names.
+ */
+export const ANNOTATE_ENGINE_VERSION = ACTION_PINS[ANNOTATE_ACTION].version.replace(/^v/, "");
 
 function uses(action: keyof typeof ACTION_PINS): string {
   const { sha, version } = ACTION_PINS[action];
@@ -176,9 +187,21 @@ jobs:
       - uses: ${uses("actions/download-artifact")}
         with:
           name: attest-report
-      - uses: ${uses("attest-framework/attest/.github/actions/pr-annotate")}
+      - uses: ${uses("astral-sh/setup-uv")}
+        with:
+          # This job holds the write token and must not restore a cache the test job filled.
+          enable-cache: false
+      - name: Fetch the attest engine
+        # pr-annotate only finds an engine, it never downloads one. The first \`attest\` command of
+        # the pinned release fetches it into ~/.attest/bin/<version>/; the Python CLI's \`doctor\`
+        # does that and exits 0 (\`npx @attest-ai/core attest doctor\` fails on 1.0.1). Run from the runner's temp
+        # directory without project config, so nothing the pull request controls steers the install.
+        working-directory: \${{ runner.temp }}
+        run: uvx --no-config --from "attest-ai==${ANNOTATE_ENGINE_VERSION}" attest doctor
+      - uses: ${uses(ANNOTATE_ACTION)}
         with:
           report: attest-report.json
+          engine-version: ${ANNOTATE_ENGINE_VERSION}
 `;
 
 /**
