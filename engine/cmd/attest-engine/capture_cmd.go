@@ -20,8 +20,10 @@ import (
 
 	"github.com/attest-framework/attest/engine/internal/capture"
 	"github.com/attest-framework/attest/engine/internal/contractdsl"
+	"github.com/attest-framework/attest/engine/internal/pathguard"
 	"github.com/attest-framework/attest/engine/internal/redact"
 	"github.com/attest-framework/attest/engine/internal/trace"
+	"github.com/attest-framework/attest/engine/internal/world"
 )
 
 func init() {
@@ -102,7 +104,8 @@ type captureOptions struct {
 	refresh        string
 	oldFixture     *capture.Fixture // with --refresh: the fixture before the re-run
 	world          string
-	worldFile      string // the --world file as the fixture records it: repo-relative, slash separated; empty when outside the repo root
+	refreshWorld   *world.World // with --refresh: the world resolveRefreshWorld verified; hosted as is, never reloaded
+	worldFile      string       // the --world file as the fixture records it: repo-relative, slash separated; empty when outside the repo root
 	yes            bool
 	json           bool
 	command        []string
@@ -203,10 +206,13 @@ func runCapture(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	}
 	var opts []capture.Option
 	if o.world != "" {
-		w, werr := loadWorld(o.world)
-		if werr != nil {
-			printWorldError(stderr, "capture", o.world, werr)
-			return 2
+		w := o.refreshWorld
+		if w == nil {
+			var werr error
+			if w, werr = loadWorld(o.world); werr != nil {
+				printWorldError(stderr, "capture", o.world, werr)
+				return 2
+			}
 		}
 		opts = append(opts, capture.WithWorld(w))
 		if o.refresh == "" {
@@ -740,11 +746,27 @@ func resolveRefreshWorld(o *captureOptions, f *capture.Fixture) error {
 	if err != nil {
 		return fmt.Errorf("--refresh %s: %w", o.refresh, err)
 	}
-	path := filepath.Join(root, filepath.FromSlash(file))
-	if _, err := os.Stat(path); errors.Is(err, fs.ErrNotExist) {
+	// The fixture is untrusted input: read the world through a root that
+	// refuses symlinks leaving the repository and anything but a regular
+	// file, and parse those bytes, so nothing outside the repo is opened.
+	guard, err := pathguard.NewRoot(root)
+	if err != nil {
+		return fmt.Errorf("--refresh %s: %w", o.refresh, err)
+	}
+	defer guard.Close()
+	// Lstat reads metadata only and never follows the final link.
+	if _, err := os.Lstat(filepath.Join(guard.Path(), filepath.FromSlash(file))); errors.Is(err, fs.ErrNotExist) {
 		return fmt.Errorf("--refresh %s: the recorded world file %s is missing; restore it or %s", o.refresh, file, redo())
 	}
-	w, err := loadWorld(path)
+	data, err := guard.ReadFile(file, world.MaxDefinitionBytes)
+	if err != nil {
+		return fmt.Errorf("--refresh %s: the recorded world file %s is not a regular file inside the repository (a symlink out of it is refused); %s", o.refresh, file, redo())
+	}
+	def, err := world.Parse(data)
+	if err != nil {
+		return fmt.Errorf("--refresh %s: the recorded world file %s does not load: %w", o.refresh, file, err)
+	}
+	w, err := world.New(def)
 	if err != nil {
 		return fmt.Errorf("--refresh %s: the recorded world file %s does not load: %w", o.refresh, file, err)
 	}
@@ -757,7 +779,7 @@ func resolveRefreshWorld(o *captureOptions, f *capture.Fixture) error {
 	if now := w.Snapshot().DefinitionSHA256; now != recorded.DefinitionSHA256 {
 		return fmt.Errorf("--refresh %s: the world file %s changed since the fixture was recorded (definition_sha256 %s, now %s); %s so the new world is reviewed", o.refresh, file, recorded.DefinitionSHA256, now, redo())
 	}
-	o.world, o.worldFile = path, file
+	o.world, o.worldFile, o.refreshWorld = filepath.Join(root, filepath.FromSlash(file)), file, w
 	return nil
 }
 
@@ -786,7 +808,12 @@ func repoRelative(outDir, path string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	abs, err := filepath.Abs(path)
+	// Compare physical paths: /tmp and /private/tmp, or a repo reached
+	// through a symlinked parent, are one place.
+	if root, err = canonicalPath(root); err != nil {
+		return "", err
+	}
+	abs, err := canonicalPath(path)
 	if err != nil {
 		return "", err
 	}
@@ -795,6 +822,15 @@ func repoRelative(outDir, path string) (string, error) {
 		return "", nil
 	}
 	return filepath.ToSlash(rel), nil
+}
+
+// canonicalPath is the absolute, symlink-free form of path.
+func canonicalPath(path string) (string, error) {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	return filepath.EvalSymlinks(abs)
 }
 
 func expectFailFlag(on bool) string {

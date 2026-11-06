@@ -244,3 +244,52 @@ resources:
 		t.Errorf("relational_capped = %q, want the cap reported", res.Capped)
 	}
 }
+
+func TestCaptureRefresh_WorldFileIsASymlinkOutOfTheRepo_RefusedBeforeAnyPromptWithoutItsContent(t *testing.T) {
+	bin := buildEngineBinary(t)
+	dir := worldRepo(t)
+	captureWorldRepo(t, bin, dir, "You refund once.")
+	secret := filepath.Join(t.TempDir(), "secret.yaml")
+	if err := os.WriteFile(secret, []byte("api_key: hunter2-planted-secret\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	worldPath := filepath.Join(dir, refreshWorldFile)
+	if err := os.Remove(worldPath); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(secret, worldPath); err != nil {
+		t.Fatal(err)
+	}
+
+	// No --yes: a prompt would show "will run" first.
+	run := engineRun(t, bin, dir, inc1077Env(t, "You refund once."), "capture", "--refresh", refreshFixtureName, "--out-dir", "fixtures")
+
+	if run.code != 1 || !strings.Contains(run.stderr, "inside the repository") {
+		t.Fatalf("exit %d, want 1 refusing the symlinked world:\n%s", run.code, run.stderr)
+	}
+	for _, leak := range []string{"hunter2", "api_key", "will run"} {
+		if strings.Contains(run.stderr+run.stdout, leak) {
+			t.Errorf("output contains %q:\n%s", leak, run.stderr)
+		}
+	}
+}
+
+func TestCapture_WorldNamedThroughASymlinkedParent_RecordsTheRepoRelativeFile(t *testing.T) {
+	bin := buildEngineBinary(t)
+	dir := worldRepo(t)
+	link := filepath.Join(t.TempDir(), "link")
+	if err := os.Symlink(dir, link); err != nil {
+		t.Fatal(err)
+	}
+	args := append([]string{"capture", "--name", refreshFixtureName, "--out-dir", filepath.Join(dir, "fixtures"), "--expect-fail", "--world", filepath.Join(link, refreshWorldFile), "--"}, worldHelper...)
+
+	run := engineRun(t, bin, dir, inc1077Env(t, "You refund once."), args...)
+
+	if run.code != 0 {
+		t.Fatalf("capture: exit %d\n%s", run.code, run.stderr)
+	}
+	got, _ := readRefreshed(t, dir)
+	if got.Source.World == nil || got.Source.World.File != refreshWorldFile {
+		t.Errorf("source.world = %+v, want file %s", got.Source.World, refreshWorldFile)
+	}
+}
