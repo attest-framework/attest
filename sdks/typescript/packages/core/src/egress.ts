@@ -9,16 +9,27 @@
  * `HTTPS_PROXY`, `HTTP_PROXY`, `ALL_PROXY`, either case, read at connect time) is screened:
  * its `_write`/`_writev` sinks (write, end, cork, writev) run every HTTP/1.1 request through a
  * minimal framer that checks the request-line target and `Host` header, skips bodies by
- * `Content-Length` or chunked framing, and passes bytes through untouched after an allowed
- * `CONNECT`. Ambiguous framing is refused. No other socket is touched (stdout/stderr pipes,
- * sockets to any other peer).
+ * `Content-Length` or chunked framing. Ambiguous framing is refused. No other socket is
+ * touched (stdout/stderr pipes, sockets to any other peer).
+ *
+ * A socket is a proxy when its connected `remoteAddress`/`remotePort` match the proxy host's
+ * `dns.lookup(all)` addresses (IPv4-mapped IPv6 normalized, cached per proxy URL), so
+ * `localhost.` or a multi-address name match a pre-resolved connect. The decision is taken on
+ * `connect` and the socket's writes are held until then. A failed lookup on a port a proxy is
+ * configured on counts as a proxy (fail closed).
+ *
+ * After an allowed `CONNECT` the framer waits for the first bytes the client writes. A TLS
+ * record header (0x16 0x03 0x00-0x04) means the tunnel is in use and the connection goes
+ * opaque; anything else (the proxy refused the CONNECT, e.g. 407, and the client sent another
+ * request, or the tunnel carries plain HTTP) returns to request framing with full screening.
+ * The proxy's response is not read, so a non-HTTP, non-TLS protocol inside a tunnel is refused.
  *
  * Not covered: child processes (the engine, anything the agent spawns), SOCKS proxies, an
  * `https://` proxy (TLS hides the request line), a proxy named only through a client option
- * rather than the environment, a proxy hostname that differs from the connect host while
- * resolving to the same address, and anything inside an allowed CONNECT tunnel.
+ * rather than the environment, and the contents of a tunnel that starts with a TLS record.
  */
 
+import * as dns from "node:dns";
 import * as net from "node:net";
 
 export const PROVIDER_HOSTS: readonly (string | RegExp)[] = [
@@ -172,21 +183,55 @@ function configuredProxies(
   return out;
 }
 
-const LOOPBACK = new Set(["localhost", "127.0.0.1", "::1", "0:0:0:0:0:0:0:1"]);
-
-function sameHost(a: string, b: string): boolean {
-  const x = a.replace(/^\[|\]$/g, "").toLowerCase();
-  const y = b.replace(/^\[|\]$/g, "").toLowerCase();
-  return x === y || (LOOPBACK.has(x) && LOOPBACK.has(y));
+/** Ports at least one configured proxy listens on. */
+function isProxyPortCandidate(args: unknown[]): boolean {
+  const port = portOf(args);
+  return port !== null && configuredProxies().some((p) => p.port === port);
 }
 
-function isProxyPeer(args: unknown[]): boolean {
-  const port = portOf(args);
-  if (port === null) return false;
-  const host = hostOf(args) ?? "localhost";
-  return configuredProxies().some(
-    (p) => p.port === port && sameHost(p.host, host),
-  );
+function normalizeAddress(address: string): string {
+  const bare = address.replace(/^\[|\]$/g, "").split("%")[0]!.toLowerCase();
+  const mapped = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/.exec(bare);
+  return mapped === null ? bare : (mapped[1] as string);
+}
+
+// Resolved addresses per proxy URL; failures are not cached.
+const proxyAddresses = new Map<string, Set<string>>();
+
+async function resolveProxy(p: { host: string; port: number }): Promise<Set<string> | null> {
+  const key = `http://${p.host}:${p.port}`;
+  const cached = proxyAddresses.get(key);
+  if (cached !== undefined) return cached;
+  try {
+    const infos = await dns.promises.lookup(p.host, { all: true });
+    const set = new Set(infos.map((i) => normalizeAddress(i.address)));
+    proxyAddresses.set(key, set);
+    return set;
+  } catch {
+    return null;
+  }
+}
+
+/** Whether a connected socket's peer is a configured proxy (fail closed on a lookup error). */
+async function isProxyPeer(sock: net.Socket): Promise<boolean> {
+  const { remoteAddress, remotePort } = sock;
+  if (remoteAddress === undefined || remotePort === undefined) return false;
+  const peer = normalizeAddress(remoteAddress);
+  for (const p of configuredProxies().filter((c) => c.port === remotePort)) {
+    const addresses = await resolveProxy(p);
+    if (addresses === null || addresses.has(peer)) return true;
+  }
+  return false;
+}
+
+/** Settles on `connect` with the proxy verdict; false if the socket closes first. */
+function decideProxy(sock: net.Socket): Promise<boolean> {
+  return new Promise<boolean>((resolve) => {
+    sock.once("connect", () => {
+      isProxyPeer(sock).then(resolve, () => resolve(true));
+    });
+    sock.once("close", () => resolve(false));
+  });
 }
 
 /** Longest request head, chunk-size line or trailer line the framer will hold. */
@@ -213,6 +258,7 @@ type FramerState =
   | "chunk-data"
   | "chunk-end"
   | "trailer"
+  | "await-tunnel"
   | "tunnel";
 
 /** Follows the HTTP/1.1 requests written to one proxy connection and screens each head. */
@@ -231,6 +277,10 @@ class RequestFramer {
       if (this.state === "tunnel") {
         out.push(buf.subarray(pos));
         pos = buf.length;
+      } else if (this.state === "await-tunnel") {
+        const startsTls = tlsRecordStart(buf.subarray(pos));
+        if (startsTls === null) break;
+        this.state = startsTls ? "tunnel" : "head";
       } else if (this.state === "body" || this.state === "chunk-data") {
         const n = Math.min(this.remaining, buf.length - pos);
         out.push(buf.subarray(pos, pos + n));
@@ -318,7 +368,7 @@ class RequestFramer {
       if (h === null) refuse("request target or Host header cannot be parsed");
       if (isProviderHost(h)) throw new EgressBlockedError(h);
     }
-    if (method === "CONNECT") return "tunnel";
+    if (method === "CONNECT") return "await-tunnel";
     const lengths = names.get("content-length") ?? [];
     const encodings = names.get("transfer-encoding") ?? [];
     if (encodings.length > 0) {
@@ -339,6 +389,16 @@ class RequestFramer {
     }
     return "head";
   }
+}
+
+/** true: a TLS record header (handshake/alert/app-data, SSL3 to TLS1.3); false: not; null: more bytes needed. */
+function tlsRecordStart(buf: Buffer): boolean | null {
+  const want = [0x16, 0x03];
+  for (let i = 0; i < Math.min(buf.length, 3); i++) {
+    const b = buf[i] as number;
+    if (i < 2 ? b !== want[i] : b > 0x04) return false;
+  }
+  return buf.length < 3 ? null : true;
 }
 
 /** true: could still become a request line; false: cannot; null: more bytes needed. */
@@ -369,7 +429,7 @@ function toBuffer(data: unknown, encoding: Encoding): Buffer {
 const screened = new Set<WeakRef<net.Socket>>();
 const refused = new WeakMap<net.Socket, Error>();
 
-function screenSocket(sock: net.Socket): void {
+function screenSocket(sock: net.Socket, isProxy: Promise<boolean>): void {
   const sinks = sock as unknown as SocketSinks;
   const framer = new RequestFramer();
   const origSink = sinks._write;
@@ -387,19 +447,27 @@ function screenSocket(sock: net.Socket): void {
     }
   };
   // Every write path (write, end(chunk), cork/uncork, writev) ends in _write or _writev.
+  // Writable issues one sink call at a time (the next waits for `cb`), so holding a call
+  // until the proxy verdict keeps write order.
   sinks._write = function (this: net.Socket, data, encoding, cb): void {
-    const outcome = decide(toBuffer(data, encoding));
-    if (outcome instanceof Error) return cb(outcome);
-    if (outcome.length === 0) return cb();
-    return origSink.call(this, outcome, "buffer", cb);
+    void isProxy.then((proxied) => {
+      if (!proxied) return origSink.call(this, data, encoding, cb);
+      const outcome = decide(toBuffer(data, encoding));
+      if (outcome instanceof Error) return cb(outcome);
+      if (outcome.length === 0) return cb();
+      return origSink.call(this, outcome, "buffer", cb);
+    });
   };
   sinks._writev = function (this: net.Socket, chunks, cb): void {
-    const outcome = decide(
-      Buffer.concat(chunks.map((c) => toBuffer(c.chunk, c.encoding))),
-    );
-    if (outcome instanceof Error) return cb(outcome);
-    if (outcome.length === 0) return cb();
-    return origSink.call(this, outcome, "buffer", cb);
+    void isProxy.then((proxied) => {
+      if (!proxied) return origSinkV.call(this, chunks, cb);
+      const outcome = decide(
+        Buffer.concat(chunks.map((c) => toBuffer(c.chunk, c.encoding))),
+      );
+      if (outcome instanceof Error) return cb(outcome);
+      if (outcome.length === 0) return cb();
+      return origSink.call(this, outcome, "buffer", cb);
+    });
   };
   const ref = new WeakRef(sock);
   screened.add(ref);
@@ -426,8 +494,9 @@ export function installEgressGuard(): () => void {
         process.nextTick(() => this.destroy(err));
         return this;
       }
-      // Decided now, from the connect arguments, so no write can precede the patch.
-      if (isProxyPeer(args)) screenSocket(this);
+      // Patched now, so no write can precede the patch; the sinks hold writes until the
+      // connected peer is identified.
+      if (isProxyPortCandidate(args)) screenSocket(this, decideProxy(this));
       return orig.apply(this, args);
     };
   }
@@ -459,4 +528,5 @@ export function uninstallEgressGuard(): void {
     delete (sock as Partial<SocketSinks>)._writev;
   }
   screened.clear();
+  proxyAddresses.clear();
 }

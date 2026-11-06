@@ -1,12 +1,13 @@
 import { execFile } from "node:child_process";
 import * as fs from "node:fs";
+import * as dns from "node:dns";
 import * as http from "node:http";
 import * as net from "node:net";
 import { createRequire } from "node:module";
 import * as os from "node:os";
 import * as path from "node:path";
 import * as tls from "node:tls";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   EgressBlockedError,
   installEgressGuard,
@@ -96,6 +97,7 @@ function viaProxy(
 }
 
 afterEach(() => {
+  vi.restoreAllMocks();
   uninstallEgressGuard();
   delete process.env.HTTP_PROXY;
 });
@@ -494,7 +496,7 @@ describe("egress guard frames every request on a proxy connection", () => {
     }
   });
 
-  it("lets TLS run through an allowed CONNECT tunnel", async () => {
+  it.each([false, true])("lets TLS run through an allowed CONNECT tunnel (rejected first: %s)", async (rejectFirst) => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "attest-egress-tls-"));
     const key = path.join(dir, "key.pem");
     const cert = path.join(dir, "cert.pem");
@@ -525,13 +527,19 @@ describe("egress guard frames every request on a proxy connection", () => {
       const tlsPort = (tlsServer.address() as net.AddressInfo).port;
       proxy = net.createServer((client) => {
         track(client);
-        client.once("data", () => {
+        const tunnel = () => {
           const upstream = net.connect({ host: "127.0.0.1", port: tlsPort }, () => {
             client.write("HTTP/1.1 200 Connection Established\r\n\r\n");
             client.pipe(upstream);
             upstream.pipe(client);
           });
           track(upstream);
+        };
+        client.once("data", () => {
+          if (!rejectFirst) return tunnel();
+          // Refuse the first CONNECT and keep the connection open for the next one.
+          client.write("HTTP/1.1 407 Proxy Authentication Required\r\nContent-Length: 0\r\n\r\n");
+          client.once("data", tunnel);
         });
       });
       await new Promise<void>((r) => proxy!.listen(0, "127.0.0.1", r));
@@ -542,6 +550,11 @@ describe("egress guard frames every request on a proxy connection", () => {
       const raw = net.connect({ host: "127.0.0.1", port: proxyPort });
       track(raw);
       await new Promise<void>((r) => raw.once("connect", r));
+      if (rejectFirst) {
+        raw.write("CONNECT example.com:443 HTTP/1.1\r\nHost: example.com:443\r\n\r\n");
+        const refusal = await new Promise<string>((r) => raw.once("data", (d) => r(d.toString())));
+        expect(refusal.startsWith("HTTP/1.1 407")).toBe(true);
+      }
       raw.write("CONNECT localhost:443 HTTP/1.1\r\nHost: localhost:443\r\n\r\n");
       const status = await new Promise<string>((r) => raw.once("data", (d) => r(d.toString())));
       expect(status.startsWith("HTTP/1.1 200")).toBe(true);
@@ -557,6 +570,140 @@ describe("egress guard frames every request on a proxy connection", () => {
       tlsServer?.close();
       proxy?.close();
       fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+const CONNECT_ALLOWED = "CONNECT example.com:443 HTTP/1.1\r\nHost: example.com:443\r\n\r\n";
+const CONNECT_PROVIDER = "CONNECT api.openai.com:443 HTTP/1.1\r\nHost: api.openai.com:443\r\n\r\n";
+
+describe("egress guard after a CONNECT", () => {
+  it("blocks a provider CONNECT written after a CONNECT the proxy refused", async () => {
+    const sink = await startSink();
+    installEgressGuard();
+    try {
+      const err = await sendParts(sink.port, [CONNECT_ALLOWED, CONNECT_PROVIDER]);
+      expect(err).toBeInstanceOf(EgressBlockedError);
+      expect(sink.received().toString("latin1")).toBe(CONNECT_ALLOWED);
+    } finally {
+      sink.close();
+    }
+  });
+
+  it("screens plain HTTP written after an allowed CONNECT and delivers it intact", async () => {
+    const sink = await startSink();
+    installEgressGuard();
+    try {
+      const request = "GET / HTTP/1.1\r\nHost: example.com\r\n\r\n";
+      const ok = await sendParts(sink.port, [
+        "CONNECT example.com:80 HTTP/1.1\r\nHost: example.com:80\r\n\r\n",
+        request,
+      ]);
+      expect(ok).toBeNull();
+      expect(sink.received().toString("latin1")).toContain(request);
+      const err = await sendParts(sink.port, [
+        "CONNECT example.com:80 HTTP/1.1\r\nHost: example.com:80\r\n\r\n",
+        PROVIDER,
+      ]);
+      expect(err).toBeInstanceOf(EgressBlockedError);
+    } finally {
+      sink.close();
+    }
+  });
+});
+
+type Lookup = (host: string) => { address: string; family: number }[];
+
+function stubLookup(resolve: Lookup | Error): void {
+  vi.spyOn(dns.promises, "lookup").mockImplementation((async (host: string) => {
+    if (resolve instanceof Error) throw resolve;
+    return resolve(host);
+  }) as never);
+}
+
+describe("egress guard identifies the proxy by its connected address", () => {
+  it("blocks a provider CONNECT when the env names the proxy as localhost.", async () => {
+    const sink = await startSink();
+    process.env.HTTP_PROXY = `http://localhost.:${sink.port}`;
+    installEgressGuard();
+    try {
+      const err = await sendParts(sink.port, [CONNECT_PROVIDER]);
+      expect(err).toBeInstanceOf(EgressBlockedError);
+      expect(sink.received().length).toBe(0);
+    } finally {
+      sink.close();
+    }
+  });
+
+  it("blocks when a multi-address proxy name includes the connected address", async () => {
+    const sink = await startSink();
+    process.env.HTTP_PROXY = `http://proxy.multi.test:${sink.port}`;
+    stubLookup(() => [
+      { address: "10.255.255.1", family: 4 },
+      { address: "127.0.0.1", family: 4 },
+    ]);
+    installEgressGuard();
+    try {
+      const err = await sendParts(sink.port, [CONNECT_PROVIDER]);
+      expect(err).toBeInstanceOf(EgressBlockedError);
+      expect(sink.received().length).toBe(0);
+    } finally {
+      sink.close();
+    }
+  });
+
+  it("matches an IPv4-mapped IPv6 address of the proxy", async () => {
+    const sink = await startSink();
+    process.env.HTTP_PROXY = `http://proxy.mapped.test:${sink.port}`;
+    stubLookup(() => [{ address: "::ffff:127.0.0.1", family: 6 }]);
+    installEgressGuard();
+    try {
+      const err = await sendParts(sink.port, [CONNECT_PROVIDER]);
+      expect(err).toBeInstanceOf(EgressBlockedError);
+      expect(sink.received().length).toBe(0);
+    } finally {
+      sink.close();
+    }
+  });
+
+  it("fails closed when the proxy name does not resolve on a configured proxy port", async () => {
+    const sink = await startSink();
+    process.env.HTTP_PROXY = `http://proxy.unresolved.test:${sink.port}`;
+    stubLookup(new Error("ENOTFOUND"));
+    installEgressGuard();
+    try {
+      const err = await sendParts(sink.port, [CONNECT_PROVIDER]);
+      expect(err).toBeInstanceOf(EgressBlockedError);
+      expect(sink.received().length).toBe(0);
+    } finally {
+      sink.close();
+    }
+  });
+
+  it("leaves the proxy port on a different, non-proxy address alone", async () => {
+    const sink = await startSink();
+    process.env.HTTP_PROXY = `http://proxy.elsewhere.test:${sink.port}`;
+    stubLookup(() => [{ address: "10.255.255.1", family: 4 }]);
+    installEgressGuard();
+    try {
+      const err = await sendParts(sink.port, [CONNECT_PROVIDER]);
+      expect(err).toBeNull();
+      expect(sink.received().toString("latin1")).toBe(CONNECT_PROVIDER);
+    } finally {
+      sink.close();
+    }
+  });
+
+  it("leaves a socket on another port alone", async () => {
+    const sink = await startSink();
+    process.env.HTTP_PROXY = `http://127.0.0.1:${sink.port + 1}`;
+    installEgressGuard();
+    try {
+      const err = await sendParts(sink.port, [CONNECT_PROVIDER]);
+      expect(err).toBeNull();
+      expect(sink.received().toString("latin1")).toBe(CONNECT_PROVIDER);
+    } finally {
+      sink.close();
     }
   });
 });
