@@ -1,0 +1,57 @@
+{
+  "cases": [
+    {
+      "statement": "sum(\"refunds\", \"amount_cents\", at_most=related(\"orders\", \"amount_cents\", on=\"order_id\"))",
+      "type": "effect",
+      "spec": {
+        "at_most": {
+          "related": {
+            "field": "amount_cents",
+            "on": "order_id",
+            "resource": "orders"
+          }
+        },
+        "check": "sum",
+        "field": "amount_cents",
+        "resource": "refunds"
+      },
+      "chain_prefix": ".world(FIXTURE.world)",
+      "python": ".world(FIXTURE.world).sum(\"refunds\", \"amount_cents\", at_most=related(\"orders\", \"amount_cents\", on=\"order_id\"))",
+      "typescript": ".world(FIXTURE.world).sum(\"refunds\", \"amount_cents\", { atMost: related(\"orders\", \"amount_cents\", { on: \"order_id\" }) })"
+    },
+    {
+      "statement": "sum(\"refunds\", \"amount_cents\", at_most=15000, status=\"paid\")",
+      "type": "effect",
+      "spec": {
+        "at_most": 15000,
+        "check": "sum",
+        "field": "amount_cents",
+        "resource": "refunds",
+        "where": {
+          "status": "paid"
+        }
+      },
+      "chain_prefix": ".world(FIXTURE.world)",
+      "python": ".world(FIXTURE.world).sum(\"refunds\", \"amount_cents\", at_most=15000, status=\"paid\")",
+      "typescript": ".world(FIXTURE.world).sum(\"refunds\", \"amount_cents\", { atMost: 15000, where: { status: \"paid\" } })"
+    },
+    {
+      "statement": "matches(\"notifications\", \"customer_id\", related(\"orders\", \"customer_id\", on=\"order_id\"))",
+      "type": "effect",
+      "spec": {
+        "check": "matches",
+        "field": "customer_id",
+        "related": {
+          "field": "customer_id",
+          "on": "order_id",
+          "resource": "orders"
+        },
+        "resource": "notifications"
+      },
+      "chain_prefix": ".world(FIXTURE.world)",
+      "python": ".world(FIXTURE.world).matches(\"notifications\", \"customer_id\", related(\"orders\", \"customer_id\", on=\"order_id\"))",
+      "typescript": ".world(FIXTURE.world).matches(\"notifications\", \"customer_id\", related(\"orders\", \"customer_id\", { on: \"order_id\" }))"
+    }
+  ],
+  "description": "Chain lines for the relational effect checks sum and matches, kept apart from rendered.json until both SDKs ship the builders. Chain lines rendered by the contract catalog for each method (Go: internal/contractdsl). The Python and TypeScript SDK tests apply each line to a real expect chain with FIXTURE bound to an object holding a world snapshot. Regenerate with ATTEST_UPDATE_GOLDEN=1 go test ./internal/contractdsl."
+}

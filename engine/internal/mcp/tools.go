@@ -289,6 +289,7 @@ func (e *env) draftContract(ctx context.Context, raw json.RawMessage) (any, erro
 		FixturePath string `json:"fixture_path"`
 		TracePath   string `json:"trace_path"`
 		ExpectFail  *bool  `json:"expect_fail"`
+		WorldPath   string `json:"world_path"`
 	}
 	if err := decodeArgs(raw, &in); err != nil {
 		return nil, err
@@ -325,10 +326,51 @@ func (e *env) draftContract(ctx context.Context, raw json.RawMessage) (any, erro
 		d.Statement, d.ChainPrefix, d.Python, d.TypeScript, d.Error = render(c)
 		out = append(out, d)
 	}
-	return map[string]any{
+	relational, capped, err := e.draftRelational(ctx, in.WorldPath, src)
+	if err != nil {
+		return nil, err
+	}
+	out = append(out, relational...)
+	result := map[string]any{
 		"source": src.name, "expect_fail": expectFail, "verified": ver.Verified,
 		"trace_check": src.check, "contracts": out,
-	}, nil
+	}
+	if capped {
+		result["relational_capped"] = fmt.Sprintf("the world relates more resources than one contract run takes; only the first %d relational contracts are drafted", contractdsl.MaxStatements)
+	}
+	return result, nil
+}
+
+// draftRelational drafts sum and matches contracts from the world (world_path,
+// else the fixture's) and reports how each fares on it. They stay out of the
+// "verified" flag, which covers the trace contracts a fixture stores.
+func (e *env) draftRelational(ctx context.Context, worldPath string, src *source) ([]draftedContract, bool, error) {
+	snapshot, err := e.worldSnapshot(worldPath, src)
+	if err != nil || snapshot == nil {
+		return nil, false, err
+	}
+	contracts, capped, err := capture.DraftRelational(snapshot)
+	if err != nil {
+		return nil, false, fmt.Errorf("draft relational: %w", err)
+	}
+	// run_contract applies the same bound: each evaluation scans the snapshot.
+	if len(snapshot)*len(contracts) > MaxFileBytes {
+		return nil, false, errors.New("the world snapshot is too large to check against this many relational contracts")
+	}
+	results, err := capture.VerifyRelational(ctx, snapshot, contracts)
+	if err != nil {
+		return nil, false, fmt.Errorf("verify relational: %w", err)
+	}
+	out := make([]draftedContract, 0, len(contracts))
+	for i, c := range contracts {
+		d := draftedContract{
+			ID: c.ID, Kind: c.Kind, Description: c.Description, Type: c.Type, Spec: c.Spec,
+			Status: results[i].Status, Explanation: results[i].Explanation,
+		}
+		d.Statement, d.ChainPrefix, d.Python, d.TypeScript, d.Error = render(c)
+		out = append(out, d)
+	}
+	return out, capped, nil
 }
 
 // render turns a drafted contract into its statement and test lines. A

@@ -20,7 +20,39 @@ const (
 	kPairs     // list of [before, after] string pairs
 	kObject    // string-keyed map
 	kValue     // any literal
+	kRelated   // a related(resource, field, on=key) reference
+	kBound     // a number or a related(...) reference
 )
+
+// Related is the closed grammar's one non-literal form, related(resource,
+// field, on=key): the record in resource whose key field equals the key of the
+// record being checked, and the field to read from it.
+type Related struct {
+	Resource string `json:"resource"`
+	Field    string `json:"field"`
+	On       string `json:"on"`
+}
+
+func (r Related) specMap() map[string]any {
+	return map[string]any{"resource": r.Resource, "field": r.Field, "on": r.On}
+}
+
+// relatedFromSpec reads the {resource, field, on} map of a spec.
+func relatedFromSpec(v any) (Related, bool) {
+	m, ok := v.(map[string]any)
+	if !ok || len(m) != 3 {
+		return Related{}, false
+	}
+	var r Related
+	for k, dst := range map[string]*string{"resource": &r.Resource, "field": &r.Field, "on": &r.On} {
+		s, ok := m[k].(string)
+		if !ok || s == "" {
+			return Related{}, false
+		}
+		*dst = s
+	}
+	return r, true
+}
 
 func (k kind) String() string {
 	switch k {
@@ -40,6 +72,10 @@ func (k kind) String() string {
 		return "a list of [before, after] string pairs"
 	case kObject:
 		return "a map with string keys"
+	case kRelated:
+		return "a related(resource, field, on=key) reference"
+	case kBound:
+		return "a number or a related(resource, field, on=key) reference"
 	}
 	return "a literal"
 }
@@ -238,6 +274,26 @@ var catalog = []*Method{
 			{name: "where", kind: kObject, isWhere: true},
 		},
 	},
+	{
+		Name: "sum", TS: "sum", Type: types.TypeEffect, Effect: true,
+		fixed: map[string]any{"check": "sum"},
+		params: []param{
+			{name: "resource", specKey: "resource", kind: kString, positional: true, required: true},
+			{name: "field", specKey: "field", kind: kString, positional: true, required: true},
+			{name: "at_most", ts: "atMost", specKey: "at_most", kind: kBound, required: true},
+			{name: "where", kind: kObject, isWhere: true},
+		},
+	},
+	{
+		Name: "matches", TS: "matches", Type: types.TypeEffect, Effect: true,
+		fixed: map[string]any{"check": "matches"},
+		params: []param{
+			{name: "resource", specKey: "resource", kind: kString, positional: true, required: true},
+			{name: "field", specKey: "field", kind: kString, positional: true, required: true},
+			{name: "related", specKey: "related", kind: kRelated, positional: true, required: true},
+			{name: "where", kind: kObject, isWhere: true},
+		},
+	},
 }
 
 // Methods returns the catalog in a fixed order.
@@ -291,6 +347,9 @@ func (m *Method) Signature() string {
 // coerce checks v against the parameter and returns its normalized value.
 func (p param) coerce(v any) (any, error) {
 	bad := func() (any, error) { return nil, fmt.Errorf("argument %q must be %s", p.name, p.kind) }
+	if _, isRelated := v.(Related); isRelated && p.kind != kRelated && p.kind != kBound {
+		return nil, fmt.Errorf("argument %q cannot be a related(...) reference; it takes %s", p.name, p.kind)
+	}
 	switch p.kind {
 	case kString:
 		s, ok := v.(string)
@@ -327,6 +386,18 @@ func (p param) coerce(v any) (any, error) {
 			return bad()
 		}
 		return b, nil
+	case kRelated:
+		return p.coerceRelated(v, bad)
+	case kBound:
+		if m, ok := v.(map[string]any); ok && len(m) == 1 {
+			if inner, ok := m["related"]; ok {
+				return p.coerceRelated(inner, bad)
+			}
+		}
+		if _, ok := v.(Related); ok {
+			return p.coerceRelated(v, bad)
+		}
+		return param{name: p.name, kind: kNumber}.coerce(v)
 	case kStrings:
 		l, ok := stringList(v)
 		if !ok {
@@ -362,6 +433,33 @@ func (p param) coerce(v any) (any, error) {
 		return m, nil
 	}
 	return v, nil
+}
+
+func (p param) coerceRelated(v any, bad func() (any, error)) (any, error) {
+	switch x := v.(type) {
+	case Related:
+		if x.Resource == "" || x.Field == "" || x.On == "" {
+			return bad()
+		}
+		return x, nil
+	case map[string]any:
+		if r, ok := relatedFromSpec(x); ok {
+			return r, nil
+		}
+	}
+	return bad()
+}
+
+// specValue is the form a bound argument takes in an assertion spec.
+func (p param) specValue(v any) any {
+	r, ok := v.(Related)
+	if !ok {
+		return v
+	}
+	if p.kind == kBound {
+		return map[string]any{"related": r.specMap()}
+	}
+	return r.specMap()
 }
 
 func asInt(v any) (int64, bool) {
@@ -475,6 +573,9 @@ func bind(m *Method, raw *rawCall) (*Call, error) {
 			if _, dup := c.Filters[kw.name]; dup {
 				return nil, fail(kw.pos, "filter %q is given twice", kw.name)
 			}
+			if _, isRelated := kw.value.(Related); isRelated {
+				return nil, fail(kw.pos, "filter %q cannot be a related(...) reference; filters are literals", kw.name)
+			}
 			c.Filters[kw.name] = kw.value
 		default:
 			return nil, fail(kw.pos, "%s has no argument %q", m.Name, kw.name)
@@ -526,7 +627,7 @@ func (c *Call) Spec() map[string]any {
 			}
 			v = p.def
 		}
-		spec[p.specKey] = v
+		spec[p.specKey] = p.specValue(v)
 	}
 	if len(c.Filters) > 0 {
 		spec["where"] = c.Filters
