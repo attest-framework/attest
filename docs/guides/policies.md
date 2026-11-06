@@ -90,7 +90,7 @@ A report that records `tests_collected` above 0 and an empty `tests` array lost 
 
 The engine renders report-v2 files for CI. Each command takes `--report` one or more times; several reports merge (a project that writes one report per runner passes them all). An unreadable or invalid report exits 2 with the error on stderr.
 
-<!-- snippet: skip reason="uses `set`, `[` and `$?`, outside the runner's shell allowlist, and starts from a report this block does not produce" -->
+<!-- snippet: setup=project -->
 ```bash
 # JUnit XML for CI test views: one suite per test file, a <failure> for a failed test,
 # a <skipped> for a skipped test, naming the reasons when its assertions were not evaluated.

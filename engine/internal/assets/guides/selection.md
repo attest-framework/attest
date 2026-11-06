@@ -39,7 +39,7 @@ A fixture that a `conftest.py` references selects every test file below that `co
 
 ## Run the selection
 
-<!-- snippet: skip reason="shell control flow and command substitution are outside the runner's allowlist" -->
+<!-- snippet: setup=gitrepo -->
 ```bash
 tests=$(uv run attest select --base origin/main)
 if [ "$tests" = "all" ]; then

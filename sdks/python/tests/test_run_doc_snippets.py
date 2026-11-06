@@ -246,6 +246,10 @@ def test_run_repository_sources_have_no_unmarked_directives() -> None:
         "attest select <(echo x)",
         "attest select >(cat)",
         "X=$(rm -rf /tmp/x) attest select",
+        "attest select --base $(echo main)",
+        "if [ -n x ]; then X=$(echo $(echo y)); fi",
+        "tests=$(attest select | cat <(echo x))",
+        "tests=$(attest select `id`)",
         'attest select --base "`id`"',
     ],
 )
@@ -254,6 +258,49 @@ def test_check_shell_commands_rejects_command_substitution(line: str) -> None:
 
     assert problem is not None
     assert "command substitution" in problem
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "attest select | pytest -q\n",
+        "attest select && pytest -q || echo failed; echo done\n",
+        "attest report summary --report r.json > out.json 2> err.txt\n",
+        "set +e\nattest x\n[ $? -le 2 ] || exit 1\n",
+        "t=$(uv run attest select --base origin/main)\n"
+        'if [ "$t" = "all" ]; then\n  uv run pytest\nelif [ -n "$t" ]; then\n  uv run pytest $t\n'
+        "else\n  echo none\nfi\n",
+        "for f in a b; do\n  attest validate $f\ndone\n",
+        "for f in a b; do attest validate $f; done\n",
+        "while [ -n x ]; do pytest -q; done\n",
+        "if attest doctor; then echo ok; fi\n",
+    ],
+)
+def test_check_shell_commands_accepts_control_flow_pipes_lists_and_redirects(body: str) -> None:
+    assert runner.check_shell_commands(body) is None
+
+
+@pytest.mark.parametrize(
+    ("body", "word"),
+    [
+        ("attest select | rm -rf x\n", "'rm'"),
+        ("attest select && curl http://x || echo no\n", "'curl'"),
+        ("attest select; curl http://x\n", "'curl'"),
+        ("if [ -n x ]; then curl http://x; fi\n", "'curl'"),
+        ("if curl http://x; then echo y; fi\n", "'curl'"),
+        ("for f in a; do curl $f; done\n", "'curl'"),
+        ("while [ -n x ]; do rm x; done\n", "'rm'"),
+        ("t=$(curl http://x)\n", "'curl'"),
+        ("t=$(attest select | rm x)\n", "'rm'"),
+        ("FOO=1 curl http://x\n", "'curl'"),
+        ("case x in x) rm y;; esac\n", "'case'"),
+    ],
+)
+def test_check_shell_commands_checks_every_command_in_control_flow(body: str, word: str) -> None:
+    problem = runner.check_shell_commands(body)
+
+    assert problem is not None
+    assert word in problem
 
 
 def test_check_shell_commands_accepts_export_and_allowlisted_commands() -> None:

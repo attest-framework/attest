@@ -11,9 +11,11 @@ executed offline, each in its own temporary directory:
   `uv run --project sdks/python python scripts/run_doc_snippets.py`.
 * TypeScript: the block runs as a vitest test file resolved against the built
   `sdks/typescript` workspace packages (`pnpm build` first).
-* Shell: every command word must be on the allowlist (`attest`, `attest-engine`,
-  `pytest`, `export`) and the block may not contain backticks, `$(`, `<(` or `>(`; the
-  block runs under `bash -e` with the engine and SDK on PATH. The allowlist is a
+* Shell: every simple command, including those inside pipelines, `&&`/`||`/`;`
+  lists, `if`/`for`/`while` blocks and `VAR=$(...)` assignments, must be on the
+  allowlist (`attest`, `attest-engine`, `pytest`, `export`, `echo`, `set`, `[`,
+  `exit`). Backticks, `<(`, `>(` and a `$(` outside a `VAR=$(...)` assignment are
+  rejected. The block runs under `bash -e` with the engine and SDK on PATH. The allowlist is a
   lint against copy-paste mistakes, not a sandbox: it does not model every
   shell construct (variables, aliases, here-documents). The security boundary
   is the CI job, which has read-only repository permissions and no secrets.
@@ -105,7 +107,7 @@ DATA_LANGS = {
     "make",
 }
 
-SHELL_ALLOWLIST = {"attest", "attest-engine", "pytest", "export"}  # export: environment setup only
+SHELL_ALLOWLIST = {"attest", "attest-engine", "pytest", "export", "echo", "set", "[", "exit"}  # export: environment setup only
 DIRECTIVE_KINDS = {"skip", "fragment", "continue"}
 PROVIDER_KEYS = (
     "OPENAI_API_KEY",
@@ -342,45 +344,85 @@ def run_cmd(cmd: list[str], cwd: Path, env: dict[str, str]) -> tuple[int, str]:
     return proc.returncode, (proc.stdout + proc.stderr)
 
 
+# Keywords that open a command position: the next word is a command again.
+SHELL_OPENERS = {"if", "then", "elif", "else", "while", "until", "do", "!"}
+# Keywords that close a compound command: no command follows on the same line.
+SHELL_CLOSERS = {"fi", "done"}
+# `VAR=$(commands)` at command position; the inner commands are checked like any other.
+_ASSIGN_SUBST = re.compile(
+    r"(?:^|(?<=[\s;&|(]))([A-Za-z_][A-Za-z0-9_]*)=\$\(([^()`$<>]*)\)"
+)
+
+
 def check_shell_commands(body: str) -> str | None:
-    """Reject any command word outside the allowlist; return an error string."""
-    for marker in SHELL_FORBIDDEN:
-        if marker in body:
-            return f"{marker!r} is not allowed in a runnable shell snippet (command substitution)"
+    """Reject any command word outside the allowlist; return an error string.
+
+    Accepted: simple commands, pipelines, `&&`/`||`/`;` lists, redirects,
+    `if`/`elif`/`else`/`for`/`while` blocks, `VAR=value` prefixes and
+    `VAR=$(commands)` assignments. Every simple command in every one of those is
+    checked against the allowlist. Backticks, `<(`, `>(` and any `$(` that is not
+    a `VAR=$(...)` assignment are rejected.
+    """
     text = re.sub(r"\\\n", " ", body)
     for raw in text.splitlines():
         line = raw.strip()
         if not line or line.startswith("#"):
             continue
-        try:
-            lexer = shlex.shlex(line, posix=True, punctuation_chars=True)
-            lexer.whitespace_split = True
-            lexer.commenters = "#"
-            tokens = list(lexer)
-        except ValueError as exc:
-            return f"cannot parse shell line {line!r}: {exc}"
-        expect_cmd = True
-        after_uv = False
-        for tok in tokens:
-            if tok and all(c in "|&;()<>" for c in tok):
-                expect_cmd = tok in ("|", "||", "&&", ";", "(")
-                after_uv = False
+        problem = _check_shell_line(line)
+        if problem:
+            return problem
+    return None
+
+
+def _check_shell_line(line: str) -> str | None:
+    substituted = ""
+    while True:
+        match = _ASSIGN_SUBST.search(line)
+        if match is None:
+            break
+        inner = check_shell_commands(match.group(2))
+        if inner:
+            return f"command substitution in {match.group(0)!r}: {inner}"
+        substituted += line[: match.start()] + match.group(1) + "=x"
+        line = line[match.end() :]
+    line = substituted + line
+    for marker in SHELL_FORBIDDEN:
+        if marker in line:
+            return f"{marker!r} is not allowed in a runnable shell snippet (command substitution)"
+    try:
+        lexer = shlex.shlex(line, posix=True, punctuation_chars=True)
+        lexer.whitespace_split = True
+        lexer.commenters = "#"
+        tokens = list(lexer)
+    except ValueError as exc:
+        return f"cannot parse shell line {line!r}: {exc}"
+    expect_cmd = True
+    after_uv = False
+    for tok in tokens:
+        if tok and all(c in "|&;()<>" for c in tok):
+            expect_cmd = tok in ("|", "||", "&&", ";", "(")
+            after_uv = False
+            continue
+        if expect_cmd and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*=.*", tok):
+            continue  # VAR=value prefix
+        if not expect_cmd:
+            continue
+        if tok in SHELL_OPENERS:
+            continue
+        if tok in SHELL_CLOSERS or tok == "for":
+            expect_cmd = False  # `for NAME in WORDS; do`: the header is words until `;`
+            continue
+        if tok == "uv":
+            after_uv = True  # the shim only accepts `uv run CMD`
+            continue
+        if after_uv:
+            after_uv = False
+            if tok == "run":
                 continue
-            if expect_cmd and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*=.*", tok):
-                continue  # VAR=value prefix
-            if not expect_cmd:
-                continue
-            if tok == "uv":
-                after_uv = True  # the shim only accepts `uv run CMD`
-                continue
-            if after_uv:
-                after_uv = False
-                if tok == "run":
-                    continue
-                return f"`uv {tok}` is not allowed in a runnable shell snippet (only `uv run`)"
-            if tok not in SHELL_ALLOWLIST:
-                return f"command {tok!r} is not allowed in a runnable shell snippet (allowed: {', '.join(sorted(SHELL_ALLOWLIST))}, `uv run` of those)"
-            expect_cmd = False
+            return f"`uv {tok}` is not allowed in a runnable shell snippet (only `uv run`)"
+        if tok not in SHELL_ALLOWLIST:
+            return f"command {tok!r} is not allowed in a runnable shell snippet (allowed: {', '.join(sorted(SHELL_ALLOWLIST))}, `uv run` of those)"
+        expect_cmd = False
     return None
 
 
