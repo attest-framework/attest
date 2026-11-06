@@ -2,6 +2,27 @@
 
 Attest adapters capture LLM interactions as `Trace` objects. Two adapter tiers exist, backed by a shared class hierarchy.
 
+Maturity of each adapter, generated from `attest-engine capabilities --json`:
+
+<!-- claims:adapter-tiers:start -->
+| Adapter | Python | TypeScript |
+| --- | --- | --- |
+| OpenAI | stable | stable |
+| Anthropic | stable | stable |
+| Manual | stable | stable |
+| Gemini | beta | beta |
+| Ollama | beta | beta |
+| LangChain | beta | beta |
+| CrewAI | beta | — |
+| OpenTelemetry | beta | beta |
+| Google ADK | experimental | — |
+| LlamaIndex | experimental | — |
+
+- **stable**: Covered by the parity and conformance suites; a change in behavior is a breaking change.
+- **beta**: Shipped and tested, but the interface or behavior can still change in a minor release.
+- **experimental**: Shipped without a stability commitment and without demonstrated demand; it can change or be removed in any release.
+<!-- claims:adapter-tiers:end -->
+
 ## Adapter Architecture
 
 ```text

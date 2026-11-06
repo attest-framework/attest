@@ -302,6 +302,8 @@ A fixture follows `proto/attest/v1/fixture-v1.schema.json`:
 
 | Field | Holds |
 | --- | --- |
+| `fixture_version` | the fixture format version, `1` |
+| `name` | the fixture name |
 | `source` | `kind` (`command`, `in_process`, `otlp_file`), `replay_capable`, and for a command its arguments and exit code |
 | `trace` | the run as an Attest trace (schema version 2), as `attest trace convert` writes it |
 | `exchanges` | every model call in request order: provider, API (`chat_completions`, `responses`, `messages`, `other`), path, request body, response status, content type and body (the JSON value, or the event-stream text for a streamed call), and its `key` |

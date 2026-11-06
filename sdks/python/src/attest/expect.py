@@ -749,7 +749,7 @@ class ExpectChain:
             },
         )
 
-    # ── Layer 7: Trace Tree (Multi-Agent) ──
+    # ── Trace Tree (Multi-Agent, layer 3) ──
 
     def agent_called(self, agent_id: str, *, soft: bool = False) -> ExpectChain:
         """Assert a specific agent was called in the trace tree."""
@@ -859,7 +859,7 @@ class ExpectChain:
             {"check": "ordered_agents", "groups": groups, "soft": soft},
         )
 
-    # ── Layer 7+: TraceTree Analytics ──
+    # ── TraceTree Analytics (layer 3) ──
 
     def aggregate_latency_under(self, max_ms: int, *, soft: bool = False) -> ExpectChain:
         """Assert aggregate latency across the trace tree is at or below max_ms."""
@@ -875,7 +875,7 @@ class ExpectChain:
             {"check": "all_tools_called", "tools": tool_names, "soft": soft},
         )
 
-    # ── Layer 8: Plugin ──
+    # ── Plugin ──
 
     def plugin(
         self,
@@ -884,7 +884,7 @@ class ExpectChain:
         *,
         soft: bool = False,
     ) -> ExpectChain:
-        """Assert via a registered plugin (Layer 8).
+        """Assert via a registered plugin (plugin assertion).
 
         Args:
             plugin_id: Identifier of the plugin registered with the engine.

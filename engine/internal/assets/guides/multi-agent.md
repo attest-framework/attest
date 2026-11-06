@@ -1,6 +1,6 @@
 # Multi-Agent Testing Guide
 
-Attest provides first-class support for testing multi-agent systems through hierarchical trace trees, cross-agent assertions, and delegation tracking. All multi-agent assertions are Layer 7 — deterministic, free, and instant.
+Attest provides first-class support for testing multi-agent systems through hierarchical trace trees, cross-agent assertions, and delegation tracking. All multi-agent assertions are layer 3 (trace) checks — deterministic, free, and instant.
 
 ## Trace Tree Model
 
@@ -147,7 +147,7 @@ tree.aggregate_latency  # Total latency_ms across all agents
 
 ## Cross-Agent Assertions
 
-All multi-agent assertions use `TYPE_TRACE_TREE` (Layer 7) and are evaluated by the engine's `TraceTreeEvaluator`.
+All multi-agent assertions use `TYPE_TRACE_TREE` (layer 3) and are evaluated by the engine's `TraceTreeEvaluator`.
 
 The snippets below run inside a pytest test that takes the `attest` fixture, with the agent's `AgentResult` in `result`. `attest.evaluate(chain)` runs every assertion in the chain and fails the test on a hard failure; a chain that is never passed to `evaluate()` checks nothing.
 
@@ -335,7 +335,7 @@ def test_research_pipeline(attest):
     def trial(persona):
         result = run_research_pipeline("AI testing frameworks")
 
-        # Layer 7: Multi-agent assertions
+        # Layer 3: Multi-agent assertions
         return attest.inspect(
             expect(result)
             .agent_called("researcher")
@@ -373,7 +373,7 @@ Total cost: $0.0150
 
 ## Temporal Assertions
 
-Temporal assertions verify the execution order and timing of agents within a trace tree. They are Layer 7 — deterministic, free, and instant. Each assertion requires that `Step` objects carry `started_at` and `ended_at` timestamps (populated automatically by framework adapters and `TraceBuilder` methods that accept timing arguments).
+Temporal assertions verify the execution order and timing of agents within a trace tree. They are layer 3 checks — deterministic, free, and instant. Each assertion requires that `Step` objects carry `started_at` and `ended_at` timestamps (populated automatically by framework adapters and `TraceBuilder` methods that accept timing arguments).
 
 ### `agent_ordered_before(a, b)`
 

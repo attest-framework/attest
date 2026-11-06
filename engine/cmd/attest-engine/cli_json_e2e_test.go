@@ -24,6 +24,9 @@ var cliJSONRunners = map[string]cliJSONRunner{
 	"version": func(t *testing.T, bin string, env []string, tmp string) []byte {
 		return cliRun(t, bin, env, tmp, 0, "version", "--json")
 	},
+	"capabilities": func(t *testing.T, bin string, env []string, tmp string) []byte {
+		return cliRun(t, bin, env, tmp, 0, "capabilities", "--json")
+	},
 	"guide": func(t *testing.T, bin string, env []string, tmp string) []byte {
 		return cliRun(t, bin, env, tmp, 0, "guide", "capture", "--json")
 	},
