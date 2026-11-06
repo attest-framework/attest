@@ -4,9 +4,12 @@ Replay serves model responses from a local proxy, so a replayed test should neve
 provider. With the guard on (``pytest --attest-egress=block`` or ``ATTEST_EGRESS=block``),
 resolving a provider host name raises :class:`EgressBlockedError`; loopback and every other
 host are untouched. The guard covers connections made by this process (the agent's own HTTP
-clients), including calls tunnelled through ``HTTP(S)_PROXY`` (the CONNECT target is
-checked, not just the proxy socket). Child processes are not covered: the engine subprocess
-and anything the agent spawns keep their own network access.
+clients), including calls through the proxy named by ``HTTP(S)_PROXY`` / ``ALL_PROXY``: only
+sockets whose connect target is that proxy are screened, request by request (every
+``CONNECT`` target and absolute-URI host, plus ``Host``), until an allowed ``CONNECT`` turns
+the connection into an opaque tunnel. Every other socket is left alone. Child processes are
+not covered: the engine subprocess and anything the agent spawns keep their own network
+access.
 """
 
 from __future__ import annotations
@@ -88,11 +91,12 @@ def egress_block_requested(env: Mapping[str, str] | None = None) -> bool:
 _lock = threading.Lock()
 _original: Any = None
 _installs = 0
-# Socket methods wrapped to catch proxied requests, name -> original function.
+# Socket methods wrapped to screen proxy connections, name -> original function.
 _socket_originals: dict[str, Any] = {}
 # Sockets that carried a blocked proxy request; their reads fail with the same error, because
 # HTTP clients (httpcore) swallow a write error and would otherwise report a dropped connection.
 _blocked_sockets: weakref.WeakKeyDictionary[socket.socket, str] = weakref.WeakKeyDictionary()
+_PROXY_ENV = ("HTTPS_PROXY", "HTTP_PROXY", "ALL_PROXY", "https_proxy", "http_proxy", "all_proxy")
 
 
 def _blocked(host: object) -> EgressBlockedError:
@@ -103,32 +107,24 @@ def _blocked(host: object) -> EgressBlockedError:
     )
 
 
-# Longest first request line a socket may buffer before the guard refuses it.
-_MAX_REQUEST_LINE = 8192
-_OVERSIZED = "an oversized request line"
+def _refusal(reason: str) -> EgressBlockedError:
+    return EgressBlockedError(
+        f"attest egress guard: proxy request refused ({reason}), so its target host cannot be "
+        "checked (--attest-egress=block / ATTEST_EGRESS=block)"
+    )
+
+
+# Largest request head (request line plus headers) or chunk framing line a proxy socket may hold.
+_MAX_HEAD = 64 * 1024
 _METHOD_PREFIX = re.compile(rb"[A-Z]*")
-
-
-class _Pending:
-    """Outgoing bytes held back on a socket until its first request line is complete."""
-
-    __slots__ = ("buffer",)
-
-    def __init__(self) -> None:
-        self.buffer = bytearray()
-
-
-# Sockets whose first request line is not yet decided. The guard cannot tell which sockets
-# lead to a proxy (HTTP(S)_PROXY, an explicit client ``proxy=`` option), so every socket's
-# first write is screened; bytes that cannot be an HTTP request line pass straight through.
-_pending: weakref.WeakKeyDictionary[socket.socket, _Pending] = weakref.WeakKeyDictionary()
-# Sockets whose first request line was inspected and allowed; their writes pass untouched.
-_cleared: weakref.WeakSet[socket.socket] = weakref.WeakSet()
+_CHUNK_SIZE = re.compile(rb"^([0-9a-fA-F]{1,16})(?:[ \t]*;[^\r\n]*)?$")
+_HEADER_NAME = re.compile(rb"^[!#$%&'*+.^_`|~0-9A-Za-z-]+$")
+_REQUEST_LINE = re.compile(rb"^([A-Z]{3,7}) (\S+) HTTP/1\.[01]$")
 
 
 def _could_be_request_line(buffer: bytes) -> bool | None:
     """``True`` when ``buffer`` can still become an HTTP request line, ``False`` when it
-    cannot (so the connection speaks something else), ``None`` when more bytes are needed."""
+    cannot, ``None`` when more bytes are needed."""
     method = _METHOD_PREFIX.match(buffer)
     end = method.end() if method is not None else 0
     if end == 0 or end > 7:
@@ -138,96 +134,298 @@ def _could_be_request_line(buffer: bytes) -> bool | None:
     return buffer[end : end + 1] == b" "
 
 
-def _screen_write(sock: socket.socket, data: bytes) -> bytes | None:
-    """Hold ``data`` until ``sock``'s first request line is complete, then decide.
+class _Framer:
+    """Frames the HTTP/1.1 requests an application writes to a proxy socket.
 
-    Returns ``None`` while the line is incomplete (the bytes are buffered and the caller
-    reports them as sent), or every byte to forward once the line was allowed. Raises
-    :class:`EgressBlockedError` when the line names a provider or outgrows the buffer bound.
-    Splitting the line across writes (``CON`` + ``NECT api.openai.com:443``) therefore
-    cannot hide the target.
+    ``feed`` consumes the application's bytes and returns the bytes that may go on the wire.
+    Only an incomplete request head (or chunk-size / trailer line) is held back; bodies are
+    forwarded as they arrive. A request naming a provider, or framing the guard cannot
+    follow, raises :class:`EgressBlockedError` and forwards nothing from that write.
     """
-    pending = _pending.get(sock)
-    if pending is None:
-        if sock in _cleared:
-            return data
-        pending = _pending[sock] = _Pending()
-    pending.buffer += data
-    buffer = bytes(pending.buffer)
-    line_end = buffer.find(b"\r\n")
-    if line_end == -1 and len(buffer) > _MAX_REQUEST_LINE:
-        _refuse_oversized(sock)
-    if line_end == -1:
-        if _could_be_request_line(buffer) is False:
-            _release(sock, cleared=True)
-            return buffer
-        return None
-    if line_end + 2 > _MAX_REQUEST_LINE:
-        _refuse_oversized(sock)
-    host = proxied_target_host(buffer)
-    if host is not None and is_provider_host(host):
-        _refuse(sock, host)
-    _release(sock, cleared=True)
-    return buffer
+
+    HEAD, BODY, CHUNK_SIZE, CHUNK_DATA, CHUNK_END, TRAILER, TUNNEL = range(7)
+
+    def __init__(self) -> None:
+        self.state = self.HEAD
+        self.buffer = b""
+        self.remaining = 0
+        # Leading bytes of ``buffer`` already on the wire (after a partial ``send``).
+        self.sent = 0
+
+    def clone(self) -> _Framer:
+        other = _Framer()
+        other.assign(self)
+        return other
+
+    def assign(self, other: _Framer) -> None:
+        self.state, self.buffer = other.state, other.buffer
+        self.remaining, self.sent = other.remaining, other.sent
+
+    def mark_sent(self) -> None:
+        """The held bytes were already written by a partial ``send``."""
+        self.sent = len(self.buffer)
+
+    def feed(self, data: bytes) -> bytes:
+        out = bytearray()
+        self.buffer += data
+        while self.buffer:
+            released = self._step()
+            if released is None:
+                break
+            out += released
+        return bytes(out)
+
+    def _take(self, count: int) -> bytes:
+        taken, self.buffer = self.buffer[:count], self.buffer[count:]
+        return taken
+
+    def _release(self, unit: bytes) -> bytes:
+        skipped, self.sent = min(self.sent, len(unit)), 0
+        return unit[skipped:]
+
+    def _line(self) -> bytes | None:
+        end = self.buffer.find(b"\r\n")
+        if end == -1:
+            if len(self.buffer) > _MAX_HEAD:
+                raise _refusal("a framing line over 64 KiB")
+            return None
+        return self._take(end + 2)
+
+    def _step(self) -> bytes | None:
+        if self.state == self.TUNNEL:
+            return self._release(self._take(len(self.buffer)))
+        if self.state in (self.BODY, self.CHUNK_DATA):
+            unit = self._take(self.remaining)
+            self.remaining -= len(unit)
+            if self.remaining == 0:
+                self.state = self.HEAD if self.state == self.BODY else self.CHUNK_END
+            return self._release(unit) if unit else b""
+        if self.state == self.HEAD:
+            return self._head()
+        line = self._line()
+        if line is None:
+            return None
+        if self.state == self.CHUNK_END:
+            if line != b"\r\n":
+                raise _refusal("a chunk not followed by CRLF")
+            self.state = self.CHUNK_SIZE
+        elif self.state == self.CHUNK_SIZE:
+            size = _CHUNK_SIZE.match(line[:-2])
+            if size is None:
+                raise _refusal("a bad chunk size")
+            self.remaining = int(size.group(1), 16)
+            self.state = self.CHUNK_DATA if self.remaining else self.TRAILER
+        elif line == b"\r\n":
+            self.state = self.HEAD
+        return self._release(line)
+
+    def _head(self) -> bytes | None:
+        end = self.buffer.find(b"\r\n\r\n")
+        if end == -1:
+            if len(self.buffer) > _MAX_HEAD:
+                raise _refusal("a request head over 64 KiB")
+            if _could_be_request_line(self.buffer) is False:
+                raise _refusal("bytes that are not an HTTP request")
+            return None
+        if end + 4 > _MAX_HEAD:
+            raise _refusal("a request head over 64 KiB")
+        head = self._take(end + 4)
+        self._screen(head[: end + 2])
+        return self._release(head)
+
+    def _screen(self, head: bytes) -> None:
+        lines = head.split(b"\r\n")[:-1]
+        request = _REQUEST_LINE.match(lines[0])
+        if request is None:
+            raise _refusal("a malformed request line")
+        method, target = request.group(1), request.group(2).decode("ascii", "replace")
+        headers: dict[bytes, list[bytes]] = {}
+        for line in lines[1:]:
+            name, colon, value = line.partition(b":")
+            if not colon or _HEADER_NAME.match(name) is None:
+                raise _refusal("a malformed header line")
+            headers.setdefault(name.lower(), []).append(value.strip())
+        authority = (
+            urlsplit(f"//{target}").hostname if method == b"CONNECT" else urlsplit(target).hostname
+        )
+        hosts = [
+            authority,
+            *(
+                urlsplit("//" + v.decode("ascii", "replace")).hostname
+                for v in headers.get(b"host", [])
+            ),
+        ]
+        for host in hosts:
+            if host is not None and is_provider_host(host):
+                raise _blocked(host)
+        lengths, encodings = (
+            headers.get(b"content-length", []),
+            headers.get(b"transfer-encoding", []),
+        )
+        if lengths and encodings:
+            raise _refusal("both Content-Length and Transfer-Encoding")
+        if method == b"CONNECT":
+            self.state = self.TUNNEL
+        elif encodings:
+            codings = [c.strip().lower() for v in encodings for c in v.split(b",")]
+            if codings[-1] != b"chunked":
+                raise _refusal("a Transfer-Encoding that does not end in chunked")
+            self.state = self.CHUNK_SIZE
+        elif lengths:
+            if len(lengths) > 1 or not lengths[0].isdigit():
+                raise _refusal("an invalid Content-Length")
+            self.remaining = int(lengths[0])
+            self.state = self.BODY if self.remaining else self.HEAD
+        else:
+            self.state = self.HEAD
 
 
-def _release(sock: socket.socket, *, cleared: bool) -> None:
-    _pending.pop(sock, None)
-    if cleared:
-        _cleared.add(sock)
+# Sockets connected to a configured proxy, with the framer that screens their writes. A
+# ``dup`` shares its original's framer: both write to the same byte stream.
+_proxy_streams: weakref.WeakKeyDictionary[socket.socket, _Framer] = weakref.WeakKeyDictionary()
 
 
-def _refuse(sock: socket.socket, target: object) -> None:
-    _pending.pop(sock, None)
-    _blocked_sockets[sock] = str(target)
-    raise _blocked(target)
+def _configured_proxies(env: Mapping[str, str]) -> list[tuple[str, int]]:
+    """Host and port of every HTTP(S) proxy named in the environment (SOCKS is not screened)."""
+    proxies = []
+    for name in _PROXY_ENV:
+        value = env.get(name, "").strip()
+        if not value:
+            continue
+        parts = urlsplit(value if "://" in value else f"http://{value}")
+        if parts.scheme not in ("http", "https") or parts.hostname is None:
+            continue
+        proxies.append((parts.hostname, parts.port or (443 if parts.scheme == "https" else 80)))
+    return proxies
 
 
-def _refuse_oversized(sock: socket.socket) -> None:
-    _pending.pop(sock, None)
-    _blocked_sockets[sock] = _OVERSIZED
-    raise EgressBlockedError(
-        f"attest egress guard: first request line exceeds {_MAX_REQUEST_LINE} bytes, "
-        "so its target host cannot be checked (--attest-egress=block / ATTEST_EGRESS=block)"
+def _addresses(host: str, port: int) -> set[str]:
+    try:
+        infos = _original(host, port, type=socket.SOCK_STREAM)
+    except OSError:
+        # A name that does not resolve cannot be the peer of this connect.
+        return set()
+    return {str(info[4][0]).split("%")[0] for info in infos}
+
+
+def _is_proxy_peer(address: Any) -> bool:
+    """Whether a ``connect`` address is a configured proxy, by port and resolved address."""
+    if not isinstance(address, tuple) or len(address) < 2 or not isinstance(address[0], str):
+        return False
+    host, port = address[0], address[1]
+    candidates = [p for p in _configured_proxies(os.environ) if p[1] == port]
+    if not candidates:
+        return False
+    peer = _addresses(host, port)
+    return any(
+        proxy_host == host or peer & _addresses(proxy_host, port) for proxy_host, _ in candidates
     )
 
 
-def _wrap_socket_method(name: str, is_write: bool) -> None:
+def _refuse(sock: socket.socket, error: EgressBlockedError) -> None:
+    _blocked_sockets[sock] = str(error)
+    raise error
+
+
+def _screened_write(
+    sock: socket.socket, framer: _Framer, data: Any, flat: bytes, real: Any, args: Any
+) -> Any:
+    trial = framer.clone()
+    try:
+        out = trial.feed(flat)
+    except EgressBlockedError as error:
+        _refuse(sock, error)
+    if out == flat:
+        sent = real(sock, data, *args)
+        if sent == len(flat):
+            framer.assign(trial)
+        else:
+            framer.feed(flat[:sent])
+            framer.mark_sent()
+        return sent
+    # Held-back bytes (an earlier partial head) go out with this write.
+    _socket_originals["sendall"](sock, out)
+    framer.assign(trial)
+    return len(flat)
+
+
+def _wrap_write(name: str) -> None:
     real = getattr(socket.socket, name)
     _socket_originals[name] = real
 
-    if is_write:
+    def guarded_write(self: socket.socket, data: Any, *args: Any) -> Any:
+        framer = _proxy_streams.get(self)
+        if framer is None:
+            return real(self, data, *args)
+        blocked = _blocked_sockets.get(self)
+        if blocked is not None:
+            raise EgressBlockedError(blocked)
+        if name == "sendmsg":
+            flat = b"".join(bytes(part) for part in data)
+        elif isinstance(data, (bytes, bytearray, memoryview)):
+            flat = bytes(data)
+        else:
+            return real(self, data, *args)
+        return _screened_write(self, framer, data, flat, real, args)
 
-        def guarded_write(self: socket.socket, data: Any, *args: Any) -> Any:
-            blocked = _blocked_sockets.get(self)
-            if blocked is not None:
-                raise _blocked(blocked)
-            if name == "sendmsg":
-                flat = b"".join(bytes(part) for part in data)
-            elif isinstance(data, (bytes, bytearray, memoryview)):
-                flat = bytes(data)
-            else:
-                return real(self, data, *args)
-            ready = _screen_write(self, flat)
-            if ready is None:
-                return len(flat)
-            if ready is flat:
-                return real(self, data, *args)
-            # Earlier writes were held back and reported as sent: flush them with this one.
-            real_sendall = _socket_originals["sendall"]
-            real_sendall(self, ready)
-            return len(flat)
+    setattr(socket.socket, name, guarded_write)
 
-        setattr(socket.socket, name, guarded_write)
-        return
+
+def _wrap_read(name: str) -> None:
+    real = getattr(socket.socket, name)
+    _socket_originals[name] = real
 
     def guarded_read(self: socket.socket, *args: Any) -> Any:
-        host = _blocked_sockets.get(self)
-        if host is not None:
-            raise _blocked(host)
+        message = _blocked_sockets.get(self)
+        if message is not None:
+            raise EgressBlockedError(message)
         return real(self, *args)
 
     setattr(socket.socket, name, guarded_read)
+
+
+def _wrap_connect(name: str) -> None:
+    real = getattr(socket.socket, name)
+    _socket_originals[name] = real
+
+    def guarded_connect(self: socket.socket, address: Any) -> Any:
+        if _original is not None and self.type == socket.SOCK_STREAM and _is_proxy_peer(address):
+            _proxy_streams[self] = _Framer()
+        return real(self, address)
+
+    setattr(socket.socket, name, guarded_connect)
+
+
+def _wrap_sendfile() -> None:
+    real = socket.socket.sendfile
+    _socket_originals["sendfile"] = real
+
+    def guarded_sendfile(
+        self: socket.socket, file: Any, offset: int = 0, count: int | None = None
+    ) -> int:
+        if self not in _proxy_streams:
+            return real(self, file, offset, count)
+        # The OS sendfile path never calls ``send``; the stdlib read-and-send fallback does.
+        return self._sendfile_use_send(file, offset, count)  # type: ignore[attr-defined, no-any-return]
+
+    setattr(socket.socket, "sendfile", guarded_sendfile)
+
+
+def _wrap_dup() -> None:
+    real = socket.socket.dup
+    _socket_originals["dup"] = real
+
+    def guarded_dup(self: socket.socket) -> socket.socket:
+        copy = real(self)
+        framer = _proxy_streams.get(self)
+        if framer is not None:
+            _proxy_streams[copy] = framer
+            message = _blocked_sockets.get(self)
+            if message is not None:
+                _blocked_sockets[copy] = message
+        return copy
+
+    setattr(socket.socket, "dup", guarded_dup)
 
 
 def install() -> None:
@@ -248,13 +446,21 @@ def install() -> None:
 
         socket.getaddrinfo = guarded
         # Behind HTTP(S)_PROXY the client resolves and connects to the proxy only; the
-        # provider appears solely in the CONNECT / absolute-URI request line, so refuse the
-        # write that would carry it. Not covered: child processes (subprocess, the engine),
-        # SOCKS proxies, and a TLS-wrapped proxy connection, which hides the request line.
+        # provider appears solely in the CONNECT / absolute-URI request lines, so connections
+        # whose peer is a configured proxy are framed and every request on them screened.
+        # Not covered: child processes (subprocess, the engine), SOCKS proxies, a TLS-wrapped
+        # proxy connection (its bytes never reach ``send``), a client that names its proxy
+        # only in code (``proxy=`` options the environment does not repeat), and writers that
+        # bypass the socket object: ``os.write`` / ``os.sendfile`` on its fd,
+        # ``socket.fromfd`` / ``socket.socket(fileno=)`` re-wraps, ``send_fds``.
+        for name in ("connect", "connect_ex"):
+            _wrap_connect(name)
         for name in ("send", "sendall", "sendmsg"):
-            _wrap_socket_method(name, is_write=True)
+            _wrap_write(name)
         for name in ("recv", "recv_into"):
-            _wrap_socket_method(name, is_write=False)
+            _wrap_read(name)
+        _wrap_sendfile()
+        _wrap_dup()
 
 
 def uninstall() -> None:
@@ -268,8 +474,7 @@ def uninstall() -> None:
                 setattr(socket.socket, name, real)
             _socket_originals.clear()
             _blocked_sockets.clear()
-            _pending.clear()
-            _cleared.clear()
+            _proxy_streams.clear()
             _original = None
 
 
