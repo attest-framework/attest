@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib.util
 import os
+import subprocess
 import sys
 from pathlib import Path
 from types import ModuleType
@@ -121,9 +122,9 @@ def test_remote_violations_requires_the_pinned_sha_to_equal_the_peeled_tag_commi
 
 def test_remote_violations_flags_a_missing_tag(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(checker, "_peeled_commit", lambda _repo, _tag: None)
-    pin = checker.Pin("w.yml:1", "actions/checkout", _SHA, "v99")
+    pin = checker.Pin("w.yml:1", "actions/checkout", _SHA, "v99.0.0")
 
-    assert "no tag v99" in checker.remote_violations([pin])[0]
+    assert "no tag v99.0.0" in checker.remote_violations([pin])[0]
 
 
 def test_remote_violations_queries_each_repo_and_tag_once(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -151,3 +152,105 @@ def test_main_with_verify_remote_fails_on_a_wrong_sha(
     assert checker.main(["--verify-remote", str(workflow)]) == 1
     assert "do not match their tag" in capsys.readouterr().err
     assert checker.main([str(workflow)]) == 0
+
+
+def test_remote_violations_rejects_a_bare_major_comment_without_querying(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def peeled(_repo: str, _tag: str) -> str:
+        raise AssertionError("a moving tag must not be looked up")
+
+    monkeypatch.setattr(checker, "_peeled_commit", peeled)
+    pin = checker.Pin("w.yml:3", "actions/checkout", _SHA, "v7")
+
+    messages = checker.remote_violations([pin])
+
+    assert len(messages) == 1
+    assert "w.yml:3" in messages[0] and "not a full vX.Y.Z tag" in messages[0]
+
+
+def test_peeled_commit_disables_prompts_and_credential_helpers_and_sets_a_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seen: dict[str, object] = {}
+
+    def run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        seen["command"], seen["kwargs"] = command, kwargs
+        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(subprocess, "run", run)
+
+    assert checker._peeled_commit("actions/checkout", "v6.1.0") is None
+
+    kwargs = seen["kwargs"]
+    assert isinstance(kwargs, dict)
+    assert kwargs["env"]["GIT_TERMINAL_PROMPT"] == "0"
+    assert kwargs["timeout"] == 30
+    assert seen["command"][:3] == ["git", "-c", "credential.helper="]
+
+
+def test_peeled_commit_turns_a_timeout_into_a_clear_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    def run(command: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        raise subprocess.TimeoutExpired(command, 30)
+
+    monkeypatch.setattr(subprocess, "run", run)
+
+    with pytest.raises(RuntimeError, match="timed out after 30s"):
+        checker._peeled_commit("actions/checkout", "v6.1.0")
+
+
+def test_main_reports_a_remote_lookup_failure_as_exit_2(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    workflow = tmp_path / "w.yml"
+    workflow.write_text(f"- uses: actions/checkout@{_SHA} # v6.1.0\n")
+
+    def boom(_repo: str, _tag: str) -> str:
+        raise RuntimeError("git ls-remote actions/checkout timed out after 30s")
+
+    monkeypatch.setattr(checker, "_peeled_commit", boom)
+
+    assert checker.main(["--verify-remote", str(workflow)]) == 2
+    assert "timed out after 30s" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "steps:\n  - uses:\n      actions/checkout@v4\n",
+        "steps:\n  - uses:   # the action\n\n      actions/checkout@v4\n",
+        'steps:\n  - "uses": actions/checkout@v4\n',
+        "steps:\n  - 'uses': actions/checkout@v4\n",
+        'steps:\n  - { "uses": actions/checkout@v4 }\n',
+        'steps:\n  - "uses":\n      "actions/checkout@v4"\n',
+    ],
+)
+def test_violations_finds_next_line_values_and_quoted_keys(tmp_path: Path, text: str) -> None:
+    assert len(_problems(tmp_path, text)) == 1
+
+
+def test_violations_reports_the_value_line_for_a_next_line_reference(tmp_path: Path) -> None:
+    problems = _problems(tmp_path, "steps:\n  - uses:\n      actions/checkout@v4\n")
+
+    assert ":3:" in problems[0]
+
+
+def test_pins_reads_a_next_line_value_with_its_comment(tmp_path: Path) -> None:
+    workflow = tmp_path / "w.yml"
+    workflow.write_text(
+        f"- uses:\n    actions/checkout@{_SHA} # v6.1.0\n- 'uses': a/b@{_SHA} # v1.2.3\n"
+    )
+
+    found = checker.pins(workflow)
+
+    assert [(p.repo, p.tag) for p in found] == [("actions/checkout", "v6.1.0"), ("a/b", "v1.2.3")]
+
+
+def test_violations_accepts_pinned_next_line_and_quoted_key_forms(tmp_path: Path) -> None:
+    text = (
+        f"- uses:\n    actions/checkout@{_SHA} # v6.1.0\n"
+        f"- 'uses': actions/checkout@{_SHA} # v6.1.0\n"
+        f'- "uses":\n    "actions/checkout@{_SHA}" # v6.1.0\n'
+    )
+
+    assert _problems(tmp_path, text) == []
