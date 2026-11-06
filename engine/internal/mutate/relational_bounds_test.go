@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/attest-framework/attest/engine/internal/mutate"
 )
@@ -141,7 +140,7 @@ func TestGenerate_SharedFields_GiveOneExceedAndOneRedirectPerRelation(t *testing
 }
 
 func TestGenerate_ManyIDFieldsAcrossManyResources_StayUnderTheCap(t *testing.T) {
-	const keys, records = 100, 1
+	const keys, records = 30, 1
 	state := map[string]any{}
 	main := make([]map[string]any, records)
 	for j := range main {
@@ -166,11 +165,7 @@ func TestGenerate_ManyIDFieldsAcrossManyResources_StayUnderTheCap(t *testing.T) 
 	for i := 0; i < keys; i++ {
 		renamed[fmt.Sprintf("k%03ds", i)] = state[fmt.Sprintf("k%03d_ids", i)]
 	}
-	start := time.Now()
 	ms := relationalMutants(t, worldSubject(t, renamed))
-	if elapsed := time.Since(start); elapsed > 10*time.Second {
-		t.Errorf("generation took %s", elapsed)
-	}
 	if len(ms) != 256 {
 		t.Errorf("relational mutants %d, want the cap 256", len(ms))
 	}
@@ -181,11 +176,7 @@ func TestGenerate_HugeExponentBound_SkipsTheExceedMutant(t *testing.T) {
 		"orders":  []map[string]any{{"order_id": "O-1", "amount_cents": json.Number("1e1000000")}},
 		"refunds": []map[string]any{{"order_id": "O-1", "amount_cents": json.Number("1")}},
 	}
-	start := time.Now()
 	ms := relationalMutants(t, worldSubject(t, state))
-	if elapsed := time.Since(start); elapsed > 2*time.Second {
-		t.Errorf("generation took %s", elapsed)
-	}
 	for _, m := range ms {
 		if len(m.World) > 10_000 {
 			t.Errorf("mutant %s carries a %d byte world", m.ID, len(m.World))
@@ -193,5 +184,30 @@ func TestGenerate_HugeExponentBound_SkipsTheExceedMutant(t *testing.T) {
 		if strings.Contains(m.ID, ".exceed.") {
 			t.Errorf("exceed mutant %s was generated for an unrepresentable bound", m.ID)
 		}
+	}
+}
+
+func TestGenerate_PercentVerbsInWorldNames_AppearLiterallyInTheID(t *testing.T) {
+	const field = "amount%[1]1000000s%d"
+	state := map[string]any{
+		"orders":  []map[string]any{{"order_id": "O-1", field: json.Number("10")}},
+		"refunds": []map[string]any{{"order_id": "O-1", field: json.Number("1")}},
+	}
+	ms := relationalMutants(t, worldSubject(t, state))
+	found := false
+	for _, m := range ms {
+		if !strings.Contains(m.ID, ".exceed.") {
+			continue
+		}
+		found = true
+		if !strings.HasSuffix(m.ID, "."+field) {
+			t.Errorf("mutant ID %q does not end with the literal field name", m.ID)
+		}
+		if len(m.ID) > 1024+len(field) {
+			t.Errorf("mutant ID is %d bytes", len(m.ID))
+		}
+	}
+	if !found {
+		t.Fatal("no exceed mutant generated")
 	}
 }

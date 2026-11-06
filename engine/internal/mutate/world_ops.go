@@ -295,7 +295,7 @@ func relatedRecords(ws *worldState, res string, rec map[string]any) []relation {
 			var found map[string]any
 			n := 0
 			for _, r := range ws.state[t] {
-				if v, ok := r[k]; ok && show(v) == show(rec[k]) {
+				if v, ok := r[k]; ok && scalar(v) && show(v) == show(rec[k]) {
 					found = r
 					n++
 				}
@@ -347,6 +347,9 @@ func plusOne(n json.Number) (json.Number, bool) {
 // (the match breaks; a second redirect of one field would repeat the mutant). Each is suggested as the sum or matches check that
 // kills it. budget counts the relational mutants the fixture may still add.
 func genRelational(ws *worldState, s Subject, res string, i int, budget *int, add func(Mutant) error) error {
+	if *budget <= 0 {
+		return nil
+	}
 	rec := ws.state[res][i]
 	redirectedFields := map[string]bool{}
 	for _, rel := range relatedRecords(ws, res, rec) {
@@ -362,7 +365,9 @@ func genRelational(ws *worldState, s Subject, res string, i int, budget *int, ad
 			if !ok {
 				continue
 			}
-			site := fmt.Sprintf("%s.%d.%%s.%s.%s.%s", res, i, rel.target, rel.key, f)
+			siteFor := func(kind string) string {
+				return fmt.Sprintf("%s.%d.%s.%s.%s.%s", res, i, kind, rel.target, rel.key, f)
+			}
 			switch cur := rec[f].(type) {
 			case json.Number:
 				bound, isNum := rv.(json.Number)
@@ -373,6 +378,9 @@ func genRelational(ws *worldState, s Subject, res string, i int, budget *int, ad
 				if !ok {
 					continue
 				}
+				if *budget <= 0 {
+					return nil
+				}
 				exceeded = true
 				*budget--
 				m := ws.clone()
@@ -380,7 +388,7 @@ func genRelational(ws *worldState, s Subject, res string, i int, budget *int, ad
 				ref := map[string]any{"resource": rel.target, "field": f, "on": rel.key}
 				spec := map[string]any{"check": "sum", "resource": res, "field": f, "at_most": map[string]any{"related": ref}}
 				if err := add(Mutant{
-					site: fmt.Sprintf(site, "exceed"), Operator: AlterWorldEffect,
+					site: siteFor("exceed"), Operator: AlterWorldEffect,
 					Description: fmt.Sprintf("raise %s record %d%s: %s %s -> %s, above %s.%s %s", res, i, describeRecord(rec), f, show(cur), show(nv), rel.target, f, show(bound)),
 					Trace:       s.Trace, World: m.marshal(),
 					candidates: []Contract{{
@@ -397,6 +405,9 @@ func genRelational(ws *worldState, s Subject, res string, i int, budget *int, ad
 				if _, isStr := rv.(string); !isStr {
 					continue
 				}
+				if *budget <= 0 {
+					return nil
+				}
 				redirected = true
 				redirectedFields[f] = true
 				*budget--
@@ -406,7 +417,7 @@ func genRelational(ws *worldState, s Subject, res string, i int, budget *int, ad
 				ref := map[string]any{"resource": rel.target, "field": f, "on": rel.key}
 				spec := map[string]any{"check": "matches", "resource": res, "field": f, "related": ref}
 				if err := add(Mutant{
-					site: fmt.Sprintf(site, "redirect"), Operator: AlterWorldEffect,
+					site: siteFor("redirect"), Operator: AlterWorldEffect,
 					Description: fmt.Sprintf("redirect %s record %d%s: %s %s -> %s, away from %s.%s", res, i, describeRecord(rec), f, show(cur), show(nv), rel.target, f),
 					Trace:       s.Trace, World: m.marshal(),
 					candidates: []Contract{{
