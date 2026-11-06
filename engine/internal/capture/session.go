@@ -255,6 +255,11 @@ type BuildReport struct {
 	// run takes, so only the first contractdsl.MaxStatements relational
 	// contracts were drafted.
 	RelationalCapped bool
+	// RelationalTrimmed: the world snapshot is too large to check every
+	// drafted relational contract within RelationalWorkLimit, so only the
+	// first RelationalKept were stored.
+	RelationalTrimmed bool
+	RelationalKept    int
 }
 
 // BuildFixture converts the spans to a trace, redacts and templates the trace
@@ -349,8 +354,9 @@ func buildFixture(in BuildInput, report *BuildReport) (*Fixture, error) {
 		if err != nil {
 			return nil, fmt.Errorf("draft relational: %w", err)
 		}
-		if len(f.World)*len(relational) > RelationalWorkLimit {
-			return nil, errors.New("the world snapshot is too large to check against this many relational contracts")
+		if keep := RelationalWorkLimit / len(f.World); len(relational) > keep {
+			relational = relational[:keep]
+			report.RelationalTrimmed, report.RelationalKept = true, keep
 		}
 		f.Contracts = append(f.Contracts, relational...)
 		report.RelationalCapped = capped

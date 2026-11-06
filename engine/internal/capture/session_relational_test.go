@@ -3,6 +3,7 @@ package capture
 import (
 	"bytes"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/attest-framework/attest/engine/internal/contractdsl"
@@ -117,5 +118,38 @@ func TestFixtureV1Schema_CaptureWithRelationalDrafts_Valid(t *testing.T) {
 	}
 	if err := s.Validate(doc); err != nil {
 		t.Fatalf("capture with relational drafts fails the schema: %v", err)
+	}
+}
+
+func TestBuildFixture_WorldTooLargeForTheDrafts_TrimsDraftsAndStillWritesTheFixture(t *testing.T) {
+	order, refund := map[string]any{"order_id": "O-1", "blob": strings.Repeat("x", 1<<20)}, map[string]any{"order_id": "O-1"}
+	for i := 0; i < 40; i++ {
+		order[fmt.Sprintf("f%04d", i)] = 10
+		refund[fmt.Sprintf("f%04d", i)] = 1
+	}
+	snap := &world.Snapshot{WorldVersion: 1, DefinitionSHA256: zeroSHA, FaultsFired: []world.Fired{},
+		State: map[string][]map[string]any{"orders": {order}, "refunds": {refund}}}
+
+	f, report := buildWithWorld(t, snap, false)
+
+	n := len(relationalIDs(f))
+	if n == 0 || n >= 40 || !report.RelationalTrimmed || report.RelationalKept != n {
+		t.Fatalf("%d relational contracts, trimmed %v, kept %d; want 0 < n < 40, trimmed, kept == n", n, report.RelationalTrimmed, report.RelationalKept)
+	}
+	if work := len(f.World) * n; work > RelationalWorkLimit {
+		t.Fatalf("world %d bytes x %d contracts = %d, over the limit %d", len(f.World), n, work, RelationalWorkLimit)
+	}
+}
+
+func TestBuildFixture_WorldBeyondTheLimitAlone_DropsEveryRelationalDraft(t *testing.T) {
+	order, refund := map[string]any{"order_id": "O-1", "blob": strings.Repeat("x", RelationalWorkLimit+1)}, map[string]any{"order_id": "O-1", "amount": 1}
+	order["amount"] = 10
+	snap := &world.Snapshot{WorldVersion: 1, DefinitionSHA256: zeroSHA, FaultsFired: []world.Fired{},
+		State: map[string][]map[string]any{"orders": {order}, "refunds": {refund}}}
+
+	f, report := buildWithWorld(t, snap, false)
+
+	if n := len(relationalIDs(f)); n != 0 || !report.RelationalTrimmed || report.RelationalKept != 0 {
+		t.Fatalf("%d relational contracts, trimmed %v, kept %d; want 0, trimmed, 0", n, report.RelationalTrimmed, report.RelationalKept)
 	}
 }

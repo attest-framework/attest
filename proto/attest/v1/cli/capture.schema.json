@@ -70,6 +70,11 @@
           "type": "integer",
           "minimum": 0
         },
+        "relational_capped": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Present when drafted relational contracts were cut: more were found than one contract run takes, or the world snapshot is too large to check them all. The text says how many were kept."
+        },
         "diff": {
           "type": "object",
           "additionalProperties": false,
