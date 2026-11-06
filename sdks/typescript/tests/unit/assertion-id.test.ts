@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -23,6 +24,7 @@ interface Vector {
   canonical_spec: string;
   canonical_input: string;
   id: string;
+  spec_hash?: string;
 }
 
 const doc = JSON.parse(readFileSync(vectorFile, "utf8")) as {
@@ -39,14 +41,18 @@ function decodeHex(hex: string): string {
 }
 
 describe("assertion id scheme 2 golden vectors", () => {
-  it("has the 29 valid and 7 invalid published vectors", () => {
-    expect(doc.vectors).toHaveLength(29);
+  it("includes published effect evidence vectors and invalid vectors", () => {
+    expect(doc.vectors).toHaveLength(40);
     expect(doc.invalid).toHaveLength(7);
   });
 
   it.each(doc.vectors.map((v) => [v.name, v] as const))("%s: canonical bytes and id", (_name, v) => {
     const spec: unknown = JSON.parse(v.spec_json);
-    expect(canonicalSpec(spec)).toBe(v.canonical_spec);
+    const canonical = canonicalSpec(spec, { scopeId: v.scope_id, type: v.assertion_type, spec });
+    expect(canonical).toBe(v.canonical_spec);
+    if (v.spec_hash !== undefined) {
+      expect(createHash("sha256").update(canonical, "utf8").digest("hex")).toBe(v.spec_hash);
+    }
     expect(canonicalIdInput(v.scope_id, v.assertion_type, spec, v.occurrence_index)).toBe(v.canonical_input);
     const id = assertionIdOf(v.scope_id, v.assertion_type, spec, v.occurrence_index);
     expect(id).toBe(v.id);
@@ -115,6 +121,48 @@ describe("AssertionIdAssigner", () => {
     const first = ids.next("cost", { max: 1.0, soft: false });
     const second = new AssertionIdAssigner("s").next("cost", { soft: false, max: 1 });
     expect(first).toBe(second);
+  });
+
+  it("counts effect occurrences by contract across different runtime worlds", () => {
+    const spec = { check: "count", resource: "refunds", equals: 1, world: { refunds: [{}] } };
+    const changed = { ...spec, world: { refunds: [{}, {}] } };
+    const ids = new AssertionIdAssigner("s");
+    expect(ids.next("effect", spec)).toBe(assertionIdOf("s", "effect", changed, 0));
+    expect(ids.next("effect", changed)).toBe(assertionIdOf("s", "effect", spec, 1));
+    expect(new AssertionIdAssigner("s").next("effect", changed)).toBe(assertionIdOf("s", "effect", spec, 0));
+    expect(assertionIdOf("s", "effect", { ...changed, equals: 2 }, 0)).not.toBe(assertionIdOf("s", "effect", spec, 0));
+    expect(spec.world.refunds).toHaveLength(1);
+    expect(changed.world.refunds).toHaveLength(2);
+  });
+
+  it("preserves nested world and world on every other assertion type", () => {
+    const spec = { where: { world: "one" }, world: { value: 1 } };
+    const changed = { ...spec, world: { value: 2 } };
+    expect(assertionIdOf("s", "content", spec, 0)).not.toBe(assertionIdOf("s", "content", changed, 0));
+    expect(assertionIdOf("s", "effect", spec, 0)).not.toBe(
+      assertionIdOf("s", "effect", { ...spec, where: { world: "two" } }, 0),
+    );
+    expect(assertionIdOf("s", "effect", { world: null }, 0)).toBe(assertionIdOf("s", "effect", {}, 0));
+  });
+
+  it("shares identity with replay fixture contracts without their runtime world", () => {
+    // Replay contracts carry the type and spec separately, just like wire assertions.
+    const replayContracts = doc.vectors.filter((v) => v.assertion_type === "effect");
+    for (const contract of replayContracts) {
+      const spec: unknown = JSON.parse(contract.spec_json);
+      // Non-object vectors exercise identity encoding, not valid replay contracts.
+      if (spec === null || typeof spec !== "object" || Array.isArray(spec)) continue;
+      expect(assertionIdOf(contract.scope_id, contract.assertion_type, {
+        ...spec, world: { resources: { refunds: [] }, events: [] },
+      }, contract.occurrence_index)).toBe(contract.id);
+    }
+  });
+
+  it("does not canonicalize excluded evidence but still validates identity fields", () => {
+    const spec = { check: "count", world: { invalid: Number.NaN, text: "\ud800" } };
+    expect(assertionIdOf("s", "effect", spec, 0)).toBe(assertionIdOf("s", "effect", { check: "count" }, 0));
+    expect(() => assertionIdOf("s", "content", spec, 0)).toThrow();
+    expect(() => assertionIdOf("s", "effect", { ...spec, where: { world: "\ud800" } }, 0)).toThrow();
   });
 
   it("does not consume an occurrence when the assertion is rejected", () => {

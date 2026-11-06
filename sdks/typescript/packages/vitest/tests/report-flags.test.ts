@@ -26,6 +26,14 @@ describe("buildReport id_scheme and budget_exceeded", () => {
     expect(buildReport([record("t")], false)["id_scheme"]).toBe(2);
   });
 
+  it.each([false, true])("marks effect world exclusion for simulated=%s reports", (simulated) => {
+    expect(buildReport([record("t")], simulated)["effect_world_excluded"]).toBe(true);
+  });
+
+  it("marks effect world exclusion for an empty report", () => {
+    expect(buildReport([], false)["effect_world_excluded"]).toBe(true);
+  });
+
   it("ORs budget_exceeded across the tests of the run", () => {
     expect(buildReport([record("a"), record("b", true), record("c")], false)["budget_exceeded"]).toBe(true);
   });

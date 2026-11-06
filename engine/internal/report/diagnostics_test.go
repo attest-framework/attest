@@ -107,6 +107,9 @@ func TestGenerateJSONReport_V2_Default(t *testing.T) {
 	if report.ReportVersion != 2 {
 		t.Errorf("expected report_version 2, got %d", report.ReportVersion)
 	}
+	if !report.EffectWorldExcluded {
+		t.Error("new reports must identify effect worlds as excluded from identity")
+	}
 	if report.Summary.Total != len(results) {
 		t.Errorf("summary.total = %d, want %d", report.Summary.Total, len(results))
 	}

@@ -64,6 +64,8 @@ type JSONReportV2 struct {
 	ReportVersion int `json:"report_version"`
 	// IDScheme is the assertion-id scheme of results[].assertion_id (2: C3).
 	IDScheme int `json:"id_scheme"`
+	// EffectWorldExcluded distinguishes effect identity from pre-rc.4 reports.
+	EffectWorldExcluded bool `json:"effect_world_excluded"`
 	// BudgetExceeded is true when any batch of the run breached the
 	// soft-fail budget; the policy blocks on it.
 	BudgetExceeded bool                    `json:"budget_exceeded"`
@@ -173,21 +175,22 @@ func generateJSONV2(results []types.AssertionResult, totalCost float64, totalDur
 	p50, p95 := durationPercentiles(results)
 
 	report := JSONReportV2{
-		ReportVersion:   int(ReportVersionV2),
-		IDScheme:        IDSchemeCurrent,
-		BudgetExceeded:  opt.BudgetExceeded,
-		Timestamp:       time.Now().UTC().Format(time.RFC3339),
-		Simulated:       opt.Simulated,
-		Summary:         summary,
-		Layers:          layers,
-		Results:         results,
-		Tests:           []TestRecord{},
-		TotalCost:       totalCost,
-		TotalDurationMS: totalDurationMS,
-		P50DurationMS:   p50,
-		P95DurationMS:   p95,
-		FailureClasses:  failureClassCounts(results),
-		Baseline:        opt.Baseline,
+		ReportVersion:       int(ReportVersionV2),
+		IDScheme:            IDSchemeCurrent,
+		EffectWorldExcluded: true,
+		BudgetExceeded:      opt.BudgetExceeded,
+		Timestamp:           time.Now().UTC().Format(time.RFC3339),
+		Simulated:           opt.Simulated,
+		Summary:             summary,
+		Layers:              layers,
+		Results:             results,
+		Tests:               []TestRecord{},
+		TotalCost:           totalCost,
+		TotalDurationMS:     totalDurationMS,
+		P50DurationMS:       p50,
+		P95DurationMS:       p95,
+		FailureClasses:      failureClassCounts(results),
+		Baseline:            opt.Baseline,
 	}
 	output, err := json.MarshalIndent(report, "", "  ")
 	if err != nil {
