@@ -5,10 +5,18 @@
  * agent bypassed the proxy. `installEgressGuard()` patches `net.Socket.prototype.connect`
  * (which every client reaches: undici `fetch`, `http`, `https`, `tls`), refuses provider
  * hostnames and always allows loopback. Calls tunnelled through `HTTP(S)_PROXY` connect only
- * to the proxy, so the guard also reads the `CONNECT host:port` / absolute-URI request line
- * written to a socket and refuses a provider target. The first write of every socket is held
- * until that request line is complete, so splitting it across writes cannot hide the target. Child processes (the engine, anything
- * the agent spawns) are not covered, nor are SOCKS proxies or a TLS-wrapped proxy connection.
+ * to the proxy, so a socket whose peer is a configured plain-HTTP proxy (host:port from
+ * `HTTPS_PROXY`, `HTTP_PROXY`, `ALL_PROXY`, either case, read at connect time) is screened:
+ * its `_write`/`_writev` sinks (write, end, cork, writev) run every HTTP/1.1 request through a
+ * minimal framer that checks the request-line target and `Host` header, skips bodies by
+ * `Content-Length` or chunked framing, and passes bytes through untouched after an allowed
+ * `CONNECT`. Ambiguous framing is refused. No other socket is touched (stdout/stderr pipes,
+ * sockets to any other peer).
+ *
+ * Not covered: child processes (the engine, anything the agent spawns), SOCKS proxies, an
+ * `https://` proxy (TLS hides the request line), a proxy named only through a client option
+ * rather than the environment, a proxy hostname that differs from the connect host while
+ * resolving to the same address, and anything inside an allowed CONNECT tunnel.
  */
 
 import * as net from "node:net";
@@ -87,20 +95,22 @@ export function egressBlockRequested(
 }
 
 type Connect = (this: net.Socket, ...args: unknown[]) => net.Socket;
+type Done = (error?: Error | null) => void;
+type Encoding = BufferEncoding | "buffer";
 type SinkWrite = (
   this: net.Socket,
   data: unknown,
-  encoding: BufferEncoding | "buffer",
+  encoding: Encoding,
   cb: Done,
 ) => void;
 type SinkWritev = (
   this: net.Socket,
-  chunks: { chunk: unknown; encoding: BufferEncoding | "buffer" }[],
+  chunks: { chunk: unknown; encoding: Encoding }[],
   cb: Done,
 ) => void;
-type Done = (error?: Error | null) => void;
+type SocketSinks = { _write: SinkWrite; _writev: SinkWritev };
+
 let original: Connect | null = null;
-let originalSinks: { write: SinkWrite; writev: SinkWritev } | null = null;
 // Installs outstanding; the guard comes off when the last one is released.
 let installs = 0;
 
@@ -121,22 +131,214 @@ function hostOf(args: unknown[]): string | null {
   return null;
 }
 
-/** Longest first request line a socket may hold back before the guard refuses it. */
-const MAX_REQUEST_LINE = 8192;
-// Bytes written to a socket before its first request line is complete.
-const held = new WeakMap<net.Socket, Buffer>();
-// Sockets whose first request line was inspected and allowed; their writes pass untouched.
-const cleared = new WeakSet<net.Socket>();
-const refused = new WeakMap<net.Socket, EgressBlockedError>();
+function portOf(args: unknown[]): number | null {
+  const first = Array.isArray(args[0]) ? (args[0] as unknown[])[0] : args[0];
+  const raw =
+    typeof first === "object" && first !== null
+      ? (first as { port?: unknown }).port
+      : first;
+  const port = typeof raw === "string" ? Number(raw) : raw;
+  return typeof port === "number" && Number.isInteger(port) ? port : null;
+}
 
-function toBuffer(data: unknown, encoding: BufferEncoding | "buffer"): Buffer {
-  if (typeof data === "string")
-    return Buffer.from(data, encoding === "buffer" ? "utf8" : encoding);
-  if (data instanceof Uint8Array)
-    return Buffer.from(data.buffer, data.byteOffset, data.byteLength);
-  throw new TypeError(
-    "net.Socket write received a chunk that is neither a string nor bytes",
+/** Plain-HTTP proxies named by the environment, read at call time. */
+function configuredProxies(
+  env: NodeJS.ProcessEnv = process.env,
+): { host: string; port: number }[] {
+  const out: { host: string; port: number }[] = [];
+  for (const name of [
+    "HTTPS_PROXY",
+    "https_proxy",
+    "HTTP_PROXY",
+    "http_proxy",
+    "ALL_PROXY",
+    "all_proxy",
+  ]) {
+    const value = env[name]?.trim();
+    if (!value) continue;
+    let url: URL;
+    try {
+      url = new URL(value.includes("://") ? value : `http://${value}`);
+    } catch {
+      continue;
+    }
+    // https:// proxies are TLS-wrapped (request line hidden) and socks:// is not HTTP.
+    if (url.protocol !== "http:") continue;
+    out.push({
+      host: url.hostname.replace(/^\[|\]$/g, "").toLowerCase(),
+      port: url.port === "" ? 80 : Number(url.port),
+    });
+  }
+  return out;
+}
+
+const LOOPBACK = new Set(["localhost", "127.0.0.1", "::1", "0:0:0:0:0:0:0:1"]);
+
+function sameHost(a: string, b: string): boolean {
+  const x = a.replace(/^\[|\]$/g, "").toLowerCase();
+  const y = b.replace(/^\[|\]$/g, "").toLowerCase();
+  return x === y || (LOOPBACK.has(x) && LOOPBACK.has(y));
+}
+
+function isProxyPeer(args: unknown[]): boolean {
+  const port = portOf(args);
+  if (port === null) return false;
+  const host = hostOf(args) ?? "localhost";
+  return configuredProxies().some(
+    (p) => p.port === port && sameHost(p.host, host),
   );
+}
+
+/** Longest request head, chunk-size line or trailer line the framer will hold. */
+const MAX_HEAD = 64 * 1024;
+const TOKEN_HEADER = /^([!#$%&'*+.^_`|~0-9A-Za-z-]+):[ \t]*(.*?)[ \t]*$/;
+const REQUEST_LINE = /^([A-Z]{3,7}) (\S+) HTTP\/1\.[01]$/;
+
+function refuse(detail: string): never {
+  throw new EgressBlockedError("proxy request", `attest egress guard: ${detail}`);
+}
+
+function hostnameOf(authority: string): string | null {
+  try {
+    return new URL(`http://${authority}`).hostname.replace(/^\[|\]$/g, "");
+  } catch {
+    return null;
+  }
+}
+
+type FramerState =
+  | "head"
+  | "body"
+  | "chunk-size"
+  | "chunk-data"
+  | "chunk-end"
+  | "trailer"
+  | "tunnel";
+
+/** Follows the HTTP/1.1 requests written to one proxy connection and screens each head. */
+class RequestFramer {
+  private state: FramerState = "head";
+  private remaining = 0;
+  private held: Buffer = Buffer.alloc(0);
+
+  /** Bytes safe to forward for `data`; throws EgressBlockedError for a blocked request. */
+  feed(data: Buffer): Buffer {
+    const buf = this.held.length === 0 ? data : Buffer.concat([this.held, data]);
+    this.held = Buffer.alloc(0);
+    const out: Buffer[] = [];
+    let pos = 0;
+    while (pos < buf.length) {
+      if (this.state === "tunnel") {
+        out.push(buf.subarray(pos));
+        pos = buf.length;
+      } else if (this.state === "body" || this.state === "chunk-data") {
+        const n = Math.min(this.remaining, buf.length - pos);
+        out.push(buf.subarray(pos, pos + n));
+        pos += n;
+        this.remaining -= n;
+        if (this.remaining === 0)
+          this.state = this.state === "body" ? "head" : "chunk-end";
+      } else if (this.state === "chunk-end") {
+        if (buf.length - pos < 2) break;
+        if (buf[pos] !== 0x0d || buf[pos + 1] !== 0x0a)
+          refuse("chunk data is not followed by CRLF");
+        out.push(buf.subarray(pos, pos + 2));
+        pos += 2;
+        this.state = "chunk-size";
+      } else if (this.state === "head") {
+        const end = buf.indexOf("\r\n\r\n", pos);
+        if (end === -1) {
+          const rest = buf.subarray(pos);
+          if (couldBeRequestLine(rest) === false)
+            refuse("a proxy connection carried bytes that are not an HTTP request");
+          if (rest.length > MAX_HEAD)
+            refuse(`request head exceeds ${MAX_HEAD} bytes, so it cannot be checked`);
+          break;
+        }
+        if (end + 4 - pos > MAX_HEAD)
+          refuse(`request head exceeds ${MAX_HEAD} bytes, so it cannot be checked`);
+        const head = buf.subarray(pos, end + 4);
+        this.state = this.screenHead(head.toString("latin1"));
+        out.push(head);
+        pos = end + 4;
+      } else {
+        // chunk-size and trailer are CRLF-terminated lines.
+        const end = buf.indexOf("\r\n", pos);
+        if (end === -1) {
+          if (buf.length - pos > MAX_HEAD)
+            refuse("chunk framing line is too long to check");
+          break;
+        }
+        this.screenLine(buf.subarray(pos, end).toString("latin1"));
+        out.push(buf.subarray(pos, end + 2));
+        pos = end + 2;
+      }
+    }
+    if (pos < buf.length) this.held = Buffer.from(buf.subarray(pos));
+    return Buffer.concat(out);
+  }
+
+  private screenLine(line: string): void {
+    if (this.state === "chunk-size") {
+      const size = (line.split(";", 1)[0] as string).trim();
+      if (!/^[0-9a-fA-F]{1,12}$/.test(size)) refuse("invalid chunk size");
+      this.remaining = parseInt(size, 16);
+      this.state = this.remaining === 0 ? "trailer" : "chunk-data";
+    } else if (line === "") {
+      this.state = "head";
+    } else if (!TOKEN_HEADER.test(line)) {
+      refuse("malformed trailer line");
+    }
+  }
+
+  private screenHead(text: string): FramerState {
+    const lines = text.slice(0, -4).split("\r\n");
+    const m = REQUEST_LINE.exec(lines[0] as string);
+    if (m === null) refuse("malformed request line");
+    const method = m[1] as string;
+    const target = m[2] as string;
+    const names = new Map<string, string[]>();
+    for (const line of lines.slice(1)) {
+      const h = TOKEN_HEADER.exec(line);
+      if (h === null) refuse("malformed header line");
+      const key = (h[1] as string).toLowerCase();
+      names.set(key, [...(names.get(key) ?? []), h[2] as string]);
+    }
+    const hosts: (string | null)[] = [];
+    if (method === "CONNECT") hosts.push(hostnameOf(target));
+    else if (target.includes("://")) {
+      try {
+        hosts.push(new URL(target).hostname.replace(/^\[|\]$/g, ""));
+      } catch {
+        hosts.push(null);
+      }
+    }
+    for (const v of names.get("host") ?? []) hosts.push(hostnameOf(v));
+    for (const h of hosts) {
+      if (h === null) refuse("request target or Host header cannot be parsed");
+      if (isProviderHost(h)) throw new EgressBlockedError(h);
+    }
+    if (method === "CONNECT") return "tunnel";
+    const lengths = names.get("content-length") ?? [];
+    const encodings = names.get("transfer-encoding") ?? [];
+    if (encodings.length > 0) {
+      if (lengths.length > 0)
+        refuse("request has both Content-Length and Transfer-Encoding");
+      const last = (encodings.join(",").split(",").pop() as string)
+        .trim()
+        .toLowerCase();
+      if (last !== "chunked") refuse("Transfer-Encoding does not end in chunked");
+      return "chunk-size";
+    }
+    if (lengths.length > 1) refuse("request has several Content-Length headers");
+    if (lengths.length === 1) {
+      const raw = lengths[0] as string;
+      if (!/^\d{1,15}$/.test(raw)) refuse("invalid Content-Length");
+      this.remaining = Number(raw);
+      return this.remaining > 0 ? "body" : "head";
+    }
+    return "head";
+  }
 }
 
 /** true: could still become a request line; false: cannot; null: more bytes needed. */
@@ -153,44 +355,55 @@ function couldBeRequestLine(buf: Buffer): boolean | null {
   return buf[end] === 0x20;
 }
 
-/**
- * Decide a socket write. Returns the bytes to forward (everything held so far plus `data`),
- * null while the first request line is incomplete (the bytes are held and reported written),
- * or an EgressBlockedError when the line names a provider or outgrows the bound.
- */
-function screen(sock: net.Socket, data: Buffer): Buffer | Error | null {
-  const prior = refused.get(sock);
-  if (prior !== undefined) return prior;
-  if (cleared.has(sock)) return data;
-  const previous = held.get(sock);
-  const buf = previous === undefined ? data : Buffer.concat([previous, data]);
-  const lineEnd = buf.indexOf("\r\n");
-  const oversized =
-    lineEnd === -1
-      ? buf.length > MAX_REQUEST_LINE
-      : lineEnd + 2 > MAX_REQUEST_LINE;
-  if (oversized) {
-    held.delete(sock);
-    const err = new EgressBlockedError(
-      "request line",
-      `attest egress guard: first request line exceeds ${MAX_REQUEST_LINE} bytes, so its target host cannot be checked`,
+function toBuffer(data: unknown, encoding: Encoding): Buffer {
+  if (typeof data === "string")
+    return Buffer.from(data, encoding === "buffer" ? "utf8" : encoding);
+  if (data instanceof Uint8Array)
+    return Buffer.from(data.buffer, data.byteOffset, data.byteLength);
+  throw new TypeError(
+    "net.Socket write received a chunk that is neither a string nor bytes",
+  );
+}
+
+// Proxy sockets carrying per-instance sink patches, so uninstall can remove them.
+const screened = new Set<WeakRef<net.Socket>>();
+const refused = new WeakMap<net.Socket, Error>();
+
+function screenSocket(sock: net.Socket): void {
+  const sinks = sock as unknown as SocketSinks;
+  const framer = new RequestFramer();
+  const origSink = sinks._write;
+  const origSinkV = sinks._writev;
+
+  const decide = (data: Buffer): Buffer | Error => {
+    const prior = refused.get(sock);
+    if (prior !== undefined) return prior;
+    try {
+      return framer.feed(data);
+    } catch (e) {
+      if (!(e instanceof EgressBlockedError)) throw e;
+      refused.set(sock, e);
+      return e;
+    }
+  };
+  // Every write path (write, end(chunk), cork/uncork, writev) ends in _write or _writev.
+  sinks._write = function (this: net.Socket, data, encoding, cb): void {
+    const outcome = decide(toBuffer(data, encoding));
+    if (outcome instanceof Error) return cb(outcome);
+    if (outcome.length === 0) return cb();
+    return origSink.call(this, outcome, "buffer", cb);
+  };
+  sinks._writev = function (this: net.Socket, chunks, cb): void {
+    const outcome = decide(
+      Buffer.concat(chunks.map((c) => toBuffer(c.chunk, c.encoding))),
     );
-    refused.set(sock, err);
-    return err;
-  }
-  if (lineEnd === -1 && couldBeRequestLine(buf) !== false) {
-    held.set(sock, buf);
-    return null;
-  }
-  held.delete(sock);
-  const host = proxiedTargetHost(buf);
-  if (host !== null && isProviderHost(host)) {
-    const err = new EgressBlockedError(host);
-    refused.set(sock, err);
-    return err;
-  }
-  cleared.add(sock);
-  return buf;
+    if (outcome instanceof Error) return cb(outcome);
+    if (outcome.length === 0) return cb();
+    return origSink.call(this, outcome, "buffer", cb);
+  };
+  const ref = new WeakRef(sock);
+  screened.add(ref);
+  sock.once("close", () => screened.delete(ref));
 }
 
 /**
@@ -213,32 +426,9 @@ export function installEgressGuard(): () => void {
         process.nextTick(() => this.destroy(err));
         return this;
       }
+      // Decided now, from the connect arguments, so no write can precede the patch.
+      if (isProxyPeer(args)) screenSocket(this);
       return orig.apply(this, args);
-    };
-    const sock = net.Socket.prototype as unknown as {
-      _write: SinkWrite;
-      _writev: SinkWritev;
-    };
-    const origSink = sock._write;
-    const origSinkV = sock._writev;
-    originalSinks = { write: origSink, writev: origSinkV };
-    // Every write path (write, end(chunk), cork/uncork, writev) ends in _write or _writev.
-    sock._write = function (this: net.Socket, data, encoding, cb): void {
-      if (cleared.has(this)) return origSink.call(this, data, encoding, cb);
-      const outcome = screen(this, toBuffer(data, encoding));
-      if (outcome instanceof Error) return cb(outcome);
-      if (outcome === null) return cb();
-      return origSink.call(this, outcome, "buffer", cb);
-    };
-    sock._writev = function (this: net.Socket, chunks, cb): void {
-      if (cleared.has(this)) return origSinkV.call(this, chunks, cb);
-      const outcome = screen(
-        this,
-        Buffer.concat(chunks.map((c) => toBuffer(c.chunk, c.encoding))),
-      );
-      if (outcome instanceof Error) return cb(outcome);
-      if (outcome === null) return cb();
-      return origSink.call(this, outcome, "buffer", cb);
     };
   }
   let released = false;
@@ -261,13 +451,12 @@ export function uninstallEgressGuard(): void {
   if (original === null) return;
   (net.Socket.prototype as unknown as { connect: Connect }).connect = original;
   original = null;
-  if (originalSinks !== null) {
-    const sock = net.Socket.prototype as unknown as {
-      _write: SinkWrite;
-      _writev: SinkWritev;
-    };
-    sock._write = originalSinks.write;
-    sock._writev = originalSinks.writev;
-    originalSinks = null;
+  for (const ref of screened) {
+    const sock = ref.deref();
+    if (sock === undefined) continue;
+    // Drop the per-instance patch: the prototype sinks apply again.
+    delete (sock as Partial<SocketSinks>)._write;
+    delete (sock as Partial<SocketSinks>)._writev;
   }
+  screened.clear();
 }

@@ -1,5 +1,11 @@
+import { execFile } from "node:child_process";
+import * as fs from "node:fs";
 import * as http from "node:http";
 import * as net from "node:net";
+import { createRequire } from "node:module";
+import * as os from "node:os";
+import * as path from "node:path";
+import * as tls from "node:tls";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   EgressBlockedError,
@@ -32,8 +38,11 @@ async function startProxy(): Promise<{
     });
   });
   await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+  // The guard screens only the configured proxy, so name it the way an env-aware client does.
+  const port = (server.address() as net.AddressInfo).port;
+  process.env.HTTP_PROXY = `http://127.0.0.1:${port}`;
   return {
-    port: (server.address() as net.AddressInfo).port,
+    port,
     lines,
     raw,
     close: () => {
@@ -86,10 +95,12 @@ function viaProxy(
   });
 }
 
+afterEach(() => {
+  uninstallEgressGuard();
+  delete process.env.HTTP_PROXY;
+});
+
 describe("egress guard behind an HTTP proxy", () => {
-  afterEach(() => {
-    uninstallEgressGuard();
-  });
 
   it("refuses a CONNECT to a provider host before any byte reaches the proxy", async () => {
     const proxy = await startProxy();
@@ -201,9 +212,9 @@ describe("egress guard behind an HTTP proxy", () => {
       expect(raw).toEqual([]);
     });
 
-    it("refuses a request line that outgrows the buffer bound", async () => {
+    it("refuses a request line that outgrows the 64 KiB head bound", async () => {
       const { err, raw } = await blocked([
-        Buffer.from(`GET http://example.com/${"a".repeat(9000)}`),
+        Buffer.from(`GET http://example.com/${"a".repeat(70000)}`),
       ]);
       expect(err).toBeInstanceOf(EgressBlockedError);
       expect(raw).toEqual([]);
@@ -280,5 +291,272 @@ describe("egress guard behind an HTTP proxy", () => {
       proxiedTargetHost(Buffer.from("GET /v1/models HTTP/1.1\r\n")),
     ).toBeNull();
     expect(proxiedTargetHost(Buffer.from([0x16, 0x03, 0x01]))).toBeNull();
+  });
+});
+
+/** Loopback proxy that records every byte per connection and answers nothing. */
+async function startSink(): Promise<{
+  port: number;
+  received: () => Buffer;
+  close: () => void;
+}> {
+  const chunks: Buffer[] = [];
+  const sockets = new Set<net.Socket>();
+  const server = net.createServer((sock) => {
+    sockets.add(sock);
+    sock.on("error", () => undefined);
+    sock.on("data", (d: Buffer) => chunks.push(d));
+  });
+  await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+  const port = (server.address() as net.AddressInfo).port;
+  process.env.HTTP_PROXY = `http://127.0.0.1:${port}`;
+  return {
+    port,
+    received: () => Buffer.concat(chunks),
+    close: () => {
+      for (const s of sockets) s.destroy();
+      server.close();
+    },
+  };
+}
+
+/** Write each part to a fresh proxy connection as its own write; return the first error. */
+async function sendParts(port: number, parts: (Buffer | string)[]) {
+  const sock = net.connect({ host: "127.0.0.1", port });
+  let failure: Error | null = null;
+  sock.on("error", (e) => {
+    failure = e;
+  });
+  await new Promise<void>((r) => sock.once("connect", r));
+  for (const part of parts) {
+    sock.write(part);
+    await tick(20);
+  }
+  await tick(100);
+  sock.destroy();
+  return failure as Error | null;
+}
+
+const ALLOWED = "GET http://example.com/ HTTP/1.1\r\nHost: example.com\r\n\r\n";
+const PROVIDER =
+  "GET http://api.openai.com/v1/models HTTP/1.1\r\nHost: api.openai.com\r\n\r\n";
+
+describe("egress guard frames every request on a proxy connection", () => {
+  it("blocks a provider request pipelined behind an allowed one in one write", async () => {
+    const sink = await startSink();
+    installEgressGuard();
+    try {
+      const err = await sendParts(sink.port, [ALLOWED + PROVIDER]);
+      expect(err).toBeInstanceOf(EgressBlockedError);
+      expect(sink.received().length).toBe(0);
+    } finally {
+      sink.close();
+    }
+  });
+
+  it("blocks a keep-alive provider request written after an allowed one", async () => {
+    const sink = await startSink();
+    installEgressGuard();
+    try {
+      const err = await sendParts(sink.port, [ALLOWED, PROVIDER]);
+      expect(err).toBeInstanceOf(EgressBlockedError);
+      expect(sink.received().toString("latin1")).toBe(ALLOWED);
+    } finally {
+      sink.close();
+    }
+  });
+
+  it("passes a pipelined pair of allowed requests byte-identical", async () => {
+    const sink = await startSink();
+    installEgressGuard();
+    try {
+      const err = await sendParts(sink.port, [ALLOWED + ALLOWED, ALLOWED]);
+      expect(err).toBeNull();
+      expect(sink.received().toString("latin1")).toBe(ALLOWED.repeat(3));
+    } finally {
+      sink.close();
+    }
+  });
+
+  it("does not screen a Content-Length body that quotes a provider request", async () => {
+    const sink = await startSink();
+    installEgressGuard();
+    const body = "GET http://api.openai.com/ HTTP/1.1\r\n\r\n";
+    const request =
+      `POST http://example.com/ HTTP/1.1\r\nHost: example.com\r\n` +
+      `Content-Length: ${body.length}\r\n\r\n${body}`;
+    try {
+      const err = await sendParts(sink.port, [request, ALLOWED]);
+      expect(err).toBeNull();
+      expect(sink.received().toString("latin1")).toBe(request + ALLOWED);
+    } finally {
+      sink.close();
+    }
+  });
+
+  it("blocks a provider request that follows a chunked body", async () => {
+    const sink = await startSink();
+    installEgressGuard();
+    const chunked =
+      "POST http://example.com/ HTTP/1.1\r\nHost: example.com\r\n" +
+      "Transfer-Encoding: chunked\r\n\r\n" +
+      "5\r\nhello\r\n0\r\nX-Trailer: 1\r\n\r\n";
+    try {
+      const err = await sendParts(sink.port, [chunked + PROVIDER]);
+      expect(err).toBeInstanceOf(EgressBlockedError);
+      expect(sink.received().length).toBe(0);
+    } finally {
+      sink.close();
+    }
+  });
+
+  it("refuses ambiguous framing", async () => {
+    for (const headers of [
+      "Content-Length: 3\r\nTransfer-Encoding: chunked\r\n",
+      "Content-Length: 3\r\nContent-Length: 3\r\n",
+      "Transfer-Encoding: gzip\r\n",
+    ]) {
+      const sink = await startSink();
+      installEgressGuard();
+      try {
+        const err = await sendParts(sink.port, [
+          `POST http://example.com/ HTTP/1.1\r\nHost: example.com\r\n${headers}\r\nabc`,
+        ]);
+        expect(err).toBeInstanceOf(EgressBlockedError);
+        expect(sink.received().length).toBe(0);
+      } finally {
+        sink.close();
+        uninstallEgressGuard();
+      }
+    }
+  });
+
+  it("leaves a non-HTTP exchange with a non-proxy server alone", async () => {
+    const proxy = await startSink();
+    const server = net.createServer((sock) => {
+      sock.on("data", (d) => {
+        if (d.toString() === "HELLO") sock.end("WORLD");
+      });
+    });
+    await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+    installEgressGuard();
+    try {
+      const sock = net.connect({
+        host: "127.0.0.1",
+        port: (server.address() as net.AddressInfo).port,
+      });
+      const reply = await new Promise<string>((resolve, reject) => {
+        sock.on("error", reject);
+        sock.on("data", (d) => resolve(d.toString()));
+        sock.write("HELLO");
+      });
+      expect(reply).toBe("WORLD");
+    } finally {
+      server.close();
+      proxy.close();
+    }
+  });
+
+  it("keeps stdout visible while the guard is installed", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "attest-egress-"));
+    try {
+      const ts = createRequire(import.meta.url)("typescript") as typeof import("typescript");
+      const source = fs.readFileSync(
+        new URL("../../packages/core/src/egress.ts", import.meta.url),
+        "utf8",
+      );
+      fs.writeFileSync(
+        path.join(dir, "egress.mjs"),
+        ts.transpileModule(source, {
+          compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
+        }).outputText,
+      );
+      fs.writeFileSync(
+        path.join(dir, "run.mjs"),
+        'import { installEgressGuard } from "./egress.mjs";\n' +
+          "installEgressGuard();\n" +
+          'console.log("INFO this must be visible");\n' +
+          'process.stderr.write("WARN stderr too\\n");\n',
+      );
+      const { stdout, stderr } = await new Promise<{ stdout: string; stderr: string }>(
+        (resolve, reject) =>
+          execFile(
+            process.execPath,
+            [path.join(dir, "run.mjs")],
+            { env: { ...process.env, HTTP_PROXY: "http://127.0.0.1:9" } },
+            (e, so, se) => (e ? reject(e) : resolve({ stdout: so, stderr: se })),
+          ),
+      );
+      expect(stdout).toBe("INFO this must be visible\n");
+      expect(stderr).toBe("WARN stderr too\n");
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("lets TLS run through an allowed CONNECT tunnel", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "attest-egress-tls-"));
+    const key = path.join(dir, "key.pem");
+    const cert = path.join(dir, "cert.pem");
+    const sockets = new Set<net.Socket>();
+    const track = (s: net.Socket) => {
+      sockets.add(s);
+      s.on("error", () => undefined);
+    };
+    let tlsServer: tls.Server | undefined;
+    let proxy: net.Server | undefined;
+    try {
+      await new Promise<void>((resolve, reject) =>
+        execFile(
+          "openssl",
+          ["req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", key, "-out", cert,
+            "-days", "1", "-subj", "/CN=localhost", "-addext", "subjectAltName=DNS:localhost"],
+          (e) => (e ? reject(e) : resolve()),
+        ),
+      );
+      tlsServer = tls.createServer(
+        { key: fs.readFileSync(key), cert: fs.readFileSync(cert) },
+        (s) => {
+          track(s);
+          s.on("data", (d) => s.end(`echo:${d.toString()}`));
+        },
+      );
+      await new Promise<void>((r) => tlsServer!.listen(0, "127.0.0.1", r));
+      const tlsPort = (tlsServer.address() as net.AddressInfo).port;
+      proxy = net.createServer((client) => {
+        track(client);
+        client.once("data", () => {
+          const upstream = net.connect({ host: "127.0.0.1", port: tlsPort }, () => {
+            client.write("HTTP/1.1 200 Connection Established\r\n\r\n");
+            client.pipe(upstream);
+            upstream.pipe(client);
+          });
+          track(upstream);
+        });
+      });
+      await new Promise<void>((r) => proxy!.listen(0, "127.0.0.1", r));
+      const proxyPort = (proxy.address() as net.AddressInfo).port;
+      process.env.HTTP_PROXY = `http://127.0.0.1:${proxyPort}`;
+      installEgressGuard();
+
+      const raw = net.connect({ host: "127.0.0.1", port: proxyPort });
+      track(raw);
+      await new Promise<void>((r) => raw.once("connect", r));
+      raw.write("CONNECT localhost:443 HTTP/1.1\r\nHost: localhost:443\r\n\r\n");
+      const status = await new Promise<string>((r) => raw.once("data", (d) => r(d.toString())));
+      expect(status.startsWith("HTTP/1.1 200")).toBe(true);
+      const secure = tls.connect({ socket: raw, ca: fs.readFileSync(cert), servername: "localhost" });
+      const reply = await new Promise<string>((resolve, reject) => {
+        secure.on("error", reject);
+        secure.on("secureConnect", () => secure.write("ping"));
+        secure.on("data", (d) => resolve(d.toString()));
+      });
+      expect(reply).toBe("echo:ping");
+    } finally {
+      for (const s of sockets) s.destroy();
+      tlsServer?.close();
+      proxy?.close();
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
