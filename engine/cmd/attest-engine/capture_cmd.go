@@ -19,6 +19,7 @@ import (
 	"github.com/mattn/go-isatty"
 
 	"github.com/attest-framework/attest/engine/internal/capture"
+	"github.com/attest-framework/attest/engine/internal/contractdsl"
 	"github.com/attest-framework/attest/engine/internal/redact"
 	"github.com/attest-framework/attest/engine/internal/trace"
 )
@@ -367,7 +368,7 @@ func requireComplete(incomplete int) error {
 }
 
 func finishCapture(o *captureOptions, in capture.BuildInput, stdout, stderr io.Writer) int {
-	f, err := capture.BuildFixture(in)
+	f, built, err := capture.BuildFixtureReport(in)
 	if err != nil {
 		fmt.Fprintf(stderr, "capture: %s\n", terminalSafe(in.Redactor.String(err.Error())))
 		return 1
@@ -402,6 +403,9 @@ func finishCapture(o *captureOptions, in capture.BuildInput, stdout, stderr io.W
 		writeCaptureSummary(stderr, path, f)
 		writeRefreshDiff(stderr, f, diff)
 		res := captureJSONResult(path, f)
+		if built.RelationalCapped {
+			res["relational_capped"] = relationalCappedText
+		}
 		if diff != nil {
 			res["diff"] = diff
 		}
@@ -420,9 +424,16 @@ func finishCapture(o *captureOptions, in capture.BuildInput, stdout, stderr io.W
 		summary = stdout
 	}
 	writeCaptureSummary(summary, path, f)
+	if built.RelationalCapped {
+		fmt.Fprintf(summary, "  %s\n", relationalCappedText)
+	}
 	writeRefreshDiff(summary, f, diff)
 	return verifiedExit(f)
 }
+
+// relationalCappedText reports a world whose relations outnumber what one
+// contract run takes.
+var relationalCappedText = fmt.Sprintf("the world relates more resources than one contract run takes; only the first %d relational contracts are drafted", contractdsl.MaxStatements)
 
 // refreshDiff compares the fixture a refresh replaced with the one it wrote.
 // The new fixture is read back from its written bytes, so the diff covers

@@ -44,6 +44,12 @@ func TestWorldHelperClient(t *testing.T) {
 		}
 		resp.Body.Close()
 	}
+	if os.Getenv("ATTEST_WORLD_HELPER_INC1077") == "1" {
+		postJSON(base+"/refunds", `{"order_id":"O-2077","amount_cents":1200}`)
+		postJSON(base+"/refunds", `{"order_id":"O-2077","amount_cents":12600}`)
+		postJSON(base+"/notifications", `{"order_id":"O-2077","customer_id":"C-0311"}`)
+		os.Exit(0)
+	}
 	body := `{"order_id":"O-1042","amount_cents":4999}`
 	for i, timeout := range []time.Duration{300 * time.Millisecond, 5 * time.Second} {
 		c := &http.Client{Timeout: timeout}
@@ -57,6 +63,16 @@ func TestWorldHelperClient(t *testing.T) {
 		}
 	}
 	os.Exit(0)
+}
+
+// postJSON posts a body to the world and exits 3 unless it answers 201.
+func postJSON(url, body string) {
+	resp, err := http.Post(url, "application/json", strings.NewReader(body))
+	if err != nil || resp.StatusCode != http.StatusCreated {
+		fmt.Fprintf(os.Stderr, "post %s: %v %v\n", url, err, resp)
+		os.Exit(3)
+	}
+	resp.Body.Close()
 }
 
 var worldHelper = []string{os.Args[0], "-test.run=^TestWorldHelperClient$"}
@@ -317,4 +333,115 @@ func mustAbs(t *testing.T, p string) string {
 		t.Fatal(err)
 	}
 	return abs
+}
+
+const inc1077World = "../../testdata/capture/inc-1077.world.yaml"
+
+func inc1077Capture(t *testing.T, extra ...string) (run replayRun, fixturePath string) {
+	t.Helper()
+	bin := buildEngineBinary(t)
+	dir := t.TempDir()
+	args := append([]string{"capture", "--name", "inc-1077", "--out-dir", filepath.Join(dir, "fixtures"), "--world", mustAbs(t, inc1077World)}, extra...)
+	args = append(append(args, "--"), worldHelper...)
+	run = engineRun(t, bin, dir, worldHelperEnv("ATTEST_WORLD_HELPER_MODEL=1", "ATTEST_WORLD_HELPER_INC1077=1", "ATTEST_CAPTURE_HELPER=1", "OPENAI_BASE_URL="+fakeModel(t), "OPENAI_API_KEY="+e2ePlantedKey), args...)
+	return run, filepath.Join(dir, "fixtures", "inc-1077.attest.json")
+}
+
+func TestCaptureWorld_ExpectFail_DraftsRelationalContractsThatFailOnTheIncident(t *testing.T) {
+	run, path := inc1077Capture(t, "--expect-fail")
+
+	if run.code != 0 {
+		t.Fatalf("capture: exit %d\n%s", run.code, run.stderr)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fx struct {
+		Contracts    []struct{ ID, Kind, Type string }
+		Verification struct {
+			Verified         bool
+			ExpectedFailures []string `json:"expected_failures"`
+			Results          []struct{ Contract, Status, Explanation string }
+		}
+	}
+	if err := json.Unmarshal(raw, &fx); err != nil {
+		t.Fatal(err)
+	}
+	if !fx.Verification.Verified {
+		t.Fatalf("fixture not verified:\n%s", run.stderr)
+	}
+	want := map[string]string{
+		"relational-sum-refunds-amount_cents-per-order_id":          "effect violated: refunds amount_cents sum 13800 for O-2077 exceeds orders.amount_cents 12600",
+		"relational-matches-notifications-customer_id-per-order_id": "effect violated: notifications customer_id C-0311 for O-2077 does not match orders.customer_id C-0744",
+	}
+	for _, r := range fx.Verification.Results {
+		if exp, ok := want[r.Contract]; ok {
+			if r.Status != "hard_fail" || !strings.Contains(r.Explanation, exp) {
+				t.Errorf("%s: %s %q, want hard_fail containing %q", r.Contract, r.Status, r.Explanation, exp)
+			}
+			delete(want, r.Contract)
+		}
+	}
+	for id := range want {
+		t.Errorf("no result for drafted contract %s", id)
+	}
+	for id := range map[string]bool{"relational-sum-refunds-amount_cents-per-order_id": true, "relational-matches-notifications-customer_id-per-order_id": true} {
+		found := false
+		for _, e := range fx.Verification.ExpectedFailures {
+			found = found || e == id
+		}
+		if !found {
+			t.Errorf("%s is not recorded as an expected failure: %v", id, fx.Verification.ExpectedFailures)
+		}
+	}
+	kinds := 0
+	for _, c := range fx.Contracts {
+		if c.Kind == "relational" && c.Type == "effect" {
+			kinds++
+		}
+	}
+	if kinds != 2 {
+		t.Errorf("%d relational effect contracts stored, want 2", kinds)
+	}
+}
+
+func TestCaptureWorld_WithoutExpectFail_FailingRelationalDraftsLeaveTheFixtureNotVerified(t *testing.T) {
+	run, path := inc1077Capture(t)
+
+	if run.code != 1 {
+		t.Fatalf("capture: exit %d, want 1\n%s", run.code, run.stderr)
+	}
+	raw, _ := os.ReadFile(path)
+	var fx struct{ Verification struct{ Verified bool } }
+	if err := json.Unmarshal(raw, &fx); err != nil {
+		t.Fatal(err)
+	}
+	if fx.Verification.Verified || !strings.Contains(run.stderr, "relational-sum-refunds-amount_cents-per-order_id") {
+		t.Fatalf("verified=%v, stderr:\n%s", fx.Verification.Verified, run.stderr)
+	}
+}
+
+func TestCaptureWorld_Recapture_IsByteIdentical(t *testing.T) {
+	_, a := inc1077Capture(t, "--expect-fail")
+	_, b := inc1077Capture(t, "--expect-fail")
+	first, _ := os.ReadFile(a)
+	second, _ := os.ReadFile(b)
+	if len(first) == 0 || string(first) != string(second) {
+		t.Fatalf("recaptures differ (%d vs %d bytes)", len(first), len(second))
+	}
+}
+
+func TestCaptureWorld_NoRelation_DraftsTraceContractsOnly(t *testing.T) {
+	bin := buildEngineBinary(t)
+	dir := t.TempDir()
+	args := append([]string{"capture", "--name", "scripted", "--out-dir", filepath.Join(dir, "fixtures"), "--expect-fail", "--world", mustAbs(t, worldYAML), "--"}, worldHelper...)
+	run := engineRun(t, bin, dir, worldHelperEnv("ATTEST_WORLD_HELPER_MODEL=1", "ATTEST_CAPTURE_HELPER=1", "OPENAI_BASE_URL="+fakeModel(t), "OPENAI_API_KEY="+e2ePlantedKey), args...)
+	if run.code != 0 {
+		t.Fatalf("capture: exit %d\n%s", run.code, run.stderr)
+	}
+	raw, _ := os.ReadFile(filepath.Join(dir, "fixtures", "scripted.attest.json"))
+	if strings.Contains(string(raw), `"relational"`) {
+		t.Fatalf("a world with no id relation drafted a relational contract")
+	}
 }

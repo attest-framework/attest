@@ -220,16 +220,39 @@ var evaluators = map[string]interface {
 // reproduction) when at least one fails and the rest pass, and the failing
 // ones are recorded as expected failures. A trace that fails trace check,
 // holds no llm_call and no tool_call step, or yields no contracts (nothing to
-// verify) is never verified.
+// hold) is never verified. Effect contracts need a world: use VerifyIn.
 func Verify(t *types.Trace, contracts []Contract, expectFail bool, check TraceCheckResult) (Verification, error) {
+	return VerifyIn(t, nil, contracts, expectFail, check)
+}
+
+// VerifyIn is Verify for contracts that may include effect contracts: those
+// are evaluated against the world snapshot (the fixture's world section), the
+// rest against the trace. An effect contract with no world is an error.
+func VerifyIn(t *types.Trace, worldSnapshot json.RawMessage, contracts []Contract, expectFail bool, check TraceCheckResult) (Verification, error) {
 	v := Verification{ExpectFail: expectFail, TraceCheck: check, Results: []ContractResult{}, ExpectedFailures: []string{}}
+	var w *assertion.EffectWorld
 	var failing, other []string
 	for _, c := range contracts {
-		ev, ok := evaluators[c.Type]
-		if !ok {
-			return v, fmt.Errorf("contract %s: type %q is not a deterministic contract type", c.ID, c.Type)
+		var r *types.AssertionResult
+		a := &types.Assertion{AssertionID: c.ID, Type: c.Type, Spec: c.Spec}
+		if c.Type == types.TypeEffect {
+			if len(worldSnapshot) == 0 {
+				return v, fmt.Errorf("contract %s: effect contracts need a world snapshot", c.ID)
+			}
+			if w == nil {
+				var err error
+				if w, err = assertion.LoadEffectWorld(worldSnapshot); err != nil {
+					return v, fmt.Errorf("world snapshot: %w", err)
+				}
+			}
+			r = (&assertion.EffectEvaluator{}).EvaluateIn(w, a)
+		} else {
+			ev, ok := evaluators[c.Type]
+			if !ok {
+				return v, fmt.Errorf("contract %s: type %q is not a deterministic contract type", c.ID, c.Type)
+			}
+			r = ev.Evaluate(t, a)
 		}
-		r := ev.Evaluate(t, &types.Assertion{AssertionID: c.ID, Type: c.Type, Spec: c.Spec})
 		v.Results = append(v.Results, ContractResult{Contract: c.ID, Status: r.Status, Explanation: r.Explanation})
 		switch r.Status {
 		case types.StatusPass:

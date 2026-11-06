@@ -86,9 +86,9 @@
       "additionalProperties": false,
       "properties": {
         "id": { "type": "string", "minLength": 1, "pattern": "^\\S+$" },
-        "kind": { "enum": ["tools", "order", "cardinality", "output_schema", "cost"] },
+        "kind": { "enum": ["tools", "order", "cardinality", "output_schema", "cost", "relational"] },
         "description": { "type": "string" },
-        "type": { "enum": ["trace", "schema", "constraint"], "description": "Engine assertion type; spec is the assertion spec the SDK DSL emits." },
+        "type": { "enum": ["trace", "schema", "constraint", "effect"], "description": "Engine assertion type; spec is the assertion spec the SDK DSL emits. effect contracts (kind relational) are evaluated against the fixture's world section, so they appear only when it is not null." },
         "spec": { "type": "object" }
       }
     },
