@@ -263,9 +263,9 @@ jobs:
         # Biome fails on any finding (including warnings); a planted `debugger;` exits 1.
         run: pnpm lint
 
-  # @attest-ai/vitest declares peer vitest >=3.0.0 <5; the lockfile pins one 4.x. This job
+  # @attest-ai/vitest declares peer vitest >=3.0.0 <6; the lockfile pins one 4.x. This job
   # runs the package suite (reporter, packaged /reporter and /setup subpaths, plugin) on the
-  # newest 3.x and 4.x. The dev dependency is overridden inside the job with `pnpm add -D
+  # newest 3.x, 4.x and 5.x. The dev dependency is overridden inside the job with `pnpm add -D
   # vitest@<major>` after a frozen install: pnpm resolves the newest release of that major,
   # rewrites package.json and the lockfile in the runner checkout only, and nothing is
   # committed. The resolved version is printed so the log shows what ran. That tree is not
