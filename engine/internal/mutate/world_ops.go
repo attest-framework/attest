@@ -8,6 +8,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/attest-framework/attest/engine/internal/world"
 	"github.com/attest-framework/attest/engine/pkg/types"
 )
 
@@ -117,6 +118,7 @@ func genWorld(s Subject, add func(Mutant) error) error {
 	if ws == nil {
 		return nil
 	}
+	relBudget := maxRelationalMutants
 	for _, res := range sortedKeys(ws.state) {
 		recs := ws.state[res]
 		for i, rec := range recs {
@@ -156,7 +158,7 @@ func genWorld(s Subject, add func(Mutant) error) error {
 				return err
 			}
 
-			if err := genRelational(ws, s, res, i, add); err != nil {
+			if err := genRelational(ws, s, res, i, &relBudget, add); err != nil {
 				return err
 			}
 
@@ -313,10 +315,22 @@ type relation struct {
 	record map[string]any
 }
 
-// plusOne returns n + 1 as a JSON number.
+// maxRelationalMutants caps the relational mutants of one fixture; the first
+// ones in resource, record and relation order are kept.
+const maxRelationalMutants = 256
+
+// maxBoundBits bounds the numerator and denominator of a value plusOne
+// accepts, so a bound written as 1e1000000 never expands.
+const maxBoundBits = 256
+
+// plusOne returns n + 1 as a JSON number, or false when n is not a number
+// small enough to print.
 func plusOne(n json.Number) (json.Number, bool) {
+	if world.CheckExponent(n.String()) != nil {
+		return "", false
+	}
 	r, ok := new(big.Rat).SetString(n.String())
-	if !ok {
+	if !ok || r.Num().BitLen() > maxBoundBits || r.Denom().BitLen() > maxBoundBits {
 		return "", false
 	}
 	r.Add(r, big.NewRat(1, 1))
@@ -326,37 +340,47 @@ func plusOne(n json.Number) (json.Number, bool) {
 	return json.Number(strings.TrimRight(strings.TrimRight(r.FloatString(12), "0"), ".")), true
 }
 
-// genRelational mutates a record against the record it relates to: a numeric
-// field shared with the related record is raised one above the related value
-// (a sum bound is exceeded) and a shared *_id string field is redirected (the
-// match breaks). Each is suggested as the sum or matches check that kills it.
-func genRelational(ws *worldState, s Subject, res string, i int, add func(Mutant) error) error {
+// genRelational mutates a record against each record it relates to. Per
+// relation it raises the first shared numeric field one above the related
+// value (a sum bound is exceeded) and redirects the first shared *_id string
+// field the record has not already had redirected through an earlier relation
+// (the match breaks; a second redirect of one field would repeat the mutant). Each is suggested as the sum or matches check that
+// kills it. budget counts the relational mutants the fixture may still add.
+func genRelational(ws *worldState, s Subject, res string, i int, budget *int, add func(Mutant) error) error {
 	rec := ws.state[res][i]
+	redirectedFields := map[string]bool{}
 	for _, rel := range relatedRecords(ws, res, rec) {
+		if *budget <= 0 {
+			return nil
+		}
+		exceeded, redirected := false, false
 		for _, f := range sortedKeys(rec) {
-			if f == rel.key {
+			if f == rel.key || (exceeded && redirected) {
 				continue
 			}
 			rv, ok := rel.record[f]
 			if !ok {
 				continue
 			}
-			ref := map[string]any{"resource": rel.target, "field": f, "on": rel.key}
+			site := fmt.Sprintf("%s.%d.%%s.%s.%s.%s", res, i, rel.target, rel.key, f)
 			switch cur := rec[f].(type) {
 			case json.Number:
 				bound, isNum := rv.(json.Number)
-				if !isNum {
+				if !isNum || exceeded {
 					continue
 				}
 				nv, ok := plusOne(bound)
 				if !ok {
 					continue
 				}
+				exceeded = true
+				*budget--
 				m := ws.clone()
 				m.state[res][i][f] = nv
+				ref := map[string]any{"resource": rel.target, "field": f, "on": rel.key}
 				spec := map[string]any{"check": "sum", "resource": res, "field": f, "at_most": map[string]any{"related": ref}}
 				if err := add(Mutant{
-					site: fmt.Sprintf("%s.%d.exceed.%s", res, i, f), Operator: AlterWorldEffect,
+					site: fmt.Sprintf(site, "exceed"), Operator: AlterWorldEffect,
 					Description: fmt.Sprintf("raise %s record %d%s: %s %s -> %s, above %s.%s %s", res, i, describeRecord(rec), f, show(cur), show(nv), rel.target, f, show(bound)),
 					Trace:       s.Trace, World: m.marshal(),
 					candidates: []Contract{{
@@ -367,18 +391,22 @@ func genRelational(ws *worldState, s Subject, res string, i int, add func(Mutant
 					return err
 				}
 			case string:
-				if !strings.HasSuffix(f, "_id") {
+				if !strings.HasSuffix(f, "_id") || redirected || redirectedFields[f] {
 					continue
 				}
 				if _, isStr := rv.(string); !isStr {
 					continue
 				}
+				redirected = true
+				redirectedFields[f] = true
+				*budget--
 				nv := cur + "_x"
 				m := ws.clone()
 				m.state[res][i][f] = nv
+				ref := map[string]any{"resource": rel.target, "field": f, "on": rel.key}
 				spec := map[string]any{"check": "matches", "resource": res, "field": f, "related": ref}
 				if err := add(Mutant{
-					site: fmt.Sprintf("%s.%d.redirect.%s", res, i, f), Operator: AlterWorldEffect,
+					site: fmt.Sprintf(site, "redirect"), Operator: AlterWorldEffect,
 					Description: fmt.Sprintf("redirect %s record %d%s: %s %s -> %s, away from %s.%s", res, i, describeRecord(rec), f, show(cur), show(nv), rel.target, f),
 					Trace:       s.Trace, World: m.marshal(),
 					candidates: []Contract{{
@@ -388,6 +416,9 @@ func genRelational(ws *worldState, s Subject, res string, i int, add func(Mutant
 				}); err != nil {
 					return err
 				}
+			}
+			if *budget <= 0 {
+				return nil
 			}
 		}
 	}
