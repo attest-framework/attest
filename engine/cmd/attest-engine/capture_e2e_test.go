@@ -536,3 +536,40 @@ func TestCaptureServe_SecretInFinalizeEnviron_Redacted(t *testing.T) {
 		t.Fatalf("late secret not redacted:\n%s", data)
 	}
 }
+
+func TestCaptureCheckRedaction_SecretWithQuoteInSSEEvent_ExitsOneWithoutPrintingIt(t *testing.T) {
+	bin := buildEngineBinary(t)
+	const secret = `hunter"2-planted-secret-value`
+	body := "event: response.completed\ndata: {\"type\":\"response.completed\",\"note\":\"hunter\\\"2-planted-secret-value\"}\n\n"
+	doc, _ := json.Marshal(map[string]any{"exchanges": []any{map[string]any{
+		"response": map[string]any{"content_type": "text/event-stream", "status": 200, "body": body},
+	}}})
+	path := filepath.Join(t.TempDir(), "quote.attest.json")
+	os.WriteFile(path, doc, 0o644)
+	cmd := exec.Command(bin, "capture", "--check-redaction", path)
+	cmd.Env = append(os.Environ(), "SERVICE_API_KEY="+secret)
+
+	out, err := cmd.CombinedOutput()
+
+	exitErr, ok := err.(*exec.ExitError)
+	if !ok || exitErr.ExitCode() != 1 || !strings.Contains(string(out), "event 0") || strings.Contains(string(out), "planted-secret-value") {
+		t.Fatalf("err %v\n%s", err, out)
+	}
+}
+
+func TestCaptureCheckRedaction_SecretOnlyInCwdDotenv_Flagged(t *testing.T) {
+	bin := buildEngineBinary(t)
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, ".env"), []byte("VENDOR_TOKEN=dotenv-only-secret-9876\n"), 0o644)
+	path := filepath.Join(dir, "leak.attest.json")
+	os.WriteFile(path, []byte(`{"a":{"note":"dotenv-only-secret-9876"}}`), 0o644)
+	cmd := exec.Command(bin, "capture", "--check-redaction", path)
+	cmd.Dir = dir
+
+	out, err := cmd.CombinedOutput()
+
+	exitErr, ok := err.(*exec.ExitError)
+	if !ok || exitErr.ExitCode() != 1 || !strings.Contains(string(out), "$.a.note") || strings.Contains(string(out), "dotenv-only-secret") {
+		t.Fatalf("err %v\n%s", err, out)
+	}
+}

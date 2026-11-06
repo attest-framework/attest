@@ -279,14 +279,19 @@ func componentsOf(api string, req any) components {
 	fields, known := promptFields[api]
 	rest := map[string]any{}
 	for name, v := range body {
-		if name != "model" && name != "tools" && (!known || !contains(fields, name)) {
-			rest[name] = v
+		if name == "model" || name == "tools" {
+			continue
+		}
+		if !known || !contains(fields, name) {
+			if v, keep := identityParam(name, v); keep {
+				rest[name] = v
+			}
 		}
 	}
 	// A request to an API without a known prompt split is identified by its
 	// whole body (minus model and tools), reported as one part.
 	if !known {
-		c.messages = rest
+		c.messages = normalizeEnvironmentReminders(rest)
 		return c
 	}
 	c.params = rest
@@ -300,6 +305,7 @@ func componentsOf(api string, req any) components {
 	case "messages":
 		c.system, c.messages = body["system"], body["messages"]
 	}
+	c.system, c.messages = normalizeEnvironmentReminders(c.system), normalizeEnvironmentReminders(c.messages)
 	return c
 }
 

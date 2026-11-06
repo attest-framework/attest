@@ -22,14 +22,19 @@ const minSecretLen = 8
 // Current Anthropic SDKs authenticate with Authorization: Bearer, not only
 // x-api-key.
 var secretHeaders = map[string]bool{
-	"authorization":       true,
-	"proxy-authorization": true,
-	"x-api-key":           true,
-	"api-key":             true,
-	"openai-organization": true,
-	"openai-project":      true,
-	"cookie":              true,
-	"set-cookie":          true,
+	"authorization":             true,
+	"proxy-authorization":       true,
+	"x-api-key":                 true,
+	"api-key":                   true,
+	"subscription-key":          true,
+	"access-key":                true,
+	"client-secret":             true,
+	"client_secret":             true,
+	"ocp-apim-subscription-key": true,
+	"openai-organization":       true,
+	"openai-project":            true,
+	"cookie":                    true,
+	"set-cookie":                true,
 }
 
 // IsSecretHeader reports whether the header name carries a credential.
@@ -82,18 +87,29 @@ func IsSecretArgName(name string) bool {
 // keyPatterns match credentials by their published prefixes, whatever
 // variable they came from. Each match is redacted whole.
 var keyPatterns = []*regexp.Regexp{
-	regexp.MustCompile(`\bsk-[A-Za-z0-9_-]{16,}`),                    // OpenAI, Anthropic (sk-ant-), project keys
-	regexp.MustCompile(`\b(?:sk|rk)_(?:live|test)_[A-Za-z0-9]{16,}`), // Stripe
-	regexp.MustCompile(`\bgsk_[A-Za-z0-9]{20,}`),                     // Groq
-	regexp.MustCompile(`\bhf_[A-Za-z0-9]{30,}`),                      // Hugging Face
-	regexp.MustCompile(`\bxai-[A-Za-z0-9]{20,}`),                     // xAI
-	regexp.MustCompile(`\bAKIA[0-9A-Z]{16}\b`),                       // AWS access key id
-	regexp.MustCompile(`\bAIza[0-9A-Za-z_-]{35}`),                    // Google API key
-	regexp.MustCompile(`\bgh[pousr]_[A-Za-z0-9]{36,}`),               // GitHub tokens (ghp_, gho_, ghs_, ...)
-	regexp.MustCompile(`\bgithub_pat_[A-Za-z0-9_]{22,}`),             // GitHub fine-grained token
-	regexp.MustCompile(`\bxox[abposr]-[A-Za-z0-9-]{10,}`),            // Slack tokens
-	regexp.MustCompile(`(?i)\bbearer\s+[A-Za-z0-9._~+/=-]{16,}`),     // bearer credentials in text
+	regexp.MustCompile(`\bsk-[A-Za-z0-9_-]{16,}`),                                         // OpenAI, Anthropic (sk-ant-), project keys
+	regexp.MustCompile(`\b(?:sk|rk)_(?:live|test)_[A-Za-z0-9]{16,}`),                      // Stripe
+	regexp.MustCompile(`\bgsk_[A-Za-z0-9]{20,}`),                                          // Groq
+	regexp.MustCompile(`\bhf_[A-Za-z0-9]{30,}`),                                           // Hugging Face
+	regexp.MustCompile(`\bxai-[A-Za-z0-9]{20,}`),                                          // xAI
+	regexp.MustCompile(`\bAKIA[0-9A-Z]{16}\b`),                                            // AWS access key id
+	regexp.MustCompile(`\bAIza[0-9A-Za-z_-]{35}`),                                         // Google API key
+	regexp.MustCompile(`\bgh[pousr]_[A-Za-z0-9]{36,}`),                                    // GitHub tokens (ghp_, gho_, ghs_, ...)
+	regexp.MustCompile(`\bgithub_pat_[A-Za-z0-9_]{22,}`),                                  // GitHub fine-grained token
+	regexp.MustCompile(`\bxox[abposr]-[A-Za-z0-9-]{10,}`),                                 // Slack tokens
+	regexp.MustCompile(`\beyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}`), // JWT
+	regexp.MustCompile(`(?i)\bbearer\s+[A-Za-z0-9._~+/=-]{16,}`),                          // bearer credentials in text
 	regexp.MustCompile(`-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----`),
+}
+
+// contextPatterns match credentials that have no published prefix (Azure's
+// 32-hex keys, Mistral's 32-character and Cohere's 40-character keys) by the
+// name that introduces them, in a query string, a header dump, a JSON object
+// (quotes and backslashes allowed between name and value) or prose. Only the
+// value (group 1) is redacted. A bare 32-hex string is not a secret: trace
+// ids and content hashes look the same.
+var contextPatterns = []*regexp.Regexp{
+	regexp.MustCompile(`(?i)(?:api[-_ ]?key|subscription[-_ ]?key|access[-_ ]?key|client[-_ ]?secret)(?:\s+is)?[\s"'\\:=]{1,8}([A-Za-z0-9]{32,64})\b`),
 }
 
 // userinfoPattern matches scheme://user:password@ anywhere in text; only the
@@ -182,6 +198,31 @@ func FromEnviron(environ []string) *Redactor {
 	return New(values...)
 }
 
+// FromDotenv returns a Redactor holding every secret in a dotenv file's
+// contents, by the same rule as the process environment: the value of a
+// variable whose name marks a secret, and the password of a URL value.
+// Blank lines and # comments are skipped; an `export ` prefix is allowed;
+// a value in single or double quotes loses the quotes.
+func FromDotenv(data []byte) *Redactor {
+	var environ []string
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(strings.TrimSuffix(line, "\r"))
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		name, value, ok := strings.Cut(strings.TrimPrefix(line, "export "), "=")
+		if !ok {
+			continue
+		}
+		value = strings.TrimSpace(value)
+		if n := len(value); n >= 2 && (value[0] == '"' || value[0] == '\'') && value[n-1] == value[0] {
+			value = value[1 : n-1]
+		}
+		environ = append(environ, strings.TrimSpace(name)+"="+value)
+	}
+	return FromEnviron(environ)
+}
+
 // FromProcessEnv is FromEnviron(os.Environ()).
 func FromProcessEnv() *Redactor { return FromEnviron(os.Environ()) }
 
@@ -201,6 +242,11 @@ func (r *Redactor) Ranges(s string) []Range {
 	for _, p := range keyPatterns {
 		for _, loc := range p.FindAllStringIndex(s, -1) {
 			rs = append(rs, Range{Start: loc[0], End: loc[1], Kind: "pattern"})
+		}
+	}
+	for _, p := range contextPatterns {
+		for _, loc := range p.FindAllStringSubmatchIndex(s, -1) {
+			rs = append(rs, Range{Start: loc[2], End: loc[3], Kind: "pattern"})
 		}
 	}
 	for _, loc := range userinfoPattern.FindAllStringSubmatchIndex(s, -1) {

@@ -98,6 +98,49 @@ func checkStreams(doc any, r *redact.Redactor) ([]RedactionHit, error) {
 				hits = append(hits, RedactionHit{Kind: h.Kind, Path: fmt.Sprintf("$.exchanges[%d].response.body (stream %q)", i, id)})
 			}
 		}
+		eventHits, err := checkEvents(body, r)
+		if err != nil {
+			return nil, fmt.Errorf("exchanges[%d]: unparseable event stream: %w", i, err)
+		}
+		for _, h := range eventHits {
+			hits = append(hits, RedactionHit{Kind: h.Kind, Path: fmt.Sprintf("$.exchanges[%d].response.body (event %s)", i, h.Path)})
+		}
+	}
+	return hits, nil
+}
+
+// checkEvents scans the decoded strings and keys of every event of a stream,
+// where a secret holding a quote or a backslash is no longer JSON-escaped.
+// Each hit's Path is the event number.
+func checkEvents(body string, r *redact.Redactor) ([]RedactionHit, error) {
+	s, err := parseSSE(body)
+	if err != nil {
+		return nil, err
+	}
+	var hits []RedactionHit
+	for n, ev := range s.events {
+		at := strconv.Itoa(n)
+		var walk func(v any)
+		walk = func(v any) {
+			switch x := v.(type) {
+			case map[string]any:
+				for k, e := range x {
+					for _, h := range r.Scan(k) {
+						hits = append(hits, RedactionHit{Kind: h.Kind, Path: at})
+					}
+					walk(e)
+				}
+			case []any:
+				for _, e := range x {
+					walk(e)
+				}
+			case string:
+				for _, h := range r.Scan(x) {
+					hits = append(hits, RedactionHit{Kind: h.Kind, Path: at})
+				}
+			}
+		}
+		walk(ev.obj)
 	}
 	return hits, nil
 }
