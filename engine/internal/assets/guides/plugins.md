@@ -1,6 +1,6 @@
 # Plugin assertions
 
-A plugin assertion (layer 8, `expect(result).plugin("plugin-id")`) runs your own check in the SDK process and reports it through the same report, policy and baseline as the built-in layers. The engine never runs plugin code: the SDK runs the plugin and submits the result.
+A plugin assertion (`expect(result).plugin("plugin-id")`) runs your own check in the SDK process and reports it through the same report, policy and baseline as the built-in layers. The engine never runs plugin code: the SDK runs the plugin and submits the result.
 
 ## How a result reaches the report
 

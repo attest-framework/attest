@@ -39,7 +39,7 @@ UPDATE_ENV = "ATTEST_UPDATE_PARITY"
 REASONS = ("upstream_python_only", "otel_capture", "language_idiom")
 
 # Outcome capabilities never take an exception: simulation scenario, persona and
-# fault injection, the L8 plugin runner with discovery, `init`, capture, replay
+# fault injection, the plugin runner with discovery, `init`, capture, replay
 # and world helpers, and trials.
 OUTCOME_SECTIONS = frozenset({"simulation", "plugins", "init_flags"})
 OUTCOME_NAMES = frozenset(
@@ -236,7 +236,7 @@ def render_matrix(matrix: Matrix) -> str:
         "",
         "Python names map to TypeScript names by snake_case to camelCase, plus an explicit "
         "alias table. Capabilities that decide a test outcome (simulation scenarios, "
-        "personas and fault injection, the L8 plugin runner and its discovery, `init`, "
+        "personas and fault injection, the plugin runner and its discovery, `init`, "
         "capture, replay and world helpers, trials) are never exceptions. Commands other "
         "than `init` are forwarded to the engine by both SDKs, so they are identical.",
         "",

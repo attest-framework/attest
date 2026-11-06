@@ -135,14 +135,14 @@ describe("Customer Service Agent — Layers 5-6", () => {
   });
 });
 
-// -- Tests: Layers 7-8 --
+// -- Tests: multi-agent and plugins --
 
-describe("Customer Service Agent — Layers 7-8", () => {
+describe("Customer Service Agent — multi-agent and plugins", () => {
   it("validates multi-agent delegation chain", async () => {
     const result = await customerService.arun({ user_message: "I want a refund" });
 
     const chain = attestExpect(result)
-      // L8: Multi-agent assertions
+      // Multi-agent assertions
       .agentCalled("refund-specialist")
       .delegationDepth(2)
       .followsTransitions([["customer-service", "refund-specialist"]])
