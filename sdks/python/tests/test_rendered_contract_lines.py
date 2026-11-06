@@ -9,7 +9,7 @@ from typing import Any
 
 import pytest
 
-from attest import expect, load_fixture
+from attest import expect, load_fixture, related
 
 _ROOT = Path(__file__).resolve().parents[3]
 _CASES: list[dict[str, Any]] = json.loads(
@@ -33,7 +33,7 @@ def test_rendered_python_line_applies_to_a_real_chain(case: dict[str, Any]) -> N
     # Test-only eval of a line this repo's own catalog rendered: the line is pasted into a
     # chain exactly as a generated test does.
     result = eval(  # noqa: S307
-        "chain" + case["python"], {"chain": chain, "FIXTURE": _FIXTURE}
+        "chain" + case["python"], {"chain": chain, "FIXTURE": _FIXTURE, "related": related}
     )
 
     assert len(result.assertions) == before + 1

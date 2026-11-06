@@ -7,7 +7,7 @@ import { readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { attestExpect, loadFixture } from "../../packages/core/src/index.js";
+import { attestExpect, loadFixture, related } from "../../packages/core/src/index.js";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../../../..");
 const golden = JSON.parse(
@@ -36,11 +36,12 @@ describe("rendered TypeScript contract lines", () => {
     const before = chain.assertions.length;
 
     // The line is applied to a chain exactly as a generated test pastes it.
-    const run = new Function("chain", "FIXTURE", `return chain${c.typescript};`) as (
+    const run = new Function("chain", "FIXTURE", "related", `return chain${c.typescript};`) as (
       chain: unknown,
       fixture: unknown,
+      related: unknown,
     ) => { assertions: { type: string; spec: Record<string, unknown> }[] };
-    const result = run(chain, FIXTURE);
+    const result = run(chain, FIXTURE, related);
 
     expect(result.assertions.length).toBe(before + 1);
     const recorded = result.assertions[result.assertions.length - 1]!;
