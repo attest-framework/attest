@@ -318,3 +318,42 @@ func TestSemanticDiff_KeyOrderOnlyDifference_NoChange(t *testing.T) {
 		t.Fatalf("reordered keys reported as change: %s", diffJSON(t, d))
 	}
 }
+
+func TestSemanticDiff_AnthropicSystemTextAndCacheControlChange_ReportsBoth(t *testing.T) {
+	mk := func(text, ttl string) string {
+		return `{"model":"m","system":[{"type":"text","text":"` + text + `","cache_control":{"type":"ephemeral","ttl":"` + ttl + `"}}],"messages":[{"role":"user","content":"hi"}]}`
+	}
+
+	d := diffOf(t, fixtureOf("messages", mk("old", "5m")), fixtureOf("messages", mk("new", "1h")))
+
+	got := diffJSON(t, d)
+	if !strings.Contains(got, `"text":"new"`) || !strings.Contains(got, `"path":"$.system[0].cache_control.ttl"`) {
+		t.Fatalf("json = %s", got)
+	}
+	var buf bytes.Buffer
+	d.WriteText(&buf, "x", 1)
+	if !strings.Contains(buf.String(), "+ new") || !strings.Contains(buf.String(), "$.system[0].cache_control.ttl") {
+		t.Fatalf("text = %q", buf.String())
+	}
+}
+
+func TestDiffWriteText_ManyChangedFields_ElidesWithCount(t *testing.T) {
+	mk := func(v string) string {
+		var fields []string
+		for i := 0; i < 30; i++ {
+			fields = append(fields, fmt.Sprintf(`"f%02d":"%s"`, i, v))
+		}
+		return `{"model":"m","messages":[{"role":"user","content":"hi",` + strings.Join(fields, ",") + `}]}`
+	}
+	d := diffOf(t, fixtureOf("chat_completions", mk("a")), fixtureOf("chat_completions", mk("b")))
+
+	var buf bytes.Buffer
+	d.WriteText(&buf, "x", 1)
+
+	if got := strings.Count(buf.String(), "$.messages[0].f"); got != 20 {
+		t.Fatalf("rendered %d field lines, want 20:\n%s", got, buf.String())
+	}
+	if !strings.Contains(buf.String(), "... 10 more changed paths elided") {
+		t.Fatalf("no elision count:\n%s", buf.String())
+	}
+}

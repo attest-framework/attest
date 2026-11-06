@@ -39,8 +39,9 @@ type ExchangeDiff struct {
 	Tools       *ToolsDiff      `json:"tools,omitempty"`
 	Messages    []MessageChange `json:"messages,omitempty"`
 	ToolResults []MessageChange `json:"tool_results,omitempty"`
-	// Other lists request fields no other section covers; set only when every
-	// other section is empty, so a changed request never reads as unchanged.
+	// Other lists request fields no other section covers, so a changed request
+	// never reads as unchanged and no field changes unreported beside another
+	// section's change.
 	Other []PathChange `json:"other,omitempty"`
 }
 
@@ -155,7 +156,10 @@ func (d *differ) exchange(oldEx, newEx *Exchange) (*ExchangeDiff, error) {
 	ed.System = d.lines(o.system, n.system)
 	ed.Tools = d.tools(o.tools, n.tools)
 	ed.Messages, ed.ToolResults = d.entries(o.entries, n.entries)
-	if ed.Model == nil && ed.Params == nil && ed.System == nil && ed.Tools == nil && ed.Messages == nil && ed.ToolResults == nil {
+	// The system text is shown as lines; every other field of the system
+	// content is what no section above reports.
+	ed.Other = d.paths("$", o.sys.extra, n.sys.extra)
+	if ed.Model == nil && ed.Params == nil && ed.System == nil && ed.Tools == nil && ed.Messages == nil && ed.ToolResults == nil && ed.Other == nil {
 		// The sections above read a request through its provider's shape;
 		// "no semantic change" holds only when the requests are equal.
 		if reflect.DeepEqual(o.req, n.req) {
@@ -174,7 +178,10 @@ type normalized struct {
 	system  []string
 	tools   map[string]any
 	entries []entry
-	req     map[string]any
+	// sys holds, as extra, the system content's fields the system lines do not
+	// show, keyed by path relative to the request root.
+	sys entry
+	req map[string]any
 }
 
 const (
@@ -242,6 +249,7 @@ func normalize(ex *Exchange) (*normalized, error) {
 	case "messages":
 		used["system"], used["messages"] = true, true
 		n.system = append(n.system, textLines(req["system"])...)
+		n.sys.addContentExtra("system", req["system"])
 		n.anthropicMessages(req["messages"])
 	}
 	for k, v := range req {
@@ -270,6 +278,13 @@ func toolName(t any, i int) string {
 
 func (n *normalized) add(e entry) { n.entries = append(n.entries, e) }
 
+// addSystemExtra records the fields of the system message m (at path) that the
+// system text lines do not show.
+func (n *normalized) addSystemExtra(path string, m map[string]any) {
+	n.sys.addExtra(path+".", m, "role", "content")
+	n.sys.addContentExtra(path+".content", m["content"])
+}
+
 func (n *normalized) chatMessages(v any) {
 	for i, raw := range anySlice(v) {
 		m, _ := raw.(map[string]any)
@@ -279,6 +294,7 @@ func (n *normalized) chatMessages(v any) {
 		switch {
 		case systemRole(role):
 			n.system = append(n.system, lines...)
+			n.addSystemExtra(fmt.Sprintf("messages[%d]", i), m)
 			continue
 		case role == "tool":
 			e.kind = kindToolResult
@@ -324,6 +340,7 @@ func (n *normalized) responsesInput(v any) {
 			e.addExtra("", m, "type", "call_id", "output")
 		case systemRole(role):
 			n.system = append(n.system, textLines(m["content"])...)
+			n.addSystemExtra(fmt.Sprintf("input[%d]", i), m)
 			continue
 		default:
 			if role == "" {
@@ -713,26 +730,30 @@ func (df *Diff) WriteText(w io.Writer, fixtureName string, total int) {
 		if e.Model != nil {
 			fmt.Fprintf(w, "    model: %s -> %s\n", oneLine(e.Model.Old), oneLine(e.Model.New))
 		}
-		writePaths(w, "    params:", e.Params)
+		writePaths(w, "    params:", "      ", e.Params)
 		writeLines(w, "    system prompt:", "      ", e.System)
 		writeTools(w, e.Tools)
 		writeMessages(w, "    messages:", e.Messages)
 		writeMessages(w, "    tool results:", e.ToolResults)
-		writePaths(w, "    other request fields changed:", e.Other)
+		writePaths(w, "    other request fields changed:", "      ", e.Other)
 	}
 }
 
-func writePaths(w io.Writer, head string, ps []PathChange) {
+// writePaths prints the changed paths under head (omitted when empty), indented
+// by indent and capped at maxDiffLines with a count of the paths left out.
+func writePaths(w io.Writer, head, indent string, ps []PathChange) {
 	if len(ps) == 0 {
 		return
 	}
-	fmt.Fprintln(w, head)
+	if head != "" {
+		fmt.Fprintln(w, head)
+	}
 	for i, p := range ps {
 		if i == maxDiffLines {
-			fmt.Fprintf(w, "      ... %d more changed paths elided\n", len(ps)-i)
+			fmt.Fprintf(w, "%s... %d more changed paths elided\n", indent, len(ps)-i)
 			return
 		}
-		fmt.Fprintf(w, "      %s\n", pathLine(p))
+		fmt.Fprintf(w, "%s%s\n", indent, pathLine(p))
 	}
 }
 
@@ -783,13 +804,7 @@ func writeTools(w io.Writer, t *ToolsDiff) {
 	}
 	for _, c := range t.Changed {
 		fmt.Fprintf(w, "      ~ %s\n", oneLine(c.Name))
-		for i, p := range c.Paths {
-			if i == maxDiffLines {
-				fmt.Fprintf(w, "          ... %d more changed paths elided\n", len(c.Paths)-i)
-				break
-			}
-			fmt.Fprintf(w, "          %s\n", pathLine(p))
-		}
+		writePaths(w, "", "          ", c.Paths)
 	}
 }
 
@@ -806,9 +821,7 @@ func writeMessages(w io.Writer, head string, ms []MessageChange) {
 		}
 		fmt.Fprintf(w, "      %s %s%s [%d]\n", sym[m.Change], oneLine(m.Role), ref, m.Index)
 		writeLines(w, "", "        ", m.Lines)
-		for _, p := range m.Fields {
-			fmt.Fprintf(w, "        %s\n", pathLine(p))
-		}
+		writePaths(w, "", "        ", m.Fields)
 	}
 }
 
