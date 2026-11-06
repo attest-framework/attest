@@ -86,7 +86,6 @@ The judge runs natively on OpenAI, Anthropic and Gemini, on any OpenAI-compatibl
 
 Point the judge at a local OpenAI-compatible server:
 
-<!-- snippet: skip reason="points the judge at a local Ollama server" -->
 ```bash
 export ATTEST_JUDGE_BASE_URL=http://localhost:11434/v1
 export ATTEST_JUDGE_API_KEY=unused

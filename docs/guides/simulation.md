@@ -19,7 +19,7 @@ And three built-in personas for simulating different user behaviors.
 
 The `@scenario` decorator wraps an agent test function with simulation context. It accepts a `ScenarioConfig` worth of parameters and returns a `ScenarioResult`.
 
-<!-- snippet: mode=script -->
+<!-- snippet: mode=script harness=simulation_scenario -->
 ```python
 from attest.simulation import scenario, FRIENDLY_USER
 
@@ -138,6 +138,7 @@ Build each trial's result with `attest.inspect(chain)`, which never fails or ski
 
 Tag a function as a mock tool implementation. The decorated function retains a `_mock_tool_name` attribute for registration:
 
+<!-- snippet: harness=simulation_mock_tool -->
 ```python
 from attest.simulation import mock_tool
 
@@ -168,6 +169,7 @@ with registry:
 
 Add random failures and latency to any function. Useful for testing agent resilience to tool failures:
 
+<!-- snippet: harness=simulation_fault_inject -->
 ```python
 from attest.simulation import fault_inject
 

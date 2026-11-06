@@ -4,7 +4,7 @@ A suite that stays green when the agent's behavior breaks is not protecting anyt
 
 Only behavior is mutated, never source code. A mutant is a copy of a fixture's trace or world snapshot with one deliberate change.
 
-<!-- snippet: skip reason="needs captured fixtures and contracts from a real incident" -->
+<!-- snippet: setup=project,incident -->
 ```bash
 uv run attest mutate tests/attest/fixtures/*.attest.json --contracts .attest/contracts
 ```
@@ -33,9 +33,13 @@ A mutant identical to the original, or to an earlier mutant, is dropped. Each mu
 
 A suite's contracts are test code, and a report row records a result, not the spec. So the engine records the specs as it evaluates them. Set `ATTEST_CONTRACTS_DIR` for the test run:
 
-<!-- snippet: skip reason="installs packages or runs npm tooling (network)" -->
+<!-- snippet: setup=project -->
 ```bash
 ATTEST_CONTRACTS_DIR=.attest/contracts uv run pytest
+```
+
+<!-- snippet: skip reason="npx vitest resolves the project's npm dependencies (network)" -->
+```bash
 ATTEST_CONTRACTS_DIR=.attest/contracts npx vitest run
 ```
 
@@ -108,7 +112,7 @@ A fixture captured from the fixed refund agent has one `issue_refund` for `O-104
 min_mutation_score: { score: 0.8, severity: warn }
 ```
 
-<!-- snippet: skip reason="needs captured fixtures and contracts from a real incident" -->
+<!-- snippet: setup=project,incident -->
 ```bash
 uv run attest mutate tests/attest/fixtures/*.attest.json --contracts .attest/contracts --json > mutation.json
 uv run attest policy evaluate --policy attest.policy.yaml --report attest-report.json --mutation mutation.json

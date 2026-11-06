@@ -4,11 +4,14 @@
 
 ## Set up a client
 
-<!-- snippet: skip reason="installs packages or runs npm tooling (network)" -->
 ```bash
 uv run attest init --mcp      # Python
-npx attest init --mcp         # TypeScript
 attest-engine mcp install --dir . --command '["attest","mcp"]'   # without an SDK
+```
+
+<!-- snippet: skip reason="npx resolves @attest-ai/core from the npm registry (network)" -->
+```bash
+npx attest init --mcp         # TypeScript
 ```
 
 `init --mcp` calls `attest-engine mcp install` with the launch command for the project: `uv run attest mcp` when `uv.lock` is in the project root, else `attest mcp` (Python); `pnpm exec attest mcp` with `pnpm-lock.yaml`, else `npx --no attest mcp` (TypeScript; `--no` makes a missing local install fail instead of letting npx fetch the unscoped `attest` package from the registry). It writes or merges an `attest` entry into:

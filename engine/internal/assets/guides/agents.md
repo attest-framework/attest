@@ -17,9 +17,12 @@ npm install -D "@attest-ai/core@>=1.0.1" "@attest-ai/vitest@>=1.0.1" "vitest@^4"
 
 ## Install with `attest init --skills`
 
-<!-- snippet: skip reason="installs packages or runs npm tooling (network)" -->
 ```bash
 uv run attest init --skills
+```
+
+<!-- snippet: skip reason="npx resolves @attest-ai/core from the npm registry (network)" -->
+```bash
 npx attest init --skills
 ```
 

@@ -250,7 +250,7 @@ uv add 'attest-ai[llamaindex]>=1.0.1'
 
 **Context manager usage:**
 
-<!-- snippet: skip reason="needs the llama-index extra and a model provider" -->
+<!-- snippet: fragment reason="excerpt: relies on `query_engine`, defined outside the snippet" -->
 ```python
 from attest import LlamaIndexInstrumentationHandler, AgentResult, expect
 
@@ -357,6 +357,7 @@ def test_raw_call_and_agent_run(attest):
 
 Inherit `BaseProviderAdapter` and implement 4 extraction methods. The base class handles timestamp resolution, builder creation, LLM step construction, and metadata assembly.
 
+<!-- snippet: harness=adapter_provider -->
 ```python
 from __future__ import annotations
 
@@ -408,6 +409,7 @@ def _build_output(
 
 Inherit `BaseAdapter` for shared utilities. Framework adapters have diverse input mechanics, so there is no template method — implement your own capture method.
 
+<!-- snippet: harness=adapter_framework -->
 ```python
 from __future__ import annotations
 

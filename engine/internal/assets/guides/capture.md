@@ -6,7 +6,7 @@ The command runs in `attest-engine`; `uv run attest capture …` and `npx attest
 
 ## Capture a command
 
-<!-- snippet: skip reason="installs packages or runs npm tooling (network)" -->
+<!-- snippet: skip reason="runs the project's own incident command (make incident, npm run incident)" -->
 ```bash
 uv run attest capture --name inc-1042 --expect-fail -- make incident
 npx attest capture --name inc-1042 --expect-fail -- npm run incident
@@ -269,9 +269,14 @@ set_trace_processors([])
 OpenAIAgentsInstrumentor().instrument(tracer_provider=provider, capture_message_content=True)
 ```
 
-<!-- snippet: skip reason="installs packages or runs npm tooling (network)" -->
+<!-- snippet: skip reason="installs packages (network)" -->
 ```bash
 uv add openai-agents opentelemetry-instrumentation-openai-agents-v2 opentelemetry-sdk opentelemetry-exporter-otlp-proto-http
+```
+
+Then set:
+
+```bash
 export OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT=true OTEL_INSTRUMENTATION_OPENAI_AGENTS_CAPTURE_METRICS=false
 ```
 
@@ -279,7 +284,6 @@ The instrumentation is alpha. It emits `unknown` spans for SDK internals; they a
 
 **Claude Agent SDK (Python and TypeScript).** The SDK runs Claude Code, whose native traces are in beta and are off unless both switches are set. Set them in the environment of the process that runs the SDK:
 
-<!-- snippet: skip reason="configures Claude Code telemetry export" -->
 ```bash
 export CLAUDE_CODE_ENABLE_TELEMETRY=1 CLAUDE_CODE_ENHANCED_TELEMETRY_BETA=1
 export OTEL_TRACES_EXPORTER=otlp OTEL_EXPORTER_OTLP_PROTOCOL=http/json OTEL_TRACES_EXPORT_INTERVAL=100
@@ -298,9 +302,14 @@ with tracing_context(enabled=True, client=client):
 provider.force_flush()
 ```
 
-<!-- snippet: skip reason="installs packages or runs npm tooling (network)" -->
+<!-- snippet: skip reason="installs packages (network)" -->
 ```bash
 uv add langgraph langchain-openai langsmith opentelemetry-sdk opentelemetry-exporter-otlp-proto-http
+```
+
+Then set:
+
+```bash
 export LANGSMITH_TRACING=true LANGSMITH_TRACING_MODE=otel LANGSMITH_API_KEY=unused
 ```
 
@@ -342,7 +351,7 @@ Request headers, which carry the API key, are never recorded. Everywhere else in
 
 Check a fixture before committing it, for example in CI with the same secrets in the environment:
 
-<!-- snippet: skip reason="needs a captured fixture (tests/attest/fixtures/inc-1042.attest.json) from a real incident" -->
+<!-- snippet: setup=project,incident -->
 ```bash
 uv run attest capture --check-redaction tests/attest/fixtures/inc-1042.attest.json
 ```
