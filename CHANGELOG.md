@@ -4,6 +4,47 @@ All notable changes to Attest are documented in this file. The format follows [K
 
 ## [Unreleased]
 
+## [1.1.0-rc.2] — 2026-11-06
+
+Second release candidate of 1.1.0, themed "Real adapters, real parity". The runner integrations behave the same on every supported version: `@attest-ai/vitest` loads and reports cost on Vitest 3 and 4, and the Python helpers keep trace metadata, accept plain agents and fail an offline run in one line. Safe defaults landed early: shipped skills no longer auto-confirm a recorded command, `--attest-egress=block` covers provider calls through HTTP proxies, and `attest capture` templates session identifiers and redacts every server-sent event. Changes that alter results are marked **Behavior change** below.
+
+### Changed
+
+- Guides document the `@attest-ai/vitest/reporter` and `/setup` subpaths for Vitest 3 and 4, the removal of `AttestCostReporter`, the Python `set_metadata` merge, string-returning `@agent`, and the one-line offline engine failure.
+- CI runs the `@attest-ai/vitest` suite on the newest Vitest 3.x and 4.x and runs `pnpm lint` for the TypeScript SDK; both are required checks.
+- **Behavior change:** a TypeScript lint finding or a failure on either Vitest major now fails the `required` check.
+
+### Fixed
+
+- `AttestReporter` and `@attest-ai/vitest/setup` load on Vitest 3 (they imported `vitest` at runtime, failing with "Vitest failed to access its internal state"); the peer range `>=3.0.0 <5` is now exercised on both majors.
+- `@attest-ai/vitest/setup` exports `setup` and `teardown`, so `globalSetup: ["@attest-ai/vitest/setup"]` works and downloads the engine once before tests run.
+- The unevaluated-`expect()`-chain guard now fails the right test on Vitest before 4.1.
+- `pnpm lint` in `sdks/typescript` runs Biome with a committed config; it checked nothing before.
+- `TraceBuilder.set_metadata` merges fields across calls instead of replacing the metadata.
+- `@agent` wraps a string return as `{"message": ...}`, accepts positional arguments and honors `adapter=` for provider adapters.
+- A failed engine download ends the run with one line naming `ATTEST_ENGINE_PATH`; the download notice prints outside pytest capture.
+- **Behavior change:** a cost or latency breach set through separate `set_metadata` calls now fails instead of skipping as `missing_evidence`.
+- **Behavior change:** `@agent(adapter=...)` with a non-provider, non-manual adapter raises `TypeError` at decoration instead of being ignored.
+- A TypeScript engine that exits during startup now fails with its stderr: `EngineManager.launch` waits (bounded, 1 s) for the exit report on stdout EOF before terminating the child.
+
+### Security
+
+- Shipped skills no longer tell agents to pass `--yes` to `attest capture --refresh`. They show the recorded `source.command` with its SHA-256 and stop for human confirmation.
+- **Behavior change:** `--attest-egress=block` / `ATTEST_EGRESS=block` now also refuses provider calls made through `HTTP(S)_PROXY` (CONNECT and absolute-URI targets), in both SDKs; calls that previously passed through a proxy now fail with `EgressBlockedError`.
+- The egress guard's provider host list now includes AWS Bedrock, Vertex AI, Mistral, Groq, OpenRouter and Together.
+- Documented limit: child processes, SOCKS proxies and TLS-wrapped proxy connections are not covered.
+- **Behavior change:** `attest capture` and `attest capture --check-redaction` refuse a `.env` that is not a regular file or is over 1 MiB; `attest replay` (and `--serve`) warns once on stderr and ignores it.
+- **Behavior change:** a replay recorded before this change computes a different key for requests that carry `metadata.user_id` or Claude Code environment reminders; keys are recomputed on load, so existing fixtures still replay, and `attest capture --refresh` rewrites them with templated identifiers.
+- `attest capture` templates Claude Code `metadata.user_id` (device, account and session ids) and leaves it out of the replay key, and normalizes environment `<system-reminder>` blocks for matching, so a replay in a new session hits.
+- `attest capture` decodes and redacts every server-sent event, so a secret containing a quote or backslash in a non-delta event such as `response.completed` no longer reaches the fixture; `attest capture --check-redaction` flags it without printing it.
+- Redaction covers JWTs, Azure, Mistral and Cohere keys introduced by `api-key`, `subscription-key`, `access-key` or `client_secret`, those names as query parameters and headers, and the secret values in the working directory's `.env`.
+- Replay-key normalization of Claude Code environment values is limited to Claude Code's own sections (`# Environment`, `<env>`, `# currentDate`, `gitStatus:`) and covers the indented entries under `Additional working directories:`; `Status:` and similar lines in an application's own prompt keep their meaning.
+- Redaction matches secrets escaped twice (JSON arguments inside raw JSON text), and a `.env` value with an unterminated quote no longer hides the variables after it.
+
+### Removed
+
+- **Behavior change:** `AttestCostReporter` is no longer exported from `@attest-ai/vitest`. It printed nothing on Vitest 4. Use `AttestReporter` (`reporters: ["default", "@attest-ai/vitest/reporter"]`): it prints the `attest usage:` line from per-test meta and writes the cost to the report-v2 file.
+
 ## [1.1.0-rc.1] — 2026-11-06
 
 First release candidate of 1.1.0, themed "Fail closed". Judges are treated as measuring instruments: a malformed reply or a rejected credential is `not_evaluated`, never a pass, and only transient failures are retried. Green now means checked: assertion ids are stable (scheme 2), a removed assertion blocks the policy, and a test with an unevaluated `expect()` chain fails. The engine exits on signals and refuses invalid configuration, dynamic thresholds and continuous-eval drift alerts work, adapters conform to a shared behavioral corpus, and the SDK packages carry signed engine hashes. Several changes turn a silent pass into a failure; they are marked **Behavior change** below.
@@ -429,7 +470,8 @@ Tagged, not published to registries. No GitHub release was created.
 
 Versions 0.1.0 through 0.6.0 are described in their [GitHub releases](https://github.com/attest-framework/attest/releases); 0.6.1 exists only as a tag. 0.1.0–0.6.0 were published to PyPI; 0.3.0–0.6.0 were also published to npm.
 
-[Unreleased]: https://github.com/attest-framework/attest/compare/v1.1.0-rc.1...HEAD
+[Unreleased]: https://github.com/attest-framework/attest/compare/v1.1.0-rc.2...HEAD
+[1.1.0-rc.2]: https://github.com/attest-framework/attest/releases/tag/v1.1.0-rc.2
 [1.1.0-rc.1]: https://github.com/attest-framework/attest/releases/tag/v1.1.0-rc.1
 [1.0.1]: https://github.com/attest-framework/attest/releases/tag/v1.0.1
 [1.0.0]: https://github.com/attest-framework/attest/releases/tag/v1.0.0
