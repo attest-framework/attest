@@ -1,0 +1,24 @@
+# The INC-1077 payments system as a world: orders keyed by order_id with a
+# customer and an amount, refunds and notifications that carry the same keys.
+world_version: 1
+base_url_env: PAYMENTS_BASE_URL
+seed: 1077
+resources:
+  orders:
+    path: /orders
+    id_field: order_id
+    routes: [get]
+    seed:
+      - {order_id: O-2001, customer_id: C-0520, amount_cents: 2650, status: delivered}
+      - {order_id: O-2077, customer_id: C-0744, amount_cents: 12600, status: delivered}
+  refunds:
+    path: /refunds
+    id_field: refund_id
+    id_format: "R-%04d"
+    routes: [create, list, get]
+    filters: [order_id]
+  notifications:
+    path: /notifications
+    id_field: notification_id
+    id_format: "N-%04d"
+    routes: [create]

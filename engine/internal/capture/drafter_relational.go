@@ -3,10 +3,13 @@ package capture
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
+	"unicode"
 
 	"github.com/attest-framework/attest/engine/internal/assertion"
 	"github.com/attest-framework/attest/engine/internal/contractdsl"
@@ -50,6 +53,7 @@ func DraftRelational(snapshot json.RawMessage) ([]Contract, bool, error) {
 		return nil, false, fmt.Errorf("world snapshot: %w", err)
 	}
 	var out []Contract
+	seen := map[string]bool{}
 	for _, res := range sortedResourceNames(snap.State) {
 		for _, key := range keyFields(snap.State[res]) {
 			target, ok := relatedResource(snap.State, res, key)
@@ -67,11 +71,32 @@ func DraftRelational(snapshot json.RawMessage) ([]Contract, bool, error) {
 				if len(out) == contractdsl.MaxStatements {
 					return out, true, nil
 				}
+				c.ID = uniqueID(seen, c.ID, res, field, key)
+				seen[c.ID] = true
 				out = append(out, *c)
 			}
 		}
 	}
 	return out, false, nil
+}
+
+// uniqueID returns id when unused. Distinct raw names can still render one
+// id (the hyphens of relational-sum-a-b-c do not say which part is the
+// resource), so a taken id gets a short hash of the raw names, then a counter
+// after the hash: a capture never aborts on ids.
+func uniqueID(seen map[string]bool, id string, raw ...string) string {
+	if !seen[id] {
+		return id
+	}
+	hashed := id + "~" + shortHash(raw...)
+	if !seen[hashed] {
+		return hashed
+	}
+	for n := 2; ; n++ {
+		if next := fmt.Sprintf("%s~%d", hashed, n); !seen[next] {
+			return next
+		}
+	}
 }
 
 // maxDisplayName bounds a world name quoted in a contract id or description.
@@ -86,6 +111,28 @@ func displayName(name string) string {
 		return string(r[:maxDisplayName]) + "..."
 	}
 	return clean
+}
+
+// idName makes a world name safe inside a contract id: displayName, with
+// whitespace replaced (fixture-v1 ids match ^\S+$). A name any of that
+// changed gets a short hash of the raw name, so two raw names that sanitize
+// alike stay apart.
+func idName(name string) string {
+	clean := strings.Map(func(r rune) rune {
+		if unicode.IsSpace(r) || r == '\uFEFF' {
+			return '_'
+		}
+		return r
+	}, displayName(name))
+	if clean == name {
+		return clean
+	}
+	return clean + "~" + shortHash(name)
+}
+
+func shortHash(parts ...string) string {
+	sum := sha256.Sum256([]byte(strings.Join(parts, "\x00")))
+	return hex.EncodeToString(sum[:4])
 }
 
 func sortedResourceNames(state map[string][]map[string]any) []string {
@@ -191,14 +238,15 @@ func relationalContract(res, target, field, key string, state map[string][]map[s
 	var spec map[string]any
 	var id, desc string
 	dRes, dTarget, dField, dKey := displayName(res), displayName(target), displayName(field), displayName(key)
+	iRes, iField, iKey := idName(res), idName(field), idName(key)
 	switch {
 	case numeric:
 		spec = map[string]any{"check": "sum", "resource": res, "field": field, "at_most": map[string]any{"related": related}}
-		id = fmt.Sprintf("relational-sum-%s-%s-per-%s", dRes, dField, dKey)
+		id = fmt.Sprintf("relational-sum-%s-%s-per-%s", iRes, iField, iKey)
 		desc = fmt.Sprintf("%s %s sums to at most %s.%s for each %s", dRes, dField, dTarget, dField, dKey)
 	case identifier:
 		spec = map[string]any{"check": "matches", "resource": res, "field": field, "related": related}
-		id = fmt.Sprintf("relational-matches-%s-%s-per-%s", dRes, dField, dKey)
+		id = fmt.Sprintf("relational-matches-%s-%s-per-%s", iRes, iField, iKey)
 		desc = fmt.Sprintf("%s %s equals %s.%s for the same %s", dRes, dField, dTarget, dField, dKey)
 	default:
 		return nil, nil
