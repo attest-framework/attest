@@ -47,7 +47,7 @@
   ],
   "peerDependencies": {
     "@attest-ai/core": ">=1.1.0-rc",
-    "vitest": ">=3.0.0 <5"
+    "vitest": ">=3.0.0 <6"
   },
   "devDependencies": {
     "@attest-ai/core": "workspace:*",
