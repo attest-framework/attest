@@ -3,6 +3,7 @@ package assertion
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -25,13 +26,18 @@ type EffectEvaluator struct{}
 //	 "where": {"order_id": "O-1042"}, "equals": 1}
 //	{"check": "unique", "world": <snapshot>, "resource": "refunds", "fields": ["order_id"]}
 //	{"check": "idempotent", "world": <snapshot>, "resource": "refunds", "field": "idempotency_key"}
+//	{"check": "sum", "world": <snapshot>, "resource": "refunds", "field": "amount_cents",
+//	 "at_most": {"related": {"resource": "orders", "field": "amount_cents", "on": "order_id"}}}
+//	{"check": "matches", "world": <snapshot>, "resource": "notifications", "field": "customer_id",
+//	 "related": {"resource": "orders", "field": "customer_id", "on": "order_id"}}
 type effectSpec struct {
 	Check    string          `json:"check"`
 	World    json.RawMessage `json:"world"`
 	Resource string          `json:"resource"`
 	Where    map[string]any  `json:"where"`
 	Equals   *int            `json:"equals"`
-	AtMost   *int            `json:"at_most"`
+	AtMost   *atMostBound    `json:"at_most"`
+	Related  *relatedRef     `json:"related"`
 	AtLeast  *int            `json:"at_least"`
 	Fields   []string        `json:"fields"`
 	Field    string          `json:"field"`
@@ -82,10 +88,17 @@ func (e *EffectEvaluator) Evaluate(_ *types.Trace, assertion *types.Assertion) *
 		v, pass, err = checkUnique(&spec, records)
 	case "idempotent":
 		v, pass, err = checkIdempotent(&spec, records)
+	case "sum":
+		v, pass, err = checkSum(&spec, records, snap.State)
+	case "matches":
+		v, pass, err = checkMatches(&spec, records, snap.State)
 	default:
 		err = fmt.Errorf("unsupported effect check: %s", spec.Check)
 	}
+	var evidence *evidenceError
 	switch {
+	case errors.As(err, &evidence):
+		return failResult(assertion, start, shown(evidence.Error()))
 	case err != nil:
 		return failResult(assertion, start, fmt.Sprintf("invalid effect spec: %v", err))
 	case v != nil:
@@ -105,6 +118,14 @@ func checkCount(spec *effectSpec, records []map[string]any) (*effectViolation, s
 	if spec.Equals != nil && (spec.AtMost != nil || spec.AtLeast != nil) {
 		return nil, "", fmt.Errorf("count: equals excludes at_most and at_least")
 	}
+	var atMost *int
+	if spec.AtMost != nil {
+		n, err := spec.AtMost.count()
+		if err != nil {
+			return nil, "", err
+		}
+		atMost = &n
+	}
 	n := 0
 	for _, r := range records {
 		if matches(r, spec.Where) {
@@ -115,8 +136,8 @@ func checkCount(spec *effectSpec, records []map[string]any) (*effectViolation, s
 	switch {
 	case spec.Equals != nil && n != *spec.Equals:
 		return violation(subject, fmt.Sprintf("expected %d", *spec.Equals), *spec.Equals, n), "", nil
-	case spec.AtMost != nil && n > *spec.AtMost:
-		return violation(subject, fmt.Sprintf("expected at most %d", *spec.AtMost), *spec.AtMost, n), "", nil
+	case atMost != nil && n > *atMost:
+		return violation(subject, fmt.Sprintf("expected at most %d", *atMost), *atMost, n), "", nil
 	case spec.AtLeast != nil && n < *spec.AtLeast:
 		return violation(subject, fmt.Sprintf("expected at least %d", *spec.AtLeast), *spec.AtLeast, n), "", nil
 	}

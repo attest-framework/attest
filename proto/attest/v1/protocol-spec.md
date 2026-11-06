@@ -1140,9 +1140,19 @@ Effect assertions check what an agent did to the external system it acts on, not
 | `count` | `resource`, optional `where` (exact field matches), one of `equals` or `at_most` / `at_least` | the number of matching records is out of bounds |
 | `unique` | `resource`, `fields`, optional `where` | two matching records share the same values for `fields` |
 | `idempotent` | `resource`, `field` (the record field that stores the idempotency key), optional `where` | a matching record has no key, or two share one |
+| `sum` | `resource`, `field` (numeric), `at_most` (a number, or `{"related": {"resource", "field", "on"}}`), optional `where` | the sum of `field` over the matching records exceeds a numeric `at_most`; with a `related` bound, any group of records sharing an `on` value sums above the related record's `field` |
+| `matches` | `resource`, `field`, `related` (`{"resource", "field", "on"}`), optional `where` | a matching record's `field` differs from the `related.field` of the record in `related.resource` that holds the same `on` value |
 
 A violation is a `hard_fail` whose explanation starts `effect violated:`. A `count` of two refunds where one is expected reads exactly `effect violated: 2 refunds for O-1042 (expected 1)`; a filter on several fields renders as `for amount_cents=4999, order_id=O-1042`, and a count of one drops the plural (`1 refund`). `target` is `world.<resource>`; `expected` and `actual` carry the counts.
 
+- **Relational checks (`sum`, `matches`).** A `related` reference names the join: the record in `related.resource` whose `on` field equals the `on` field of the record being checked (both resources use the same field name, for example `order_id`). `sum` with a related bound groups the matching records by their `on` value and compares each group's sum to the related record's `field`; with a numeric `at_most` it compares the total (of the `where`-filtered records) to the number. `matches` compares every matching record. Sums are exact decimals. The explanations read:
+  - `effect violated: refunds amount_cents sum 13800 for O-2077 exceeds orders.amount_cents 12600`
+  - `effect violated: refunds amount_cents sum 1500.5 exceeds 1500` (numeric bound; a `where` filter is appended as ` for <value>`)
+  - `effect violated: notifications customer_id C-0520 for O-2077 does not match orders.customer_id C-0311`
+  - `effect violated: refunds has order_id O-9999 but orders has no record with that order_id` (no related record for a key)
+  - `effect violated: refunds record 3 has no order_id to relate to orders` (a record without the `on` field)
+
+  Violations are ordered by key (then record position) so the first one reported is stable, and further ones add `; N more violations`. A `sum` field value or related bound that is not a JSON number (a string, `null`, or an absent field) is a `hard_fail` starting `effect evidence:`, since treating it as zero would hide an overspend. A related resource with two records holding the same `on` value is the same kind of `hard_fail`. A related resource missing from the world, an incomplete `related`, `sum` without `field` or `at_most`, and `matches` without `field` or `related` are `hard_fail`s naming the problem. `count` keeps integer-only `at_most`; a related or fractional `at_most` on `count` is a `hard_fail`.
 - `idempotent` and `unique` look at every matching record, seed records included; add `where` to scope them to what the agent created. `unique` compares values as JSON (`"1"` and `1` differ; a missing field differs from `null`).
 - Text taken from records is printed with control and format characters removed and long values cut.
 - A request line is limited to 10 MiB. A longer line gets a `-32600` error (`REQUEST_TOO_LARGE`) with the request's `id` when it is in the first bytes, otherwise `null`; the engine keeps serving.
