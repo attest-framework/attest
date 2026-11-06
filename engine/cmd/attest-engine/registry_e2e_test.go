@@ -5,7 +5,10 @@ import (
 	"testing"
 )
 
-var registeredCommands = []string{"baseline", "cache", "calibrate", "capture", "doctor", "policy", "trace", "version"}
+var registeredCommands = []string{
+	"baseline", "cache", "calibrate", "capabilities", "capture", "doctor", "guide", "mcp", "mutate",
+	"policy", "replay", "report", "select", "skills", "trace", "version", "view", "world",
+}
 
 func TestHelp_ListsEveryCommand_ExitsZero(t *testing.T) {
 	bin := buildEngineBinary(t)

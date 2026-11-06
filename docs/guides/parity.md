@@ -2,7 +2,7 @@
 
 Every capability the Python SDK exposes has a TypeScript counterpart, or a documented exception. This page is generated from the public surface of both SDKs by the parity test (`sdks/python/tests/test_parity.py`); do not edit it by hand. Regenerate it with `ATTEST_UPDATE_PARITY=1` after changing either SDK's surface.
 
-Python names map to TypeScript names by snake_case to camelCase, plus an explicit alias table. Capabilities that decide a test outcome (simulation scenarios, personas and fault injection, the L8 plugin runner and its discovery, `init`, capture, replay and world helpers, trials) are never exceptions. Commands other than `init` are forwarded to the engine by both SDKs, so they are identical.
+Python names map to TypeScript names by snake_case to camelCase, plus an explicit alias table. Capabilities that decide a test outcome (simulation scenarios, personas and fault injection, the plugin runner and its discovery, `init`, capture, replay and world helpers, trials) are never exceptions. Commands other than `init` are forwarded to the engine by both SDKs, so they are identical.
 
 Exceptions use one of three reasons: `upstream_python_only` (the framework has no TypeScript release), `otel_capture` (TypeScript users capture the framework through OpenTelemetry) or `language_idiom` (the TypeScript way is named in the note).
 

@@ -32,8 +32,8 @@ stderr ──► Engine debug log output only (never parsed by SDK)
 
 **Wire example (two messages):**
 ```
-{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"sdk_name":"attest-python","sdk_version":"0.3.0","protocol_version":1,"required_capabilities":["layers_1_4"],"preferred_encoding":"json"}}\n
-{"jsonrpc":"2.0","id":1,"result":{"engine_version":"0.3.0","protocol_version":1,"capabilities":["layers_1_4"],"missing":[],"compatible":true,"encoding":"json","max_concurrent_requests":1}}\n
+{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"sdk_name":"attest-python","sdk_version":"1.1.0-rc.3","protocol_version":1,"required_capabilities":["layers_1_4"],"preferred_encoding":"json"}}\n
+{"jsonrpc":"2.0","id":1,"result":{"engine_version":"1.1.0-rc.3","protocol_version":1,"capabilities":["layers_1_4"],"missing":[],"compatible":true,"encoding":"json","max_concurrent_requests":1}}\n
 ```
 
 ### 1.3 Stderr Logging
@@ -103,9 +103,9 @@ Sent by the SDK immediately after spawning the engine. Establishes the session a
   "method": "initialize",
   "params": {
     "sdk_name": "attest-python",
-    "sdk_version": "0.3.0",
+    "sdk_version": "1.1.0-rc.3",
     "protocol_version": 1,
-    "required_capabilities": ["layers_1_4", "soft_failures"],
+    "required_capabilities": ["layers_1_4"],
     "preferred_encoding": "json"
   }
 }
@@ -128,9 +128,9 @@ Sent by the SDK immediately after spawning the engine. Establishes the session a
   "jsonrpc": "2.0",
   "id": 1,
   "result": {
-    "engine_version": "0.3.0",
+    "engine_version": "1.1.0-rc.3",
     "protocol_version": 1,
-    "capabilities": ["layers_1_4", "soft_failures"],
+    "capabilities": ["layers_1_4", "trace_tree", "continuous_eval", "plugins", "embedding", "llm_judge"],
     "missing": [],
     "compatible": true,
     "encoding": "json",

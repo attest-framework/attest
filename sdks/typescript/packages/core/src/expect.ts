@@ -942,7 +942,7 @@ export class ExpectChain {
     });
   }
 
-  // -- Layer 7: Trace Tree (Multi-Agent) --
+  // -- Trace Tree (Multi-Agent, layer 3) --
 
   /**
    * Assert that a specific agent was called in the trace tree.
@@ -1189,10 +1189,10 @@ export class ExpectChain {
     });
   }
 
-  // -- Layer 8: Plugin --
+  // -- Plugin --
 
   /**
-   * Assert via a registered plugin (Layer 8).
+   * Assert via a registered plugin (plugin assertion).
    *
    * @param pluginId - Identifier of the plugin registered with the engine.
    * @param config - Plugin-specific configuration passed at evaluation time.

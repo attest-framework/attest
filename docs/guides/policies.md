@@ -28,7 +28,7 @@ not_evaluated: warn
 # Fail the gate when the report's total cost exceeds this many dollars.
 max_cost_usd: 0.50
 
-# Per-layer caps on failures (layers 1-8; 0 means any layer).
+# Per-layer caps on failures (keys 1–6, and 8 for plugin assertions; 0 means any layer).
 layers:
   3: { max_hard_fails: 0 }
   6: { max_soft_fails: 2, severity: warn }
