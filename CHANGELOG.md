@@ -4,6 +4,95 @@ All notable changes to Attest are documented in this file. The format follows [K
 
 ## [Unreleased]
 
+## [1.1.0-rc.1] — 2026-11-06
+
+First release candidate of 1.1.0, themed "Fail closed". Judges are treated as measuring instruments: a malformed reply or a rejected credential is `not_evaluated`, never a pass, and only transient failures are retried. Green now means checked: assertion ids are stable (scheme 2), a removed assertion blocks the policy, and a test with an unevaluated `expect()` chain fails. The engine exits on signals and refuses invalid configuration, dynamic thresholds and continuous-eval drift alerts work, adapters conform to a shared behavioral corpus, and the SDK packages carry signed engine hashes. Several changes turn a silent pass into a failure; they are marked **Behavior change** below.
+
+### Upgrading from 1.0.x
+
+- Re-pin baselines: assertion ids are scheme 2 (`a2_` + 32 hex), and `attest policy evaluate --baseline` exits 3 for a baseline pinned on id scheme 1.
+- Set `ATTEST_ENGINE_TIMEOUT` in seconds for the TypeScript SDK (it was milliseconds; values above 3600 are refused).
+- History ids change, so drift baselines rebuild over the first runs after upgrading.
+- Source and editable installs no longer download an engine: build one with `make engine` and point `ATTEST_ENGINE_PATH` at it.
+- `ContinuousEvalRunner` requires a name (`name=` in Python, `options.name` in TypeScript), and the TypeScript `stop()` returns a `Promise<void>`.
+- Tests that never evaluate an `expect()` chain now fail; evaluate the chain or remove it.
+- Tests that asserted the old TypeScript OpenAI adapter shapes, the CrewAI `agent_call` / `tool_call` steps or an empty output on an OpenAI refusal must be updated.
+
+### Added
+
+- `failure_class: spec_error` for invalid judge specs, and `initialize` capabilities `judge_configured` and `embedding_configured`.
+- `judge_malformed` and `provider_auth` not_evaluated reasons in the report-v2 and verdict schemas, protocol fixtures and both SDKs' constants (`REASON_JUDGE_MALFORMED`, `REASON_PROVIDER_AUTH`, `FAILURE_CLASS_SPEC_ERROR` / `FailureClass.SpecError`); `attest explain_failure` (MCP) names the next step for both reasons.
+- Report v2 fields `id_scheme`, `budget_exceeded`, and per-row `scope_id` and `spec_hash`; policy rules `block_on_removal` and `allow_removed`; a plugins guide.
+- `attest-engine replay --trace-out <file>` writes the trace of the new run; `replayRun` (`@attest-ai/core`) and `attest.capture.replay_run` re-run a fixture's source command under strict replay and return the new trace.
+- Continuous-eval guide covering runner setup in Python and TypeScript, the webhook and Slack alert payload, triggers, error handling, stop and drain, and the 10-run cold start. Documentation for `threshold="dynamic"` on `passes_judge` and `output_similar_to`.
+- `AttestClient.queryDrift` (TypeScript) and `AttestClient.query_drift` (Python) accept a static threshold.
+- Python `ContinuousEvalRunner` takes an `on_error` callback.
+
+### Changed
+
+- **Behavior change:** CI now fails when a framework-gated adapter test is skipped because its framework or the engine is missing; previously these skipped silently.
+- **Behavior change:** CrewAIAdapter traces are summary-only (output, tokens, latency). Agents and tasks from the crew's configuration are no longer recorded as `agent_call` and `tool_call` steps, so assertions on those steps now fail.
+- **Behavior change:** `ContinuousEvalRunner.stop()` returns a `Promise<void>` and waits (bounded) for in-flight evaluations and alert dispatches.
+- **Behavior change:** `ContinuousEvalRunner` requires a `name=` keyword, the scope of its assertion ids.
+- **Behavior change:** `ContinuousEvalRunner` requires `options.name`.
+- Guides document the judge reply contract, per-call nonce delimiters, selective retry (408/429/5xx/network; 401/403 is one call), the ACP environment allowlist, `ATTEST_ENGINE_TIMEOUT` in seconds in both SDKs, the new initialize capabilities and the 1.1.0 JSON-RPC and numeric-environment behavior.
+- CI lints the engine with golangci-lint and tests the Python SDK on 3.13 and 3.14, and runs the adapter tests against real crewai, langchain-core, google-adk, llama-index-core and provider SDKs from `uv.lock`. The `crewai` extra is not installed on Python 3.14 (its dependency chain pins a pydantic-core release without 3.14 wheels).
+- `attest capture` output, drafted tests and the capture guide say "consistent with the recording" instead of "verified", and state that replay keeps relative, not absolute, identity.
+- Corrected `results[].drift.count` in the protocol spec to the number of baseline rows.
+
+### Fixed
+
+- **Behavior change:** a judge reply with a missing, non-numeric or out-of-range `score` is now `not_evaluated(judge_malformed)`; it was a measured pass (`{"score":7}`) or a measured 0 hard fail.
+- **Behavior change:** provider 401/403 responses are no longer retried; the assertion is `not_evaluated(provider_auth)` after one judge call (previously four calls, 3.5 s, `provider_unavailable`). Other non-transient errors (400, 404, unparseable replies) are also no longer retried.
+- LLM provider retries use jittered backoff and honour `Retry-After` on 408/429/5xx.
+- Judge prompts delimit agent output with a per-call random nonce; output containing the old fixed delimiter cannot close the data block, and a judge reply containing the nonce is `judge_malformed`.
+- The judge cache is consulted only after the spec validates, and its key includes `repeat` and bias probes.
+- `failure_class` for judge failures is computed against the assertion's own threshold, so a 0.78 score against 0.8 is `stochastic_variance` rather than `broken_code`.
+- The ACP judge agent starts with an allowlisted environment (process basics, locale, Windows system variables, proxy/CA settings, `CLAUDE_CODE_OAUTH_TOKEN`, `CLAUDE_CONFIG_DIR`, `CODEX_HOME`) instead of inheriting everything but ten variables, so unrelated credentials such as `GITHUB_TOKEN` and `AWS_SECRET_ACCESS_KEY` no longer reach it.
+- **Behavior change:** ACP agents that relied on other inherited variables (for example `XDG_*`, `NPM_CONFIG_*`) no longer see them.
+- **Behavior change:** a test that builds an `expect()` chain and never evaluates it now fails with "N expect() chain(s) built but never evaluated"; evaluating a chain with no assertions fails. Both used to pass.
+- **Behavior change:** a Vitest test that builds an `expect()` chain and never passes it to `evaluate()`/`inspect()`, or evaluates a chain with no assertions, now fails instead of passing.
+- **Behavior change:** assertion ids are now `a2_` plus 32 hex characters over the test node id (or `ContinuousEvalRunner` name), assertion type, canonical spec and occurrence index. Reordering assertions keeps their ids, identical assertions get distinct ids, and editing a spec makes a new id. Baselines pinned on 1.0.x must be re-pinned.
+- Both SDKs derive assertion ids this way.
+- **Behavior change:** `attest policy evaluate --baseline <tag>` exits 1 when a baselined assertion id is missing from the report (`block_on_removal`, on by default with a baseline). List accepted removals under `allow_removed`; a spec edit is reported as `changed` and does not block.
+- **Behavior change:** `attest policy evaluate --baseline` exits 3 with `baseline uses id scheme 1; re-pin it on 1.1` for baselines pinned before id scheme 2.
+- **Behavior change:** a run that exceeded `ATTEST_MAX_SOFT_FAILURES` blocks the policy (`budget_exceeded`); `evaluate_batch` now returns every result with a `budget_exceeded` flag instead of `ENGINE_ERROR`, so hard failures are no longer dropped. Reports carry the flag, true when any batch pushed the session past the limit.
+- `.plugin()` assertions run their registered plugin and submit the result before evaluation, so the row follows the plugin result and judge and embedding assertions in the same batch still evaluate (Python: register plugins on `attest_engine.plugin_registry` or through the `attest.plugins` entry point; TypeScript: `attestPlugins`).
+- **Behavior change:** the engine exits 0 within about a second of SIGTERM or SIGINT, cancelling an in-flight judge call, instead of finishing the batch and exiting 1.
+- **Behavior change:** the engine and `attest-engine doctor` refuse `ATTEST_EVAL_CONCURRENCY`, `ATTEST_EMBEDDING_CACHE_MAX_MB`, `ATTEST_JUDGE_CACHE_MAX_MB`, `ATTEST_HISTORY_MAX_ROWS`, `ATTEST_HISTORY_MAX_AGE_DAYS` and `ATTEST_JUDGE_TIMEOUT_S` values that are not positive integers (doctor exits 1 naming each variable). `ATTEST_JUDGE_TIMEOUT_S` no longer falls back to 30 on a bad value.
+- **Behavior change:** JSON-RPC requests without an `id` are no longer answered; parse errors and invalid ids reply with `id: null` instead of `0`. String ids are echoed unchanged.
+- `capture`, `replay` and `world` no longer die and orphan the wrapped command when SIGINT or SIGTERM arrives just as the command starts; the signal is relayed to the command.
+- The engine Go module path is `github.com/attest-framework/attest/engine`, so `go install github.com/attest-framework/attest/engine/cmd/attest-engine@<version>` resolves; the CONTRIBUTING clone URL points at `attest-framework/attest`.
+- **Behavior change:** the TypeScript SDK reads `ATTEST_ENGINE_TIMEOUT` in seconds (was milliseconds) and refuses values above 3600 with "ATTEST_ENGINE_TIMEOUT is in seconds since 1.1.0".
+- **Behavior change:** the repository's TypeScript test run fails once with a `make engine` remedy when `bin/attest-engine` is missing or stale, instead of skipping or failing each engine-backed test. `uv run pytest` in `sdks/python` works on a fresh clone via a `dev` dependency group.
+- **Behavior change:** `threshold="dynamic"` on `similar_to` and `passes_judge` is evaluated against history instead of always hard-failing as an invalid spec.
+- **Behavior change:** the dynamic pass bar is never below the static threshold, uses a sigma floor of 0.02, and is built from passing and soft scores only. An all-zero or failing history no longer passes a 0.0 score, and a steady 1.0 history no longer hard-fails 0.99.
+- **Behavior change:** `query_drift` and `result.drift` use the same estimator as classification; `query_drift` ignores `window_size`, and `result.drift` is attached only when a 10-run baseline exists.
+- **Behavior change:** history is keyed by id scheme 2 assertion ids. Rows recorded under ordinal ids are orphaned, so the first runs after upgrading rebuild each baseline.
+- `ContinuousEvalRunner` (Python and TypeScript) delivers drift alerts: after each evaluation it reads drift and posts to the alert webhook / Slack URL on `drift_detected` or `hard_fail`. Dispatch errors go to `on_error` (Python) or `alertError` / `onError` (TypeScript) and the log, Python POSTs are time-bounded, and `stop()` waits for in-flight evaluations and dispatches.
+- Python `ContinuousEvalRunner` reads the alert webhook and Slack URL configured through `attest.config()` (or the `ATTEST_ALERT_*` env vars) when none are passed; TypeScript `stop()` processes the traces already queued before resolving, bounded by `drainTimeoutMs`.
+- **Behavior change:** strict replay keeps the roles of email identities across a session. A request that notifies a different address than the one looked up no longer replays a recording where both were the same address. A run that uses one different address throughout still replays.
+- **Behavior change:** the test `attest capture` drafts for a command capture re-runs the agent under strict replay and fails when the new run misses the recording or violates a contract; it used to pass whatever the agent did.
+- **Behavior change:** an OpenAI refusal now fails `output_not_contains` on the refusal text; before, the output was empty and the assertion passed.
+- **Behavior change:** TypeScript adapter traces now match the Python adapters: `OpenAIAdapter` tool-call args are objects (was the raw JSON string, which failed `toolArgsMatchSchema`), refusals are the output text (so `outputNotContains` on refusal wording now fails), and llm steps carry token counts. Tests that asserted the old shapes must be updated.
+- **Behavior change:** `LangChainAdapter` methods now take langchainjs's callback signatures (`..., runId, parentRunId`). The old hand-called forms (`handleChainStart()`, `handleLLMEnd(output)`, `handleToolEnd(output, {name})`) are gone: langchainjs never called them, because `fromMethods` copied only own properties. `new LangChainAdapter()` now throws unless the `@langchain/core` peer is installed.
+- The `LangChainAdapter` change applies to the TypeScript SDK. It is a `BaseCallbackHandler` keyed by `runId`; pass it in `callbacks`.
+- Adapters: OpenAIAdapter handles Responses API objects (Python and TypeScript) and records a model refusal as the completion and trace output; AnthropicAdapter records `server_tool_use` blocks as tool calls; GeminiAdapter skips thought-summary parts, reads the model from `model_version` / `modelVersion`, reads usage tokens and no longer raises on a function-call-only response (TypeScript `input` is `{text}` for a single string message); OllamaAdapter (TypeScript) no longer records an empty `model` arg.
+- Provider adapters set `latency_ms` from the timestamps passed in (`startedAtMs` / `endedAtMs` in TypeScript) and record input, output and total tokens on the llm_call step, with tool calls after it. LangChainCallbackHandler (Python) records tool arguments as structured objects, reads ToolMessage content blocks and `usage_metadata` tokens, and measures latency from event timestamps.
+
+### Security
+
+- **Behavior change:** the SDK engine download is verified against a hash table embedded in the wheel and npm tarballs instead of the release's `checksums-sha256.txt`. A binary that differs fails with `does not match the hash shipped in attest-ai <version>` / `@attest-ai/core <version>`.
+- **Behavior change:** a source or editable install no longer downloads an engine; it fails naming `ATTEST_ENGINE_PATH` and `make engine`.
+- Engine downloads refuse a redirect to a non-https URL, resolve relative redirects, and time out (10s connect, 120s total). A truncated download is reported as truncated rather than as a hash mismatch, and a malformed redirect `Location` is a normal download failure in both SDKs instead of an uncaught exception.
+- Release engine binaries carry GitHub build-provenance attestations, created by a dedicated `attest-engine` job that alone holds `id-token: write` and `attestations: write`; verify with `gh attestation verify <file> --repo attest-framework/attest --signer-workflow attest-framework/attest/.github/workflows/release.yml --source-ref refs/tags/v<VERSION>`.
+- The Python engine download honours `HTTPS_PROXY`/`NO_PROXY` and system proxies (CONNECT tunnel, end-to-end TLS verification); proxy credentials never appear in errors.
+
+### Removed
+
+- `@attest-ai/vitest` no longer ships `engine-checksums.json` (it has no downloader).
+- Empty `engine/pkg/engine`, `engine/internal/config` and `sdks/go` directories, unused helpers, and the `engine-benchmark` and `protocol-benchmark` Makefile targets.
+
 ## [1.0.1] — 2026-11-05
 
 Hotfix themed "Red stays red". On 1.0.0 a failing assertion could be reported as green: an engine drift line, a request timeout or concurrent evaluations could hand one test another test's verdict, a pytest-xdist run wrote an empty report that the policy gate passed, and a regression policy without its baseline passed silently. 1.0.1 routes every engine response by request id in both SDKs, writes complete reports under parallel runners, and makes `attest policy evaluate` fail closed when an input is missing. Several fixes turn a silent pass into a failure; they are marked **Behavior change** below.
@@ -340,7 +429,8 @@ Tagged, not published to registries. No GitHub release was created.
 
 Versions 0.1.0 through 0.6.0 are described in their [GitHub releases](https://github.com/attest-framework/attest/releases); 0.6.1 exists only as a tag. 0.1.0–0.6.0 were published to PyPI; 0.3.0–0.6.0 were also published to npm.
 
-[Unreleased]: https://github.com/attest-framework/attest/compare/v1.0.1...HEAD
+[Unreleased]: https://github.com/attest-framework/attest/compare/v1.1.0-rc.1...HEAD
+[1.1.0-rc.1]: https://github.com/attest-framework/attest/releases/tag/v1.1.0-rc.1
 [1.0.1]: https://github.com/attest-framework/attest/releases/tag/v1.0.1
 [1.0.0]: https://github.com/attest-framework/attest/releases/tag/v1.0.0
 [1.0.0-rc.5]: https://github.com/attest-framework/attest/releases/tag/v1.0.0-rc.5
