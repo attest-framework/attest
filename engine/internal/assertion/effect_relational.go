@@ -56,6 +56,9 @@ func (b *atMostBound) UnmarshalJSON(data []byte) error {
 	if err := json.Unmarshal(trimmed, &n); err != nil {
 		return fmt.Errorf("at_most must be a number or {\"related\": {resource, field, on}}")
 	}
+	if err := world.CheckExponent(n.String()); err != nil {
+		return fmt.Errorf("at_most: %w", err)
+	}
 	r, ok := new(big.Rat).SetString(n.String())
 	if !ok {
 		return fmt.Errorf("at_most must be a finite number")
@@ -164,6 +167,13 @@ func formatRat(r *big.Rat) string {
 // and false when den has a prime factor other than 2 or 5 or needs more than
 // maxExactDigits digits.
 func terminatingDigits(den *big.Int) (int, bool) {
+	digits, _, ok := terminatingDigitsSteps(den)
+	return digits, ok
+}
+
+// terminatingDigitsSteps is terminatingDigits that also reports how many
+// divisions by 5 it ran, which never exceeds maxExactDigits.
+func terminatingDigitsSteps(den *big.Int) (digits, steps int, ok bool) {
 	twos := int(den.TrailingZeroBits())
 	rest := new(big.Int).Rsh(den, uint(twos))
 	five := big.NewInt(5)
@@ -172,19 +182,19 @@ func terminatingDigits(den *big.Int) (int, bool) {
 	fives := 0
 	for rest.Cmp(big.NewInt(1)) != 0 {
 		if fives >= maxExactDigits {
-			return 0, false
+			return 0, fives, false
 		}
 		quo.DivMod(rest, five, rem)
 		if rem.Sign() != 0 {
-			return 0, false
+			return 0, fives, false
 		}
 		rest, quo = quo, rest
 		fives++
 	}
 	if twos > maxExactDigits {
-		return 0, false
+		return 0, fives, false
 	}
-	return max(twos, fives), true
+	return max(twos, fives), fives, true
 }
 
 // maxExactDigits bounds the fraction digits formatRat prints; a value that

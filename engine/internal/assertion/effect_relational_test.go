@@ -221,18 +221,37 @@ func TestFormatRatIsLossless(t *testing.T) {
 	}
 }
 
-func TestFormatRatHugeNegativeExponentIsFast(t *testing.T) {
+func TestFormatRatHugeNegativeExponent_BoundsTheWorkDeterministically(t *testing.T) {
 	r, ok := new(big.Rat).SetString("1e-1000000")
 	if !ok {
 		t.Fatal("parse")
 	}
-	start := time.Now()
-	got := formatRat(r)
-	if elapsed := time.Since(start); elapsed > 500*time.Millisecond {
-		t.Fatalf("formatRat took %s", elapsed)
+	_, steps, exact := terminatingDigitsSteps(r.Denom())
+	if exact {
+		t.Fatal("a 10^1000000 denominator must not print as digits")
 	}
-	if strings.HasPrefix(got, "0.") && len(got) > 1000 {
-		t.Fatalf("formatRat printed %d characters", len(got))
+	if steps > maxExactDigits {
+		t.Fatalf("terminatingDigits ran %d divisions, want at most %d", steps, maxExactDigits)
+	}
+	done := make(chan string, 1)
+	go func() { done <- formatRat(r) }()
+	select {
+	case got := <-done:
+		if want := "1/" + r.Denom().String(); got != want {
+			t.Fatalf("formatRat form wrong: got %d chars, want num/den", len(got))
+		}
+	case <-time.After(30 * time.Second):
+		t.Fatal("formatRat did not finish")
+	}
+}
+
+func TestEffectSumAtMostLiteralHugeExponent_IsASpecError(t *testing.T) {
+	for _, lit := range []string{"1e1000000", "1e-1000000"} {
+		var b atMostBound
+		err := b.UnmarshalJSON([]byte(lit))
+		if err == nil || !strings.Contains(err.Error(), "at_most") {
+			t.Errorf("literal at_most %s: err %v, want an at_most spec error", lit, err)
+		}
 	}
 }
 
