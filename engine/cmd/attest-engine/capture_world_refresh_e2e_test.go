@@ -274,6 +274,39 @@ func TestCaptureRefresh_WorldFileIsASymlinkOutOfTheRepo_RefusedBeforeAnyPromptWi
 	}
 }
 
+func TestCaptureRefresh_WorldDirSymlinkedOutOfTheRepo_SameRefusalWhetherTheOutsideFileExists(t *testing.T) {
+	bin := buildEngineBinary(t)
+	stderrFor := func(outsideHasFile bool) string {
+		dir := worldRepo(t)
+		captureWorldRepo(t, bin, dir, "You refund once.")
+		outside := t.TempDir()
+		if outsideHasFile {
+			if err := os.WriteFile(filepath.Join(outside, filepath.Base(refreshWorldFile)), []byte("seed: 1\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}
+		parent := filepath.Join(dir, filepath.Dir(refreshWorldFile))
+		if err := os.RemoveAll(parent); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(outside, parent); err != nil {
+			t.Fatal(err)
+		}
+		run := engineRun(t, bin, dir, inc1077Env(t, "You refund once."), "capture", "--refresh", refreshFixtureName, "--out-dir", "fixtures")
+		if run.code != 1 {
+			t.Fatalf("exit %d, want 1:\n%s", run.code, run.stderr)
+		}
+		return strings.ReplaceAll(run.stderr, dir, "<repo>")
+	}
+	exists, missing := stderrFor(true), stderrFor(false)
+	if exists != missing {
+		t.Errorf("refusal differs by whether the outside file exists:\nexists:  %s\nmissing: %s", exists, missing)
+	}
+	if strings.Contains(missing, "is missing") {
+		t.Errorf("a path outside the repo reported as missing:\n%s", missing)
+	}
+}
+
 func TestCapture_WorldNamedThroughASymlinkedParent_RecordsTheRepoRelativeFile(t *testing.T) {
 	bin := buildEngineBinary(t)
 	dir := worldRepo(t)

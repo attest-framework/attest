@@ -754,11 +754,12 @@ func resolveRefreshWorld(o *captureOptions, f *capture.Fixture) error {
 		return fmt.Errorf("--refresh %s: %w", o.refresh, err)
 	}
 	defer guard.Close()
-	// Lstat reads metadata only and never follows the final link.
-	if _, err := os.Lstat(filepath.Join(guard.Path(), filepath.FromSlash(file))); errors.Is(err, fs.ErrNotExist) {
+	// ReadExisting decides "missing" inside the root, so the message cannot
+	// reveal whether a path reached through a symlink outside the repo exists.
+	data, _, exists, err := guard.ReadExisting(file, world.MaxDefinitionBytes)
+	if err == nil && !exists {
 		return fmt.Errorf("--refresh %s: the recorded world file %s is missing; restore it or %s", o.refresh, file, redo())
 	}
-	data, err := guard.ReadFile(file, world.MaxDefinitionBytes)
 	if err != nil {
 		return fmt.Errorf("--refresh %s: the recorded world file %s is not a regular file inside the repository (a symlink out of it is refused); %s", o.refresh, file, redo())
 	}
