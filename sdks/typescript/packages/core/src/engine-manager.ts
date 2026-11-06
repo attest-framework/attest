@@ -24,6 +24,11 @@ function isPipeWriteError(err: unknown): boolean {
   return false;
 }
 
+/** The client's stdout-EOF rejection: it can fire before the child's 'close' delivers the exit status and stderr. */
+function isStdoutClosedError(err: unknown): boolean {
+  return err instanceof Error && err.message.startsWith("Engine closed stdout.");
+}
+
 /** A discovered engine does not report the version this SDK requires. */
 export class EngineVersionMismatchError extends Error {
   readonly enginePath: string;
@@ -264,8 +269,15 @@ export class EngineManager {
     try {
       return await Promise.race([this.initialize(client), exited]);
     } catch (err) {
-      await this.terminate();
-      if (isPipeWriteError(err)) await reportExit(exited, EXIT_REPORT_GRACE_MS);
+      try {
+        // The engine is already dying: let it deliver its exit status and stderr before
+        // terminate() kills a still-writing process.
+        if (isPipeWriteError(err) || isStdoutClosedError(err)) {
+          await reportExit(exited, EXIT_REPORT_GRACE_MS);
+        }
+      } finally {
+        await this.terminate();
+      }
       throw err;
     }
   }

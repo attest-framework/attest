@@ -236,6 +236,7 @@ describe("renderDiagnostics", () => {
       explanation: "missing",
     });
     const block = renderDiagnostics(result, { color: true });
+    // biome-ignore lint/suspicious/noControlCharactersInRegex: asserts on the ANSI escape byte
     expect(block).toMatch(/\x1b\[/);
   });
 });

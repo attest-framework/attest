@@ -8,11 +8,9 @@ import { describe, it, expect } from "vitest";
 import {
   Agent,
   TraceBuilder,
-  AgentResult,
   TraceTree,
   attestExpect,
   delegate,
-  STEP_AGENT_CALL,
 } from "@attest-ai/core";
 
 // -- Define the customer service agent --

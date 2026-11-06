@@ -223,6 +223,7 @@ describe("replay errors and engine flags", () => {
     const session = await startReplay("x", { enginePath: line(hostile), mode: "strict", noLive: false });
     await session.finish();
     const message = session.error()?.message ?? "";
+    // biome-ignore lint/suspicious/noControlCharactersInRegex: asserts that no control byte survives
     expect(message).not.toMatch(/[\u0000-\u001f\u202e]/);
     expect(message).toContain("\\u001b");
 

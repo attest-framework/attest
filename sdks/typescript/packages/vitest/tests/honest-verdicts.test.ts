@@ -9,9 +9,12 @@ import { existsSync, mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import * as vitestModule from "vitest";
 import { describe, expect, it } from "vitest";
 
 const pkgDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+// Vitest before 4.1 cannot name the running test, so a context-less evaluate() cannot skip it.
+const hasTestRunner = "TestRunner" in vitestModule;
 const engine = resolve(pkgDir, "../../../../bin/attest-engine");
 
 interface JsonAssertion {
@@ -67,7 +70,12 @@ describe.skipIf(!existsSync(engine))("honest verdicts (real engine)", () => {
     const loop = run.byTitle.get("loop violated")?.failureMessages.join("\n") ?? "";
     expect(loop).toContain("trace.loop_detection");
     expect(loop).toContain("not evaluated: short_circuited");
-    expect(run.byTitle.get("judge only")?.status).toBe("skipped");
+    if (hasTestRunner) {
+      expect(run.byTitle.get("judge only")?.status).toBe("skipped");
+    } else {
+      expect(run.byTitle.get("judge only")?.status).toBe("failed");
+      expect(run.byTitle.get("judge only")?.failureMessages.join("\n")).toContain("pass the test context");
+    }
     expect(run.byTitle.get("judge only with context")?.status).toBe("skipped");
     const concurrent = run.byTitle.get("concurrent without context");
     expect(concurrent?.status).toBe("failed");

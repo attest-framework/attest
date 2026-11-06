@@ -3,9 +3,8 @@ import {
   AttestClient,
   isSimulationMode,
   requireSimulationCapability,
-  type AgentResult,
 } from "@attest-ai/core";
-import { MIN_PASS_RATE_ENV, validateMinPassRate } from "./trials.js";
+import { MIN_PASS_RATE_ENV, validateMinPassRate } from "./process-env.js";
 
 let engineManager: EngineManager | undefined;
 let attestClient: AttestClient | undefined;
@@ -28,10 +27,6 @@ declare global {
   var __attest_client__: AttestClient | undefined;
   // eslint-disable-next-line no-var
   var __attest_session_cost__: number;
-  // eslint-disable-next-line no-var
-  var __attest_session_soft_failures__: number;
-  // eslint-disable-next-line no-var
-  var __attest_session_failures__: AgentResult[] | undefined;
 }
 
 export function attestGlobalSetup(options?: AttestGlobalSetupOptions) {
@@ -43,8 +38,6 @@ export function attestGlobalSetup(options?: AttestGlobalSetupOptions) {
     async setup() {
       if (minPassRate !== undefined) process.env[MIN_PASS_RATE_ENV] = String(minPassRate);
       globalThis.__attest_session_cost__ = 0;
-      globalThis.__attest_session_soft_failures__ = 0;
-      globalThis.__attest_session_failures__ = [];
 
       if (isSimulationMode()) {
         // The engine decides simulation at startup from its environment;
@@ -85,7 +78,12 @@ export function attestGlobalSetup(options?: AttestGlobalSetupOptions) {
 
       globalThis.__attest_engine__ = undefined;
       globalThis.__attest_client__ = undefined;
-      globalThis.__attest_session_failures__ = undefined;
     },
   };
 }
+
+const defaultGlobalSetup = attestGlobalSetup();
+
+/** `globalSetup: ["@attest-ai/vitest/setup"]`: resolves (and downloads, once) the engine before any test runs. */
+export const setup = defaultGlobalSetup.setup;
+export const teardown = defaultGlobalSetup.teardown;

@@ -3,6 +3,7 @@
  * client (the engine boundary). Each test drives its own test task so the
  * recorded meta can be inspected.
  */
+import * as vitestModule from "vitest";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { TestContext } from "vitest";
 import {
@@ -19,13 +20,13 @@ import { evaluate, inspect } from "../src/fixtures.js";
 import type { AttestTaskMeta } from "../src/report.js";
 import {
   remainingBudget,
-  ROOT_ENV,
   testIdOf,
   validateBudget,
   type RunningTest,
 } from "../src/test-state.js";
 import { assertionIdOf } from "@attest-ai/core";
 import { attestGlobalSetup } from "../src/plugin.js";
+import { ROOT_ENV } from "../src/process-env.js";
 import { trials } from "../src/trials.js";
 
 type Status = "pass" | "hard_fail" | "not_evaluated";
@@ -130,7 +131,7 @@ describe("deterministic assertion IDs", () => {
     );
   });
 
-  it("count identical assertions across a test's evaluations and are random outside a test", async () => {
+  it("count identical assertions across a test's evaluations", async () => {
     const calls = scriptedClient(["pass", "pass", "pass"]);
     const t = fakeTest("ids");
     const testId = testIdOf(t.task);
@@ -141,12 +142,18 @@ describe("deterministic assertion IDs", () => {
         chain().assertions.map((a) => assertionIdOf(testId, a.type, a.spec, occurrence)),
       ),
     );
+  });
 
+  // Vitest before 4.1 has no TestRunner to stub, so "outside a test" cannot be simulated there.
+  it.skipIf(!hasTestRunner)("keep the chain's own assertion ids outside a test", async () => {
+    const calls = scriptedClient(["pass"]);
     const outside = chain();
     await useOutsideTest(() => inspect(outside));
-    expect(calls[2]!.assertions.map((a) => a.assertion_id)).toEqual(outside.assertions.map((a) => a.assertion_id));
+    expect(calls[0]!.assertions.map((a) => a.assertion_id)).toEqual(outside.assertions.map((a) => a.assertion_id));
   });
 });
+
+const hasTestRunner = "TestRunner" in vitestModule;
 
 /** Run fn with no running Vitest test, as in a module-level script. */
 async function useOutsideTest<T>(fn: () => Promise<T>): Promise<T> {

@@ -22,9 +22,9 @@ import {
   type RunningTest,
   type TestBudget,
 } from "./test-state.js";
+import { MIN_PASS_RATE_ENV, validateMinPassRate } from "./process-env.js";
 
-/** How attestGlobalSetup({ minPassRate }) reaches the workers that run trials(). */
-export const MIN_PASS_RATE_ENV = "ATTEST_MIN_PASS_RATE";
+export { MIN_PASS_RATE_ENV };
 
 export interface TrialsOptions {
   /** Number of trials N; defaults to the ATTEST_TRIALS environment variable, else 1. */
@@ -64,14 +64,6 @@ function trialCount(n: number | undefined): number {
     throw new Error(`trials(): N must be an integer >= 1, got ${source}`);
   }
   return raw;
-}
-
-/** A pass rate in [0, 1]; anything else is an error naming where it came from. */
-export function validateMinPassRate(rate: number, source: string): number {
-  if (!Number.isFinite(rate) || rate < 0 || rate > 1) {
-    throw new Error(`minPassRate must be a number between 0 and 1, got ${source}`);
-  }
-  return rate;
 }
 
 /** The run's minimum pass rate: ATTEST_MIN_PASS_RATE (set by attestGlobalSetup), else 1.0. */
@@ -179,7 +171,7 @@ export async function trials(
       ? runMinPassRate()
       : validateMinPassRate(options.minPassRate, `minPassRate=${options.minPassRate}`);
   const budget = options?.budget === undefined ? undefined : validateBudget(options.budget);
-  const test = options?.context?.task ?? (await runningTest());
+  const test = options?.context?.task ?? runningTest();
   if (test === undefined) throw new Error("trials() must be called inside a test");
   if (options?.context === undefined && test.concurrent === true) {
     throw new Error("trials() in a test.concurrent test — pass the test context: trials(body, { context })");

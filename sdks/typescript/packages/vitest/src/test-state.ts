@@ -20,6 +20,7 @@ import {
   type Usage,
 } from "@attest-ai/core";
 import { reportTracesEnabled, TraceTable, type AttestTaskMeta } from "./report.js";
+import { BUDGET_MARKER_EXT, ROOT_ENV, USAGE_DIR_ENV } from "./process-env.js";
 
 export type RunningTest = NonNullable<TestContext["task"]>;
 
@@ -75,15 +76,16 @@ export function attemptState(test: RunningTest): AttemptState {
   return state;
 }
 
-/**
- * The running test: `TestRunner.getCurrentTest()` on Vitest 4.1+, `vitest/suite`
- * before that (loaded only there, because Vitest 4.1 warns when it is imported).
- */
-export async function runningTest(): Promise<RunningTest | undefined> {
+// Vitest before 4.1 has no TestRunner; its running test comes from `vitest/suite`. Loaded only
+// there (4.1 warns when it is imported) and at module load, so the lookup stays synchronous:
+// an async lookup resolves after a synchronous test body has already finished.
+const legacySuite =
+  (vitest as Partial<typeof vitest>).TestRunner === undefined ? await import("vitest/suite") : undefined;
+
+/** The running test: `TestRunner.getCurrentTest()` on Vitest 4.1+, `vitest/suite` before that. */
+export function runningTest(): RunningTest | undefined {
   const runner = (vitest as Partial<typeof vitest>).TestRunner;
-  if (runner !== undefined) return runner.getCurrentTest();
-  const suite = await import("vitest/suite");
-  return suite.getCurrentTest();
+  return runner !== undefined ? runner.getCurrentTest() : legacySuite?.getCurrentTest();
 }
 
 /**
@@ -95,7 +97,7 @@ export async function resolveTest(context: TestContext | undefined): Promise<Run
   if (context !== undefined) return context.task;
   const scope = trialScope.getStore();
   if (scope !== undefined) return scope.test;
-  const test = await runningTest();
+  const test = runningTest();
   if (test !== undefined && test.concurrent === true) {
     throw new Error(
       "Attest results from a test.concurrent test — pass the test context: " +
@@ -104,14 +106,6 @@ export async function resolveTest(context: TestContext | undefined): Promise<Run
   }
   return test;
 }
-
-/**
- * Set by AttestReporter in the main process before workers start: the Vitest
- * root its report paths are relative to, and the directory where workers drop
- * the usage of evaluations that belong to no test.
- */
-export const ROOT_ENV = "ATTEST_VITEST_ROOT";
-export const USAGE_DIR_ENV = "ATTEST_VITEST_USAGE_DIR";
 
 /**
  * The report's test_id of `test`: "<file> > <suites> > <name>", the same string
@@ -293,9 +287,6 @@ export function recordBudgetExceeded(test: RunningTest | undefined): void {
   mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, `${randomUUID()}${BUDGET_MARKER_EXT}`), "");
 }
-
-/** File extension of the markers `recordBudgetExceeded` writes outside a test. */
-export const BUDGET_MARKER_EXT = ".budget-exceeded";
 
 export function strictFromEnv(): boolean {
   const v = (process.env["ATTEST_STRICT"] ?? "").trim().toLowerCase();

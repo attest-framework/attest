@@ -3,7 +3,6 @@ import type { TestContext } from "vitest";
 import {
   type ExpectChain,
   AgentResult,
-  STATUS_SOFT_FAIL,
   AttestClient,
   EngineManager,
   isSimulationMode,
@@ -219,12 +218,6 @@ export class AttestEngineFixture {
 
     if (result.budget_exceeded === true) recordBudgetExceeded(test);
 
-    const softFailCount = (result.results ?? []).filter(
-      (r) => r.status === STATUS_SOFT_FAIL,
-    ).length;
-    globalThis.__attest_session_soft_failures__ =
-      (globalThis.__attest_session_soft_failures__ ?? 0) + softFailCount;
-
     const agentResult = new AgentResult(
       chain.trace,
       result.results ?? [],
@@ -235,16 +228,6 @@ export class AttestEngineFixture {
     if (test !== undefined) recordOnTest(test, agentResult, trial);
     else recordUnattachedUsage(agentResult.usage);
     if (scope !== undefined && scope.test === test) scope.results.push(agentResult);
-
-    // Track non-passing AgentResults so AttestCostReporter can render the
-    // diagnostic block at the end of the run. Bound size because long
-    // suites with many failures should not balloon RAM.
-    if (!agentResult.passed) {
-      const list = (globalThis.__attest_session_failures__ ??= []);
-      if (list.length < 200) {
-        list.push(agentResult);
-      }
-    }
 
     if (
       options?.budget !== undefined &&

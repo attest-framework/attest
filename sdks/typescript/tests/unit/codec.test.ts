@@ -137,7 +137,6 @@ describe("extractId", () => {
   });
 
   it("throws when id field is missing", () => {
-    const response = { jsonrpc: "2.0" as const } as { jsonrpc: "2.0"; id: number };
     // Force undefined id
     const broken = { jsonrpc: "2.0" as const, id: undefined as unknown as number };
     expect(() => extractId(broken)).toThrow("response missing 'id' field");

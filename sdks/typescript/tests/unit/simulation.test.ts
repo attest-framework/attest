@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { describe, it, expect, afterEach, vi } from "vitest";
 import { config, isSimulationMode, getSampleRate, resetConfig } from "../../packages/core/src/config.js";
 import type { Assertion, Trace } from "../../packages/core/src/proto/types.js";
 

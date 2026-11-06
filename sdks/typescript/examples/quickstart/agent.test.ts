@@ -11,8 +11,6 @@ import {
   AgentResult,
   attestExpect,
   TraceTree,
-  STEP_LLM_CALL,
-  STEP_TOOL_CALL,
 } from "@attest-ai/core";
 
 // -- Define a simple agent --

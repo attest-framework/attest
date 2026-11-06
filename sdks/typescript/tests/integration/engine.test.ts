@@ -8,8 +8,6 @@ import {
   TraceBuilder,
   attestExpect,
   AgentResult,
-  STEP_LLM_CALL,
-  STEP_TOOL_CALL,
 } from "../../packages/core/src/index.js";
 
 describe("Engine Integration", () => {

@@ -6,7 +6,8 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AttestEngineFixture } from "../src/fixtures.js";
-import { ROOT_ENV, batchContextOf, resolveTest, testIdOf } from "../src/test-state.js";
+import { ROOT_ENV } from "../src/process-env.js";
+import { batchContextOf, resolveTest, testIdOf } from "../src/test-state.js";
 
 const evaluateBatch = vi.fn(async () => ({
   results: [] as unknown[],
