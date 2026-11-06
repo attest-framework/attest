@@ -47,7 +47,23 @@ Attest diagnostic — 1 of 4 assertions failed:
 | Runner | Command |
 |---|---|
 | pytest | `uv run pytest --attest-report=attest-report.json` |
-| Vitest | `npx vitest run --reporter=default --reporter=@attest-ai/vitest/reporter --outputFile.attest=attest-report.json`, or `reporters: ["default", new AttestReporter({ outputFile: "attest-report.json" })]` in the Vitest config |
+| Vitest | `npx vitest run --reporter=default --reporter=@attest-ai/vitest/reporter --outputFile.attest=attest-report.json`, or `reporters: ["default", new AttestReporter({ outputFile: "attest-report.json" })]` in the Vitest config (import `AttestReporter` from `@attest-ai/vitest/reporter`) |
+
+The Vitest config runs in the main process: import from the `@attest-ai/vitest/reporter` and `@attest-ai/vitest/setup` subpaths there, never from the package root. The root also exports the test helpers, which need the Vitest test runtime, and importing it from `vitest.config.ts` fails on Vitest 3. The two subpaths load on Vitest 3 and 4 (the peer range is `>=3.0.0 <5`). `globalSetup: ["@attest-ai/vitest/setup"]` resolves the engine, downloading it once, before the first test, so the download neither slows nor times out a test.
+
+```ts
+import AttestReporter from "@attest-ai/vitest/reporter";
+import { defineConfig } from "vitest/config";
+
+export default defineConfig({
+  test: {
+    globalSetup: ["@attest-ai/vitest/setup"],
+    reporters: ["default", new AttestReporter({ outputFile: "attest-report.json" })],
+  },
+});
+```
+
+The reporter collects the cost per test and writes it to the report-v2 file (`total_cost`, `summary.usage`) and prints the `attest usage:` line when the run made or refused an Attest model call; `AttestCostReporter` no longer exists, so remove it from the `reporters` list.
 
 The report follows `proto/attest/v1/report-v2.schema.json`:
 

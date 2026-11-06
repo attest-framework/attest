@@ -63,6 +63,12 @@ pytest test_refund_agent.py --attest-report=report.json
 
 Change one assertion, for example `.output_contains("refund")` to `.output_contains("chargeback")`, and the test fails with a diagnostic for that assertion.
 
+## Helpers
+
+- `TraceBuilder.set_metadata(...)` merges: fields given in a later call are added, and fields it leaves out keep their value. `set_metadata(cost_usd=0.5)` followed by `set_metadata(latency_ms=100)` keeps both, so `cost_under(0.05)` fails on the cost.
+- `@agent("name")` wraps a function with a `builder` parameter that Attest injects. A string return becomes the output `{"message": <str>}`, so `output_contains` works on a plain agent; a dict return is the output as is. Positional arguments are forwarded: with `def my_agent(builder, user_message)`, both `my_agent("hello")` and `my_agent(user_message="hello")` work. `adapter=` converts a provider adapter's return value and raises `TypeError` at decoration for an adapter that cannot convert.
+- When the engine cannot be found or downloaded (offline, or behind a blocking proxy), pytest ends the run with one error line that names `ATTEST_ENGINE_PATH`, without a traceback. Build an engine with `make engine` and point `ATTEST_ENGINE_PATH` at it to run offline.
+
 ## Pytest integration
 
 Attest registers as a pytest plugin automatically:

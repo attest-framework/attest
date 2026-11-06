@@ -23,6 +23,7 @@ Each published `attest-ai` wheel and sdist and the `@attest-ai/core` tarball car
 - The connect phase times out after 10 seconds and the whole download, redirects included, after 120 seconds.
 - A source checkout or editable install has no table and never downloads. It fails naming `ATTEST_ENGINE_PATH`; build an engine with `make engine` and point `ATTEST_ENGINE_PATH` at `./bin/attest-engine`.
 - `ATTEST_ENGINE_PATH` and the exact-version pin are unchanged.
+- When the download fails, for example offline or behind a proxy that blocks it, the pytest plugin ends the run with one error line that names `ATTEST_ENGINE_PATH`, without a traceback. The download notice itself is printed with pytest's output capture off, so it shows even without `-s`. The Vitest global setup resolves the engine once before the tests, so an engine that cannot be found fails the run before the first test.
 
 Every release binary also carries a GitHub build-provenance attestation, created by the `attest-engine` job of the release workflow. To check a binary you downloaded yourself, pin the workflow and the tag, not just the repository:
 
