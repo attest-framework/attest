@@ -137,7 +137,8 @@ const draftInput = `{
   "properties": {
     "fixture_path": {"type": "string", "minLength": 1},
     "trace_path": {"type": "string", "minLength": 1, "description": "OTLP/JSON export or capture fixture."},
-    "expect_fail": {"type": "boolean", "description": "Draft for an incident: allow one call per id, so repeated calls become the expected failures. Defaults to the fixture's own setting, else false."}
+    "expect_fail": {"type": "boolean", "description": "Draft for an incident: allow one call per id, so repeated calls become the expected failures. Defaults to the fixture's own setting, else false."},
+    "world_path": {"type": "string", "minLength": 1, "description": "World snapshot (or fixture holding one) to draft relational sum and matches contracts from. Defaults to the fixture's own world."}
   }
 }`
 
@@ -292,6 +293,7 @@ var tools = []toolDef{
 		ToolInfo: ToolInfo{
 			Name: "draft_contract",
 			Description: "Draft deterministic behavior contracts from a captured run (fixture_path, or trace_path) and verify them on that run. " +
+				"When the run has a world (fixture world or world_path) it also drafts relational sum and matches contracts: a *_id field that names another resource joins the two, and a numeric field both carry becomes sum(..., at_most=related(...)), a shared *_id field becomes matches(...); their status is reported but not part of verified. " +
 				"Each contract comes as a run_contract statement, its assertion spec, its verification status, and the Python and TypeScript test lines to paste.",
 			InputSchema: json.RawMessage(draftInput), OutputSchema: json.RawMessage(draftOutput),
 		},
@@ -303,7 +305,7 @@ var tools = []toolDef{
 			Description: "Evaluate contract statements against a captured run. A statement is one call in Python call syntax with literal arguments, for example " +
 				`tool_cardinality("issue_refund", per="order_id", at_most=1). ` +
 				"Only these methods exist: " + methodList() + ". Anything else is rejected with a position; nothing is evaluated as code. " +
-				"Effect checks (count, unique, idempotent) read the world from world_path or the fixture. " +
+				"Effect checks (count, unique, idempotent, sum, matches) read the world from world_path or the fixture. " +
 				"Returns per statement a status (pass, soft_fail, hard_fail, not_evaluated or error), the explanation, the spec and the Python and TypeScript test lines; effect lines start with the .world(FIXTURE.world) chain prefix." + deterministicNote,
 			InputSchema: json.RawMessage(runInput), OutputSchema: json.RawMessage(runOutput),
 		},

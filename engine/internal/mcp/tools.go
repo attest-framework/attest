@@ -289,6 +289,7 @@ func (e *env) draftContract(ctx context.Context, raw json.RawMessage) (any, erro
 		FixturePath string `json:"fixture_path"`
 		TracePath   string `json:"trace_path"`
 		ExpectFail  *bool  `json:"expect_fail"`
+		WorldPath   string `json:"world_path"`
 	}
 	if err := decodeArgs(raw, &in); err != nil {
 		return nil, err
@@ -325,10 +326,43 @@ func (e *env) draftContract(ctx context.Context, raw json.RawMessage) (any, erro
 		d.Statement, d.ChainPrefix, d.Python, d.TypeScript, d.Error = render(c)
 		out = append(out, d)
 	}
+	relational, err := e.draftRelational(in.WorldPath, src)
+	if err != nil {
+		return nil, err
+	}
+	out = append(out, relational...)
 	return map[string]any{
 		"source": src.name, "expect_fail": expectFail, "verified": ver.Verified,
 		"trace_check": src.check, "contracts": out,
 	}, nil
+}
+
+// draftRelational drafts sum and matches contracts from the world (world_path,
+// else the fixture's) and reports how each fares on it. They stay out of the
+// "verified" flag, which covers the trace contracts a fixture stores.
+func (e *env) draftRelational(worldPath string, src *source) ([]draftedContract, error) {
+	snapshot, err := e.worldSnapshot(worldPath, src)
+	if err != nil || snapshot == nil {
+		return nil, err
+	}
+	contracts, err := capture.DraftRelational(snapshot)
+	if err != nil {
+		return nil, fmt.Errorf("draft relational: %w", err)
+	}
+	results, err := capture.VerifyRelational(snapshot, contracts)
+	if err != nil {
+		return nil, fmt.Errorf("verify relational: %w", err)
+	}
+	out := make([]draftedContract, 0, len(contracts))
+	for i, c := range contracts {
+		d := draftedContract{
+			ID: c.ID, Kind: c.Kind, Description: c.Description, Type: c.Type, Spec: c.Spec,
+			Status: results[i].Status, Explanation: results[i].Explanation,
+		}
+		d.Statement, d.ChainPrefix, d.Python, d.TypeScript, d.Error = render(c)
+		out = append(out, d)
+	}
+	return out, nil
 }
 
 // render turns a drafted contract into its statement and test lines. A
