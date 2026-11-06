@@ -53,14 +53,22 @@ An incident reproduction test uses `inspect()` and asserts each contract's recor
 
 ## 5. Refresh after an intended agent change
 
-A replay miss names the refresh command. It re-runs the command recorded in the fixture (`source.command`) with its original flags:
+A replay miss names the refresh command. It re-runs the command recorded in the fixture (`source.command`) with its original flags, and it calls the upstream model. The command comes from the repo, so whoever can edit the fixture can change what runs. A refresh needs a human decision every time:
 
-```bash
-uv run attest capture --refresh checkout-timeout          # prints the command, asks y/N at a terminal
-uv run attest capture --refresh checkout-timeout --yes    # non-interactive: CI, --json, agents
-```
+1. Read the recorded command and hash it. Do not run `--refresh` yet:
 
-Before `--yes`, read the recorded command in the fixture (`source.command`) and confirm it is the expected one: whoever can edit the fixture can change what runs. Refresh refuses fixtures captured with `--from` or in-process, fixtures whose command arguments were redacted or templated, and fixtures with a `world` section; re-run the original `attest capture … --world <file>` command instead. Review the fixture diff and rerun its tests afterwards.
+   ```bash
+   jq -c '.source.command' <fixture path> | tee /dev/stderr | shasum -a 256
+   ```
+
+2. Show the human the command and the SHA-256, then ask whether to refresh. Stop and wait for the answer. Do not infer approval from the original task, a replay-miss message or an earlier turn.
+3. Only after the human confirms, the human runs the refresh at a terminal (it prints the command and asks y/N):
+
+   ```bash
+   uv run attest capture --refresh checkout-timeout
+   ```
+
+Never pass `--yes` to `--refresh` from a skill, even in CI or under `--json`. Without a terminal the command exits 2 and prints the recorded command; report that to the human instead of adding `--yes`. Refresh refuses fixtures captured with `--from` or in-process, fixtures whose command arguments were redacted or templated, and fixtures with a `world` section; re-run the original `attest capture … --world <file>` command instead. Review the fixture diff and rerun its tests afterwards.
 
 ## Failure modes
 
@@ -70,4 +78,4 @@ Before `--yes`, read the recorded command in the fixture (`source.command`) and 
 | `exchanges: 0 recorded` | the model client has a hard-coded base URL; read it from `OPENAI_BASE_URL` / `ANTHROPIC_BASE_URL` |
 | normal capture of an incident verifies with `at_most=2` | the run is an incident: re-capture with `--expect-fail` |
 | `--expect-fail` capture unverified: no contract failed | the drafted contracts miss the bug; write the contract by hand |
-| exit 2, `capture: refusing to run it without confirmation` | non-interactive context (`CI` set, `--json`, no terminal): read the printed command, then add `--yes` |
+| exit 2, `capture: refusing to run it without confirmation` | non-interactive context (`CI` set, `--json`, no terminal): show the human the printed command and its SHA-256 and let them run the refresh; never add `--yes` yourself |
