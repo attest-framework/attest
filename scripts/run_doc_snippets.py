@@ -11,11 +11,17 @@ executed offline, each in its own temporary directory:
   `uv run --project sdks/python python scripts/run_doc_snippets.py`.
 * TypeScript: the block runs as a vitest test file resolved against the built
   `sdks/typescript` workspace packages (`pnpm build` first).
-* Shell: every command must be on the allowlist (`attest`, `attest-engine`,
-  `pytest`); the block runs under `bash -e` with the engine and SDK on PATH.
+* Shell: every command word must be on the allowlist (`attest`, `attest-engine`,
+  `pytest`, `export`) and the block may not contain backticks, `$(`, `<(` or `>(`; the
+  block runs under `bash -e` with the engine and SDK on PATH. The allowlist is a
+  lint against copy-paste mistakes, not a sandbox: it does not model every
+  shell construct (variables, aliases, here-documents). The security boundary
+  is the CI job, which has read-only repository permissions and no secrets.
 
-Every environment runs with ATTEST_SIMULATION=1, no provider keys, no engine
-download and an unreachable proxy, so a snippet that needs the network fails.
+Every environment runs with ATTEST_SIMULATION=1, the provider keys removed, no
+engine download, and the HTTP(S) proxy variables pointing at an unreachable
+address (Node is told to honor them). That is best-effort, not network
+isolation: a client that ignores proxy variables still reaches the network.
 
 A block that cannot run standalone must say so in an HTML comment on the line
 above its fence (blank lines between are allowed):
@@ -26,13 +32,19 @@ above its fence (blank lines between are allowed):
     <!-- snippet: setup=project -->
     <!-- snippet: exit=1 -->
     <!-- snippet: mode=script -->
+    <!-- snippet: harness=simulation_scenario -->
 
 `skip` and `fragment` need a reason and are counted per file in the report.
 `continue` joins the block to the previous runnable block of the same file (it
-runs as one program). `setup=NAME` copies scripts/doc_snippet_fixtures/NAME/
+runs as one program). `setup=NAME[,NAME...]` copies scripts/doc_snippet_fixtures/NAME/
 into the working directory first and runs its setup.sh, if any. `exit=N` is the expected shell exit status
 (default 0). `mode=script|pytest` overrides the detection that a block defining
-`test_*` functions runs under pytest. A directive with nothing to attach to, an unknown directive or
+`test_*` functions runs under pytest. `harness=NAME` (Python only) embeds the
+block into scripts/doc_snippet_harness/NAME.py at its `# SNIPPET` line; the
+harness supplies the reader's own objects (an offline `my_agent`) and calls
+what the block defines. A Python script block that only defines functions or
+classes runs nothing, so it needs a harness, a `test_*` function, or a
+`fragment` marker. `setup=` and `harness=` names (setup takes a comma-separated list, applied in order) match `[A-Za-z0-9_-]+`. A directive with nothing to attach to, an unknown directive or
 an unrecognised fence language is an error: nothing is skipped silently.
 
     python3 scripts/run_doc_snippets.py [--root DIR] [--engine PATH] [FILE ...]
@@ -56,6 +68,9 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 FIXTURES = Path(__file__).resolve().parent / "doc_snippet_fixtures"
+HARNESSES = Path(__file__).resolve().parent / "doc_snippet_harness"
+NAME_RE = re.compile(r"[A-Za-z0-9_-]+")
+SHELL_FORBIDDEN = ("`", "$(", "<(", ">(")
 
 SOURCE_GLOBS = [
     "README.md",
@@ -90,7 +105,7 @@ DATA_LANGS = {
     "make",
 }
 
-SHELL_ALLOWLIST = {"attest", "attest-engine", "pytest"}
+SHELL_ALLOWLIST = {"attest", "attest-engine", "pytest", "export"}  # export: environment setup only
 DIRECTIVE_KINDS = {"skip", "fragment", "continue"}
 PROVIDER_KEYS = (
     "OPENAI_API_KEY",
@@ -173,7 +188,7 @@ def parse_directive(body: str, where: str) -> dict[str, str]:
 
 def validate_directive(d: dict[str, str], where: str) -> str:
     """Return the block kind a directive set selects."""
-    unknown = set(d) - DIRECTIVE_KINDS - {"reason", "setup", "exit", "mode"}
+    unknown = set(d) - DIRECTIVE_KINDS - {"reason", "setup", "exit", "mode", "harness"}
     if unknown:
         raise SystemExit(f"{where}: unknown snippet directive(s) {sorted(unknown)}")
     kinds = [k for k in ("skip", "fragment") if k in d]
@@ -187,6 +202,10 @@ def validate_directive(d: dict[str, str], where: str) -> str:
         raise SystemExit(f"{where}: `reason` only goes with `skip` or `fragment`")
     if d.get("mode", "script") not in ("script", "pytest"):
         raise SystemExit(f"{where}: mode= is script or pytest")
+    for key in ("setup", "harness"):
+        names = d[key].split(",") if key in d and key == "setup" else [d[key]] if key in d else []
+        if not all(NAME_RE.fullmatch(n) for n in names):
+            raise SystemExit(f"{where}: {key}= takes names matching [A-Za-z0-9_-]+")
     if "exit" in d and not d["exit"].isdigit():
         raise SystemExit(f"{where}: exit= needs an integer")
     return kinds[0] if kinds else "run"
@@ -262,6 +281,8 @@ def build_units(blocks: Sequence[Block]) -> list[Unit]:
     for b in blocks:
         if b.kind != "run":
             continue
+        if "harness" in b.directives and b.lang not in PYTHON_LANGS:
+            raise SystemExit(f"{b.file}:{b.line}: harness= applies to Python blocks only")
         if b.continues:
             if not units or units[-1].lang != b.lang or units[-1].head.file != b.file:
                 raise SystemExit(
@@ -305,6 +326,7 @@ def base_env(root: Path, engine: Path, home: Path) -> dict[str, str]:
         https_proxy="http://127.0.0.1:9",
         NO_PROXY="127.0.0.1,localhost,::1",
         no_proxy="127.0.0.1,localhost,::1",
+        NODE_USE_ENV_PROXY="1",
         PYTHONDONTWRITEBYTECODE="1",
     )
     return env
@@ -322,6 +344,9 @@ def run_cmd(cmd: list[str], cwd: Path, env: dict[str, str]) -> tuple[int, str]:
 
 def check_shell_commands(body: str) -> str | None:
     """Reject any command word outside the allowlist; return an error string."""
+    for marker in SHELL_FORBIDDEN:
+        if marker in body:
+            return f"{marker!r} is not allowed in a runnable shell snippet (command substitution)"
     text = re.sub(r"\\\n", " ", body)
     for raw in text.splitlines():
         line = raw.strip()
@@ -359,6 +384,45 @@ def check_shell_commands(body: str) -> str | None:
     return None
 
 
+def apply_harness(name: str, body: str) -> str:
+    path = HARNESSES / f"{name}.py"
+    if not path.is_file():
+        raise SystemExit(f"harness not found: {path}")
+    template = path.read_text()
+    if template.count("# SNIPPET\n") != 1:
+        raise SystemExit(f"{path}: needs exactly one `# SNIPPET` line")
+    return template.replace("# SNIPPET\n", body)
+
+
+def python_defines_only(body: str) -> bool:
+    """True when a script defines functions or classes but nothing in it ever runs them."""
+    tree = ast.parse(body)
+    defs = (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
+    inert = (ast.Import, ast.ImportFrom, *defs)
+    return any(isinstance(n, defs) for n in tree.body) and all(
+        isinstance(n, inert) or (isinstance(n, ast.Expr) and isinstance(n.value, ast.Constant))
+        for n in tree.body
+    )
+
+
+TS_DECLARATION_RE = re.compile(
+    r"(import|export\s+(default\s+)?(async\s+)?(function|class|interface|type|enum)|"
+    r"(async\s+)?function|class|interface|type|enum|declare)\b"
+)
+
+
+def typescript_defines_only(body: str) -> bool:
+    """True when every top-level TS statement is an import or a declaration (nothing runs)."""
+    starts = [
+        ln
+        for ln in body.splitlines()
+        if ln and not ln[0].isspace() and ln[0] not in "}])/*"
+    ]
+    return any(not ln.startswith("import") for ln in starts) and all(
+        TS_DECLARATION_RE.match(ln) for ln in starts
+    )
+
+
 def run_unit(unit: Unit, root: Path, engine: Path, ts_root: Path) -> Result:
     d = unit.head.directives
     with tempfile.TemporaryDirectory(prefix="attest-snippet-") as tmp:
@@ -366,25 +430,34 @@ def run_unit(unit: Unit, root: Path, engine: Path, ts_root: Path) -> Result:
         work.mkdir()
         home = Path(tmp) / "home"
         home.mkdir()
-        if "setup" in d:
-            fixture = FIXTURES / d["setup"]
+        env = base_env(root, engine, home)
+        for name in d.get("setup", "").split(",") if "setup" in d else []:
+            fixture = FIXTURES / name
             if not fixture.is_dir():
                 return Result(unit, False, f"setup fixture not found: {fixture}")
             shutil.copytree(fixture, work, dirs_exist_ok=True)
-        env = base_env(root, engine, home)
-        setup_script = work / "setup.sh"
-        if setup_script.is_file():
-            code, out = run_cmd(["sh", "setup.sh"], work, env)
-            setup_script.unlink()
-            if code:
-                return Result(unit, False, f"setup {d['setup']}/setup.sh exited {code}\n{out}")
+            setup_script = work / "setup.sh"
+            if setup_script.is_file():
+                code, out = run_cmd(["sh", "setup.sh"], work, env)
+                setup_script.unlink()
+                if code:
+                    return Result(unit, False, f"setup {name}/setup.sh exited {code}\n{out}")
         body = unit.body
         if unit.lang in PYTHON_LANGS:
+            if "harness" in d:
+                body = apply_harness(d["harness"], body)
             is_test = (
                 d["mode"] == "pytest"
                 if "mode" in d
                 else re.search(r"^(async\s+)?def test_|^class Test", body, re.M) is not None
             )
+            if not is_test and python_defines_only(body):
+                return Result(
+                    unit,
+                    False,
+                    "block only defines functions or classes, so nothing runs: add a test_* function, "
+                    "a harness=NAME that calls it, or mark it fragment",
+                )
             if is_test:
                 (work / "test_snippet.py").write_text(body)
                 (work / "pytest.ini").write_text("[pytest]\nasyncio_mode = auto\n")
@@ -428,6 +501,13 @@ def run_ts(unit: Unit, ts_root: Path, env: dict[str, str], work: Path) -> Result
         )
     body = unit.body
     if not re.search(r"^\s*(it|test)\(", body, re.M):
+        if typescript_defines_only(body):
+            return Result(
+                unit,
+                False,
+                "block only declares functions, classes or types, so nothing runs: "
+                "add an it(...) test or mark it fragment",
+            )
         # A script, not a test file: vitest needs one test to accept the file.
         body += '\nimport { test as __snippetRan } from "vitest";\n__snippetRan("snippet ran", () => {});\n'
     # Resolve @attest-ai/* and vitest from the workspace package that depends on them.

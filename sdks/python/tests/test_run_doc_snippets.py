@@ -235,3 +235,131 @@ def test_run_repository_sources_have_no_unmarked_directives() -> None:
         runner.parse_blocks(
             root / rel, rel
         )  # raises SystemExit on a malformed or orphaned directive
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "attest select `echo x`",
+        "attest select $(echo x)",
+        'attest select "$(echo x)"',
+        "attest select <(echo x)",
+        "attest select >(cat)",
+        "X=$(rm -rf /tmp/x) attest select",
+        'attest select --base "`id`"',
+    ],
+)
+def test_check_shell_commands_rejects_command_substitution(line: str) -> None:
+    problem = runner.check_shell_commands(line + "\n")
+
+    assert problem is not None
+    assert "command substitution" in problem
+
+
+def test_check_shell_commands_accepts_export_and_allowlisted_commands() -> None:
+    body = "export A=1 B=2\nA=1 attest select | pytest -q\nuv run attest init\n"
+
+    assert runner.check_shell_commands(body) is None
+
+
+@pytest.mark.parametrize("directive", ["setup=../project", "setup=project,../x", "harness=a/b"])
+def test_run_setup_or_harness_name_with_path_is_an_error(
+    root: Path, capsys: pytest.CaptureFixture[str], directive: str
+) -> None:
+    with pytest.raises(SystemExit, match=r"takes names matching \[A-Za-z0-9_-\]\+"):
+        _run(root, "README.md", f"<!-- snippet: {directive} -->\n```python\npass\n```\n", capsys)
+
+
+def test_run_harness_on_a_shell_block_is_an_error(
+    root: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    with pytest.raises(SystemExit, match="harness= applies to Python blocks only"):
+        _run(
+            root,
+            "README.md",
+            "<!-- snippet: harness=simulation_mock_tool -->\n```bash\nattest --help\n```\n",
+            capsys,
+        )
+
+
+DEFINITION_ONLY = """\
+```python
+from attest.simulation import mock_tool
+
+@mock_tool("search_web")
+def mock_search(q: str) -> dict:
+    return {"results": [q]}
+```
+"""
+
+
+def test_run_definition_only_python_block_fails(
+    root: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    code, _, err = _run(root, "README.md", DEFINITION_ONLY, capsys)
+
+    assert code == 1
+    assert "only defines functions or classes" in err
+
+
+def test_run_definition_only_python_block_with_forced_script_mode_fails(
+    root: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    text = "<!-- snippet: mode=script -->\n" + DEFINITION_ONLY.replace("mock_search", "test_x")
+
+    code, _, err = _run(root, "README.md", text, capsys)
+
+    assert code == 1
+    assert "only defines functions or classes" in err
+
+
+def test_run_harness_exercises_a_definition_only_block(
+    root: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    text = "<!-- snippet: harness=simulation_mock_tool -->\n" + DEFINITION_ONLY.replace(
+        '{"results": [q]}', '{"results": [f"Mock result for: {q}"]}'
+    )
+
+    code, out, _ = _run(root, "README.md", text, capsys)
+
+    assert code == 0
+    assert "snippets ok: 1 executed" in out
+
+
+def test_run_harness_fails_when_the_block_is_wrong(
+    root: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    text = "<!-- snippet: harness=simulation_mock_tool -->\n" + DEFINITION_ONLY
+
+    code, _, err = _run(root, "README.md", text, capsys)
+
+    assert code == 1
+    assert "AssertionError" in err
+
+
+def test_run_simulation_guide_planted_wrong_method_fails(
+    root: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    guide = (_SCRIPT.parent.parent / "docs" / "guides" / "simulation.md").read_text()
+    assert "my_agent.run(persona=persona)" in guide
+    planted = guide.replace("my_agent.run(persona=persona)", "my_agent.runn(persona=persona)")
+
+    code, _, err = _run(root, "README.md", planted, capsys)
+
+    assert code == 1
+    assert "AttributeError" in err
+    assert "runn" in err
+
+
+@pytest.mark.parametrize(
+    ("body", "expected"),
+    [
+        ("function f() { return 1; }\n", True),
+        ('import { a } from "b";\nexport function f() {}\ninterface X {\n  a: 1;\n}\n', True),
+        ('import { a } from "b";\n', False),
+        ('import { a } from "b";\nconst x = a();\n', False),
+        ("export default defineConfig({\n  test: {},\n});\n", False),
+    ],
+)
+def test_typescript_defines_only(body: str, expected: bool) -> None:
+    assert runner.typescript_defines_only(body) is expected
