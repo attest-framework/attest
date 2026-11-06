@@ -83,6 +83,23 @@ Trajectory modes compare the list of tool calls with `tools`, counting repeats:
 
 `tool_arg_satisfies` operators: `eq`, `ne`, `lt`, `lte`, `gt`, `gte` (numbers), `in`, `not_in` (a list of values). `arg` and `per` are dot paths into the call's arguments, such as `order_id` or `customer.tier`. Equality compares JSON values. A numeric operator on an argument that is not a number fails.
 
+## World effect contracts
+
+The contracts above read the trace. Effect contracts read what the agent did to the system it acts on: the records of a [world](world-fixtures.md). They are Layer 3 checks too, deterministic and free, and a contract statement names them like any other method.
+
+| Statement | Python / TypeScript chain | Holds when |
+| --- | --- | --- |
+| `count("refunds", equals=1, order_id="O-1042")` | `.world(w).count(...)` | The matching records number between the bounds. |
+| `unique("refunds", by=["order_id"])` | `.world(w).unique(...)` | No two matching records share the values of `by`. |
+| `idempotent("refunds", key="idempotency_key")` | `.world(w).idempotent(...)` | Every matching record has a key, and no two share one. |
+| `sum("refunds", "amount_cents", at_most=15000, status="paid")` | `.world(w).sum(...)` | The total of `amount_cents` over the matching records is at most the number. |
+| `sum("refunds", "amount_cents", at_most=related("orders", "amount_cents", on="order_id"))` | `.world(w).sum(..., related(...))` | For each `order_id`, the refunds sum to at most that order's `amount_cents`. |
+| `matches("notifications", "customer_id", related("orders", "customer_id", on="order_id"))` | `.world(w).matches(...)` | Each notification's `customer_id` equals its order's. |
+
+`related(resource, field, on=key)` (TypeScript `related(resource, field, { on: key })`, imported from `attest` / `@attest-ai/core`) names the record of `resource` whose `key` field equals the checked record's, and the field to compare. A `sum` bound given as `related(...)` groups by `key`; a numeric bound compares the whole filtered total. The messages, the missing-record cases and the exponent limit are in [world fixtures](world-fixtures.md#relational-effects-totals-and-recipients).
+
+The contract grammar stays closed. A statement still takes only literals; `related(...)` is the one call it accepts inside an argument, and only as the `at_most=` keyword of `sum` or the third argument of `matches`. Inside a list or a map, with a positional `on`, with a non-literal name, as the value of any other argument (`count(..., equals=related(...))`), or combined with an operator (`related(...) + 1`), it is rejected with a position, for example `calls are not allowed in arguments (position 48)`. [MCP](mcp.md#contract-statements) `run_contract` and `draft_contract` accept and draft these statements; the lines they return are the ones pasted into a test.
+
 ## What the contracts see
 
 - **Tool calls only.** Contracts read `tool_call` steps. Model calls, retrievals and agent calls between them do not affect a trajectory, an ordering rule or a cycle. The six original trace checks (`tools_called_in_order`, `tools_called_exactly`, `no_tool_loops`, `no_duplicate_tools`, `required_tools`, `forbidden_tools`) still match steps of every type by name.

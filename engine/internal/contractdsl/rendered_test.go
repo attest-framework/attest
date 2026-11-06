@@ -10,13 +10,7 @@ import (
 	"github.com/attest-framework/attest/engine/internal/contractdsl"
 )
 
-const (
-	renderedGolden = contractsDir + "rendered.json"
-	// relationalGolden holds the lines for sum and matches. The SDKs apply
-	// rendered.json to a real chain, and neither SDK has those builders yet, so
-	// the lines live in their own file until the builders land.
-	relationalGolden = contractsDir + "rendered-relational.json"
-)
+const renderedGolden = contractsDir + "rendered.json"
 
 // relationalExamples are the statements for the relational effect checks.
 var relationalExamples = []string{
@@ -58,14 +52,17 @@ type renderedCase struct {
 	TypeScript  string         `json:"typescript"`
 }
 
-func renderExamples(t *testing.T) []renderedCase {
-	t.Helper()
-	return renderStatements(t, renderedExamples)
+// golden lists every example in golden-file order; the format-character case stays last.
+func golden() []string {
+	last := len(renderedExamples) - 1
+	out := append([]string{}, renderedExamples[:last]...)
+	out = append(out, relationalExamples...)
+	return append(out, renderedExamples[last])
 }
 
-func renderRelationalExamples(t *testing.T) []renderedCase {
+func renderExamples(t *testing.T) []renderedCase {
 	t.Helper()
-	return renderStatements(t, relationalExamples)
+	return renderStatements(t, golden())
 }
 
 func renderStatements(t *testing.T, statements []string) []renderedCase {
@@ -91,7 +88,7 @@ func renderStatements(t *testing.T, statements []string) []renderedCase {
 
 func TestRenderedExamples_CoverEveryCatalogMethod(t *testing.T) {
 	covered := map[string]bool{}
-	for _, stmt := range append(append([]string{}, renderedExamples...), relationalExamples...) {
+	for _, stmt := range golden() {
 		call, err := contractdsl.Parse(stmt)
 		if err != nil {
 			t.Fatalf("Parse(%q): %v", stmt, err)
@@ -106,40 +103,31 @@ func TestRenderedExamples_CoverEveryCatalogMethod(t *testing.T) {
 }
 
 func TestRenderedLines_MatchGoldenFile(t *testing.T) {
-	const description = "Chain lines rendered by the contract catalog for each method (Go: internal/contractdsl). The Python and TypeScript SDK tests apply each line to a real expect chain with FIXTURE bound to an object holding a world snapshot. Regenerate with ATTEST_UPDATE_GOLDEN=1 go test ./internal/contractdsl."
-	for _, g := range []struct {
-		path        string
-		description string
-		cases       []renderedCase
-	}{
-		{renderedGolden, description, renderExamples(t)},
-		{relationalGolden, "Chain lines for the relational effect checks sum and matches, kept apart from rendered.json until both SDKs ship the builders. " + description, renderRelationalExamples(t)},
-	} {
-		doc := map[string]any{"description": g.description, "cases": g.cases}
-		var buf bytes.Buffer
-		enc := json.NewEncoder(&buf)
-		enc.SetEscapeHTML(false)
-		enc.SetIndent("", "  ")
-		if err := enc.Encode(doc); err != nil {
+	const description = "Chain lines rendered by the contract catalog for each method (Go: internal/contractdsl). The Python and TypeScript SDK tests apply each line to a real expect chain with FIXTURE bound to an object holding a world snapshot and related imported from the SDK. Regenerate with ATTEST_UPDATE_GOLDEN=1 go test ./internal/contractdsl."
+	doc := map[string]any{"description": description, "cases": renderExamples(t)}
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(doc); err != nil {
+		t.Fatal(err)
+	}
+	if os.Getenv("ATTEST_UPDATE_GOLDEN") == "1" {
+		if err := os.WriteFile(renderedGolden, buf.Bytes(), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		if os.Getenv("ATTEST_UPDATE_GOLDEN") == "1" {
-			if err := os.WriteFile(g.path, buf.Bytes(), 0o644); err != nil {
-				t.Fatal(err)
-			}
-		}
-		want, err := os.ReadFile(g.path)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if !bytes.Equal(want, buf.Bytes()) {
-			t.Errorf("%s is stale: regenerate with ATTEST_UPDATE_GOLDEN=1 go test ./internal/contractdsl", g.path)
-		}
+	}
+	want, err := os.ReadFile(renderedGolden)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(want, buf.Bytes()) {
+		t.Errorf("%s is stale: regenerate with ATTEST_UPDATE_GOLDEN=1 go test ./internal/contractdsl", renderedGolden)
 	}
 }
 
 func TestRenderedLines_EffectChecksCarryWorldPrefix(t *testing.T) {
-	for _, c := range append(renderExamples(t), renderRelationalExamples(t)...) {
+	for _, c := range renderExamples(t) {
 		call, _ := contractdsl.Parse(c.Statement)
 		isEffect := call.Method.Effect
 		if isEffect != (c.ChainPrefix == ".world(FIXTURE.world)") {
@@ -155,14 +143,14 @@ func TestRenderedLines_EffectChecksCarryWorldPrefix(t *testing.T) {
 }
 
 func TestRenderedLines_FormatCharactersAreEscaped(t *testing.T) {
-	for _, c := range append(renderExamples(t), renderRelationalExamples(t)...) {
+	for _, c := range renderExamples(t) {
 		for _, r := range c.Python + c.TypeScript {
 			if r == 0x200b || r == 0xad || r == 0x202e || r == 0x2028 || (r >= 0xe0000 && r <= 0xe007f) {
 				t.Errorf("%s: raw format character %U in a rendered line", c.Statement, r)
 			}
 		}
 	}
-	last := renderExamples(t)[len(renderedExamples)-1]
+	last := renderExamples(t)[len(golden())-1]
 	for _, want := range []string{`\u200b`, `\u00ad`, `\u202e`, `\u2028`} {
 		if !strings.Contains(last.Python, want) || !strings.Contains(last.TypeScript, want) {
 			t.Errorf("missing %s in\n%s\n%s", want, last.Python, last.TypeScript)

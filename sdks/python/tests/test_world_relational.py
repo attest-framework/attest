@@ -19,9 +19,6 @@ _TRACE = Trace.from_dict(
         (_ROOT / "protocol-tests" / "trace-v2" / "otlp" / "inc-1042-refund.trace.json").read_text()
     )
 )
-_RENDERED: list[dict[str, Any]] = json.loads(
-    (_ROOT / "protocol-tests" / "contracts" / "rendered-relational.json").read_text()
-)["cases"]
 _FIXTURE = load_fixture(
     _ROOT / "protocol-tests" / "fixture-v1" / "valid" / "005-world-snapshot.attest.json"
 )
@@ -121,20 +118,3 @@ def test_sum_filter_in_where_and_keyword_raises() -> None:
         expect(_TRACE).world(_WORLD).sum(
             "refunds", "amount_cents", at_most=1, where={"status": "a"}, status="b"
         )
-
-
-@pytest.mark.parametrize("case", _RENDERED, ids=lambda c: str(c["statement"])[:60])
-def test_rendered_relational_python_line_applies_to_a_real_chain(case: dict[str, Any]) -> None:
-    chain = expect(_FIXTURE.trace)
-
-    # Test-only eval of a line this repo's own catalog rendered, pasted into a chain as a
-    # generated test does.
-    result = eval(  # noqa: S307
-        "chain" + case["python"], {"chain": chain, "FIXTURE": _FIXTURE, "related": related}
-    )
-
-    recorded = result.assertions[-1]
-    spec = dict(recorded.spec)
-    assert spec.pop("world") == _FIXTURE.world
-    assert recorded.type == case["type"]
-    assert spec == case["spec"]

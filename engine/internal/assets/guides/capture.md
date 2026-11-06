@@ -109,6 +109,40 @@ The test needs the command to run unchanged: it uses the working directory `atte
 
 `attest capture --refresh inc-1042` prints the command recorded in the fixture (`source.command`), asks for confirmation (`y` at a terminal; without one, `--yes`), then runs it, with the flags it was captured with (`--expect-fail` included), and overwrites the fixture. **Review the printed command before confirming a fixture you did not record:** the fixture is a file in your repository, and whoever can change it can change the command that `--refresh` runs. Run it from the directory the original capture ran in, with the environment the command needs. It refuses with an explanation when the command's arguments were redacted (a secret passed as an argument), and for fixtures captured with `--from` or in process, which have no command; re-run those captures yourself. It also refuses a fixture with a `world` section, because a refresh would drop the world's state: re-run `attest capture --name inc-1042 --world <world.yaml> …` instead. A replay miss names this command (see `attest-engine replay`).
 
+### Review what the refresh changed
+
+A refresh replaces the fixture, and a byte diff of the JSON hides what mattered. After the capture summary, `--refresh` compares the fixture it replaced with the one it wrote, exchange by exchange (paired by position; extra or missing exchanges are reported as added or removed), and prints what changed in the requests the agent sent. Edit the system prompt, refresh, and the changed lines show per exchange:
+
+```text
+refresh refund: 1 of 1 exchanges changed
+  exchange 0 (openai chat_completions gpt-4.1): changed
+    system prompt:
+      - You refund once.
+      + You refund twice.
+```
+
+Unchanged lines are not printed. The comparison covers the system prompt (changed lines only), tool schemas (tools added, removed or changed, with the changed JSON paths), messages and tool results (added, removed or changed, with role and the changed lines), the model and the request parameters:
+
+```text
+refresh refund: 1 of 1 exchanges changed
+  exchange 0 (openai chat_completions gpt-5.4): changed
+    model: gpt-4.1 -> gpt-5.4
+    messages:
+      ~ user [0]
+        - Refund order O-2077.
+        + Refund order O-2077 in full.
+```
+
+Chat Completions, Responses and Messages requests are normalized to the same form. Each block prints at most 20 lines, then `... N more changed lines elided`. Responses and the trace are not compared. The diff is read from the redacted fixtures as written and every string passes through the capture redactor again, so a secret in a prompt is never printed; control characters are escaped, so a line break in a name cannot forge a diff line.
+
+A refresh that changes nothing prints one line, and the fixture keeps its bytes:
+
+```text
+refresh refund: no semantic change
+```
+
+The report goes to stderr. With `--json`, the result gains a `diff` object (`cli/capture.schema.json`): `changed` and `exchanges`, which lists only the exchanges that differ. Each has `index`, `change` (`added`, `removed` or `changed`), `label` (provider, API and model) and any of `model` (`old`, `new`), `system` (`{op, text}` lines, `-` old and `+` new), `tools`, `messages` and `tool_results` (`index`, `change`, `role`, `lines`, and `fields` for changed fields the lines do not show), `params` and `other` (changed JSON paths). An unchanged refresh reports `{"changed": false, "exchanges": []}`.
+
 ## Capture in process
 
 When the agent runs inside your own process (a notebook, a script, a test), capture a block of code:

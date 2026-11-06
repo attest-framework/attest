@@ -58,6 +58,7 @@ Exceptions use one of three reasons: `upstream_python_only` (the framework has n
 | `JudgeAgreement` | `JudgeAgreement` | match | - |
 | `JudgeMetadata` | `JudgeMetadata` | match | - |
 | `REASON_REPLAY_MISS` | `REASON_REPLAY_MISS` | match | - |
+| `Related` | `Related` | match | - |
 | `ReplayError` | `ReplayError` | match | - |
 | `ReplayMissError` | `ReplayMissError` | match | - |
 | `ReplayNotEvaluatedError` | `ReplayNotEvaluatedError` | match | - |
@@ -88,6 +89,7 @@ Exceptions use one of three reasons: `upstream_python_only` (the framework has n
 | `live_line` | `liveLine` | match | - |
 | `load_fixture` | `loadFixture` | match | - |
 | `record` | `record` | match | - |
+| `related` | `related` | match | - |
 | `resolve_mode` | `resolveMode` | match | - |
 | `start_replay` | `startReplay` | match | - |
 | `start_world` | `startWorld` | match | - |
