@@ -6,6 +6,8 @@ All notable changes to Attest are documented in this file. The format follows [K
 
 ### Changed
 
+- TypeScript development dependencies use Vitest 5. CI keeps Node 20 consumer coverage by overriding the runner checkout to Vitest 4 (`pnpm -r add -D vitest@4`); Node 22 tests the committed Vitest 5 default, and the integration matrix still covers Vitest 3, 4 and 5. Published Node and Vitest peer ranges are unchanged.
+
 - Python development and adapter conformance use OpenAI 2.54.0, with the compatible CrewAI 1.10.1, Instructor 1.13.0 and LlamaIndex OpenAI 0.6.8 lockfile versions. User-facing optional dependency ranges are unchanged; OpenAI 3.x cannot currently resolve alongside the framework test dependencies.
 
 ## [1.1.0-rc.4] — 2026-11-07

@@ -267,11 +267,12 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: ${{ matrix.node-version }}
-          cache: pnpm
+          cache: ${{ matrix.node-version == '22' && 'pnpm' || '' }}
           cache-dependency-path: sdks/typescript/pnpm-lock.yaml
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: "1.27"
+          cache: ${{ matrix.node-version == '22' }}
           cache-dependency-path: engine/go.sum
       - name: Build engine
         # Engine-backed tests (replay end to end) skip without bin/attest-engine.
@@ -279,6 +280,12 @@ jobs:
         run: make engine
       - name: Install dependencies
         run: pnpm install
+      - name: Use Vitest 4 for Node 20 consumer coverage
+        # Vitest 5 requires Node >=22.12. Keep testing the SDK on Node 20 with its
+        # supported Vitest 4 runtime; the committed dev default remains Vitest 5.
+        # This unlocked runner-only override neither restores nor saves shared pnpm/Go caches.
+        if: matrix.node-version == '20'
+        run: pnpm -r add -D vitest@4
       - name: Build
         run: pnpm -r build
       - name: Test
@@ -289,7 +296,7 @@ jobs:
         # Biome fails on any finding (including warnings); a planted `debugger;` exits 1.
         run: pnpm lint
 
-  # @attest-ai/vitest declares peer vitest >=3.0.0 <6; the lockfile pins one 4.x. This job
+  # @attest-ai/vitest declares peer vitest >=3.0.0 <6; the lockfile pins one 5.x. This job
   # runs the package suite (reporter, packaged /reporter and /setup subpaths, plugin) on the
   # newest 3.x, 4.x and 5.x. The dev dependency is overridden inside the job with `pnpm add -D
   # vitest@<major>` after a frozen install: pnpm resolves the newest release of that major,
