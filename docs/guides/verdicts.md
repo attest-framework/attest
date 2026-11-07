@@ -67,6 +67,29 @@ def test_refund_reliability(attest):
 
 `attest.enforce(result)` applies the same rules (and `--attest-strict`) to an `AgentResult` from `inspect()`, a `RepeatResult` or a `ScenarioResult`: any failing trial fails the test with that trial's diagnostics; otherwise any not-evaluated trial skips it with the summed reasons, for example `not evaluated: simulation ×5`. A trial with soft failures counts as passing; passed and skipped tests with soft failures are listed in the "Attest soft failures" session summary.
 
+### Every chain must be evaluated
+
+An otherwise-passing pytest test fails if it builds an `expect()` chain without passing it to `evaluate()` or `inspect()`; skipped or already-failing pytest tests keep their outcome. With the Vitest integration loaded, unevaluated chains also fail their owning test. The error is `1 expect() chain built but never evaluated` (or `N expect() chains built but never evaluated` for multiple chains). An empty chain does not count as a check: evaluating it also fails. Chains built outside a running test, such as at module import, are not tracked.
+
+Evaluation covers the assertions present when it starts, not future additions. Appending an assertion after `evaluate()` or `inspect()` reopens the chain; evaluate it again before the test finishes. The second evaluation runs the whole chain, not just the appended assertion. Within the same test/trial scope, existing assertions retain their `assertion_id` on re-evaluation; new identical assertions get distinct occurrence indices.
+
+```python
+from attest import expect
+from attest.result import AgentResult
+from attest.trace import TraceBuilder
+
+def test_extend_chain(attest):
+    result = AgentResult(trace=TraceBuilder("agent").set_output(message="refund issued").build())
+    chain = expect(result).output_contains("refund")
+    attest.evaluate(chain)
+    first_id = chain.assertions[0].assertion_id
+    chain.output_contains("issued")  # The chain is no longer fully evaluated.
+    attest.evaluate(chain)          # Evaluate both assertions.
+    assert chain.assertions[0].assertion_id == first_id
+```
+
+In pytest, tracking starts before fixture setup, even for tests that do not request the `attest` fixture. A function-scoped fixture's chain belongs to the test whose setup builds it; a module- or session-scoped fixture's chain belongs to the first test item that executes that fixture's setup. Evaluate it during setup or in that test. Receiving an unchanged cached chain in a later test does not transfer that responsibility. Appending assertions to a shared chain registers it with the **mutating test**, which must evaluate it again; an unevaluated mutation is not charged to subsequent tests that only receive the cached value.
+
 ### Vitest
 
 <!-- snippet: fragment reason="excerpt: relies on `it`, defined outside the snippet" -->
@@ -79,6 +102,26 @@ it("refund", async () => {
 ```
 
 `evaluate(chain)` throws with the diagnostics on any hard failure and skips the running test (`↓ refund [not evaluated: provider_not_configured]`) when an assertion was not evaluated; pass `{ strict: true }` or set `ATTEST_STRICT=1` to fail instead. Under `it.concurrent`, or on Vitest before 4.1 (Vitest 3 included), pass the test context so the right test is skipped; without it on those versions `evaluate()` fails with a "pass the test context" error instead of skipping: `it.concurrent("refund", async (context) => evaluate(chain, { context }))`. `inspect(chain)` never enforces. `AgentResult` exposes `outcome()`, `notEvaluated`, `notEvaluatedReasons`, `passRate` and `skipReason()`. Each Vitest worker starts its own engine on first use when the client of `globalSetup: ["@attest-ai/vitest/setup"]` is not visible to it; that engine exits with the worker.
+
+The chain guard also covers `it.concurrent`: an unevaluated chain fails its owning test, not a concurrently running sibling. Pass `{ context }` to `evaluate()`, `inspect()` and `trials()` in concurrent tests so evaluations and report rows are attributed to the right test:
+
+```ts
+import { it } from "vitest";
+import { attestExpect, TraceBuilder } from "@attest-ai/core";
+import { evaluate } from "@attest-ai/vitest";
+
+it.concurrent("checks the refund", async (context) => {
+  const trace = new TraceBuilder("agent").setOutput({ message: "refund issued" }).build();
+  const chain = attestExpect(trace).outputContains("refund");
+  await evaluate(chain, { context });
+  chain.outputContains("issued");
+  await evaluate(chain, { context });
+});
+```
+
+Vitest 4.1 and later use `aroundEach` to bind the guard across hooks and the test body. On Vitest before 4.1, the integration binds the test body, but cannot safely bind chains built in concurrent hooks or finish handlers: those fail fast with `Attest cannot bind this concurrent test's chain guard` and guidance to build the chain inside the test body or upgrade to Vitest >=4.1.
+
+Keep test isolation enabled. With `isolate: false`, a later test file can reuse the cached integration without reinstalling its hooks; concurrent chains outside a bound scope fail with the same guidance, including `Enable test isolation if the integration is cached`. Do not rely on `isolate: false` for per-file hook coverage.
 
 ## Policy
 
