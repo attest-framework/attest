@@ -39,6 +39,7 @@ func outageReport(t *testing.T, dir string) string {
 		"report_version": 2,
 		"id_scheme":      2,
 		"results":        batch.Results,
+		"tests":          []any{},
 		"total_cost":     batch.TotalCost,
 	})
 	if err != nil {
