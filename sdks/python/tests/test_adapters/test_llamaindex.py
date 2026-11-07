@@ -286,6 +286,7 @@ class TestLlamaIndexHandler:
 
     @pytest.mark.parametrize("arguments", ['{"query": "Paris"}', "not-json"])
     def test_provider_tool_call_objects(self, arguments: str) -> None:
+        pytest.importorskip("llama_index.llms.openai")
         from llama_index.core.base.llms.types import ChatResponse
         from llama_index.core.instrumentation.events.llm import LLMChatEndEvent
         from llama_index.llms.openai.utils import from_openai_message

@@ -43,12 +43,14 @@ class LlamaIndexInstrumentationHandler(BaseAdapter):
         """Register the event handler with the LlamaIndex global dispatcher."""
         _require_llamaindex()
 
-        from llama_index.core.instrumentation import get_dispatcher  # type: ignore[attr-defined]
+        from llama_index.core.instrumentation import (  # type: ignore[attr-defined,unused-ignore]
+            get_dispatcher,
+        )
         from llama_index.core.instrumentation.event_handlers import BaseEventHandler
 
         outer = self
 
-        class _AttestEventHandlerImpl(BaseEventHandler):
+        class _AttestEventHandlerImpl(BaseEventHandler):  # type: ignore[misc,unused-ignore]
             """Internal event handler that accumulates LlamaIndex events."""
 
             @classmethod
@@ -67,7 +69,9 @@ class LlamaIndexInstrumentationHandler(BaseAdapter):
         if self._handler is None:
             return
 
-        from llama_index.core.instrumentation import get_dispatcher  # type: ignore[attr-defined]
+        from llama_index.core.instrumentation import (  # type: ignore[attr-defined,unused-ignore]
+            get_dispatcher,
+        )
 
         dispatcher = get_dispatcher()
         # LlamaIndex dispatcher stores handlers in a list attribute
