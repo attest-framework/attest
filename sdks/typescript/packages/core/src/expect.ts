@@ -202,21 +202,21 @@ export class ExpectChain {
   private readonly _result: AgentResult;
   private readonly _assertions: Assertion[] = [];
   private _worldBytes = 0;
-  private _evaluated = false;
+  private _evaluatedCount: number | undefined;
 
   constructor(result: AgentResult) {
     this._result = result;
     chainObserver?.(this);
   }
 
-  /** True once the chain was handed to an evaluation. */
+  /** True when every assertion currently in the chain was handed to an evaluation. */
   get evaluated(): boolean {
-    return this._evaluated;
+    return this._evaluatedCount === this._assertions.length;
   }
 
-  /** Record that the chain was handed to an evaluation. */
+  /** Record the number of assertions handed to an evaluation. Later additions are unchecked. */
   markEvaluated(): void {
-    this._evaluated = true;
+    this._evaluatedCount = this._assertions.length;
   }
 
   get assertions(): Assertion[] {

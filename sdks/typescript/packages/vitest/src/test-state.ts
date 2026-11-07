@@ -76,6 +76,12 @@ export function attemptState(test: RunningTest): AttemptState {
   return state;
 }
 
+type TestBody = () => unknown;
+interface TestFunctions {
+  getFn(test: RunningTest): TestBody | undefined;
+  setFn(test: RunningTest, fn: TestBody): void;
+}
+
 // Vitest before 4.1 has no TestRunner; its running test comes from `vitest/suite`. Loaded only
 // there (4.1 warns when it is imported) and at module load, so the lookup stays synchronous:
 // an async lookup resolves after a synchronous test body already finished. The specifier is a
@@ -84,13 +90,37 @@ export function attemptState(test: RunningTest): AttemptState {
 const LEGACY_SUITE = "vitest/suite";
 const legacySuite =
   (vitest as Partial<typeof vitest>).TestRunner === undefined
-    ? ((await import(/* @vite-ignore */ LEGACY_SUITE)) as { getCurrentTest(): RunningTest | undefined })
+    ? ((await import(/* @vite-ignore */ LEGACY_SUITE)) as TestFunctions & {
+        getCurrentTest(): RunningTest | undefined;
+      })
     : undefined;
 
 /** The running test: `TestRunner.getCurrentTest()` on Vitest 4.1+, `vitest/suite` before that. */
 export function runningTest(): RunningTest | undefined {
   const runner = (vitest as Partial<typeof vitest>).TestRunner;
   return runner !== undefined ? runner.getCurrentTest() : legacySuite?.getCurrentTest();
+}
+
+/** The context of the test body, preserved across awaits and concurrent sibling tests. */
+export const testScope = new AsyncLocalStorage<{
+  context: TestContext;
+  // Vitest temporarily replaces this method while finish/fail handlers run.
+  onTestFinished: TestContext["onTestFinished"];
+}>();
+const boundTests = new WeakSet<RunningTest>();
+
+/**
+ * Before Vitest's aroundEach API, bind the runner's test callback. Merely entering an async
+ * scope in beforeEach does not enclose the body. vitest/suite was removed in Vitest 5.
+ */
+export function bindTestContext(context: TestContext): void {
+  const test = context.task;
+  if (boundTests.has(test)) return;
+  const fn = legacySuite?.getFn(test);
+  if (fn === undefined) throw new Error("Attest cannot bind the Vitest test context");
+  const scope = { context, onTestFinished: context.onTestFinished };
+  legacySuite?.setFn(test, () => testScope.run(scope, fn));
+  boundTests.add(test);
 }
 
 /**
