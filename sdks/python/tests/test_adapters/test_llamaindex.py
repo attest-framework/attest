@@ -284,6 +284,38 @@ class TestLlamaIndexHandler:
         assert trace.steps[2].name == "calculate"
         assert trace.steps[2].args == {"expression": "2+2"}
 
+    @pytest.mark.parametrize("arguments", ['{"query": "Paris"}', "not-json"])
+    def test_provider_tool_call_objects(self, arguments: str) -> None:
+        pytest.importorskip("llama_index.llms.openai")
+        from llama_index.core.base.llms.types import ChatResponse
+        from llama_index.core.instrumentation.events.llm import LLMChatEndEvent
+        from llama_index.llms.openai.utils import from_openai_message
+        from openai.types.chat import ChatCompletionMessage, ChatCompletionMessageToolCall
+        from openai.types.chat.chat_completion_message_tool_call import Function
+
+        from attest.adapters.llamaindex import LlamaIndexInstrumentationHandler
+
+        tool_call = ChatCompletionMessageToolCall(
+            id="call_search",
+            type="function",
+            function=Function(name="search_web", arguments=arguments),
+        )
+        message = from_openai_message(
+            ChatCompletionMessage(role="assistant", content=None, tool_calls=[tool_call]),
+            modalities=["text"],
+        )
+        assert message.additional_kwargs["tool_calls"][0] is tool_call
+        handler = LlamaIndexInstrumentationHandler()
+        handler._handle_event(LLMChatEndEvent(messages=[], response=ChatResponse(message=message)))
+
+        trace = handler.build_trace()
+
+        assert [step.type for step in trace.steps] == [STEP_LLM_CALL, STEP_TOOL_CALL]
+        assert trace.steps[1].name == "search_web"
+        assert trace.steps[1].args == (
+            {"query": "Paris"} if arguments.startswith("{") else {"raw": arguments}
+        )
+
     def test_multiple_llm_calls_produce_multiple_steps(self) -> None:
         with _llamaindex_available():
             from attest.adapters.llamaindex import LlamaIndexInstrumentationHandler
