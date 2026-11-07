@@ -41,7 +41,7 @@ def pytest_runtest_call(item: pytest.Item) -> Generator[None, None, None]:
     yield
     if item.get_closest_marker(CHAIN_TEARDOWN_MARKER) is None and trials._ledgers:
         for chain in trials._ledgers[-1]:
-            chain.evaluated = True
+            chain._evaluated_assertion_count = len(chain.assertions)
 
 
 @pytest.fixture

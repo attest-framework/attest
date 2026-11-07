@@ -128,7 +128,7 @@ def test_assign_ids_identical_assertions_in_one_test_get_distinct_ids(run: TestR
 
 def test_unevaluated_chains_lists_only_chains_not_sent(run: TestRun) -> None:
     sent = ExpectChain(_result()).output_contains("a")
-    sent.evaluated = True
+    sent._evaluated_assertion_count = len(sent.assertions)
     pending = ExpectChain(_result()).output_contains("b")
 
     assert run.unevaluated_chains() == [pending]

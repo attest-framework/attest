@@ -115,6 +115,7 @@ Exceptions use one of three reasons: `upstream_python_only` (the framework has n
 | `cost_under` | `costUnder` | match | - |
 | `cross_agent_data_flow` | `crossAgentDataFlow` | match | - |
 | `delegation_depth` | `delegationDepth` | match | - |
+| `evaluated` | `evaluated` | match | - |
 | `follows_transitions` | `followsTransitions` | match | - |
 | `forbidden_tools` | `forbiddenTools` | match | - |
 | `latency_under` | `latencyUnder` | match | - |
