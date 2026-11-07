@@ -87,6 +87,7 @@
     "cost_under",
     "cross_agent_data_flow",
     "delegation_depth",
+    "evaluated",
     "follows_transitions",
     "forbidden_tools",
     "latency_under",
