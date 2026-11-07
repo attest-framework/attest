@@ -8,7 +8,7 @@ below; they are the specification, never the output of an adapter.
 Run (no network, no model calls)::
 
     uv run --no-project \
-        --with openai==1.83.0 --with anthropic==0.81.0 --with google-genai==1.63.0 \
+        --with openai==1.83.0 --with anthropic==2.4.0 --with google-genai==1.63.0 \
         --with ollama==0.6.3 --with langchain-core==1.7.4 --with crewai==1.9.3 \
         python sdks/parity/adapters/generate.py [--check]
 
