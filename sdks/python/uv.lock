@@ -267,22 +267,23 @@ wheels = [
 
 [[package]]
 name = "anthropic"
-version = "0.81.0"
+version = "2.4.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anyio" },
-    { name = "distro" },
     { name = "docstring-parser" },
-    { name = "httpx" },
+    { name = "httpx2", version = "2.14.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "httpx2", version = "2.16.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "jiter" },
+    { name = "opentelemetry-api" },
     { name = "pydantic", version = "2.11.10", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.14'" },
     { name = "pydantic", version = "2.14.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.14'" },
     { name = "sniffio" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/f3/c2/d2bb9b3c82c386abf3b2c32ae0452a8dcb89ed2809d875e1420bea22e318/anthropic-0.81.0.tar.gz", hash = "sha256:bab2d4e45c2e81a0668fdc2da2f7fd665ed8a0295ba3c86450f9dcc3a7804524", size = 532935, upload-time = "2026-02-18T04:00:54.658Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/c8/5b/6c13b126554cfec789ce14a74f2ccfd46382a0eb296ec78ea6b80eeac3b5/anthropic-2.4.0.tar.gz", hash = "sha256:c59cab76049cf581e90e2ee3a20472291029b7a6a1ee2ef32bff2b2a7010fd47", size = 1915809, upload-time = "2026-11-02T19:08:06.047Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/86/27/a18e1613da66b3c9c7565c92457a60de15e824a6dd2ed9bce0fbfe615ded/anthropic-0.81.0-py3-none-any.whl", hash = "sha256:ac54407e9a1f9b35e6e6c86f75bf403f0e54d60944f99f15f685a38d6829f20b", size = 455627, upload-time = "2026-02-18T04:00:53.207Z" },
+    { url = "https://files.pythonhosted.org/packages/8b/5d/e399d9028411ce404d7ddbe6b8060d878b2549ed8cd671a7bb496ae20ffc/anthropic-2.4.0-py3-none-any.whl", hash = "sha256:db2e691364ae2e04083ed9b8deb49f1a6967e9f184f8cbb5afcb3bcda8ab0532", size = 2340848, upload-time = "2026-11-02T19:08:03.822Z" },
 ]
 
 [[package]]
@@ -397,7 +398,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "anthropic", marker = "extra == 'anthropic'", specifier = ">=0.30" },
-    { name = "anthropic", marker = "extra == 'dev'", specifier = "==0.81.0" },
+    { name = "anthropic", marker = "extra == 'dev'", specifier = "==2.4.0" },
     { name = "attest-ai", extras = ["openai", "anthropic", "gemini", "ollama", "otel", "langchain", "google-adk", "llamaindex", "crewai"], marker = "extra == 'all'" },
     { name = "build", marker = "extra == 'dev'", specifier = ">=1.0" },
     { name = "crewai", marker = "python_full_version < '3.14' and extra == 'crewai'", specifier = ">=0.60" },
