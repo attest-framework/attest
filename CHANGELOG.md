@@ -4,6 +4,10 @@ All notable changes to Attest are documented in this file. The format follows [K
 
 ## [Unreleased]
 
+### Changed
+
+- TypeScript development dependencies use Vitest 5. CI keeps Node 20 consumer coverage by overriding the runner checkout to Vitest 4 (`pnpm -r add -D vitest@4`); Node 22 tests the committed Vitest 5 default, and the integration matrix still covers Vitest 3, 4 and 5. Published Node and Vitest peer ranges are unchanged.
+
 ## [1.1.0-rc.4] — 2026-11-07
 
 Fourth release candidate of 1.1.0, themed "Evidence". Relational world-effect contracts, semantic refresh diffs, per-operator mutation scores and executable public claims make the evidence behind a green gate visible. Changes that alter results are marked **Behavior change** below.

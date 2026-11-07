@@ -279,6 +279,12 @@ jobs:
         run: make engine
       - name: Install dependencies
         run: pnpm install
+      - name: Use Vitest 4 for Node 20 consumer coverage
+        # Vitest 5 requires Node >=22.12. Keep testing the SDK on Node 20 with its
+        # supported Vitest 4 runtime; the committed dev default remains Vitest 5.
+        # Like vitest-range, this override changes only the runner checkout.
+        if: matrix.node-version == '20'
+        run: pnpm -r add -D vitest@4
       - name: Build
         run: pnpm -r build
       - name: Test
@@ -289,7 +295,7 @@ jobs:
         # Biome fails on any finding (including warnings); a planted `debugger;` exits 1.
         run: pnpm lint
 
-  # @attest-ai/vitest declares peer vitest >=3.0.0 <6; the lockfile pins one 4.x. This job
+  # @attest-ai/vitest declares peer vitest >=3.0.0 <6; the lockfile pins one 5.x. This job
   # runs the package suite (reporter, packaged /reporter and /setup subpaths, plugin) on the
   # newest 3.x, 4.x and 5.x. The dev dependency is overridden inside the job with `pnpm add -D
   # vitest@<major>` after a frozen install: pnpm resolves the newest release of that major,
