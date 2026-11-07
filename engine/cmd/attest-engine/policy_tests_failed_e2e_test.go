@@ -93,7 +93,7 @@ func TestPolicyEvaluate_TestsFailedOffKeepsBaselineRules(t *testing.T) {
 		name, report, rules, wantRule string
 	}{
 		{"regression", reportWithStatuses("pass", "hard_fail"), "block_on_regression: true\n", "block_on_regression"},
-		{"removal", `{"report_version":2,"id_scheme":2,"results":[{"assertion_id":"a","status":"pass","score":1,"layer":1,"type":"schema"}]}`, "", "block_on_removal"},
+		{"removal", `{"report_version":2,"id_scheme":2,"results":[{"assertion_id":"a","status":"pass","score":1,"layer":1,"type":"schema"}],"tests":[]}`, "", "block_on_removal"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			policyPath := filepath.Join(t.TempDir(), "policy.yaml")
@@ -126,6 +126,62 @@ func TestPolicyEvaluate_TestsFailedOffKeepsInputErrors(t *testing.T) {
 			stdout, stderr, code := runEngine(t, bin, dir, "policy", "evaluate", "--policy", policyPath, "--report", reportPath)
 			if code != 3 || !strings.Contains(stderr, tc.missing) {
 				t.Fatalf("want usage error naming %s, exit=%d\nstdout: %s\nstderr: %s", tc.missing, code, stdout, stderr)
+			}
+		})
+	}
+}
+
+func TestPolicyEvaluate_InvalidTestOutcomesAreUsageErrors(t *testing.T) {
+	bin := buildEngineBinary(t)
+	for _, setting := range []string{"block", "warn", "off"} {
+		for _, outcome := range []string{"Failed", "error", ""} {
+			t.Run(setting+"/"+outcome, func(t *testing.T) {
+				dir := t.TempDir()
+				policyPath, reportPath := filepath.Join(dir, "policy.yaml"), filepath.Join(dir, "report.json")
+				cliWriteFile(t, policyPath, "tests_failed: "+setting+"\n")
+				cliWriteFile(t, reportPath, nativeFailureReport(outcome))
+				stdout, stderr, code := runEngine(t, bin, dir, "policy", "evaluate", "--policy", policyPath, "--report", reportPath)
+				if code != 3 || !strings.Contains(stderr, "tests/test_agent.py::test_business_limit") || !strings.Contains(stderr, `"`+outcome+`"`) {
+					t.Fatalf("want usage error naming test and outcome %q, exit=%d\nstdout: %s\nstderr: %s", outcome, code, stdout, stderr)
+				}
+			})
+		}
+	}
+}
+
+func TestPolicyEvaluate_MissingTestsAreUsageErrors(t *testing.T) {
+	bin := buildEngineBinary(t)
+	for _, body := range []string{
+		`{"report_version":2,"results":[]}`,
+		`{"report_version":2,"results":[],"tests":null}`,
+	} {
+		t.Run(body, func(t *testing.T) {
+			dir := t.TempDir()
+			policyPath, reportPath := filepath.Join(dir, "policy.yaml"), filepath.Join(dir, "report.json")
+			cliWriteFile(t, policyPath, "tests_failed: off\n")
+			cliWriteFile(t, reportPath, body)
+			stdout, stderr, code := runEngine(t, bin, dir, "policy", "evaluate", "--policy", policyPath, "--report", reportPath)
+			if code != 3 || !strings.Contains(stderr, "tests") {
+				t.Fatalf("want usage error naming missing tests, exit=%d\nstdout: %s\nstderr: %s", code, stdout, stderr)
+			}
+		})
+	}
+}
+
+func TestPolicyEvaluate_ValidProtocolTestOutcomes(t *testing.T) {
+	bin := buildEngineBinary(t)
+	dir := t.TempDir()
+	policyPath := filepath.Join(dir, "policy.yaml")
+	cliWriteFile(t, policyPath, "tests_failed: off\n")
+	fixtures, err := filepath.Glob("../../../protocol-tests/report-v2/valid/*.json")
+	if err != nil || len(fixtures) == 0 {
+		t.Fatalf("find valid report-v2 fixtures: %v, %v", fixtures, err)
+	}
+	for _, fixture := range fixtures {
+		t.Run(filepath.Base(fixture), func(t *testing.T) {
+			stdout, stderr, code := runEngine(t, bin, dir, "policy", "evaluate", "--policy", policyPath, "--report", fixture)
+			if code == 3 {
+				t.Fatalf("valid report-v2 fixture rejected\nstdout: %s\nstderr: %s", stdout, stderr)
 			}
 		})
 	}
