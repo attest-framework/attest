@@ -83,7 +83,8 @@ func policyEvaluate(args []string) {
 		fmt.Fprintf(os.Stderr, "policy evaluate: %v\n", err)
 		os.Exit(policy.ExitUsage)
 	}
-	if err := checkReportComplete(*reportPath); err != nil {
+	tests, err := loadPolicyTests(*reportPath)
+	if err != nil {
 		fmt.Fprintf(os.Stderr, "policy evaluate: report %s: %v\n", *reportPath, err)
 		os.Exit(policy.ExitUsage)
 	}
@@ -112,6 +113,9 @@ func policyEvaluate(args []string) {
 	}
 
 	result := policy.Evaluate(pol, env.Results, env.TotalCost, delta)
+	if v, ok := policy.TestsFailedViolation(pol, tests); ok {
+		result.Violations = append(result.Violations, v)
+	}
 	if v, ok := policy.MutationViolation(pol, mutationScore); ok {
 		result.Violations = append(result.Violations, v)
 	}
@@ -135,14 +139,33 @@ func policyEvaluate(args []string) {
 	os.Exit(result.ExitCode())
 }
 
-// checkReportComplete rejects a report with 0 tests while tests_collected is
-// positive.
-func checkReportComplete(path string) error {
+// loadPolicyTests requires the report-v2 tests input and schema-defined
+// outcomes. C2 still rejects 0 tests while tests_collected is positive.
+func loadPolicyTests(path string) ([]report.CITest, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return fmt.Errorf("read report: %w", err)
+		return nil, fmt.Errorf("read report: %w", err)
 	}
-	return report.CheckComplete(data)
+	if err := report.CheckComplete(data); err != nil {
+		return nil, err
+	}
+	var doc struct {
+		Tests *[]report.CITest `json:"tests"`
+	}
+	if err := json.Unmarshal(data, &doc); err != nil {
+		return nil, fmt.Errorf("decode test outcomes: %w", err)
+	}
+	if doc.Tests == nil {
+		return nil, fmt.Errorf("missing tests input: report-v2 requires a non-null tests array")
+	}
+	for _, test := range *doc.Tests {
+		switch test.Outcome {
+		case report.OutcomePassed, report.OutcomeFailed, report.OutcomeSkipped:
+		default:
+			return nil, fmt.Errorf("test %q: outcome %q must be passed, failed, or skipped", test.TestID, test.Outcome)
+		}
+	}
+	return *doc.Tests, nil
 }
 
 // loadMutationScore reads the score from `attest mutate --json` output. The
