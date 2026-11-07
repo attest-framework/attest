@@ -17,6 +17,7 @@ import pytest
 from attest import egress
 from attest._proto.types import (
     TYPE_PLUGIN,
+    Assertion,
     BatchBudget,
     BatchContext,
     EvaluateBatchResult,
@@ -117,6 +118,9 @@ _item_worlds: dict[str, list[WorldSession]] = {}
 _egress_installed: list[Callable[[], None] | None] = []
 # A strict replay failure recorded on the item: no xfail marker may turn it into XFAIL.
 _REPLAY_FAILURE = pytest.StashKey[str]()
+_CHAIN_STATE = pytest.StashKey[tuple[TestRun | None, list[ExpectChain]]]()
+_CHAIN_CALL_PASSED = pytest.StashKey[bool]()
+_CHAIN_MARKER_ERROR = pytest.StashKey[str]()
 
 
 def _record_result(agent_result: AgentResult) -> None:
@@ -361,25 +365,52 @@ def _uses_attest(item: pytest.Item) -> bool:
     return not _ATTEST_FIXTURES.isdisjoint(getattr(item, "fixturenames", ()))
 
 
-@pytest.hookimpl(hookwrapper=True)
-def pytest_runtest_call(item: pytest.Item) -> Generator[None, Any, None]:
-    """Track the running test (deterministic assertion IDs, per-test budget)
-    for tests using the attest fixture, and fail any test that built an ``expect()`` chain
-    it never evaluated, fixture or not; validate the ``attest_budget`` marker."""
+@pytest.hookimpl(hookwrapper=True, tryfirst=True)
+def pytest_runtest_protocol(item: pytest.Item) -> Generator[None, Any, None]:
+    """Release ownership even when Exit/KeyboardInterrupt prevents pytest from tearing down."""
+    try:
+        yield
+    finally:
+        _release_chain_state(item)
+
+
+def _release_chain_state(item: pytest.Item) -> None:
+    state = item.stash.get(_CHAIN_STATE, None)
+    if state is not None:
+        if state[0] is not None:
+            end_run()
+        else:
+            end_chain_ledger()
+        del item.stash[_CHAIN_STATE]
+
+
+@pytest.hookimpl(tryfirst=True)
+def pytest_runtest_setup(item: pytest.Item) -> None:
+    """Start per-item tracking before fixtures run.
+
+    A module/session-scoped fixture's chains belong to the first item that executes setup.
+    Receiving an unchanged cached value does not transfer responsibility; appending an
+    assertion registers it with the mutating item. Teardown-created chains belong to the item
+    executing that teardown. No outstanding chain is carried into the next item.
+    """
+    item.stash[_CHAIN_CALL_PASSED] = False
+    if _CHAIN_MARKER_ERROR in item.stash:
+        del item.stash[_CHAIN_MARKER_ERROR]
     marker = item.get_closest_marker(BUDGET_MARKER)
     budget: TestBudget | None = None
     if marker is not None:
         try:
             budget = TestBudget.from_marker(marker.args, marker.kwargs)
         except ValueError as exc:
-            pytest.fail(f"{item.nodeid}: {exc}", pytrace=False)
+            item.stash[_CHAIN_MARKER_ERROR] = f"{item.nodeid}: {exc}"
     rate_marker = item.get_closest_marker(MIN_PASS_RATE_MARKER)
     min_pass_rate: float | None = None
     if rate_marker is not None:
         try:
             min_pass_rate = min_pass_rate_from_marker(rate_marker.args, rate_marker.kwargs)
         except ValueError as exc:
-            pytest.fail(f"{item.nodeid}: {exc}", pytrace=False)
+            if item.stash.get(_CHAIN_MARKER_ERROR, None) is None:
+                item.stash[_CHAIN_MARKER_ERROR] = f"{item.nodeid}: {exc}"
     run = (
         TestRun(
             test_id=item.nodeid,
@@ -391,22 +422,41 @@ def pytest_runtest_call(item: pytest.Item) -> Generator[None, Any, None]:
         if _uses_attest(item)
         else None
     )
-    ledger: list[ExpectChain] | None = None
+    chains = run.chains if run is not None else begin_chain_ledger()
+    item.stash[_CHAIN_STATE] = (run, chains)
     if run is not None:
         begin_run(run)
-    else:
-        ledger = begin_chain_ledger()
+
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_call(item: pytest.Item) -> Generator[None, Any, None]:
+    """Keep the existing call-phase failure for forgotten chains, including fixture chains."""
+    # Preserve marker validation as a call failure rather than changing it to a setup error.
+    marker_error = item.stash.get(_CHAIN_MARKER_ERROR, None)
+    if marker_error is not None:
+        pytest.fail(marker_error, pytrace=False)
+    outcome = yield
+    if outcome.excinfo is None:
+        _, chains = item.stash[_CHAIN_STATE]
+        _fail_unevaluated_chains([c for c in chains if not c.evaluated], outcome)
+    _finish_replays(item, outcome)
+    item.stash[_CHAIN_CALL_PASSED] = outcome.excinfo is None
+
+
+@pytest.hookimpl(hookwrapper=True, tryfirst=True)
+def pytest_runtest_teardown(item: pytest.Item) -> Generator[None, Any, None]:
+    """Track fixture finalizers too, and always release ownership even after setup failure."""
     try:
         outcome = yield
+        state = item.stash.get(_CHAIN_STATE, None)
+        if (
+            state is not None
+            and outcome.excinfo is None
+            and item.stash.get(_CHAIN_CALL_PASSED, False)
+        ):
+            _fail_unevaluated_chains([c for c in state[1] if not c.evaluated], outcome)
     finally:
-        if run is not None:
-            end_run()
-        else:
-            end_chain_ledger()
-    if outcome.excinfo is None:
-        chains = run.chains if run is not None else ledger
-        _fail_unevaluated_chains([c for c in chains or [] if not c.evaluated], outcome)
-    _finish_replays(item, outcome)
+        _release_chain_state(item)
 
 
 def _fail_unevaluated_chains(unevaluated: list[ExpectChain], outcome: Any) -> None:
@@ -1035,7 +1085,8 @@ class AttestEngineFixture:
             RuntimeError: No test using the ``attest`` fixture is running, so there is no scope.
         """
         assert self._client is not None
-        if not chain.assertions:
+        assertions = chain.assertions
+        if not assertions:
             pytest.fail(
                 "expect() chain has no assertions; add a check before evaluating it",
                 pytrace=False,
@@ -1046,18 +1097,25 @@ class AttestEngineFixture:
                 "evaluating an expect() chain needs a running test that uses the attest "
                 "fixture: assertion ids are scoped to the test node id"
             )
-        run.assign_ids(chain.assertions)
-        chain.evaluated = True
-        return self._run_chain(chain, budget=_batch_budget(chain.trace), context=_batch_context())
+        run.assign_ids(assertions)
+        chain._evaluated_assertion_count = len(assertions)
+        return self._run_chain(
+            chain, assertions, budget=_batch_budget(chain.trace), context=_batch_context()
+        )
 
     async def _run_chain(
-        self, chain: ExpectChain, *, budget: BatchBudget | None, context: BatchContext | None
+        self,
+        chain: ExpectChain,
+        assertions: list[Assertion],
+        *,
+        budget: BatchBudget | None,
+        context: BatchContext | None,
     ) -> EvaluateBatchResult:
         """Submit each plugin assertion's result, then evaluate the batch (the engine reads
         the submitted result at evaluation, so the submit goes first)."""
         assert self._client is not None
         trace = chain.trace
-        for assertion in chain.assertions:
+        for assertion in assertions:
             if assertion.type != TYPE_PLUGIN:
                 continue
             plugin_id = assertion.spec.get("plugin_id")
@@ -1074,9 +1132,7 @@ class AttestEngineFixture:
                 assertion.assertion_id,
                 plugin_name=str(plugin_id),
             )
-        return await self._client.evaluate_batch(
-            trace, chain.assertions, budget=budget, context=context
-        )
+        return await self._client.evaluate_batch(trace, assertions, budget=budget, context=context)
 
     def _process_result(
         self,
