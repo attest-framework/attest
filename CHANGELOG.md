@@ -4,11 +4,46 @@ All notable changes to Attest are documented in this file. The format follows [K
 
 ## [Unreleased]
 
+## [1.1.0-rc.5] — 2026-11-07
+
+Fifth release candidate of 1.1.0, themed "Every check ran". Checked-chain ownership and failed-test policy gates close silent-green paths in Python and Vitest, while packaged npm guides and provider-object handling improve onboarding and compatibility. Changes that alter results are marked **Behavior change** below.
+
+**Upgrade note:** Chains are now enforced after append-after-evaluate, when fixture-built, and in isolated Vitest `it.concurrent` bodies: evaluate every chain again after adding assertions. Move unscoped concurrent lifecycle assertions into the test body or upgrade to Vitest >=4.1; cached, non-isolated concurrent files fail explicitly when guard hooks are unavailable. Policy evaluation now blocks failed native tests by default through `tests_failed`; explicitly configure `tests_failed: warn` or `tests_failed: off` only when a non-blocking verdict is intended.
+
 ### Changed
 
-- TypeScript development dependencies use Vitest 5. CI keeps Node 20 consumer coverage by overriding the runner checkout to Vitest 4 (`pnpm -r add -D vitest@4`); Node 22 tests the committed Vitest 5 default, and the integration matrix still covers Vitest 3, 4 and 5. Published Node and Vitest peer ranges are unchanged.
+- **Behavior change:** policy evaluation now blocks reports containing failed test outcomes, even when every Attest assertion passed; configure `tests_failed: warn` or `tests_failed: off` to explicitly downgrade or disable this rule.
+- **Behavior change:** policy evaluation exits 3 for report-v2 input with missing/null `tests` or an outcome outside `passed|failed|skipped`, instead of treating the malformed input as a passing verdict.
 
-- Python development and adapter conformance use OpenAI 2.54.0, with the compatible CrewAI 1.10.1, Instructor 1.13.0 and LlamaIndex OpenAI 0.6.8 lockfile versions. User-facing optional dependency ranges are unchanged; OpenAI 3.x cannot currently resolve alongside the framework test dependencies.
+### Fixed
+
+- Fix LlamaIndex trace construction for genuine OpenAI provider tool-call objects while retaining support for dictionary tool calls.
+- Include installation instructions, a runnable Vitest example, and documentation links in the `@attest-ai/core` and `@attest-ai/vitest` npm packages.
+- **Behavior change:** Python tests now fail with the existing `expect() chain built but never evaluated` diagnostic when assertions were added after the last evaluation.
+- **Behavior change:** Assertion chains created during fixture setup or teardown are checked for evaluation and attributed to the item executing that fixture phase rather than silently passing or leaking into the next test.
+- Preserve scheme-2 assertion ids across reevaluation while assigning new assertions the next occurrence index in each scope/trial.
+- **Behavior change:** Isolated Vitest concurrent test bodies now fail when their own Attest chains were never evaluated; another test's evaluated chain cannot satisfy their guard. Unhooked concurrent chains in cached, non-isolated files fail explicitly instead of silently opting out.
+- **Behavior change:** Adding an assertion after evaluation, including while an evaluation is in flight, leaves the chain unevaluated and fails teardown unless it is evaluated again.
+- **Behavior change:** Unscoped concurrent lifecycle assertions on Vitest <4.1 fail with guidance instead of silently opting out. Move the chain into the body or upgrade Vitest.
+- Preserve assertion ids across re-evaluation.
+- **Behavior change:** Detect unevaluated mutations of chains shared across tests; untouched shared chains are not charged to another test.
+- **Behavior change:** report Vitest suite/module `beforeAll` and `afterAll` errors as failures of their collected descendant tests instead of silently reporting them passed or skipped, so the `tests_failed` policy rule can block the run.
+
+### Docs
+
+- Explain chain re-evaluation, pytest fixture ownership and shared mutations, concurrent Vitest guard coverage and compatibility limits.
+- Document failed-test policy gating, invalid-report errors, and Vitest suite/module hook failure reporting.
+
+### Dependencies
+
+- Python `google-genai` 1.63.0 → 1.75.0 (development/conformance only; the proposed 2.x update is incompatible with the framework test environment); user-facing optional ranges are unchanged. (#222)
+- TypeScript `vitest` 4.1.12 → 5.1.0 (development only); CI retains Node 20 consumer coverage with an isolated Vitest 4 override and tests the committed Vitest 5 default on Node 22; published Node/Vitest peer ranges are unchanged. (#223)
+- Python `openai` 1.83.0 → 2.54.0 (development/conformance only), with compatible CrewAI 1.10.1, Instructor 1.13.0 and LlamaIndex OpenAI 0.6.8 lockfile versions; user-facing optional ranges are unchanged. (#224)
+- Python `ollama` 0.6.1 → 0.6.3 (development/conformance only); user-facing optional ranges are unchanged. (#225)
+- Python `anthropic` 0.81.0 → 2.4.0 (development/conformance only), with development-lock OpenTelemetry security overrides; user-facing optional ranges are unchanged. (#226)
+- TypeScript `@langchain/core` 1.1.40 → 1.3.3 (development/conformance only); user-facing optional peer ranges are unchanged. (#227)
+- Python `langchain-core` 1.3.3 → 1.7.4 (development/conformance only); user-facing optional ranges are unchanged. (#228)
+- GitHub Actions development/CI tooling: `actions/checkout` v7.0.1, `actions/setup-go` v7.0.0, `actions/setup-python` v7.1.0 and `actions/setup-node` v7.1.0 (major 7), `astral-sh/setup-uv` v10.3.3 (major 10), and `pnpm/action-setup` v6.1.1 (major 6); synchronize SHA-pinned generated Python/TypeScript workflows to checkout v7.0.1 and setup-uv v10.3.3, plus setup-node v7.1.0 for TypeScript. (#229)
 
 ## [1.1.0-rc.4] — 2026-11-07
 
@@ -560,7 +595,8 @@ Tagged, not published to registries. No GitHub release was created.
 
 Versions 0.1.0 through 0.6.0 are described in their [GitHub releases](https://github.com/attest-framework/attest/releases); 0.6.1 exists only as a tag. 0.1.0–0.6.0 were published to PyPI; 0.3.0–0.6.0 were also published to npm.
 
-[Unreleased]: https://github.com/attest-framework/attest/compare/v1.1.0-rc.4...HEAD
+[Unreleased]: https://github.com/attest-framework/attest/compare/v1.1.0-rc.5...HEAD
+[1.1.0-rc.5]: https://github.com/attest-framework/attest/releases/tag/v1.1.0-rc.5
 [1.1.0-rc.4]: https://github.com/attest-framework/attest/releases/tag/v1.1.0-rc.4
 [1.1.0-rc.3]: https://github.com/attest-framework/attest/releases/tag/v1.1.0-rc.3
 [1.1.0-rc.2]: https://github.com/attest-framework/attest/releases/tag/v1.1.0-rc.2
