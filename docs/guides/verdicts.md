@@ -69,7 +69,7 @@ def test_refund_reliability(attest):
 
 ### Every chain must be evaluated
 
-In pytest and with the Vitest integration loaded, building an `expect()` chain without passing it to `evaluate()` or `inspect()` fails the test with `1 expect() chain built but never evaluated` (or `N expect() chains built but never evaluated` for multiple chains). An empty chain does not count as a check: evaluating it also fails. Chains built outside a running test, such as at module import, are not tracked.
+An otherwise-passing pytest test fails if it builds an `expect()` chain without passing it to `evaluate()` or `inspect()`; skipped or already-failing pytest tests keep their outcome. With the Vitest integration loaded, unevaluated chains also fail their owning test. The error is `1 expect() chain built but never evaluated` (or `N expect() chains built but never evaluated` for multiple chains). An empty chain does not count as a check: evaluating it also fails. Chains built outside a running test, such as at module import, are not tracked.
 
 Evaluation covers the assertions present when it starts, not future additions. Appending an assertion after `evaluate()` or `inspect()` reopens the chain; evaluate it again before the test finishes. The second evaluation runs the whole chain, not just the appended assertion. Within the same test/trial scope, existing assertions retain their `assertion_id` on re-evaluation; new identical assertions get distinct occurrence indices.
 
