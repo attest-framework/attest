@@ -12,7 +12,9 @@
     "mutants",
     "survivors_suggestions",
     "skipped_specs",
-    "applicable_specs"
+    "applicable_specs",
+    "operators",
+    "excluded"
   ],
   "properties": {
     "score": {
@@ -193,6 +195,98 @@
       "type": "integer",
       "minimum": 0,
       "description": "Specs that pass on at least one unmutated fixture."
+    },
+    "operators": {
+      "type": "array",
+      "description": "Per-operator tally, in operator enumeration order; operators that generated no mutant are omitted. score is killed / (killed + survived), null when none of the operator's mutants has an applicable spec.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "operator",
+          "generated",
+          "killed",
+          "survived",
+          "no_applicable_specs",
+          "score"
+        ],
+        "properties": {
+          "operator": {
+            "type": "string",
+            "enum": [
+              "drop_tool_call",
+              "duplicate_tool_call",
+              "reorder_tool_calls",
+              "perturb_argument",
+              "inject_tool_error",
+              "alter_world_effect",
+              "truncate_output"
+            ]
+          },
+          "generated": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "killed": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "survived": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "no_applicable_specs": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "score": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "minimum": 0,
+            "maximum": 1
+          }
+        }
+      }
+    },
+    "excluded": {
+      "type": "object",
+      "description": "What the score leaves out.",
+      "additionalProperties": false,
+      "required": [
+        "skipped_specs",
+        "mutants_no_applicable_specs"
+      ],
+      "properties": {
+        "skipped_specs": {
+          "type": "array",
+          "description": "Specs that were not run, counted by reason.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "reason",
+              "specs"
+            ],
+            "properties": {
+              "reason": {
+                "type": "string",
+                "minLength": 1
+              },
+              "specs": {
+                "type": "integer",
+                "minimum": 1
+              }
+            }
+          }
+        },
+        "mutants_no_applicable_specs": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Mutants of fixtures none of whose specs pass unmutated."
+        }
+      }
     }
   }
 }

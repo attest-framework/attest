@@ -1,6 +1,7 @@
 package assertionid
 
 import (
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"os"
@@ -18,6 +19,7 @@ type vector struct {
 	CanonicalSpec   string `json:"canonical_spec"`
 	CanonicalInput  string `json:"canonical_input"`
 	ID              string `json:"id"`
+	SpecHash        string `json:"spec_hash"`
 }
 
 func loadVectors(t *testing.T) []vector {
@@ -41,12 +43,18 @@ func loadVectors(t *testing.T) []vector {
 func TestGoldenVectors_ReproduceCanonicalBytesAndIDs(t *testing.T) {
 	for _, v := range loadVectors(t) {
 		t.Run(v.Name, func(t *testing.T) {
-			canon, err := Canonicalize([]byte(v.SpecJSON))
+			canon, err := CanonicalSpec(v.AssertionType, []byte(v.SpecJSON))
 			if err != nil {
 				t.Fatal(err)
 			}
 			if string(canon) != v.CanonicalSpec {
 				t.Errorf("canonical spec = %q, want %q", canon, v.CanonicalSpec)
+			}
+			if v.SpecHash != "" {
+				sum := sha256.Sum256(canon)
+				if got := hex.EncodeToString(sum[:]); got != v.SpecHash {
+					t.Errorf("spec hash = %s, want %s", got, v.SpecHash)
+				}
 			}
 			in, err := Input(v.ScopeID, v.AssertionType, []byte(v.SpecJSON), v.OccurrenceIndex)
 			if err != nil {
@@ -76,6 +84,7 @@ func TestGoldenVectors_EquivalentSpecsShareIDsDistinctSpecsDoNot(t *testing.T) {
 		{"unicode_bmp", "unicode_raw_equals_escaped"},
 		{"int_float_equiv_int", "int_float_equiv_float"},
 		{"negative_zero", "negative_zero_float"},
+		{"effect_world_baseline", "effect_world_head", "effect_world_null"},
 	}
 	for _, g := range same {
 		for _, n := range g[1:] {

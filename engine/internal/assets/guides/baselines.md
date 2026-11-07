@@ -6,6 +6,7 @@ A baseline is a pinned report-v2: the status, score, cost and duration of every 
 
 Write a report from a run you trust, then pin it:
 
+<!-- snippet: setup=project -->
 ```bash
 uv run pytest --attest-report=attest-report.json
 uv run attest baseline pin --tag main --report attest-report.json
@@ -28,6 +29,7 @@ Baselines are rows in `attest.db` under `ATTEST_CACHE_DIR` (default `~/.attest/c
 
 ## Compare a run with a baseline
 
+<!-- snippet: setup=project -->
 ```bash
 uv run attest policy evaluate --policy attest.policy.yaml --report attest-report.json --baseline main
 ```
@@ -45,13 +47,19 @@ block_on_removal: true        # default when --baseline is given; false turns th
 allow_removed: [3f9a1c0e5b7d2a44]   # ids whose removal is accepted
 ```
 
-Reordering assertions keeps every id, so it passes. An id is a hash of the test (or `ContinuousEvalRunner` name), the assertion type, the canonical spec and the occurrence index among identical assertions in that test, so editing a spec produces a new id. When the same test still holds an assertion of the same type with a different spec, the missing id is reported as `changed` instead of removed: the policy output lists it under `changed` (`assertion_id`, `new_assertion_id`) and it does not block. Re-pin the baseline to accept the edit.
+Reordering distinct contracts keeps their ids, so it passes. An id is a hash of the test (or `ContinuousEvalRunner` name), the assertion type, the canonical spec and the occurrence index among identical projected contracts in that test, so editing a spec produces a new id. Repeated identical contracts still depend on evaluation order: for example, the same effect check on before/after worlds has one projected spec, so its occurrence indices follow the order of evaluation. When the same test still holds an assertion of the same type with a different spec, the missing id is reported as `changed` instead of removed: the policy output lists it under `changed` (`assertion_id`, `new_assertion_id`) and it does not block. Re-pin the baseline to accept the edit.
+
+For effect assertions, the top-level `world` snapshot is evidence, not part of the canonical spec: changing the agent's effects keeps the contract's id and `spec_hash`, so a passing contract that now fails is a regression. Resource names, bounds, filters and relational arguments still define the contract and change its identity.
 
 ## Id scheme
 
 Reports and baselines carry `id_scheme: 2`. A baseline pinned before 1.1 uses scheme 1 (ordinal ids); `attest policy evaluate --baseline` refuses to compare against it and exits 3 with `baseline uses id scheme 1; re-pin it on 1.1`, rather than reporting every assertion as removed. The check applies to the head report too: a report without `id_scheme: 2` (written by an SDK older than 1.1) exits 3 with `report uses id scheme 1; re-run with an SDK on 1.1`. Re-pin the tag from a 1.1 report. Rolling back to 1.0 orphans baselines pinned on 1.1.
 
+**Upgrading from 1.1.0-rc.3 or earlier:** effect assertion ids no longer include the world snapshot; re-pin baselines that hold effect assertions. `id_scheme` stays `2`. New reports include `effect_world_excluded: true`, which is saved when pinning; old reports and stored baseline rows lack it. A comparison with an unmarked baseline containing any effect assertion exits **3** with a re-pin message, rather than classifying it as `changed` and silently passing. An unmarked head report with effect assertions also exits **3**, with a re-run message. Re-run the trusted baseline and head using attest 1.1.0-rc.4 or later, then pin the regenerated baseline report. Merely re-pinning an old report does not migrate its ids. Baselines and reports with only non-effect assertions remain comparable without the marker.
+
 The same ids key the result history behind `threshold="dynamic"` and drift alerts. History written before 1.1 under ordinal ids matches no assertion, so each baseline restarts at the 10-run cold start ([continuous eval](continuous-eval.md#upgrading)).
+
+On this effect-identity upgrade, old effect history and drift rows stay under their orphaned ids: effect assertions restart at the same cold start while new history accumulates. Non-effect ids and their history are unchanged.
 
 ## Trials and the regression rule
 

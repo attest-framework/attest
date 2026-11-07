@@ -20,7 +20,15 @@
         },
         "replay_capable": { "type": "boolean", "description": "True when model exchanges were recorded through the capture proxy." },
         "command": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
-        "exit_code": { "type": "integer" }
+        "exit_code": { "type": "integer" },
+        "world": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "The world a world capture hosted, so `attest capture --refresh` can host it again. The world's definition_sha256 is in the fixture's `world` section.",
+          "properties": {
+            "file": { "type": "string", "minLength": 1, "description": "The --world file, as a slash-separated path relative to the repository root (the nearest ancestor of the fixtures directory holding .git, else the working directory). Absent when the file lay outside that root; --refresh then refuses." }
+          }
+        }
       },
       "if": { "properties": { "kind": { "const": "otlp_file" } } },
       "then": { "properties": { "replay_capable": { "const": false } } }
@@ -86,9 +94,9 @@
       "additionalProperties": false,
       "properties": {
         "id": { "type": "string", "minLength": 1, "pattern": "^\\S+$" },
-        "kind": { "enum": ["tools", "order", "cardinality", "output_schema", "cost"] },
+        "kind": { "enum": ["tools", "order", "cardinality", "output_schema", "cost", "relational"] },
         "description": { "type": "string" },
-        "type": { "enum": ["trace", "schema", "constraint"], "description": "Engine assertion type; spec is the assertion spec the SDK DSL emits." },
+        "type": { "enum": ["trace", "schema", "constraint", "effect"], "description": "Engine assertion type; spec is the assertion spec the SDK DSL emits. effect contracts (kind relational) are evaluated against the fixture's world section, so they appear only when it is not null." },
         "spec": { "type": "object" }
       }
     },

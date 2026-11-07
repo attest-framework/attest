@@ -35,8 +35,7 @@ attest/
 │   └── testdata/       # Shared test fixtures
 ├── sdks/
 │   ├── python/         # Python SDK (PyPI: attest-ai)
-│   ├── typescript/     # TypeScript SDK (npm: @attest-ai/core)
-│   └── go/             # Go SDK
+│   └── typescript/     # TypeScript SDK (npm: @attest-ai/core)
 ├── docs/               # Documentation
 ├── examples/           # Standalone example projects
 └── scripts/            # Build and development scripts
@@ -168,6 +167,19 @@ When modifying the protocol:
 3. Update SDK implementations
 4. Add tests covering the protocol change
 5. Update capability identifiers if adding new functionality
+
+## Public Claims
+
+The layer table, the adapter list and the feature maturity table in `README.md`, and the adapter maturity table in `docs/guides/framework-adapters.md`, are generated from `attest-engine capabilities --json`. Do not edit the text between `<!-- claims:NAME:start -->` and `<!-- claims:NAME:end -->` markers by hand.
+
+```bash
+make generate-claims   # rewrite the generated regions from the built engine
+make check-claims      # exit 1 on drift or on a retired claim listed in scripts/generate_claims.py
+```
+
+- Layers and assertion types come from `engine/pkg/types`.
+- Adapters and feature maturity come from `engine/internal/capabilities/data.json`. Adding or removing a file in `sdks/python/src/attest/adapters/` or `sdks/typescript/packages/core/src/adapters/` fails the engine, Python and TypeScript tests until that file lists it with a tier.
+- Public docs describe six evaluated layers plus plugins. The internal plugin layer id 8 is not a public layer.
 
 ## CI
 

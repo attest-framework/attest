@@ -27,6 +27,7 @@ Each published `attest-ai` wheel and sdist and the `@attest-ai/core` tarball car
 
 Every release binary also carries a GitHub build-provenance attestation, created by the `attest-engine` job of the release workflow. To check a binary you downloaded yourself, pin the workflow and the tag, not just the repository:
 
+<!-- snippet: skip reason="verifies a release asset with the GitHub CLI (network)" -->
 ```bash
 gh attestation verify attest-engine-linux-amd64 \
   --repo attest-framework/attest \
@@ -38,6 +39,7 @@ Passing means the file's SHA-256 matches an attestation signed by `release.yml` 
 
 The `attest` command (`uv run attest`, `npx attest`) implements `attest init` itself and forwards every other command to the version-checked engine, passing arguments, output and exit code through unchanged:
 
+<!-- snippet: fragment reason="command overview; report.json comes from your own run" -->
 ```bash
 attest --help                     # SDK commands, plus engine commands when one is installed
 attest --version                  # SDK version and the engine version it requires
@@ -132,6 +134,15 @@ Under pytest-xdist each worker is a separate pytest process with its own engine 
 | `ATTEST_HISTORY_MAX_AGE_DAYS` | Result history age limit in days (enables pruning). | `30` when pruning is enabled |
 
 The history is what `threshold="dynamic"` and the [continuous eval runner](continuous-eval.md) read: one row per evaluated assertion id, with `not_evaluated` rows left out. Rows recorded before 1.1 are keyed by ordinal ids and match no assertion, so each assertion rebuilds its baseline (10 passing or soft runs) after the upgrade.
+
+## Egress guard and proxies
+
+| Variable | Purpose |
+|---|---|
+| `ATTEST_EGRESS` | `block` fails connections from the test process to known model-provider hosts; `allow` and unset leave them alone; any other value is an error. Equivalent to `pytest --attest-egress=block` and `useReplay(name, { egress: "block" })`. |
+| `HTTPS_PROXY`, `HTTP_PROXY`, `ALL_PROXY` (either case) | With the guard on, requests a client sends to the named HTTP proxy are screened: a `CONNECT` target or absolute-form request that names a provider host is blocked. `NO_PROXY` is not read. |
+
+The guard is a best-effort check for trusted test code, not an isolation boundary: child processes, SOCKS proxies and `https://` proxy connections are not inspected, and after an allowed `CONNECT` it does not check what the tunnel carries. The provider host list and the full limits are in [replay](replay.md#block-direct-provider-connections).
 
 ## Removed variables
 

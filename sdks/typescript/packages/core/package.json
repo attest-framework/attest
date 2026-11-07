@@ -1,6 +1,6 @@
 {
   "name": "@attest-ai/core",
-  "version": "1.1.0-rc.2",
+  "version": "1.1.0-rc.4",
   "description": "Attest SDK for testing AI agents — protocol types, codec, trace builder, assertion DSL",
   "type": "module",
   "main": "./dist/cjs/index.cjs",
@@ -34,6 +34,7 @@
   "sideEffects": false,
   "files": [
     "dist",
+    "README.md",
     "engine-checksums.json"
   ],
   "engines": {
@@ -51,7 +52,7 @@
     "url": "https://github.com/attest-framework/attest.git",
     "directory": "sdks/typescript/packages/core"
   },
-  "license": "MIT",
+  "license": "Apache-2.0",
   "keywords": [
     "ai",
     "testing",

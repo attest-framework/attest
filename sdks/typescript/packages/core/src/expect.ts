@@ -25,6 +25,48 @@ export const MAX_WORLD_BYTES = 9 * 1024 * 1024;
 /** A resource's records filtered by exact field values. */
 type Where = Record<string, unknown>;
 
+/** A reference to the record of another resource that shares a key, from {@link related}. */
+export interface Related {
+  readonly related: { readonly resource: string; readonly field: string; readonly on: string };
+}
+
+function requireName(what: string, value: unknown): asserts value is string {
+  if (typeof value !== "string" || value === "") {
+    throw new Error(`${what} must be a non-empty string`);
+  }
+}
+
+/**
+ * Point a `sum` bound or a `matches` check at a field of another resource's record. The record
+ * is the one in `resource` whose `on` field equals the checked record's `on` field.
+ *
+ * @param resource - The related resource, for example `"orders"`.
+ * @param field - The field on the related record to compare against.
+ * @param opts - `on`: the field both resources carry as the key, for example `"order_id"`.
+ * @throws Error when `resource`, `field` or `on` is not a non-empty string.
+ *
+ * @example
+ * ```ts
+ * related("orders", "amount_cents", { on: "order_id" });
+ * ```
+ */
+export function related(resource: string, field: string, opts: { on: string }): Related {
+  requireName("related: resource", resource);
+  requireName("related: field", field);
+  requireName("related: on", opts?.on);
+  return { related: { resource, field, on: opts.on } };
+}
+
+function requireRelated(what: string, value: unknown): asserts value is Related {
+  const inner = (value as Related | null | undefined)?.related;
+  if (typeof value !== "object" || value === null || inner === undefined || typeof inner !== "object") {
+    throw new Error(`${what} must be a related(...) reference`);
+  }
+  requireName(`${what}: resource`, inner.resource);
+  requireName(`${what}: field`, inner.field);
+  requireName(`${what}: on`, inner.on);
+}
+
 /**
  * Effect checks against one world snapshot, from {@link ExpectChain.world}. Each method adds
  * an `effect` assertion (Layer 3) to the parent chain and returns it.
@@ -80,6 +122,58 @@ export class WorldChecks<C> {
   }
 
   /**
+   * Assert that the sum of `field` over the matching `resource` records stays at or below
+   * `atMost`. A finite number bounds the whole filtered total; a {@link related} reference groups
+   * the sum by its `on` key and bounds each group by the referenced record's field. A violation reads
+   * `effect violated: refunds amount_cents sum 13800 for O-2077 exceeds orders.amount_cents 12600`.
+   *
+   * @throws Error when `field` is empty, or `atMost` is neither a finite number nor `related(...)`.
+   *
+   * @example
+   * ```ts
+   * expect(trace).world(snapshot).sum("refunds", "amount_cents", {
+   *   atMost: related("orders", "amount_cents", { on: "order_id" }),
+   * });
+   * ```
+   */
+  sum(
+    resource: string,
+    field: string,
+    opts: { atMost: number | Related; where?: Where },
+  ): C {
+    requireName("sum: resource", resource);
+    requireName("sum: field", field);
+    const bound = opts?.atMost;
+    if (typeof bound === "number") {
+      if (!Number.isFinite(bound)) throw new Error("sum: atMost must be a finite number");
+    } else {
+      requireRelated("sum: atMost", bound);
+    }
+    return this.addCheck({ check: "sum", resource, field, at_most: bound }, opts.where);
+  }
+
+  /**
+   * Assert each matching `resource` record's `field` equals the `field` of the record it
+   * {@link related} points to. A misdirected record reads
+   * `effect violated: notifications customer_id C-0520 for O-2077 does not match orders.customer_id C-0311`.
+   *
+   * @throws Error when `field` is empty or `rel` is not a `related(...)` reference.
+   *
+   * @example
+   * ```ts
+   * expect(trace).world(snapshot).matches(
+   *   "notifications", "customer_id", related("orders", "customer_id", { on: "order_id" }),
+   * );
+   * ```
+   */
+  matches(resource: string, field: string, rel: Related, opts: { where?: Where } = {}): C {
+    requireName("matches: resource", resource);
+    requireName("matches: field", field);
+    requireRelated("matches: related", rel);
+    return this.addCheck({ check: "matches", resource, field, related: rel.related }, opts.where);
+  }
+
+  /**
    * Assert every matching record carries a distinct value in field `key` (default
    * `idempotency_key`), the record field that stores the idempotency key.
    */
@@ -96,9 +190,9 @@ type ChainObserver = (chain: ExpectChain) => void;
 let chainObserver: ChainObserver | undefined;
 
 /**
- * Register the function called with every new {@link ExpectChain}. The Vitest integration uses
- * it to fail a test that builds a chain it never evaluates. One observer at a time; pass
- * `undefined` to remove it.
+ * Register the function called when an {@link ExpectChain} is created or gains an assertion.
+ * The Vitest integration uses it to track chains authored or extended by the current test.
+ * One observer at a time; pass `undefined` to remove it.
  */
 export function setChainObserver(observer: ChainObserver | undefined): void {
   chainObserver = observer;
@@ -108,21 +202,21 @@ export class ExpectChain {
   private readonly _result: AgentResult;
   private readonly _assertions: Assertion[] = [];
   private _worldBytes = 0;
-  private _evaluated = false;
+  private _evaluatedCount: number | undefined;
 
   constructor(result: AgentResult) {
     this._result = result;
     chainObserver?.(this);
   }
 
-  /** True once the chain was handed to an evaluation. */
+  /** True when every assertion currently in the chain was handed to an evaluation. */
   get evaluated(): boolean {
-    return this._evaluated;
+    return this._evaluatedCount === this._assertions.length;
   }
 
-  /** Record that the chain was handed to an evaluation. */
+  /** Record the number of assertions handed to an evaluation. Later additions are unchecked. */
   markEvaluated(): void {
-    this._evaluated = true;
+    this._evaluatedCount = this._assertions.length;
   }
 
   get assertions(): Assertion[] {
@@ -139,6 +233,7 @@ export class ExpectChain {
       type: assertionType,
       spec,
     });
+    chainObserver?.(this);
     return this;
   }
 
@@ -848,7 +943,7 @@ export class ExpectChain {
     });
   }
 
-  // -- Layer 7: Trace Tree (Multi-Agent) --
+  // -- Trace Tree (Multi-Agent, layer 3) --
 
   /**
    * Assert that a specific agent was called in the trace tree.
@@ -1095,10 +1190,10 @@ export class ExpectChain {
     });
   }
 
-  // -- Layer 8: Plugin --
+  // -- Plugin --
 
   /**
-   * Assert via a registered plugin (Layer 8).
+   * Assert via a registered plugin (plugin assertion).
    *
    * @param pluginId - Identifier of the plugin registered with the engine.
    * @param config - Plugin-specific configuration passed at evaluation time.

@@ -137,7 +137,7 @@ describe("ExpectChain", () => {
     expect(chain.assertions[0].spec.threshold).toBe("dynamic");
   });
 
-  // Layer 7: Trace Tree
+  // Layer 3: Trace Tree
   it("agentCalled adds trace_tree assertion", () => {
     const chain = attestExpect(makeResult()).agentCalled("sub-agent");
     expect(chain.assertions[0].type).toBe(TYPE_TRACE_TREE);
@@ -183,7 +183,7 @@ describe("ExpectChain", () => {
     expect(ids[0]).toMatch(/^assert_[a-f0-9]{8}$/);
   });
 
-  // Layer 7: Temporal DSL
+  // Layer 3: Temporal DSL
   it("agentOrderedBefore adds trace_tree assertion", () => {
     const chain = attestExpect(makeResult()).agentOrderedBefore("planner", "executor");
     expect(chain.assertions).toHaveLength(1);
@@ -261,7 +261,7 @@ describe("ExpectChain", () => {
     ]);
   });
 
-  // Layer 8: Plugin
+  // Plugin
   it("plugin adds plugin assertion", () => {
     const chain = attestExpect(makeResult()).plugin("safety-check");
     expect(chain.assertions).toHaveLength(1);

@@ -4,6 +4,90 @@ All notable changes to Attest are documented in this file. The format follows [K
 
 ## [Unreleased]
 
+## [1.1.0-rc.4] — 2026-11-07
+
+Fourth release candidate of 1.1.0, themed "Evidence". Relational world-effect contracts, semantic refresh diffs, per-operator mutation scores and executable public claims make the evidence behind a green gate visible. Changes that alter results are marked **Behavior change** below.
+
+**Upgrade note:** Re-pin baselines containing effect assertions when upgrading from 1.1.0-rc.3 or earlier. Baseline comparison exits 3 when either a baseline or report contains legacy effect identities without `effect_world_excluded: true`; re-pin the baseline and re-run reports before comparing. The assertion id scheme remains 2.
+
+### Added
+
+- `attest capture --refresh` prints a per-exchange semantic diff (system prompt lines, tool schemas, messages, tool results, model, params) and reports "no semantic change" when nothing differs. `--json` results carry a `diff` object.
+
+- Effect checks `sum` and `matches` relate two world resources: a refunded total stays within the order amount, a notification goes to the order's customer. The contract DSL gains `sum(...)`, `matches(...)` and the `related(resource, field, on=key)` literal, and `draft_contract` drafts them from a world.
+
+- TypeScript SDK: `sum()` and `matches()` world-effect checks and a `related()` helper for relational effects.
+
+- Python SDK: `sum` and `matches` world-effect checks and the `related()` helper for relational effects (refunded total within the order amount; notification goes to the order's customer).
+
+- `attest mutate --json` reports `operators` (per-operator generated, killed, survived, no-applicable and score) and `excluded` (skipped specs by reason, mutants without an applicable spec); the text table prints the same rows, and `attest view` renders them.
+
+- `alter_world_effect` raises a numeric field above its related record's value and redirects a shared `*_id` field, so `sum` and `matches` effect specs can kill world mutants and survivors suggest them.
+
+- `attest-engine capabilities [--json]` prints the layers, assertion types, SDK languages, adapters and features with maturity tiers, the licence and versions; schema `proto/attest/v1/cli/capabilities.schema.json`.
+
+- `make generate-claims` and `make check-claims` render and verify the README layer table, adapter list and feature maturity table and the adapter guide's tier table from `capabilities --json`.
+
+- Issue templates "Report a regression attest missed" and "Design partner".
+
+- `related()` is exported from both SDK roots (`attest`, `@attest-ai/core`).
+
+- Guides for relational `sum`/`matches` effects, relational drafting through MCP, the `--refresh` semantic diff and the per-operator mutation report.
+
+- CI `claims` job runs `make check-claims`, and CI `snippets` job runs every runnable README and guide code block offline; both are required by the `required` gate.
+
+- `scripts/run_doc_snippets.py`: snippet runner with `<!-- snippet: ... -->` markers; every skip and fragment carries a reason and is counted.
+
+- `attest capture` drafts relational `sum`/`matches` effect contracts from the captured world and verifies them against it; with `--expect-fail` they are recorded as expected failures. A capped draft list is reported as `relational_capped` in the `--json` result and in the summary. `fixture-v1` gains the `relational` kind and `effect` type.
+
+### Changed
+
+- `count` with a fractional or `related` `at_most` now fails with `invalid effect spec: count: at_most must be an integer` instead of a JSON decode error.
+
+- The `attest mutate` text table columns are now `operator generated killed survived n/a score` (was `operator mutants killed survived`).
+
+- **Behavior change:** a world number whose decimal exponent is outside ±400 is now an evidence error (`effect evidence: … decimal exponent outside ±400`) instead of being evaluated; relational sums print exact values up to 1024 digits and a numerator/denominator form beyond that.
+
+- Public docs describe six evaluated layers plus plugins; the internal plugin layer id 8 is unchanged. Multi-agent assertions are documented as layer 3.
+
+- The README lists the 10 Python adapter modules that exist (it listed 11 including a non-existent Simulation adapter) and a maturity tier per adapter and feature.
+
+**Behavior change:** a wrong method name, a stale import or an unmarked non-runnable code block in the README or a guide now fails CI; before, it passed silently.
+
+**Behavior change:** a world capture without `--expect-fail` whose world violates a drafted relational contract is now `not_verified` (exit 1); before, relational contracts were not drafted and the capture passed.
+
+### Fixed
+
+- **Behavior change:** world numbers with a decimal exponent outside ±400 fail as effect evidence errors instead of passing.
+
+- `@attest-ai/core` and `@attest-ai/vitest` declare `Apache-2.0` (they declared MIT) and ship the `LICENSE` file.
+
+- Removed the README claims of a Go SDK, of SDK/engine release decoupling (the SDK requires the exact engine version) and of "70% of your agent's testable surface is deterministic" (no source).
+
+- `docs/guides/capture.md` fixture table lists `fixture_version` and `name`; the `protocol-spec.md` handshake example shows the current version.
+
+- **Behavior change:** effect assertion ids and spec hashes exclude their runtime world snapshot, so a baselined passing effect contract that fails on changed world state is blocked by `block_on_regression` rather than silently classified as a spec edit. Re-pin baselines containing effect assertions when upgrading from 1.1.0-rc.3 or earlier; id scheme stays 2.
+
+- **Behavior change:** baseline comparison exits 3 with a re-pin/re-run hint when either side contains legacy effect identities without `effect_world_excluded: true`, preventing upgrade-time fail-open policy results. Non-effect-only legacy comparisons remain compatible.
+
+- Require assertion-type context in low-level canonical-spec helpers and preserve non-object effect specs during identity encoding.
+
+## [1.1.0-rc.3] — 2026-11-06
+
+Third release candidate of 1.1.0, themed "Trusted supply chain". Every GitHub Actions reference in the repository and in the `attest init --ci github` scaffold is pinned to a commit SHA and checked in CI, the scaffolded workflow gives pull-request write access only to a separate `annotate` job, and `pr-annotate` reports every report's policy result. `@attest-ai/vitest` also loads on Vitest 5. Changes that alter results are marked **Behavior change** below.
+
+### Changed
+
+- Every GitHub Actions `uses:` in this repository's workflows and composite actions is pinned to a commit SHA with a version comment; Dependabot's `github-actions` ecosystem now covers the workflows and both composite actions, grouped. `scripts/check-action-pins.py` runs in the `GitHub config` CI job.
+- `attest init --ci github` (Python and TypeScript) writes a workflow with SHA-pinned actions and two jobs: the test job holds `contents: read`, and a separate `annotate` job holds `pull-requests: write`. The annotate step pins the `pr-annotate` `v1.0.1` commit instead of `@v<sdk version>`.
+- **Behavior change:** a workflow or action that references an action by tag now fails the `GitHub config` check.
+
+### Fixed
+
+- `pr-annotate`: with several reports the policy line now shows the worst exit, every report's violations (each prefixed with its report) and a per-report list instead of only the worst report.
+- CI: removed the `notify-docs-python` and `notify-docs-typescript` jobs, which passed an empty `DOCS_DEPLOY_TOKEN` on push to main; the release workflow dispatches the website sync from the `website-sync` environment.
+- `@attest-ai/vitest` now supports Vitest 5 (peer `>=3.0.0 <6`); it previously failed to load there.
+
 ## [1.1.0-rc.2] — 2026-11-06
 
 Second release candidate of 1.1.0, themed "Real adapters, real parity". The runner integrations behave the same on every supported version: `@attest-ai/vitest` loads and reports cost on Vitest 3 and 4, and the Python helpers keep trace metadata, accept plain agents and fail an offline run in one line. Safe defaults landed early: shipped skills no longer auto-confirm a recorded command, `--attest-egress=block` covers provider calls through HTTP proxies, and `attest capture` templates session identifiers and redacts every server-sent event. Changes that alter results are marked **Behavior change** below.
@@ -470,7 +554,9 @@ Tagged, not published to registries. No GitHub release was created.
 
 Versions 0.1.0 through 0.6.0 are described in their [GitHub releases](https://github.com/attest-framework/attest/releases); 0.6.1 exists only as a tag. 0.1.0–0.6.0 were published to PyPI; 0.3.0–0.6.0 were also published to npm.
 
-[Unreleased]: https://github.com/attest-framework/attest/compare/v1.1.0-rc.2...HEAD
+[Unreleased]: https://github.com/attest-framework/attest/compare/v1.1.0-rc.4...HEAD
+[1.1.0-rc.4]: https://github.com/attest-framework/attest/releases/tag/v1.1.0-rc.4
+[1.1.0-rc.3]: https://github.com/attest-framework/attest/releases/tag/v1.1.0-rc.3
 [1.1.0-rc.2]: https://github.com/attest-framework/attest/releases/tag/v1.1.0-rc.2
 [1.1.0-rc.1]: https://github.com/attest-framework/attest/releases/tag/v1.1.0-rc.1
 [1.0.1]: https://github.com/attest-framework/attest/releases/tag/v1.0.1

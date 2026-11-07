@@ -11,7 +11,7 @@ npx attest init --ci github --json         # TypeScript
 
 `--json` prints `{created, updated, skipped}` (paths relative to the project root). `init` never overwrites an existing file; a skipped workflow or policy means the repo already has one: read it instead of replacing it. Add `--skills` to also install the attest agent skills. Files: `.github/workflows/attest.yml`, `attest.policy.yaml`, and a sample test if none exists (delete the sample once a real test exists, with the user's agreement).
 
-The generated job, in order: install (`uv sync --locked` / `npm ci`); **Run tests** with `continue-on-error: true` and the report flag (`uv run pytest --attest-report=attest-report.json`, or Vitest with `--reporter=default --reporter=@attest-ai/vitest/reporter --outputFile.attest=attest-report.json`); JUnit (`attest report junit --report attest-report.json --out attest-junit.xml`); the failure viewer (`attest view attest-report.json --no-open --out attest-report.html`; `ATTEST_REPORT_TRACES: "1"` stays commented out on the test step: it embeds prompts, outputs and tool arguments, unredacted, in the report and the page, so enable it only on private repositories); artifact upload (report, JUnit and HTML); **Evaluate the merge policy** (exit 2 is a warning, any other non-zero fails); **Annotate the pull request** with `attest-framework/attest/.github/actions/pr-annotate@v<sdk version>`; **Fail the job when tests failed**. Steps after the tests run with `if: always()`.
+The generated workflow has two jobs. `attest` (`contents: read`) runs the tests; `annotate` (`pull-requests: write`) posts the summary and never runs repo code. Every action is pinned to a 40-hex commit SHA with the release in a trailing comment; never replace a pin with a tag. The `attest` job, in order: install (`uv sync --locked` / `npm ci`); **Run tests** with `continue-on-error: true` and the report flag (`uv run pytest --attest-report=attest-report.json`, or Vitest with `--reporter=default --reporter=@attest-ai/vitest/reporter --outputFile.attest=attest-report.json`); JUnit (`attest report junit --report attest-report.json --out attest-junit.xml`); the failure viewer (`attest view attest-report.json --no-open --out attest-report.html`; `ATTEST_REPORT_TRACES: "1"` stays commented out on the test step: it embeds prompts, outputs and tool arguments, unredacted, in the report and the page, so enable it only on private repositories); artifact upload (report, JUnit and HTML); **Evaluate the merge policy** (exit 2 is a warning, any other non-zero fails); **Fail the job when tests failed**. Steps after the tests run with `if: always()`. The `annotate` job downloads the `attest-report` artifact, fetches the engine with `uvx --no-config --exclude-newer <date> --from "attest-ai==<version>" attest doctor` (run from `runner.temp`), then runs `attest-framework/attest/.github/actions/pr-annotate@<sha> # v<version>` with `engine-version: <version>`.
 
 ## 2. Make the job model-free
 
@@ -38,12 +38,31 @@ uv run attest policy evaluate --policy attest.policy.yaml --report attest-report
 
 ## 4. Pull request annotations
 
-`pr-annotate` posts one summary comment (updated on each run) and an annotation per failure and replay miss at its file and line. It needs `pull-requests: write` on the job and runs only for pull requests from the same repository (fork pull requests get the summary in the job summary only). Keep the action pinned to the release tag `init` wrote; with a GitHub App token set `comment-author: <app-slug>[bot]`. Preview the comment locally:
+`pr-annotate` posts one summary comment (updated on each run) and an annotation per failure and replay miss at its file and line. It needs `pull-requests: write` on the job and runs only for pull requests from the same repository (a fork's pull request skips the `annotate` job). Keep the action pinned to the commit `init` wrote. With several reports and a `policy`, the comment's policy line is the aggregate (worst exit, every report's violations prefixed with the report) and a "Policy by report" list shows each report's result. With a GitHub App token set `comment-author: <app-slug>[bot]`. Preview the comment locally:
 
 ```bash
 uv run attest policy evaluate --policy attest.policy.yaml --report attest-report.json > policy-result.json
 uv run attest report summary --report attest-report.json --policy-result policy-result.json
 ```
+
+### Keep the pins current
+
+Do not edit pins by hand. Add Dependabot for the workflow files so each bump is a reviewable pull request that changes the SHA and its version comment:
+
+```yaml
+# .github/dependabot.yml
+version: 2
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    groups:
+      github-actions:
+        patterns: ["*"]
+```
+
+Dependabot does not change the `attest-ai==<version>` pin in the engine fetch step or `engine-version`. Move the `pr-annotate` pin, `attest-ai==`, `engine-version` and the `--exclude-newer` date together, in one pull request. Check for a tag pin with `grep -nE 'uses: *[^ ]+@' .github/workflows/*.yml | grep -vE '@[0-9a-f]{40}( |$)'`; it prints nothing when every action is pinned.
 
 ## 5. Run only affected tests (optional)
 

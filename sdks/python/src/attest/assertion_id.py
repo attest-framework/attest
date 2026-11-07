@@ -127,14 +127,18 @@ def _utf16_key(key: str) -> bytes:
         ) from exc
 
 
-def canonical_spec(spec: dict[str, Any] | None) -> str:
-    """The JCS text of an assertion spec; no spec is ``{}``."""
-    return canonicalize({} if spec is None else _serialize(spec))
+def canonical_spec(assertion_type: str, spec: Any) -> str:
+    """The JCS identity spec, excluding only effect's top-level runtime world.
+
+    The original spec remains untouched for wire serialization and validation.
+    """
+    identity_spec = {} if spec is None else spec
+    if assertion_type == "effect" and isinstance(identity_spec, dict):
+        identity_spec = {key: value for key, value in identity_spec.items() if key != "world"}
+    return canonicalize(_serialize(identity_spec))
 
 
-def canonical_input(
-    scope_id: str, assertion_type: str, spec: dict[str, Any] | None, occurrence_index: int
-) -> str:
+def canonical_input(scope_id: str, assertion_type: str, spec: Any, occurrence_index: int) -> str:
     """The JCS array ``[scope_id, assertion_type, spec, occurrence_index]`` that is hashed."""
     return (
         "["
@@ -142,7 +146,7 @@ def canonical_input(
             (
                 _string(scope_id),
                 _string(assertion_type),
-                canonical_spec(spec),
+                canonical_spec(assertion_type, spec),
                 str(occurrence_index),
             )
         )
@@ -151,7 +155,7 @@ def canonical_input(
 
 
 def compute_assertion_id(
-    scope_id: str, assertion_type: str, spec: dict[str, Any] | None, occurrence_index: int
+    scope_id: str, assertion_type: str, spec: Any, occurrence_index: int
 ) -> str:
     """The scheme-2 id of one assertion.
 
@@ -187,7 +191,7 @@ class OccurrenceCounter:
     def assign(self, assertion: Assertion) -> None:
         """Set ``assertion.assertion_id`` and ``assertion.scope_id`` in evaluation order."""
         try:
-            key = (assertion.type, canonical_spec(assertion.spec))
+            key = (assertion.type, canonical_spec(assertion.type, assertion.spec))
         except AssertionIdError as exc:
             raise AssertionIdError(
                 f"assertion {assertion.type!r} in scope {self.scope_id!r}: {exc}"

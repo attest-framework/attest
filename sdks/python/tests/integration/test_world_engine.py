@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import os
 import socket
+import subprocess
 import textwrap
 import urllib.error
 import urllib.request
@@ -23,6 +24,7 @@ from attest._proto.types import (
     Trace,
 )
 from attest.capture import load_fixture
+from attest.expect import related
 from attest.plugin import AttestEngineFixture
 from tests.integration.test_capture_engine import (
     _scripted_agent,
@@ -298,6 +300,20 @@ def test_record_with_world_saves_the_world_in_the_fixture(
     fixture = load_fixture(out_dir / "inc-9.attest.json")
     assert fixture.world is not None
     assert len(fixture.world["state"]["refunds"]) == 2
+    from attest.assertion_id import OccurrenceCounter
+
+    # Check an effect contract against recorded and replay-time evidence from
+    # the loaded fixture. Capture without resource relations drafts trace-only
+    # contracts, so build the effect through the same SDK path replay uses.
+    recorded = expect(fixture.trace).world(fixture.world).count("refunds", equals=1)
+    replayed = (
+        expect(fixture.trace)
+        .world({**fixture.world, "state": {"refunds": []}})
+        .count("refunds", equals=1)
+    )
+    OccurrenceCounter("replay:inc-9").assign(recorded.assertions[0])
+    OccurrenceCounter("replay:inc-9").assign(replayed.assertions[0])
+    assert recorded.assertions[0].assertion_id == replayed.assertions[0].assertion_id
 
 
 @pytest.mark.integration
@@ -313,3 +329,163 @@ def test_effect_dsl_fixture_results_match_the_engine(
     assert row.status == case["result"]["status"]
     if "explanation" in case["result"]:
         assert row.explanation == case["result"]["explanation"]
+
+
+def _order_world(*refund_cents: int, notify_customer: str | None = None) -> dict[str, Any]:
+    state: dict[str, Any] = {
+        "orders": [{"order_id": "O-2077", "amount_cents": 12600, "customer_id": "C-0311"}],
+        "refunds": [
+            {"refund_id": f"R-{i}", "order_id": "O-2077", "amount_cents": cents}
+            for i, cents in enumerate(refund_cents, 1)
+        ],
+    }
+    if notify_customer is not None:
+        state["notifications"] = [{"order_id": "O-2077", "customer_id": notify_customer}]
+    return {
+        "world_version": 1,
+        "definition_sha256": "0" * 64,
+        "state": state,
+        "faults_fired": [],
+        "faults_fired_count": 0,
+    }
+
+
+_ORDER_AMOUNT = related("orders", "amount_cents", on="order_id")
+_ORDER_CUSTOMER = related("orders", "customer_id", on="order_id")
+
+
+@pytest.mark.integration
+def test_sum_related_over_the_order_amount_fails_with_the_violation_text(
+    engine: AttestEngineFixture,
+) -> None:
+    row = _check(
+        engine, _order_world(1200, 12600), "sum", "refunds", "amount_cents", at_most=_ORDER_AMOUNT
+    )
+
+    assert row.status == STATUS_HARD_FAIL
+    assert row.explanation == (
+        "effect violated: refunds amount_cents sum 13800 for O-2077 "
+        "exceeds orders.amount_cents 12600"
+    )
+
+
+@pytest.mark.integration
+def test_sum_related_within_the_order_amount_passes(engine: AttestEngineFixture) -> None:
+    row = _check(
+        engine, _order_world(1200, 11400), "sum", "refunds", "amount_cents", at_most=_ORDER_AMOUNT
+    )
+
+    assert row.status == STATUS_PASS
+
+
+@pytest.mark.integration
+def test_sum_number_bound_over_the_limit_fails(engine: AttestEngineFixture) -> None:
+    row = _check(engine, _order_world(1200, 12600), "sum", "refunds", "amount_cents", at_most=13000)
+
+    assert row.status == STATUS_HARD_FAIL
+
+
+@pytest.mark.integration
+def test_matches_misdirected_notification_fails_with_the_violation_text(
+    engine: AttestEngineFixture,
+) -> None:
+    row = _check(
+        engine,
+        _order_world(notify_customer="C-0520"),
+        "matches",
+        "notifications",
+        "customer_id",
+        _ORDER_CUSTOMER,
+    )
+
+    assert row.status == STATUS_HARD_FAIL
+    assert row.explanation == (
+        "effect violated: notifications customer_id C-0520 for O-2077 "
+        "does not match orders.customer_id C-0311"
+    )
+
+
+@pytest.mark.integration
+def test_matches_notification_to_the_orders_customer_passes(engine: AttestEngineFixture) -> None:
+    row = _check(
+        engine,
+        _order_world(notify_customer="C-0311"),
+        "matches",
+        "notifications",
+        "customer_id",
+        _ORDER_CUSTOMER,
+    )
+
+    assert row.status == STATUS_PASS
+
+
+@pytest.mark.integration
+def test_effect_world_change_is_a_baseline_regression(
+    engine: AttestEngineFixture,
+    engine_env: str,  # noqa: F811
+    tmp_path: Path,
+) -> None:
+    from attest._proto.types import Usage
+    from attest.report_v2 import TestRecord, build_report
+    from attest.trials import current_run
+
+    run = current_run()
+    assert run is not None
+    reports = []
+    ids = []
+    for trial, amounts in enumerate(((100,), (100, 100)), start=1):
+        run.start_trial(trial)
+        snapshot = _order_world(*amounts)
+        chain = expect(Trace.from_dict(json.loads(_TRACE.read_text())))
+        chain.world(snapshot).count("refunds", order_id="O-2077", equals=1)
+        result = engine.inspect(chain)
+        [row] = result.assertion_results
+        assert row.status == (STATUS_PASS if trial == 1 else STATUS_HARD_FAIL)
+        assert chain.assertions[0].spec["world"] == snapshot
+        ids.append(row.assertion_id)
+        record = TestRecord(
+            test_id=run.test_id,
+            name="effect",
+            file=__file__,
+            line=1,
+            outcome="passed" if trial == 1 else "failed",
+            agent_results=[result],
+        )
+        path = tmp_path / f"report-{trial}.json"
+        path.write_text(json.dumps(build_report([record], simulated=False, usage=Usage())))
+        reports.append(path)
+    assert ids[0] == ids[1]
+    policy = tmp_path / "policy.yaml"
+    policy.write_text("block_on_regression: true\n")
+    env = {**os.environ, "ATTEST_CACHE_DIR": str(tmp_path / "cache")}
+    pinned = subprocess.run(
+        [engine_env, "baseline", "pin", "--tag", "effect-baseline", "--report", str(reports[0])],
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+    assert pinned.returncode == 0, pinned.stdout + pinned.stderr
+    verdict = subprocess.run(
+        [
+            engine_env,
+            "policy",
+            "evaluate",
+            "--policy",
+            str(policy),
+            "--report",
+            str(reports[1]),
+            "--baseline",
+            "effect-baseline",
+        ],
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+    assert verdict.returncode == 1, verdict.stdout + verdict.stderr
+    output = json.loads(verdict.stdout)
+    assert any(
+        item["rule"] == "block_on_regression"
+        and f"regressions vs effect-baseline: {ids[0]}" in item["detail"]
+        for item in output["violations"]
+    )
+    assert not output.get("changed")

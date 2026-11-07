@@ -605,6 +605,8 @@ func TestRenderHTML_PlantedPayloads_InReasonsPathsIDsMutantsAndNotices(t *testin
 				sg := m["survivors_suggestions"].([]any)[0].(map[string]any)
 				sg["mutant_id"], sg["description"] = planted, planted
 				sg["contract"].(map[string]any)["description"] = planted
+				m["operators"].([]any)[1].(map[string]any)["operator"] = planted
+				m["excluded"].(map[string]any)["skipped_specs"].([]any)[0].(map[string]any)["reason"] = planted
 			})
 
 			page := renderOpts(t, ViewOptions{Reports: []string{head}, Mutation: mut})
@@ -685,5 +687,50 @@ func TestRenderHTML_HighlightCapCountsOnlyFailingRowsPastPassingOnes(t *testing.
 
 	if !strings.Contains(page, `<li class="step hit" id="t0-tr0-s3">`) {
 		t.Fatal("passing rows must not use up the highlight cap")
+	}
+}
+
+func TestRenderHTML_Mutation_ListsPerOperatorScoresAndExcludedPopulations(t *testing.T) {
+	page := renderFixtures(t, nil, false, true)
+	for _, want := range []string{
+		"<th>Generated</th>", "drop_tool_call", "alter_world_effect", "100.0%", "0.0%",
+		"3 mutant(s) with no applicable contract", "2 spec(s): judge specs are not deterministic",
+	} {
+		if !strings.Contains(page, want) {
+			t.Errorf("page missing %q", want)
+		}
+	}
+	assertPageIsInert(t, page)
+}
+
+func TestRenderHTML_Mutation_ReportWithoutOperatorsOmitsTheTable(t *testing.T) {
+	dir := t.TempDir()
+	head := writeEdited(t, dir, "head.json", func(map[string]any) {})
+	mut := editMutation(t, dir, func(m map[string]any) {
+		delete(m, "operators")
+		delete(m, "excluded")
+	})
+	page := renderOpts(t, ViewOptions{Reports: []string{head}, Mutation: mut})
+	if strings.Contains(page, "<th>Generated</th>") {
+		t.Error("operator table rendered for a report without operators")
+	}
+}
+
+func TestRenderHTML_Mutation_CapsOperatorRows(t *testing.T) {
+	dir := t.TempDir()
+	head := writeEdited(t, dir, "head.json", func(map[string]any) {})
+	mut := editMutation(t, dir, func(m map[string]any) {
+		rows := []any{}
+		for i := 0; i < viewMaxListed+25; i++ {
+			rows = append(rows, map[string]any{"operator": fmt.Sprintf("op_%04d", i), "generated": 1, "killed": 1, "survived": 0, "no_applicable_specs": 0, "score": 1})
+		}
+		m["operators"] = rows
+	})
+	page := renderOpts(t, ViewOptions{Reports: []string{head}, Mutation: mut})
+	if !strings.Contains(page, fmt.Sprintf("op_%04d", viewMaxListed-1)) || strings.Contains(page, fmt.Sprintf("op_%04d", viewMaxListed)) {
+		t.Errorf("operator rows are not capped at %d", viewMaxListed)
+	}
+	if !strings.Contains(page, "operator row(s) in total") {
+		t.Error("no notice for the capped operator rows")
 	}
 }

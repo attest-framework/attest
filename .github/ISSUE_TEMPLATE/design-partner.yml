@@ -1,0 +1,33 @@
+name: Design partner
+description: You run an agent in production or CI and want to shape what attest checks next.
+title: "design partner: "
+labels: ["design-partner"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Design partners get direct access to the maintainer and a say in what attest checks next. Nothing here is paid or binding. Do not include secrets or customer data.
+  - type: textarea
+    id: agent
+    attributes:
+      label: Your agent
+      description: What the agent does, which framework and language it uses (Python or TypeScript), and which tools or systems it changes.
+    validations:
+      required: true
+  - type: textarea
+    id: incident
+    attributes:
+      label: A failure you want to stop
+      description: A regression, incident or near miss, described as what the agent did and what it should have done instead.
+    validations:
+      required: true
+  - type: textarea
+    id: ci
+    attributes:
+      label: Where it would run
+      description: Your CI system and how an agent change reaches production today.
+  - type: input
+    id: contact
+    attributes:
+      label: Preferred contact
+      description: A GitHub handle is enough; this issue is public.

@@ -179,6 +179,7 @@ def build_report(
     document: dict[str, Any] = {
         "report_version": REPORT_VERSION,
         "id_scheme": ID_SCHEME,
+        "effect_world_excluded": True,
         "budget_exceeded": any(r.budget_exceeded for test in tests for r in test.agent_results),
         "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "simulated": simulated,
@@ -239,6 +240,11 @@ def merge_reports(
     merged: dict[str, Any] = {
         "report_version": REPORT_VERSION,
         "id_scheme": ID_SCHEME,
+        "effect_world_excluded": all(
+            doc.get("effect_world_excluded") is True
+            or not any(row.get("type") == "effect" for row in doc["results"])
+            for doc in documents
+        ),
         "budget_exceeded": any(doc["budget_exceeded"] for doc in documents),
         "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "simulated": simulated.pop(),

@@ -245,10 +245,40 @@ type BuildInput struct {
 	World *world.Snapshot
 }
 
+// RelationalWorkLimit bounds world bytes times relational contracts, the
+// product run_contract applies too: each evaluation scans the snapshot.
+const RelationalWorkLimit = 32 << 20
+
+// BuildReport carries what a built fixture does not store.
+type BuildReport struct {
+	// RelationalCapped: the world relates more resources than one contract
+	// run takes, so only the first contractdsl.MaxStatements relational
+	// contracts were drafted.
+	RelationalCapped bool
+	// RelationalTrimmed: the world snapshot is too large to check every
+	// drafted relational contract within RelationalWorkLimit, so only the
+	// first RelationalKept were stored.
+	RelationalTrimmed bool
+	RelationalKept    int
+}
+
 // BuildFixture converts the spans to a trace, redacts and templates the trace
 // and exchanges together, keys each exchange, drafts contracts and verifies
-// them.
+// them. When the capture hosted a world, relational effect contracts are
+// drafted from the world section too and verified against it.
 func BuildFixture(in BuildInput) (*Fixture, error) {
+	f, _, err := BuildFixtureReport(in)
+	return f, err
+}
+
+// BuildFixtureReport is BuildFixture plus the BuildReport.
+func BuildFixtureReport(in BuildInput) (*Fixture, BuildReport, error) {
+	var report BuildReport
+	f, err := buildFixture(in, &report)
+	return f, report, err
+}
+
+func buildFixture(in BuildInput, report *BuildReport) (*Fixture, error) {
 	if len(in.Spans) == 0 {
 		return nil, errors.New("no spans were received; point the agent's OTLP/HTTP exporter at OTEL_EXPORTER_OTLP_TRACES_ENDPOINT and flush it before exit")
 	}
@@ -256,9 +286,9 @@ func BuildFixture(in BuildInput) (*Fixture, error) {
 	if err != nil {
 		return nil, err
 	}
-	report := trace.Check(in.Spans)
-	errs := len(report.Errors())
-	check := TraceCheckResult{OK: report.OK, Errors: errs, Warnings: len(report.Issues) - errs}
+	traceReport := trace.Check(in.Spans)
+	errs := len(traceReport.Errors())
+	check := TraceCheckResult{OK: traceReport.OK, Errors: errs, Warnings: len(traceReport.Issues) - errs}
 
 	traceDoc, err := toGeneric(t)
 	if err != nil {
@@ -316,13 +346,23 @@ func BuildFixture(in BuildInput) (*Fixture, error) {
 	if f.Contracts == nil {
 		f.Contracts = []Contract{}
 	}
-	if f.Verification, err = Verify(f.Trace, f.Contracts, in.ExpectFail, check); err != nil {
-		return nil, err
-	}
 	if in.World != nil {
 		if f.World, err = worldSection(in.World, in.Redactor, tpl); err != nil {
 			return nil, err
 		}
+		relational, capped, err := DraftRelational(f.World)
+		if err != nil {
+			return nil, fmt.Errorf("draft relational: %w", err)
+		}
+		if keep := RelationalWorkLimit / len(f.World); len(relational) > keep {
+			relational = relational[:keep]
+			report.RelationalTrimmed, report.RelationalKept = true, keep
+		}
+		f.Contracts = append(f.Contracts, relational...)
+		report.RelationalCapped = capped
+	}
+	if f.Verification, err = VerifyIn(f.Trace, f.World, f.Contracts, in.ExpectFail, check); err != nil {
+		return nil, err
 	}
 	return f, nil
 }

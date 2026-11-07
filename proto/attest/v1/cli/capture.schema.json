@@ -69,6 +69,145 @@
         "steps": {
           "type": "integer",
           "minimum": 0
+        },
+        "relational_capped": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Present when drafted relational contracts were cut: more were found than one contract run takes, or the world snapshot is too large to check them all. The text says how many were kept."
+        },
+        "diff": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "changed",
+            "exchanges"
+          ],
+          "description": "Present with --refresh: what the re-run changed in the requests the agent sent, read from the redacted fixtures as written. Exchanges are paired by index; responses and the trace are not compared. changed is false (and exchanges empty) when nothing differs.",
+          "properties": {
+            "changed": {
+              "type": "boolean"
+            },
+            "exchanges": {
+              "type": "array",
+              "description": "Only the exchanges that differ.",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "index",
+                  "change",
+                  "label"
+                ],
+                "properties": {
+                  "index": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "change": {
+                    "enum": [
+                      "added",
+                      "removed",
+                      "changed"
+                    ]
+                  },
+                  "label": {
+                    "type": "string",
+                    "description": "provider, API and model."
+                  },
+                  "model": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "old",
+                      "new"
+                    ],
+                    "properties": {
+                      "old": {
+                        "type": "string"
+                      },
+                      "new": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "params": {
+                    "type": "array",
+                    "items": {
+                      "$ref": "#/$defs/path_change"
+                    },
+                    "description": "Changed request parameters (temperature, tool_choice, ...), as JSON paths rooted at $."
+                  },
+                  "system": {
+                    "type": "array",
+                    "items": {
+                      "$ref": "#/$defs/line_change"
+                    },
+                    "description": "Changed system prompt lines."
+                  },
+                  "tools": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "added": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      },
+                      "removed": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      },
+                      "changed": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "required": [
+                            "name",
+                            "paths"
+                          ],
+                          "properties": {
+                            "name": {
+                              "type": "string"
+                            },
+                            "paths": {
+                              "type": "array",
+                              "items": {
+                                "$ref": "#/$defs/path_change"
+                              }
+                            }
+                          }
+                        }
+                      }
+                    },
+                    "description": "Tool schemas by tool name."
+                  },
+                  "messages": {
+                    "type": "array",
+                    "items": {
+                      "$ref": "#/$defs/message_change"
+                    }
+                  },
+                  "tool_results": {
+                    "type": "array",
+                    "items": {
+                      "$ref": "#/$defs/message_change"
+                    }
+                  },
+                  "other": {
+                    "type": "array",
+                    "items": {
+                      "$ref": "#/$defs/path_change"
+                    },
+                    "description": "Request fields the other sections do not cover, as JSON paths rooted at $. Present only when no other section differs, so a changed request never reads as no change."
+                  }
+                }
+              }
+            }
+          }
         }
       },
       "description": "A capture: the fixture written and whether it verified. exit_code is the captured command's (null for --from).",
@@ -153,5 +292,100 @@
       },
       "description": "--check-redaction: where each secret is (never the secret itself)."
     }
-  ]
+  ],
+  "$defs": {
+    "line_change": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "op",
+        "text"
+      ],
+      "properties": {
+        "op": {
+          "enum": [
+            "+",
+            "-"
+          ]
+        },
+        "text": {
+          "type": "string"
+        }
+      }
+    },
+    "path_change": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "op"
+      ],
+      "properties": {
+        "path": {
+          "type": "string",
+          "description": "JSON path, rooted at $."
+        },
+        "op": {
+          "enum": [
+            "added",
+            "removed",
+            "changed"
+          ]
+        },
+        "old": {
+          "type": "string",
+          "description": "Compact JSON of the old value; absent for added."
+        },
+        "new": {
+          "type": "string",
+          "description": "Compact JSON of the new value; absent for removed."
+        }
+      }
+    },
+    "message_change": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "index",
+        "change",
+        "role",
+        "lines"
+      ],
+      "properties": {
+        "index": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Position among the messages (or tool results) of the new fixture; of the old one for a removed entry."
+        },
+        "change": {
+          "enum": [
+            "added",
+            "removed",
+            "changed"
+          ]
+        },
+        "role": {
+          "type": "string"
+        },
+        "ref": {
+          "type": "string",
+          "description": "For a tool result, the tool call id it answers."
+        },
+        "lines": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/line_change"
+          },
+          "description": "Changed lines only: - for old text, + for new text."
+        },
+        "fields": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/path_change"
+          },
+          "description": "Changed message fields the lines do not show (is_error, call_id, summary, ...), as JSON paths rooted at $ of the request."
+        }
+      }
+    }
+  }
 }

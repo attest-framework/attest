@@ -1,0 +1,40 @@
+name: Report a regression attest missed
+description: An agent change broke behavior or an effect, the attest gate stayed green, and you want it to catch that case.
+title: "missed regression: "
+labels: ["missed-regression"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        A gate that stays green on a real regression is the most useful report you can send. Redact secrets and customer data before pasting anything.
+  - type: textarea
+    id: regression
+    attributes:
+      label: What the agent did wrong
+      description: The behavior or effect that regressed, for example a tool ran twice per business key, a refund was issued twice, a forbidden tool was called.
+    validations:
+      required: true
+  - type: textarea
+    id: gate
+    attributes:
+      label: What attest reported
+      description: The gate result you saw (pass, not evaluated, soft failure) and the command or CI job that produced it.
+    validations:
+      required: true
+  - type: textarea
+    id: checks
+    attributes:
+      label: The checks in place
+      description: The contracts, assertions, world fixture or policy rules that ran against this agent. Paste the fixture or test if you can share it.
+  - type: input
+    id: version
+    attributes:
+      label: Versions
+      description: Output of `attest-engine version` and the SDK version (`attest-ai` or `@attest-ai/core`).
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction
+      description: A fixture, trace or test that reproduces the miss without a model call, if possible.

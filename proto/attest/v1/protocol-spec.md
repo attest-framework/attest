@@ -32,8 +32,8 @@ stderr ──► Engine debug log output only (never parsed by SDK)
 
 **Wire example (two messages):**
 ```
-{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"sdk_name":"attest-python","sdk_version":"0.3.0","protocol_version":1,"required_capabilities":["layers_1_4"],"preferred_encoding":"json"}}\n
-{"jsonrpc":"2.0","id":1,"result":{"engine_version":"0.3.0","protocol_version":1,"capabilities":["layers_1_4"],"missing":[],"compatible":true,"encoding":"json","max_concurrent_requests":1}}\n
+{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"sdk_name":"attest-python","sdk_version":"1.1.0-rc.3","protocol_version":1,"required_capabilities":["layers_1_4"],"preferred_encoding":"json"}}\n
+{"jsonrpc":"2.0","id":1,"result":{"engine_version":"1.1.0-rc.3","protocol_version":1,"capabilities":["layers_1_4"],"missing":[],"compatible":true,"encoding":"json","max_concurrent_requests":1}}\n
 ```
 
 ### 1.3 Stderr Logging
@@ -103,9 +103,9 @@ Sent by the SDK immediately after spawning the engine. Establishes the session a
   "method": "initialize",
   "params": {
     "sdk_name": "attest-python",
-    "sdk_version": "0.3.0",
+    "sdk_version": "1.1.0-rc.3",
     "protocol_version": 1,
-    "required_capabilities": ["layers_1_4", "soft_failures"],
+    "required_capabilities": ["layers_1_4"],
     "preferred_encoding": "json"
   }
 }
@@ -128,9 +128,9 @@ Sent by the SDK immediately after spawning the engine. Establishes the session a
   "jsonrpc": "2.0",
   "id": 1,
   "result": {
-    "engine_version": "0.3.0",
+    "engine_version": "1.1.0-rc.3",
     "protocol_version": 1,
-    "capabilities": ["layers_1_4", "soft_failures"],
+    "capabilities": ["layers_1_4", "trace_tree", "continuous_eval", "plugins", "embedding", "llm_judge"],
     "missing": [],
     "compatible": true,
     "encoding": "json",
@@ -447,13 +447,17 @@ Every model call reserves one call and its worst-case cost (price × prompt byte
 Every SDK computes `assertion_id` with exactly this recipe, so independent SDKs produce identical ids.
 
 1. **`canonical_spec`**: the assertion `spec` serialized per [RFC 8785](https://www.rfc-editor.org/rfc/rfc8785) (JSON Canonicalization Scheme): object keys sorted by UTF-16 code units, numbers in ECMAScript `Number::toString` form (`1.0` and `1` both serialize as `1`, `-0` as `0`, `1e21` as `1e+21`), strings escaped minimally (only `\"`, `\\`, `\b`, `\t`, `\n`, `\f`, `\r` and lowercase `\u00xx` for the other control characters below U+0020; `<`, `>`, `&`, U+2028, U+007F and non-ASCII characters stay raw), no whitespace, UTF-8 output. Python's `json.dumps(sort_keys=True)` and Go's `encoding/json` are not conformant (code-point key order, `1.0`, `\u003c` escaping); implement JCS. An assertion without a spec uses `{}`.
+   For `assertion_type == "effect"` only, remove the **top-level `world` member** before canonicalizing. The world snapshot is runtime evidence, not the contract. This exclusion applies whether `world` holds a snapshot, `null`, or is absent; it is not recursive. Every other member stays in identity, including `resource`, bounds, `where` (even a nested `world` key), and relational arguments. Other assertion types have no exclusions. The wire spec is unchanged: the engine still receives and validates the complete world for evaluation. The report's `spec_hash` is the full lowercase SHA-256 hex digest of these same UTF-8 `canonical_spec` bytes, so changing evidence alone changes neither hash nor id. Fixture/replay contracts use the same rule.
 2. **Input**: the JCS array `[scope_id, assertion_type, canonical_spec_value, occurrence_index]`, serialized with the same rules (no whitespace). `scope_id` is the raw scope identifier string: the test node id (for example `tests/test_a.py::TestX::test_y[case-1]`) or the `ContinuousEvalRunner` name; it is never hashed or normalized. `assertion_type` is the wire `type` string. `occurrence_index` is a 0-based integer: the count of earlier assertions in the same scope with the same `(assertion_type, canonical_spec)`, in evaluation order.
 3. **Hash**: SHA-256 over the UTF-8 bytes of the input.
 4. **Id**: `"a2_"` followed by the first 32 characters of the lowercase hex digest (`a2_` plus 32 hex characters, 35 characters in all).
 
 5. **Rejected input**: implementations MUST reject a lone (unpaired) surrogate, escaped (`"\ud800"`) or otherwise, in spec keys, spec string values, `scope_id` and `assertion_type`, and MUST reject invalid UTF-8 in any of them. RFC 8785 gives such input no canonical form, so the id cannot be computed: SDKs raise an error that names the assertion. The engine marks a row `hard_fail` with an `invalid input` explanation when the spec it receives holds such input; `scope_id` and `assertion_type` arrive through the JSON-RPC decoder, which substitutes U+FFFD for a lone escaped surrogate, so the engine does not detect it there and the SDK check is the guard. A valid pair (`"\ud83d\ude00"`) is accepted and canonicalizes to the raw character. Decoders that substitute U+FFFD (Go `encoding/json`) or preserve the lone escape (JavaScript `JSON.stringify`) must scan for it before canonicalizing.
+   These identity checks apply to the projected identity spec. Computing an id in an SDK does not certify excluded evidence: the engine separately validates the complete wire spec and world. Its raw JSON, Unicode and duplicate-key checks still reject malformed evidence, including an unpaired surrogate inside `world`, even though a valid world's contents are not hashed.
 
 The golden vectors in `protocol-tests/ids/assertion-ids.json` (the `invalid` list holds inputs that must error: lone high and low surrogates, a reversed pair, invalid UTF-8; spec text, canonical bytes and expected id for nested keys, key order, Unicode including non-BMP, `<>&`, integer/float equivalence, `1e21`, `-0`, occurrence indices, empty specs and scope strings with `::` and brackets) are the executable form of this recipe; the engine (`engine/internal/report/assertionid`) and every SDK test against the same file.
+
+Effect assertion ids produced through 1.1.0-rc.3 included the snapshot and change once on upgrade. `id_scheme` remains `2`. New engine, pytest and Vitest report-v2 writers emit the report-level boolean **`effect_world_excluded: true`** beside `id_scheme`; it certifies this effect-identity projection, not the validity or completeness of the evidence. Missing or `false` means legacy effect identity. Baseline pin persists the marker (existing stored rows default to false). When comparing a baseline, `policy evaluate --baseline` exits **3** with a re-pin hint if the baseline contains any `effect` row lacking the marker, and exits **3** with a re-run hint if the head report contains any `effect` row without it. Reports and baselines containing only non-effect rows remain compatible without the marker. Re-run a trusted baseline using attest 1.1.0-rc.4 or later and re-pin it; merely re-pinning the old report does not migrate its ids. Old effect history/drift rows remain under orphaned ids and restart from cold start; non-effect history is unchanged.
 
 **`usage`** counts the batch's attest-initiated model calls: `model_calls` sent (failed requests included) and `judge_calls`, the judge-provider part of them that `max_judge_calls` limits, `input_tokens` / `output_tokens` / `cached_tokens` (provider prompt-cache reads, included in `input_tokens`), `cost_usd` reconciled from the reported tokens at the configured price, `retry_cost_usd` (the part of `cost_usd` spent on retried requests), `unpriced_calls` (calls whose model has no price, so `cost_usd` excludes them) and `budget_refused` (calls not sent because no budget remained). Judge-cache hits make no call. `generate_user_message` calls count against the session budget (a refusal is a non-retryable engine error) but are not part of any batch's `usage`.
 
@@ -1140,9 +1144,19 @@ Effect assertions check what an agent did to the external system it acts on, not
 | `count` | `resource`, optional `where` (exact field matches), one of `equals` or `at_most` / `at_least` | the number of matching records is out of bounds |
 | `unique` | `resource`, `fields`, optional `where` | two matching records share the same values for `fields` |
 | `idempotent` | `resource`, `field` (the record field that stores the idempotency key), optional `where` | a matching record has no key, or two share one |
+| `sum` | `resource`, `field` (numeric), `at_most` (a number, or `{"related": {"resource", "field", "on"}}`), optional `where` | the sum of `field` over the matching records exceeds a numeric `at_most`; with a `related` bound, any group of records sharing an `on` value sums above the related record's `field` |
+| `matches` | `resource`, `field`, `related` (`{"resource", "field", "on"}`), optional `where` | a matching record's `field` differs from the `related.field` of the record in `related.resource` that holds the same `on` value |
 
 A violation is a `hard_fail` whose explanation starts `effect violated:`. A `count` of two refunds where one is expected reads exactly `effect violated: 2 refunds for O-1042 (expected 1)`; a filter on several fields renders as `for amount_cents=4999, order_id=O-1042`, and a count of one drops the plural (`1 refund`). `target` is `world.<resource>`; `expected` and `actual` carry the counts.
 
+- **Relational checks (`sum`, `matches`).** A `related` reference names the join: the record in `related.resource` whose `on` field equals the `on` field of the record being checked (both resources use the same field name, for example `order_id`). `sum` with a related bound groups the matching records by their `on` value and compares each group's sum to the related record's `field`; with a numeric `at_most` it compares the total (of the `where`-filtered records) to the number. `matches` compares every matching record. Sums are exact decimals. The explanations read:
+  - `effect violated: refunds amount_cents sum 13800 for O-2077 exceeds orders.amount_cents 12600`
+  - `effect violated: refunds amount_cents sum 1500.5 exceeds 1500` (numeric bound; a `where` filter is appended as ` for <value>`)
+  - `effect violated: notifications customer_id C-0520 for O-2077 does not match orders.customer_id C-0311`
+  - `effect violated: refunds has order_id O-9999 but orders has no record with that order_id` (no related record for a key)
+  - `effect violated: refunds record 3 has no order_id to relate to orders` (a record without the `on` field)
+
+  Violations are ordered by key (then record position) so the first one reported is stable, and further ones add `; N more violations`. A `sum` field value or related bound that is not a JSON number (a string, `null`, or an absent field) is a `hard_fail` starting `effect evidence:`, since treating it as zero would hide an overspend. A related resource with two records holding the same `on` value is the same kind of `hard_fail`. A related resource missing from the world, an incomplete `related`, `sum` without `field` or `at_most`, and `matches` without `field` or `related` are `hard_fail`s naming the problem. `count` keeps integer-only `at_most`; a related or fractional `at_most` on `count` is a `hard_fail`.
 - `idempotent` and `unique` look at every matching record, seed records included; add `where` to scope them to what the agent created. `unique` compares values as JSON (`"1"` and `1` differ; a missing field differs from `null`).
 - Text taken from records is printed with control and format characters removed and long values cut.
 - A request line is limited to 10 MiB. A longer line gets a `-32600` error (`REQUEST_TOO_LARGE`) with the request's `id` when it is in the first bytes, otherwise `null`; the engine keeps serving.

@@ -19,6 +19,7 @@ And three built-in personas for simulating different user behaviors.
 
 The `@scenario` decorator wraps an agent test function with simulation context. It accepts a `ScenarioConfig` worth of parameters and returns a `ScenarioResult`.
 
+<!-- snippet: mode=script harness=simulation_scenario -->
 ```python
 from attest.simulation import scenario, FRIENDLY_USER
 
@@ -50,6 +51,7 @@ def test_multi_turn_support(persona):
 
 The decorated function returns a `ScenarioResult`:
 
+<!-- snippet: fragment reason="excerpt: relies on `test_multi_turn_support`, defined outside the snippet" -->
 ```python
 result = test_multi_turn_support()
 
@@ -63,6 +65,7 @@ result.outcome()  # "fail" | "skip" | "pass" over all turns
 
 When `max_turns > 1`, the scenario executes the wrapped function once per turn. Each turn produces an `AgentResult`. The persona is injected as a keyword argument if provided:
 
+<!-- snippet: fragment reason="excerpt: relies on `scenario`, defined outside the snippet" -->
 ```python
 @scenario(persona=ADVERSARIAL_USER, max_turns=3, seed=42)
 def test_adversarial_multi_turn(persona):
@@ -78,6 +81,7 @@ assert len(scenario_result.results) == 3
 
 Mock tools registered via `mock_tools` are activated as a context variable during scenario execution. When `TraceBuilder.add_tool_call()` is called with a tool name that matches a registered mock, the mock function is invoked instead:
 
+<!-- snippet: fragment reason="excerpt: relies on `scenario`, defined outside the snippet" -->
 ```python
 @scenario(mock_tools={
     "lookup_order": lambda order_id: {"status": "delivered", "total": 89.99},
@@ -95,6 +99,7 @@ def test_refund_with_mocks():
 
 Run a test function multiple times and collect statistical results. Useful for measuring pass rates under non-deterministic conditions.
 
+<!-- snippet: fragment reason="excerpt: relies on `my_agent`, defined outside the snippet" -->
 ```python
 from attest import expect
 from attest.simulation import repeat
@@ -133,6 +138,7 @@ Build each trial's result with `attest.inspect(chain)`, which never fails or ski
 
 Tag a function as a mock tool implementation. The decorated function retains a `_mock_tool_name` attribute for registration:
 
+<!-- snippet: harness=simulation_mock_tool -->
 ```python
 from attest.simulation import mock_tool
 
@@ -145,6 +151,7 @@ def mock_search(q: str) -> dict:
 
 For programmatic mock registration, use `MockToolRegistry` as a context manager:
 
+<!-- snippet: fragment reason="excerpt: relies on `my_agent`, defined outside the snippet" -->
 ```python
 from attest.simulation import MockToolRegistry
 
@@ -162,6 +169,7 @@ with registry:
 
 Add random failures and latency to any function. Useful for testing agent resilience to tool failures:
 
+<!-- snippet: harness=simulation_fault_inject -->
 ```python
 from attest.simulation import fault_inject
 
@@ -249,6 +257,7 @@ IMPATIENT_USER = Persona(
 
 Decorators compose naturally. `@scenario` provides the simulation context; `@repeat` wraps it for statistical runs:
 
+<!-- snippet: fragment reason="excerpt: relies on `my_agent`, defined outside the snippet" -->
 ```python
 from attest import expect
 from attest.simulation import scenario, repeat, ADVERSARIAL_USER
@@ -273,6 +282,7 @@ def test_adversarial_resilience(attest):
 
 Apply `@fault_inject` to individual tool implementations to simulate unreliable external services:
 
+<!-- snippet: fragment reason="excerpt: relies on `fault_inject`, defined outside the snippet" -->
 ```python
 @fault_inject(error_rate=0.5, latency_jitter_ms=1000, seed=42)
 def unreliable_search(q: str) -> dict:
@@ -288,6 +298,7 @@ def test_agent_handles_search_failures():
 
 Use `fault_error_rate` and `fault_latency_jitter_ms` on `@scenario` to inject faults at the turn level rather than the tool level:
 
+<!-- snippet: fragment reason="excerpt: relies on `scenario`, defined outside the snippet" -->
 ```python
 @scenario(fault_error_rate=0.1, fault_latency_jitter_ms=300, max_turns=10, seed=42)
 def test_multi_turn_resilience():
@@ -307,6 +318,7 @@ def test_multi_turn_resilience():
 
 5. **Combine with assertions.** Simulation decorators aggregate verdicts. Return `attest.inspect(chain)` from the decorated function so each trial carries its assertion results; a chain that is never evaluated checks nothing:
 
+<!-- snippet: fragment reason="excerpt: relies on `my_agent`, defined outside the snippet" -->
 ```python
 from attest import expect
 from attest.simulation import scenario, repeat, ADVERSARIAL_USER
@@ -326,6 +338,7 @@ def test_adversarial_with_assertions(attest):
 
 `@attest-ai/core` has the same helpers as functions instead of decorators. Seeded faults are deterministic within TypeScript for a fixed seed (the random sequence differs from Python's). `scenario` and `repeat` return async functions.
 
+<!-- snippet: fragment reason="excerpt: relies on `runAgent`, defined outside the snippet" -->
 ```ts
 import {
   FRIENDLY_USER,

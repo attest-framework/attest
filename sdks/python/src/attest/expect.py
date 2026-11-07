@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import math
+from dataclasses import dataclass
 from typing import Any, Literal
 
 from attest._proto.types import (
@@ -38,6 +40,40 @@ def _merge_where(where: dict[str, Any] | None, filters: dict[str, Any]) -> dict[
         raise TypeError(f"filter given both in where and as a keyword: {', '.join(clash)}")
     merged.update(filters)
     return merged
+
+
+@dataclass(frozen=True)
+class Related:
+    """A record of another world resource, joined on a key: the only non-literal value the
+    effect checks accept. Build it with :func:`related`."""
+
+    resource: str
+    field: str
+    on: str
+
+    def to_spec(self) -> dict[str, str]:
+        """Return the engine's ``related`` object."""
+        return {"resource": self.resource, "field": self.field, "on": self.on}
+
+
+def related(resource: str, field: str, *, on: str) -> Related:
+    """Name ``resource.field`` of the record whose ``on`` field equals this record's ``on``.
+
+    Use it as the ``at_most`` bound of :meth:`WorldChecks.sum` or as the third argument of
+    :meth:`WorldChecks.matches`. ``on`` is the key both resources carry (``order_id``).
+
+    Raises:
+        TypeError: An argument is not a non-empty string.
+    """
+    for name, value in (("resource", resource), ("field", field), ("on", on)):
+        if not isinstance(value, str) or not value:
+            raise TypeError(f"related: {name} must be a non-empty string, got {value!r}")
+    return Related(resource, field, on)
+
+
+def _require_name(check: str, name: str, value: object) -> None:
+    if not isinstance(value, str) or not value:
+        raise TypeError(f"{check}: {name} must be a non-empty string, got {value!r}")
 
 
 class WorldChecks:
@@ -130,6 +166,73 @@ class WorldChecks:
         record field that stores the idempotency key."""
         return self._add(
             {"check": "idempotent", "resource": resource, "field": key},
+            _merge_where(where, filters),
+        )
+
+    def sum(
+        self,
+        resource: str,
+        field: str,
+        /,
+        *,
+        at_most: int | float | Related,
+        where: dict[str, Any] | None = None,
+        **filters: Any,
+    ) -> ExpectChain:
+        """Assert the sum of ``field`` over the matching records of ``resource`` stays within
+        ``at_most``.
+
+        With a number the filtered total must not exceed it. With :func:`related` the records
+        are grouped by the ``on`` key and each group's sum must not exceed the related
+        record's field. A violation reads ``effect violated: refunds amount_cents sum 13800
+        for O-2077 exceeds orders.amount_cents 12600``.
+
+        Raises:
+            TypeError: ``resource`` or ``field`` is not a non-empty string, or ``at_most`` is
+                neither a finite number nor a :func:`related`.
+        """
+        _require_name("sum", "resource", resource)
+        _require_name("sum", "field", field)
+        bound: float | dict[str, dict[str, str]]
+        if isinstance(at_most, Related):
+            bound = {"related": at_most.to_spec()}
+        elif isinstance(at_most, bool) or not isinstance(at_most, (int, float)):
+            raise TypeError(f"sum: at_most must be a number or related(...), got {at_most!r}")
+        elif isinstance(at_most, float) and not math.isfinite(at_most):
+            raise TypeError(f"sum: at_most must be finite, got {at_most!r}")
+        else:
+            bound = at_most
+        return self._add(
+            {"check": "sum", "resource": resource, "field": field, "at_most": bound},
+            _merge_where(where, filters),
+        )
+
+    def matches(
+        self,
+        resource: str,
+        field: str,
+        target: Related,
+        /,
+        *,
+        where: dict[str, Any] | None = None,
+        **filters: Any,
+    ) -> ExpectChain:
+        """Assert ``field`` of every matching record of ``resource`` equals the related
+        record's field, as named by ``target`` (:func:`related`).
+
+        A violation reads ``effect violated: notifications customer_id C-0520 for O-2077 does
+        not match orders.customer_id C-0311``.
+
+        Raises:
+            TypeError: ``resource`` or ``field`` is not a non-empty string, or ``target`` is
+                not a :func:`related`.
+        """
+        _require_name("matches", "resource", resource)
+        _require_name("matches", "field", field)
+        if not isinstance(target, Related):
+            raise TypeError(f"matches: the third argument must be related(...), got {target!r}")
+        return self._add(
+            {"check": "matches", "resource": resource, "field": field, "related": target.to_spec()},
             _merge_where(where, filters),
         )
 
@@ -646,7 +749,7 @@ class ExpectChain:
             },
         )
 
-    # ── Layer 7: Trace Tree (Multi-Agent) ──
+    # ── Trace Tree (Multi-Agent, layer 3) ──
 
     def agent_called(self, agent_id: str, *, soft: bool = False) -> ExpectChain:
         """Assert a specific agent was called in the trace tree."""
@@ -756,7 +859,7 @@ class ExpectChain:
             {"check": "ordered_agents", "groups": groups, "soft": soft},
         )
 
-    # ── Layer 7+: TraceTree Analytics ──
+    # ── TraceTree Analytics (layer 3) ──
 
     def aggregate_latency_under(self, max_ms: int, *, soft: bool = False) -> ExpectChain:
         """Assert aggregate latency across the trace tree is at or below max_ms."""
@@ -772,7 +875,7 @@ class ExpectChain:
             {"check": "all_tools_called", "tools": tool_names, "soft": soft},
         )
 
-    # ── Layer 8: Plugin ──
+    # ── Plugin ──
 
     def plugin(
         self,
@@ -781,7 +884,7 @@ class ExpectChain:
         *,
         soft: bool = False,
     ) -> ExpectChain:
-        """Assert via a registered plugin (Layer 8).
+        """Assert via a registered plugin (plugin assertion).
 
         Args:
             plugin_id: Identifier of the plugin registered with the engine.

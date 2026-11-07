@@ -13,9 +13,9 @@
 [![npm](https://img.shields.io/npm/v/%40attest-ai%2Fcore)](https://www.npmjs.com/package/@attest-ai/core)
 [![License](https://img.shields.io/github/license/attest-framework/attest)](LICENSE)
 
-Attest is an open-source testing framework purpose-built for AI agents and LLM-powered systems. It treats deterministic assertions as first-class citizens alongside probabilistic evaluation — because 70% of your agent's testable surface is deterministic.
+Attest is an open-source testing framework purpose-built for AI agents and LLM-powered systems. It treats deterministic assertions as first-class citizens alongside probabilistic evaluation. Deterministic checks run first; model-scored checks run last.
 
-> **Status:** v1.0.1 — capture → replay → merge gate on real agent runs, 8 assertion layers, 11 adapters (Python) + 7 adapters (TypeScript incl. LangChain.js), behavior contracts, mutation testing, HTML failure viewer, MCP server + agent skills, judges on four provider families, continuous eval with drift detection, pytest + vitest integrations.
+> **Status:** v1.0.1 — capture → replay → merge gate on real agent runs, six evaluated assertion layers plus plugins, Python and TypeScript adapters with a maturity tier each (see Key Features), behavior contracts, mutation testing, HTML failure viewer, MCP server + agent skills, judges on four provider families, continuous eval with drift detection, pytest + vitest integrations.
 
 ---
 
@@ -23,18 +23,19 @@ Attest is an open-source testing framework purpose-built for AI agents and LLM-p
 
 ## Why Attest
 
-The current ecosystem defaults to LLM-as-judge for everything. This creates cost explosion, flaky tests, and slow suites. Attest provides a graduated 8-layer assertion model that reaches for the cheapest valid assertion first:
+The current ecosystem defaults to LLM-as-judge for everything. This creates cost explosion, flaky tests, and slow suites. Attest provides six evaluated layers plus plugins, ordered from free and deterministic (layers 1–4) to model-scored (layers 5–6, whose cost depends on the configured provider), and reaches for the cheapest valid assertion first. The table below is generated from `attest-engine capabilities --json`.
 
-```text
-Layer 1: Schema Validation        — free, instant, deterministic
-Layer 2: Constraint Checks        — free, instant, deterministic
-Layer 3: Trace/Behavioral Checks  — free, instant, deterministic
-Layer 4: Content Pattern Matching  — free, instant, near-deterministic
-Layer 5: Embedding Similarity      — ≪$0.001, ~100ms, near-deterministic
-Layer 6: LLM-as-Judge             — ~$0.001, ~1-3s, non-deterministic
-Layer 7: Simulation               — free (mocked), variable
-Layer 8: Multi-Agent              — free, instant, deterministic
-```
+<!-- claims:layers:start -->
+| Layer | Name | Checks | Assertion types | Cost | Deterministic |
+| --- | --- | --- | --- | --- | --- |
+| 1 | Schema validation | Checks the output against a JSON Schema. | `schema` | free | yes |
+| 2 | Constraint checks | Checks cost, token, latency and step-count limits. | `constraint` | free | yes |
+| 3 | Trace and behavioral checks | Checks which tools ran, in which order, with which arguments, how often per business key, across the agent tree and against the world's final state. | `trace`, `trace_tree`, `effect` | free | yes |
+| 4 | Content pattern matching | Checks the output text against substrings, patterns and keywords. | `content` | free | yes |
+| 5 | Embedding similarity | Scores semantic similarity against a reference with an embedding model: OpenAI embeddings are paid, the local ONNX model is free. | `embedding` | depends on provider | no |
+| 6 | LLM-as-judge | Scores the output against a rubric with a judge model: OpenAI, Anthropic and Gemini judges are paid, a local ACP agent or an OpenAI-compatible local endpoint is not. | `llm_judge` | depends on provider | no |
+| plugins | Plugins | Custom assertions that run in the SDK process; cost and determinism are the plugin's. | `plugin` | plugin-defined | no |
+<!-- claims:layers:end -->
 
 ## What It Looks Like
 
@@ -86,13 +87,13 @@ def test_refund(attest: AttestEngineFixture) -> None:
 Attest follows a **protocol-first, engine-centric architecture** inspired by LSP and Playwright:
 
 - **Core engine** (Go) — single binary, handles all evaluation, assertion, and simulation logic
-- **Language SDKs** (Python, TypeScript, Go) — thin, idiomatic wrappers that communicate with the engine via JSON-RPC 2.0 over stdio
-- **Protocol** — SDK spawns engine as subprocess; capability negotiation decouples SDK and engine release cycles
+- **Language SDKs** (Python, TypeScript) — thin, idiomatic wrappers that communicate with the engine via JSON-RPC 2.0 over stdio
+- **Protocol** — SDK spawns engine as subprocess; each SDK release requires the engine version equal to its own (see [configuration](docs/guides/configuration.md))
 
 ```text
-SDK (Python/TS/Go) ──stdin/stdout──▶ Engine Process (Go)
+SDK (Python/TS) ──stdin/stdout──▶ Engine Process (Go)
                                         ├── Trace Processor
-                                        ├── 8-Layer Assertion Pipeline
+                                        ├── Assertion Pipeline (6 layers + plugins)
                                         ├── Result History (SQLite)
                                         ├── Drift Detection (σ-based)
                                         ├── Simulation Runtime
@@ -101,9 +102,34 @@ SDK (Python/TS/Go) ──stdin/stdout──▶ Engine Process (Go)
 
 ## Key Features
 
-- **8-layer assertion pipeline** — graduated from free/deterministic to paid/probabilistic
-- **11 Python adapters** — OpenAI, Anthropic, Gemini, Ollama, LangChain, Google ADK, LlamaIndex, CrewAI, OTel, Manual, Simulation
-- **7 TypeScript adapters** — OpenAI, Anthropic, Gemini, Ollama, LangChain.js, OTel, Manual
+Each feature carries a maturity tier; the table is generated from `attest-engine capabilities --json`.
+
+<!-- claims:features:start -->
+| Feature | Maturity |
+| --- | --- |
+| Capture, replay and merge gate | stable |
+| Behavior and world-effect contracts | stable |
+| CI policy, baselines and reports | stable |
+| Failure viewer | beta |
+| Mutation testing | beta |
+| MCP server and agent skills | beta |
+| LLM judges on four provider families | beta |
+| Multi-agent trace trees | beta |
+| Simulation runtime | beta |
+| Plugin assertions | beta |
+| Local ONNX embeddings | experimental |
+| Continuous eval and drift detection | experimental |
+
+- **stable**: Covered by the parity and conformance suites; a change in behavior is a breaking change.
+- **beta**: Shipped and tested, but the interface or behavior can still change in a minor release.
+- **experimental**: Shipped without a stability commitment and without demonstrated demand; it can change or be removed in any release.
+<!-- claims:features:end -->
+
+- **Six evaluated layers plus plugins** — layers 1–4 are free and deterministic; layers 5–6 are model-scored and cost what their provider costs
+<!-- claims:adapters:start -->
+- **10 Python adapters** — OpenAI (stable), Anthropic (stable), Manual (stable), Gemini (beta), Ollama (beta), LangChain (beta), CrewAI (beta), OpenTelemetry (beta), Google ADK (experimental), LlamaIndex (experimental)
+- **7 TypeScript adapters** — OpenAI (stable), Anthropic (stable), Manual (stable), Gemini (beta), Ollama (beta), LangChain.js (beta), OpenTelemetry (beta)
+<!-- claims:adapters:end -->
 - **Soft failure budgets** — scores between 0.5–0.8 warn without blocking CI
 - **Cost as a test metric** — assert on token usage, API cost, and latency
 - **Soft-failure limit** — cap soft failures per engine session via `ATTEST_MAX_SOFT_FAILURES`
@@ -144,8 +170,7 @@ attest/
 │   └── pkg/            # Public Go packages
 ├── sdks/
 │   ├── python/         # Python SDK (PyPI: attest-ai)
-│   ├── typescript/     # TypeScript SDK (npm: @attest-ai/core)
-│   └── go/             # Go SDK
+│   └── typescript/     # TypeScript SDK (npm: @attest-ai/core)
 ├── .github/
 │   └── actions/        # Reusable composite actions (setup-attest)
 ├── docs/               # Documentation
@@ -159,6 +184,7 @@ No API key, model or network access is needed: the sample test checks a recorded
 
 ### Python
 
+<!-- snippet: skip reason="installs packages or runs npm tooling (network)" -->
 ```bash
 uv init --bare my-agent-tests && cd my-agent-tests
 uv add "attest-ai>=1.0.1" pytest
@@ -234,6 +260,7 @@ Attest diagnostic — 1 of 4 assertions failed:
 
 `--attest-report` writes every test with its outcome, file and line, and every assertion result, as a report-v2 JSON file (`proto/attest/v1/report-v2.schema.json`). `attest policy evaluate` checks it against `attest.policy.yaml`: exit 0 passes, 1 blocks (a hard failure), 2 warns (assertions not evaluated), 3 means the policy or report could not be loaded or the arguments were invalid.
 
+<!-- snippet: setup=project -->
 ```bash
 uv run pytest --attest-report=attest-report.json
 uv run attest policy evaluate --report attest-report.json --policy attest.policy.yaml
@@ -244,6 +271,7 @@ uv run attest init --ci github
 
 ### TypeScript
 
+<!-- snippet: skip reason="installs packages or runs npm tooling (network)" -->
 ```bash
 npm init -y && npm pkg set type=module
 npm install -D "@attest-ai/core@>=1.0.1" "@attest-ai/vitest@>=1.0.1" "vitest@^4"
@@ -268,7 +296,6 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) to build the engine and run the SDK test 
 | 4     | v0.4    | **Complete** | Continuous eval, drift detection, plugin system, CrewAI adapter, result history, CLI                                             |
 | 5     | v0.5.0  | **Complete** | The Alignment Release — engine/SDK version unification, schema cache, segmentio/encoding, full TypeScript parity, test coverage  |
 | 6     | v0.6.0  | **Complete** | SDK parity with engine — `queryDrift`, `generateUserMessage`, dynamic thresholds, vitest simulation mode, 4 personas, sampleRate |
-| 7     | v0.7    | Planned      | Go SDK, Attest Cloud MVP, benchmark registry                                                                                     |
 
 ## Contributing
 

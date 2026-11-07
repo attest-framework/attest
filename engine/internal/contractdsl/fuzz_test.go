@@ -15,6 +15,11 @@ var rejectedSeeds = []string{
 	`forbidden_tools(["a"]) # x`, `tool_cardinality("a", at_most=1, at_most=2)`, `forbidden_tools(["\x41"])`,
 	`forbidden_tools(*x)`, `forbidden_tools(**x)`, `forbidden_tools(x := 1)`, `cost_under(0x10)`,
 	`tool_arg_satisfies("t", "a", "eq", [[[[[[[[[[]]]]]]]]]])`, "forbidden_tools([\"a\nb\"])", ``,
+	`sum("r", "f", at_most=related(x, "f", on="k"))`, `sum("r", "f", at_most=related("o", "f"))`,
+	`sum("r", "f", at_most=related("o", "f", on="k", on="j"))`, `sum("r", "f", at_most=[related("o", "f", on="k")])`,
+	`sum("r", "f", at_most=related("o", "f", on=related("o", "f", on="k")))`, `sum("r", "f", at_most=related("o", "f", "k"))`,
+	`sum("r", "f", at_most=related("o", "f", on="k").x)`, `sum("r", "f", at_most=related("o", "f", on=""))`,
+	`matches("r", "f", sum("o", "f", at_most=1))`, `count("r", equals=related("o", "f", on="k"))`,
 }
 
 // FuzzParse checks that no input panics the parser or the renderers, and that
@@ -37,7 +42,7 @@ func FuzzParse(f *testing.F) {
 			f.Add(caseStatement(c))
 		}
 	}
-	for _, s := range renderedExamples {
+	for _, s := range append(append([]string{}, renderedExamples...), relationalExamples...) {
 		f.Add(s)
 	}
 	for _, s := range rejectedSeeds {

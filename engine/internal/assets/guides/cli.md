@@ -4,6 +4,7 @@
 
 ## Discover
 
+<!-- snippet: fragment reason="`<topic>` is a placeholder for a guide name" -->
 ```bash
 attest help --json      # every command, its schema, its exit codes
 attest guide            # list the shipped guides
@@ -29,6 +30,7 @@ Commands that run a child process (`capture`, `replay`, `world` with `-- <comman
 | `cache stats` | `cli/cache-stats.schema.json` |
 | `cache clear` | `cli/cache-clear.schema.json` |
 | `calibrate` | `cli/calibrate.schema.json` |
+| `capabilities` | `cli/capabilities.schema.json` |
 | `capture` | `cli/capture.schema.json` |
 | `doctor` | `doctor.schema.json` |
 | `guide` | `cli/guide.schema.json` |
@@ -69,6 +71,9 @@ The table is checked against the engine's command registry by a test; a change t
 | `calibrate` | 0 | success |
 | `calibrate` | 1 | the labels file could not be read, has no judge_score rows or no usable agreement, or persisting failed |
 | `calibrate` | 2 | usage error |
+| `capabilities` | 0 | success |
+| `capabilities` | 1 | writing the output failed |
+| `capabilities` | 2 | usage error |
 | `capture` | 0 | the fixture is verified or captured with nothing to verify, or --check-redaction found no secrets; the command's own exit code is recorded, not propagated |
 | `capture` | 1 | the fixture is not verified (a drafted contract failed, the trace check failed, no step was mapped, --expect-fail drafted nothing, or nothing was drafted while the command exited non-zero or recorded no model call) or was not written, the capture failed, or --check-redaction found secrets |
 | `capture` | 2 | usage error, an invalid --world file, or a --refresh that was not confirmed |

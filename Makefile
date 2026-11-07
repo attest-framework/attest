@@ -1,4 +1,4 @@
-.PHONY: record-judge-fixtures all generate engine engine-test engine-lint sdk-python sdk-python-test sdk-python-lint security test clean dev-setup verify-versions
+.PHONY: record-judge-fixtures all generate generate-claims check-claims engine engine-test engine-lint sdk-python sdk-python-test sdk-python-lint security test clean dev-setup verify-versions
 
 # ── Version source-of-truth ──
 verify-versions:
@@ -12,6 +12,13 @@ generate:
 
 engine: verify-versions
 	cd engine && go build -o ../bin/attest-engine ./cmd/attest-engine/
+
+# Render the README and guide regions from `attest-engine capabilities --json`.
+generate-claims: engine
+	python3 scripts/generate_claims.py --engine bin/attest-engine
+
+check-claims: engine
+	python3 scripts/generate_claims.py --check --engine bin/attest-engine
 
 engine-test:
 	cd engine && go test ./... -v -race

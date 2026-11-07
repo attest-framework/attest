@@ -14,6 +14,7 @@ Layer 6 (`llm_judge`) asks a model to score agent output against a rubric. The e
 
 Anthropic and Gemini have no built-in default model: a judge whose model silently changes is not the judge you calibrated, so `ATTEST_JUDGE_MODEL` is required and its absence is a startup error.
 
+<!-- snippet: fragment reason="<an Anthropic model id> is a placeholder, not valid shell" -->
 ```bash
 export ATTEST_JUDGE_PROVIDER=anthropic
 export ANTHROPIC_API_KEY=...
@@ -37,6 +38,7 @@ The agent starts with an explicit allowlist of environment variables, not a copy
 
 Three credential channels still reach the agent, and an agent tool steered by the output under test could read them: proxy URLs are passed unchanged, including any `user:pass@` in them; the agent's own session variables (`CLAUDE_CODE_OAUTH_TOKEN`, `CLAUDE_CONFIG_DIR`, `CODEX_HOME`) are passed by design; and `HOME` is passed, so credential files under it (`~/.aws`, `~/.npmrc`, `gh` configuration) stay readable. Use a proxy without embedded credentials and an agent configuration that denies tools (below) when the output under test is untrusted.
 
+<!-- snippet: skip reason="doctor refuses an ACP judge when CI is set, and the CI job sets it" -->
 ```bash
 export ATTEST_JUDGE_PROVIDER=acp
 export ATTEST_JUDGE_ACP_COMMAND="npx -y @zed-industries/claude-code-acp"   # or your agent's ACP command
@@ -106,6 +108,7 @@ Every judge result carries `judge_metadata` with `provider` (`openai`, `anthropi
 
 Agreement with human labels is a property of one judge model. `attest calibrate` stores labels keyed by judge provider and model as well as rubric, rubric version and prompt hash:
 
+<!-- snippet: fragment reason="`<model id>` is a placeholder; calibration needs a judge provider" -->
 ```bash
 attest calibrate --labels labels.jsonl --rubric default \
   --persist --judge-provider anthropic --judge-model <model id>

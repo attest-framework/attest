@@ -32,7 +32,8 @@ export {
 } from "./diagnostics.js";
 export type { RenderOptions } from "./diagnostics.js";
 export { TraceTree } from "./trace-tree.js";
-export { ExpectChain, WorldChecks, attestExpect, setChainObserver } from "./expect.js";
+export { ExpectChain, WorldChecks, attestExpect, related, setChainObserver } from "./expect.js";
+export type { Related } from "./expect.js";
 export {
   AssertionIdAssigner,
   ID_SCHEME,

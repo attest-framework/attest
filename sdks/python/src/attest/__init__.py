@@ -42,7 +42,7 @@ from attest.egress import (
     uninstall_egress_guard,
 )
 from attest.exceptions import EngineTimeoutError
-from attest.expect import ExpectChain, expect
+from attest.expect import ExpectChain, Related, expect, related
 from attest.replay import (
     ReplayError,
     ReplayMissError,
@@ -60,8 +60,8 @@ from attest.trace import TraceBuilder
 from attest.trace_tree import TraceTree
 from attest.world import WorldError, WorldSession, start_world
 
-__version__: str = "1.1.0-rc.2"
-ENGINE_VERSION: str = "1.1.0-rc.2"
+__version__: str = "1.1.0-rc.4"
+ENGINE_VERSION: str = "1.1.0-rc.4"
 
 __all__ = [
     # Core types
@@ -83,7 +83,9 @@ __all__ = [
     "AgentResult",
     # Expect DSL
     "ExpectChain",
+    "Related",
     "expect",
+    "related",
     # Capture
     "CaptureError",
     "ReplayError",

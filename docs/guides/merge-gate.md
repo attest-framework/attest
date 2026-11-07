@@ -6,6 +6,7 @@ This guide takes a project from no tests to a GitHub Actions job that blocks mer
 
 Python:
 
+<!-- snippet: skip reason="installs packages or runs npm tooling (network)" -->
 ```bash
 uv add "attest-ai>=1.0.1" pytest
 uv run attest init
@@ -14,6 +15,7 @@ uv run pytest            # 1 passed
 
 TypeScript:
 
+<!-- snippet: skip reason="installs packages or runs npm tooling (network)" -->
 ```bash
 npm install -D "@attest-ai/core@>=1.0.1" "@attest-ai/vitest@>=1.0.1" "vitest@^4"
 npx attest init
@@ -49,7 +51,7 @@ Attest diagnostic — 1 of 4 assertions failed:
 | pytest | `uv run pytest --attest-report=attest-report.json` |
 | Vitest | `npx vitest run --reporter=default --reporter=@attest-ai/vitest/reporter --outputFile.attest=attest-report.json`, or `reporters: ["default", new AttestReporter({ outputFile: "attest-report.json" })]` in the Vitest config (import `AttestReporter` from `@attest-ai/vitest/reporter`) |
 
-The Vitest config runs in the main process: import from the `@attest-ai/vitest/reporter` and `@attest-ai/vitest/setup` subpaths there, never from the package root. The root also exports the test helpers, which need the Vitest test runtime, and importing it from `vitest.config.ts` fails on Vitest 3. The two subpaths load on Vitest 3 and 4 (the peer range is `>=3.0.0 <5`). `globalSetup: ["@attest-ai/vitest/setup"]` resolves the engine, downloading it once, before the first test, so the download neither slows nor times out a test.
+The Vitest config runs in the main process: import from the `@attest-ai/vitest/reporter` and `@attest-ai/vitest/setup` subpaths there, never from the package root. The root also exports the test helpers, which need the Vitest test runtime, and importing it from `vitest.config.ts` fails on Vitest 3. The two subpaths load on Vitest 3, 4 and 5 (the peer range is `>=3.0.0 <6`). `globalSetup: ["@attest-ai/vitest/setup"]` resolves the engine, downloading it once, before the first test, so the download neither slows nor times out a test.
 
 ```ts
 import AttestReporter from "@attest-ai/vitest/reporter";
@@ -76,6 +78,7 @@ The report follows `proto/attest/v1/report-v2.schema.json`:
 
 ## 4. Evaluate the policy
 
+<!-- snippet: setup=project -->
 ```bash
 uv run attest policy evaluate --report attest-report.json --policy attest.policy.yaml
 ```
@@ -91,16 +94,42 @@ With `--baseline <tag>` the gate also blocks when a baselined assertion is missi
 
 ## 5. Gate merges in GitHub Actions
 
-`attest init --ci github` writes `.github/workflows/attest.yml`:
+`attest init --ci github` writes `.github/workflows/attest.yml` with two jobs. The first, `attest`, runs your tests with `contents: read` and no write access. The second, `annotate`, holds `pull-requests: write` and never runs your code.
+
+The `attest` job:
 
 1. **Run tests** has `continue-on-error: true` and `id: tests`, so a failing test does not stop the job before the report is handled.
 2. **Write the JUnit report** runs `attest report junit --report attest-report.json --out attest-junit.xml`. **Write the failure viewer** runs `attest view attest-report.json --no-open --out attest-report.html`. **Upload the Attest report** uploads the report, the JUnit file and the HTML page as the `attest-report` artifact. Without traces the page still shows failures, expected versus actual and the baseline metrics. To add the trace tree, uncomment `ATTEST_REPORT_TRACES: "1"` on the test step, on private repositories only: traces hold prompts, outputs and tool arguments, and they are not redacted. See [Failure viewer](viewer.md).
 3. **Evaluate the merge policy** treats exit 2 as a warning and fails on exit 1.
-4. **Annotate the pull request** uses the `pr-annotate` action at the SDK's release tag. It posts one summary comment and emits a workflow annotation for each failure and replay miss; see [Annotations and the summary comment](annotations.md). It runs only for pull requests from branches of the same repository; on a fork's pull request the token is read-only, so the action posts no comment and the summary is in the job summary (annotations still appear).
-5. **Fail the job when tests failed** checks `steps.tests.outcome == 'failure'` and exits 1, so a red test is never hidden by `continue-on-error`.
+4. **Fail the job when tests failed** checks `steps.tests.outcome == 'failure'` and exits 1, so a red test is never hidden by `continue-on-error`.
 
-Steps 2 to 4 run with `if: always()`.
+Steps 2 and 3 run with `if: always()`.
 
-Permissions are minimal. The workflow grants `contents: read`, and the job adds `pull-requests: write`, which the summary comment needs.
+The `annotate` job needs `attest`, runs with `if: always()` for pull requests from branches of the same repository, downloads the `attest-report` artifact and:
+
+1. Fetches the engine: `uvx --no-config --exclude-newer <date> --from "attest-ai==<version>" attest doctor`, run from the runner's temporary directory. `pr-annotate` finds an engine but never downloads one; this command downloads the pinned release's engine into `~/.attest/bin/<version>/`. `--no-config` and the directory keep anything the pull request controls (a `uv.toml`, a `pyproject.toml`) from steering the install, and `--exclude-newer` refuses a release newer than the scaffold date.
+2. **Annotates the pull request** with the `pr-annotate` action, passing `engine-version`. It posts one summary comment and emits a workflow annotation for each failure and replay miss; see [Annotations and the summary comment](annotations.md). On a fork's pull request the token is read-only, so the job is skipped; the report, JUnit file and HTML page are still in the `attest` job's artifact.
+
+Permissions are minimal and split by job. The workflow grants `contents: read`; only `annotate` adds `pull-requests: write`, which the summary comment needs. The `annotate` job does not restore the cache the test job filled (`enable-cache: false` on `setup-uv`).
+
+Every action in the generated workflow is pinned to a full commit SHA with the release in a trailing comment (`uses: actions/checkout@<40-hex sha> # v6.1.0`), not a tag. A tag can be moved to different code after you reviewed it; a SHA cannot. This matters most in the job that holds a write token.
+
+### Keeping the pins current
+
+Pinned actions do not update themselves. Let Dependabot propose the bumps in your repository, so each one is a reviewable diff of a SHA and its version comment (`.github/dependabot.yml`):
+
+```yaml
+version: 2
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    groups:
+      github-actions:
+        patterns: ["*"]
+```
+
+Two values in the `annotate` job are not actions, so Dependabot does not touch them: the `attest-ai==<version>` in the engine fetch step and `engine-version`. They must equal the release of the `pr-annotate` pin (the `v1.0.1` in its comment). When you move the `pr-annotate` pin, change the `attest-ai==` pin, `engine-version` and, if you want a fresh bound, the `--exclude-newer` date in the same pull request. To check for a tag-pinned action, run `grep -nE 'uses: *[^ ]+@' .github/workflows/*.yml | grep -vE '@[0-9a-f]{40}( |$)'`; it prints nothing when every action is pinned.
 
 `pr-annotate` also evaluates a policy itself when you pass `policy:`. Its `exit-code` output is the evaluator's exit code; the step fails on 1 (unless `fail-on-violation: false`) and on any code other than 0, 1 and 2. The workflow above evaluates the policy in its own step instead, so the action runs without `policy:`.

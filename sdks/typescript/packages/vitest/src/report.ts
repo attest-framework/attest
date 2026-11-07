@@ -206,6 +206,7 @@ export function buildReport(
   return {
     report_version: REPORT_VERSION,
     id_scheme: ID_SCHEME,
+    effect_world_excluded: true,
     budget_exceeded: budgetExceeded,
     timestamp: new Date().toISOString().replace(/\.\d{3}Z$/, "Z"),
     simulated,

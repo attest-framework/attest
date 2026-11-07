@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"math/big"
 	"strings"
 	"unicode/utf8"
 
+	"github.com/attest-framework/attest/engine/internal/world"
 	"github.com/attest-framework/attest/engine/pkg/types"
 )
 
@@ -116,6 +118,7 @@ func genWorld(s Subject, add func(Mutant) error) error {
 	if ws == nil {
 		return nil
 	}
+	relBudget := maxRelationalMutants
 	for _, res := range sortedKeys(ws.state) {
 		recs := ws.state[res]
 		for i, rec := range recs {
@@ -152,6 +155,10 @@ func genWorld(s Subject, add func(Mutant) error) error {
 				Description: fmt.Sprintf("drop %s record %d%s", res, i, describeRecord(rec)),
 				Trace:       s.Trace, World: drop.marshal(), candidates: []Contract{countCandidate(res, where, n)},
 			}); err != nil {
+				return err
+			}
+
+			if err := genRelational(ws, s, res, i, &relBudget, add); err != nil {
 				return err
 			}
 
@@ -265,4 +272,166 @@ func lastRunes(s string, n int) string {
 		r = r[len(r)-n:]
 	}
 	return strings.TrimSpace(string(r))
+}
+
+// relatedRecords lists the records of other resources that rec points to
+// through a <name>_id field: resource <name>, <name>s, <name>es or the
+// y -> ies plural holding exactly one record with that key value.
+func relatedRecords(ws *worldState, res string, rec map[string]any) []relation {
+	var out []relation
+	for _, k := range sortedKeys(rec) {
+		if !strings.HasSuffix(k, "_id") || !scalar(rec[k]) {
+			continue
+		}
+		base := strings.TrimSuffix(k, "_id")
+		names := []string{base, base + "s", base + "es"}
+		if strings.HasSuffix(base, "y") {
+			names = append(names, strings.TrimSuffix(base, "y")+"ies")
+		}
+		for _, t := range names {
+			if t == res {
+				continue
+			}
+			var found map[string]any
+			n := 0
+			for _, r := range ws.state[t] {
+				if v, ok := r[k]; ok && scalar(v) && show(v) == show(rec[k]) {
+					found = r
+					n++
+				}
+			}
+			if n == 1 {
+				out = append(out, relation{key: k, target: t, record: found})
+				break
+			}
+		}
+	}
+	return out
+}
+
+type relation struct {
+	key    string
+	target string
+	record map[string]any
+}
+
+// maxRelationalMutants caps the relational mutants of one fixture; the first
+// ones in resource, record and relation order are kept.
+const maxRelationalMutants = 256
+
+// maxBoundBits bounds the numerator and denominator of a value plusOne
+// accepts, so a bound written as 1e1000000 never expands.
+const maxBoundBits = 256
+
+// plusOne returns n + 1 as a JSON number, or false when n is not a number
+// small enough to print.
+func plusOne(n json.Number) (json.Number, bool) {
+	if world.CheckExponent(n.String()) != nil {
+		return "", false
+	}
+	r, ok := new(big.Rat).SetString(n.String())
+	if !ok || r.Num().BitLen() > maxBoundBits || r.Denom().BitLen() > maxBoundBits {
+		return "", false
+	}
+	r.Add(r, big.NewRat(1, 1))
+	if r.IsInt() {
+		return json.Number(r.Num().String()), true
+	}
+	return json.Number(strings.TrimRight(strings.TrimRight(r.FloatString(12), "0"), ".")), true
+}
+
+// genRelational mutates a record against each record it relates to. Per
+// relation it raises the first shared numeric field one above the related
+// value (a sum bound is exceeded) and redirects the first shared *_id string
+// field the record has not already had redirected through an earlier relation
+// (the match breaks; a second redirect of one field would repeat the mutant). Each is suggested as the sum or matches check that
+// kills it. budget counts the relational mutants the fixture may still add.
+func genRelational(ws *worldState, s Subject, res string, i int, budget *int, add func(Mutant) error) error {
+	if *budget <= 0 {
+		return nil
+	}
+	rec := ws.state[res][i]
+	redirectedFields := map[string]bool{}
+	for _, rel := range relatedRecords(ws, res, rec) {
+		if *budget <= 0 {
+			return nil
+		}
+		exceeded, redirected := false, false
+		for _, f := range sortedKeys(rec) {
+			if f == rel.key || (exceeded && redirected) {
+				continue
+			}
+			rv, ok := rel.record[f]
+			if !ok {
+				continue
+			}
+			siteFor := func(kind string) string {
+				return fmt.Sprintf("%s.%d.%s.%s.%s.%s", res, i, kind, rel.target, rel.key, f)
+			}
+			switch cur := rec[f].(type) {
+			case json.Number:
+				bound, isNum := rv.(json.Number)
+				if !isNum || exceeded {
+					continue
+				}
+				nv, ok := plusOne(bound)
+				if !ok {
+					continue
+				}
+				if *budget <= 0 {
+					return nil
+				}
+				exceeded = true
+				*budget--
+				m := ws.clone()
+				m.state[res][i][f] = nv
+				ref := map[string]any{"resource": rel.target, "field": f, "on": rel.key}
+				spec := map[string]any{"check": "sum", "resource": res, "field": f, "at_most": map[string]any{"related": ref}}
+				if err := add(Mutant{
+					site: siteFor("exceed"), Operator: AlterWorldEffect,
+					Description: fmt.Sprintf("raise %s record %d%s: %s %s -> %s, above %s.%s %s", res, i, describeRecord(rec), f, show(cur), show(nv), rel.target, f, show(bound)),
+					Trace:       s.Trace, World: m.marshal(),
+					candidates: []Contract{{
+						Type: types.TypeEffect, Spec: rawJSON(spec),
+						Description: fmt.Sprintf("%s %s sums stay within %s.%s per %s", res, f, rel.target, f, rel.key),
+					}},
+				}); err != nil {
+					return err
+				}
+			case string:
+				if !strings.HasSuffix(f, "_id") || redirected || redirectedFields[f] {
+					continue
+				}
+				if _, isStr := rv.(string); !isStr {
+					continue
+				}
+				if *budget <= 0 {
+					return nil
+				}
+				redirected = true
+				redirectedFields[f] = true
+				*budget--
+				nv := cur + "_x"
+				m := ws.clone()
+				m.state[res][i][f] = nv
+				ref := map[string]any{"resource": rel.target, "field": f, "on": rel.key}
+				spec := map[string]any{"check": "matches", "resource": res, "field": f, "related": ref}
+				if err := add(Mutant{
+					site: siteFor("redirect"), Operator: AlterWorldEffect,
+					Description: fmt.Sprintf("redirect %s record %d%s: %s %s -> %s, away from %s.%s", res, i, describeRecord(rec), f, show(cur), show(nv), rel.target, f),
+					Trace:       s.Trace, World: m.marshal(),
+					candidates: []Contract{{
+						Type: types.TypeEffect, Spec: rawJSON(spec),
+						Description: fmt.Sprintf("%s %s matches %s.%s per %s", res, f, rel.target, f, rel.key),
+					}},
+				}); err != nil {
+					return err
+				}
+			}
+			if *budget <= 0 {
+				return nil
+			}
+		}
+	}
+	return nil
 }

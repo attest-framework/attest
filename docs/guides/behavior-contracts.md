@@ -2,6 +2,7 @@
 
 A behavior contract states what the agent did, not what it said: how often a tool ran per business key, which tools it must never call, the shape and order of its tool calls, whether it looped, how many tool failures it hit in a row, and what arguments it passed. Contracts are Layer 3 trace checks. They run in the engine, deterministically, with no model calls, so they cost nothing and give the same answer on every run.
 
+<!-- snippet: skip reason="installs packages or runs npm tooling (network)" -->
 ```bash
 uv add "attest-ai>=1.0.1"
 npm install -D "@attest-ai/core@>=1.0.1" "@attest-ai/vitest@>=1.0.1" "vitest@^4"
@@ -13,6 +14,7 @@ The refund-desk incident INC-1042 refunded order `O-1042` twice: `issue_refund` 
 
 Python (pytest, with the `attest` fixture):
 
+<!-- snippet: skip reason="needs the INC-1042 trace export from a real incident capture (the refund-desk demo repository)" -->
 ```python
 from pathlib import Path
 
@@ -33,6 +35,7 @@ def test_inc_1042_refunds_twice(attest):
 
 TypeScript (Vitest, with the Attest plugin):
 
+<!-- snippet: skip reason="needs the INC-1042 trace export from a real incident capture (the refund-desk demo repository)" -->
 ```typescript
 import { readFileSync } from "node:fs";
 import { it, expect } from "vitest";
@@ -82,6 +85,23 @@ Trajectory modes compare the list of tool calls with `tools`, counting repeats:
 | `superset` | Every entry of `tools` was called (at least as often). |
 
 `tool_arg_satisfies` operators: `eq`, `ne`, `lt`, `lte`, `gt`, `gte` (numbers), `in`, `not_in` (a list of values). `arg` and `per` are dot paths into the call's arguments, such as `order_id` or `customer.tier`. Equality compares JSON values. A numeric operator on an argument that is not a number fails.
+
+## World effect contracts
+
+The contracts above read the trace. Effect contracts read what the agent did to the system it acts on: the records of a [world](world-fixtures.md). They are Layer 3 checks too, deterministic and free, and a contract statement names them like any other method.
+
+| Statement | Python / TypeScript chain | Holds when |
+| --- | --- | --- |
+| `count("refunds", equals=1, order_id="O-1042")` | `.world(w).count(...)` | The matching records number between the bounds. |
+| `unique("refunds", by=["order_id"])` | `.world(w).unique(...)` | No two matching records share the values of `by`. |
+| `idempotent("refunds", key="idempotency_key")` | `.world(w).idempotent(...)` | Every matching record has a key, and no two share one. |
+| `sum("refunds", "amount_cents", at_most=15000, status="paid")` | `.world(w).sum(...)` | The total of `amount_cents` over the matching records is at most the number. |
+| `sum("refunds", "amount_cents", at_most=related("orders", "amount_cents", on="order_id"))` | `.world(w).sum(..., related(...))` | For each `order_id`, the refunds sum to at most that order's `amount_cents`. |
+| `matches("notifications", "customer_id", related("orders", "customer_id", on="order_id"))` | `.world(w).matches(...)` | Each notification's `customer_id` equals its order's. |
+
+`related(resource, field, on=key)` (TypeScript `related(resource, field, { on: key })`, imported from `attest` / `@attest-ai/core`) names the record of `resource` whose `key` field equals the checked record's, and the field to compare. A `sum` bound given as `related(...)` groups by `key`; a numeric bound compares the whole filtered total. The messages, the missing-record cases and the exponent limit are in [world fixtures](world-fixtures.md#relational-effects-totals-and-recipients).
+
+The contract grammar stays closed. A statement still takes only literals; `related(...)` is the one call it accepts inside an argument, and only as the `at_most=` keyword of `sum` or the third argument of `matches`. Inside a list or a map, with a positional `on`, with a non-literal name, as the value of any other argument (`count(..., equals=related(...))`), or combined with an operator (`related(...) + 1`), it is rejected with a position, for example `calls are not allowed in arguments (position 48)`. [MCP](mcp.md#contract-statements) `run_contract` and `draft_contract` accept and draft these statements; the lines they return are the ones pasted into a test.
 
 ## What the contracts see
 

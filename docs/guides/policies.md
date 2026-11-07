@@ -2,6 +2,7 @@
 
 A policy is the file that decides whether a report lets a pull request merge. `attest policy evaluate` reads a report-v2 and a policy, prints the violations as JSON, and exits with the verdict:
 
+<!-- snippet: setup=project -->
 ```bash
 uv run attest policy evaluate --policy attest.policy.yaml --report attest-report.json
 ```
@@ -28,7 +29,7 @@ not_evaluated: warn
 # Fail the gate when the report's total cost exceeds this many dollars.
 max_cost_usd: 0.50
 
-# Per-layer caps on failures (layers 1-8; 0 means any layer).
+# Per-layer caps on failures (keys 1–6, and 8 for plugin assertions; 0 means any layer).
 layers:
   3: { max_hard_fails: 0 }
   6: { max_soft_fails: 2, severity: warn }
@@ -65,6 +66,7 @@ A [replay miss](replay.md#what-a-miss-says) is `not_evaluated` with reason `repl
 
 `min_mutation_score` gates on how well the suite's contracts catch behavior mutants of your fixtures ([mutation](mutation.md)). Pass the `--json` output of `attest mutate`:
 
+<!-- snippet: setup=project,incident -->
 ```bash
 uv run attest mutate tests/attest/fixtures/*.attest.json --contracts .attest/contracts --json > mutation.json
 uv run attest policy evaluate --policy attest.policy.yaml --report attest-report.json --mutation mutation.json
@@ -88,6 +90,7 @@ A report that records `tests_collected` above 0 and an empty `tests` array lost 
 
 The engine renders report-v2 files for CI. Each command takes `--report` one or more times; several reports merge (a project that writes one report per runner passes them all). An unreadable or invalid report exits 2 with the error on stderr.
 
+<!-- snippet: setup=project -->
 ```bash
 # JUnit XML for CI test views: one suite per test file, a <failure> for a failed test,
 # a <skipped> for a skipped test, naming the reasons when its assertions were not evaluated.

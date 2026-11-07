@@ -12,6 +12,13 @@ import (
 
 const renderedGolden = contractsDir + "rendered.json"
 
+// relationalExamples are the statements for the relational effect checks.
+var relationalExamples = []string{
+	`sum("refunds", "amount_cents", at_most=related("orders", "amount_cents", on="order_id"))`,
+	`sum("refunds", "amount_cents", at_most=15000, status="paid")`,
+	`matches("notifications", "customer_id", related("orders", "customer_id", on="order_id"))`,
+}
+
 // renderedExamples has at least one statement per catalog method. The lines the
 // catalog renders for them are the golden file the Python and TypeScript SDK
 // tests apply to a real expect chain.
@@ -45,16 +52,27 @@ type renderedCase struct {
 	TypeScript  string         `json:"typescript"`
 }
 
+// golden lists every example in golden-file order; the format-character case stays last.
+func golden() []string {
+	last := len(renderedExamples) - 1
+	out := append([]string{}, renderedExamples[:last]...)
+	out = append(out, relationalExamples...)
+	return append(out, renderedExamples[last])
+}
+
 func renderExamples(t *testing.T) []renderedCase {
 	t.Helper()
+	return renderStatements(t, golden())
+}
+
+func renderStatements(t *testing.T, statements []string) []renderedCase {
+	t.Helper()
 	var out []renderedCase
-	covered := map[string]bool{}
-	for _, stmt := range renderedExamples {
+	for _, stmt := range statements {
 		call, err := contractdsl.Parse(stmt)
 		if err != nil {
 			t.Fatalf("Parse(%q): %v", stmt, err)
 		}
-		covered[call.Method.Name] = true
 		py, err := call.PythonLine()
 		if err != nil {
 			t.Fatal(err)
@@ -65,19 +83,28 @@ func renderExamples(t *testing.T) []renderedCase {
 		}
 		out = append(out, renderedCase{Statement: stmt, Type: call.Type(), Spec: call.Spec(), ChainPrefix: call.ChainPrefix(), Python: py, TypeScript: ts})
 	}
+	return out
+}
+
+func TestRenderedExamples_CoverEveryCatalogMethod(t *testing.T) {
+	covered := map[string]bool{}
+	for _, stmt := range golden() {
+		call, err := contractdsl.Parse(stmt)
+		if err != nil {
+			t.Fatalf("Parse(%q): %v", stmt, err)
+		}
+		covered[call.Method.Name] = true
+	}
 	for _, m := range contractdsl.Methods() {
 		if !covered[m.Name] {
 			t.Errorf("no rendered example for catalog method %s", m.Name)
 		}
 	}
-	return out
 }
 
 func TestRenderedLines_MatchGoldenFile(t *testing.T) {
-	doc := map[string]any{
-		"description": "Chain lines rendered by the contract catalog for each method (Go: internal/contractdsl). The Python and TypeScript SDK tests apply each line to a real expect chain with FIXTURE bound to an object holding a world snapshot. Regenerate with ATTEST_UPDATE_GOLDEN=1 go test ./internal/contractdsl.",
-		"cases":       renderExamples(t),
-	}
+	const description = "Chain lines rendered by the contract catalog for each method (Go: internal/contractdsl). The Python and TypeScript SDK tests apply each line to a real expect chain with FIXTURE bound to an object holding a world snapshot and related imported from the SDK. Regenerate with ATTEST_UPDATE_GOLDEN=1 go test ./internal/contractdsl."
+	doc := map[string]any{"description": description, "cases": renderExamples(t)}
 	var buf bytes.Buffer
 	enc := json.NewEncoder(&buf)
 	enc.SetEscapeHTML(false)
@@ -123,7 +150,7 @@ func TestRenderedLines_FormatCharactersAreEscaped(t *testing.T) {
 			}
 		}
 	}
-	last := renderExamples(t)[len(renderedExamples)-1]
+	last := renderExamples(t)[len(golden())-1]
 	for _, want := range []string{`\u200b`, `\u00ad`, `\u202e`, `\u2028`} {
 		if !strings.Contains(last.Python, want) || !strings.Contains(last.TypeScript, want) {
 			t.Errorf("missing %s in\n%s\n%s", want, last.Python, last.TypeScript)

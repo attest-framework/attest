@@ -15,6 +15,7 @@ const pkgDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const fixture = "tests/e2e/reporter.fixture.ts";
 
 interface Report {
+  effect_world_excluded: boolean;
   tests_collected: number;
   summary: Record<string, number>;
   results: Array<{ status: string; test_id: string; file: string; line: number }>;
@@ -48,6 +49,7 @@ describe.skipIf(!existsSync(engine))("AttestReporter (real engine)", () => {
     const report = JSON.parse(readFileSync(out, "utf8")) as Report;
     const validate = reportV2Validator();
     expect(validate(report), JSON.stringify(validate.errors)).toBe(true);
+    expect(report.effect_world_excluded).toBe(true);
     const byName = new Map(report.tests.map((t) => [t.name, t]));
     expect([...byName.keys()].sort()).toEqual(
       ["fails", "flaky", "no attest", "not evaluated", "passes", "plain skip"].sort(),
@@ -95,6 +97,7 @@ describe.skipIf(!existsSync(engine))("AttestReporter (real engine)", () => {
       const report = JSON.parse(readFileSync(out, "utf8")) as Report;
       const validate = reportV2Validator();
       expect(validate(report), JSON.stringify(validate.errors)).toBe(true);
+      expect(report.effect_world_excluded).toBe(true);
       // Three files: 3 passing, 6 failing, 1 skipped.
       expect(report.tests_collected).toBe(10);
       expect(report.tests).toHaveLength(10);

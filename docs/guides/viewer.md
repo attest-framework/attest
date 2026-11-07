@@ -2,6 +2,7 @@
 
 `attest view` turns report-v2 files into one HTML page you open in a browser: the test list, the trace tree with the failing span highlighted, expected versus actual, replay or live provenance, cost, a baseline-versus-head diff and the mutants that survived. It is a local file, not a server. The page has no JavaScript, makes no network request and loads nothing from outside itself.
 
+<!-- snippet: skip reason="starts a local web server that serves until interrupted" -->
 ```bash
 ATTEST_REPORT_TRACES=1 uv run pytest --attest-report=attest-report.json
 uv run attest view attest-report.json

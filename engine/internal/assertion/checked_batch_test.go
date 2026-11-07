@@ -120,9 +120,9 @@ func TestValidatePluginResult_RejectsBadStatusAndScore(t *testing.T) {
 }
 
 func TestSpecHash_KeyOrderInsensitive(t *testing.T) {
-	a := SpecHash(json.RawMessage(`{"a":1,"b":[1,2]}`))
-	b := SpecHash(json.RawMessage(`{ "b": [1, 2], "a": 1 }`))
-	c := SpecHash(json.RawMessage(`{"a":2,"b":[1,2]}`))
+	a := SpecHash(types.TypeContent, json.RawMessage(`{"a":1,"b":[1,2]}`))
+	b := SpecHash(types.TypeContent, json.RawMessage(`{ "b": [1, 2], "a": 1 }`))
+	c := SpecHash(types.TypeContent, json.RawMessage(`{"a":2,"b":[1,2]}`))
 	if a != b || a == c {
 		t.Errorf("hashes a=%s b=%s c=%s: want a==b, a!=c", a, b, c)
 	}
@@ -134,7 +134,7 @@ func TestAnnotateDiagnostics_EchoesScopeAndSpecHash(t *testing.T) {
 
 	annotateDiagnostics(&r, &a)
 
-	if r.ScopeID != "tests/t.py::test_a" || r.SpecHash != SpecHash(a.Spec) {
+	if r.ScopeID != "tests/t.py::test_a" || r.SpecHash != SpecHash(a.Type, a.Spec) {
 		t.Errorf("row = %+v, want scope and spec hash filled", r)
 	}
 }

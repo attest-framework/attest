@@ -28,6 +28,9 @@ type BaselineEntry struct {
 	// IDScheme is the assertion-id scheme of the report this row was pinned
 	// from (C3). Rows pinned before id schemes existed read as scheme 1.
 	IDScheme int
+	// EffectWorldExcluded marks report identity that excludes runtime worlds.
+	// Legacy rows default false and must be re-pinned before effect comparison.
+	EffectWorldExcluded bool
 	// ScopeID and SpecHash identify what the assertion asserted, so a
 	// comparison can report a spec edit as changed instead of removed (C4).
 	ScopeID  string
@@ -109,8 +112,8 @@ func (b *BaselineStore) Pin(tag string, entries []BaselineEntry) error {
 	stmt, err := tx.Prepare(`
 		INSERT INTO baselines
 		(tag, assertion_id, assertion_type, status, score, cost, duration_ms, pinned_at,
-		 passes, evaluated, not_evaluated, id_scheme, scope_id, spec_hash)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		 passes, evaluated, not_evaluated, id_scheme, effect_world_excluded, scope_id, spec_hash)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`)
 	if err != nil {
 		return fmt.Errorf("prepare insert: %w", err)
@@ -138,6 +141,7 @@ func (b *BaselineStore) Pin(tag string, entries []BaselineEntry) error {
 			e.Evaluated,
 			e.NotEvaluated,
 			e.IDScheme,
+			e.EffectWorldExcluded,
 			e.ScopeID,
 			e.SpecHash,
 		); err != nil {
@@ -156,7 +160,7 @@ func (b *BaselineStore) Pin(tag string, entries []BaselineEntry) error {
 func (b *BaselineStore) Get(tag string) ([]BaselineEntry, error) {
 	rows, err := b.db.Query(`
 		SELECT tag, assertion_id, assertion_type, status, score, cost, duration_ms, pinned_at,
-		       passes, evaluated, not_evaluated, id_scheme, scope_id, spec_hash
+		       passes, evaluated, not_evaluated, id_scheme, effect_world_excluded, scope_id, spec_hash
 		FROM baselines
 		WHERE tag = ?
 		ORDER BY assertion_id
@@ -183,6 +187,7 @@ func (b *BaselineStore) Get(tag string) ([]BaselineEntry, error) {
 			&e.Evaluated,
 			&e.NotEvaluated,
 			&e.IDScheme,
+			&e.EffectWorldExcluded,
 			&e.ScopeID,
 			&e.SpecHash,
 		); err != nil {
@@ -289,6 +294,7 @@ func addBaselineCountColumns(db *sql.DB) error {
 		{"evaluated", "INTEGER NOT NULL DEFAULT -1"},
 		{"not_evaluated", "INTEGER NOT NULL DEFAULT 0"},
 		{"id_scheme", "INTEGER NOT NULL DEFAULT 1"},
+		{"effect_world_excluded", "INTEGER NOT NULL DEFAULT 0"},
 		{"scope_id", "TEXT NOT NULL DEFAULT ''"},
 		{"spec_hash", "TEXT NOT NULL DEFAULT ''"},
 	} {
