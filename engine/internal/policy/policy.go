@@ -75,6 +75,9 @@ type Policy struct {
 	// not_evaluated: "warn" (default, exit 2) or "block" (exit 1). It does
 	// not inherit Severity, so an outage never blocks unless asked to.
 	NotEvaluated string `yaml:"not_evaluated" json:"not_evaluated,omitempty"`
+	// TestsFailed controls failed test outcomes, independently of assertion
+	// rules and Severity: "block" (default), "warn", or "off".
+	TestsFailed string `yaml:"tests_failed" json:"tests_failed,omitempty"`
 	// Regression compares each assertion's pass rate over fixed-N trials
 	// with the baseline (`--baseline <tag>`) using a Wilson interval:
 	// regressed (Severity, default block → exit 1), inconclusive (warn →
@@ -210,14 +213,19 @@ func Load(path string) (*Policy, error) {
 }
 
 // Validate checks the policy for self-consistent severity values. Empty
-// policies are valid (the engine treats them as "no rules"); typos in
-// severity are rejected so a misspelled "blokc" cannot silently default.
+// policies retain built-in rules; typos in severity are rejected so a
+// misspelled "blokc" cannot silently default.
 func (p *Policy) Validate() error {
 	if err := validateSeverity("policy", p.Severity); err != nil {
 		return err
 	}
 	if err := validateSeverity("not_evaluated", p.NotEvaluated); err != nil {
 		return err
+	}
+	switch p.TestsFailed {
+	case "", SeverityBlock, SeverityWarn, "off":
+	default:
+		return fmt.Errorf("tests_failed: %q must be %q, %q, or %q", p.TestsFailed, SeverityBlock, SeverityWarn, "off")
 	}
 	for _, id := range p.AllowRemoved {
 		if id == "" {
@@ -426,6 +434,29 @@ func unallowedRemovals(baseline *report.BaselineDelta, allowed []string) []strin
 		}
 	}
 	return ids
+}
+
+// TestsFailedViolation checks report-v2 test outcomes independently of
+// assertion results and baseline comparisons. Skips (including normalized
+// xfails) do not count; strict XPASS is already normalized to failed.
+func TestsFailedViolation(p *Policy, tests []report.CITest) (Violation, bool) {
+	if p == nil || p.TestsFailed == "off" {
+		return Violation{}, false
+	}
+	failed := 0
+	for _, test := range tests {
+		if test.Outcome == report.OutcomeFailed {
+			failed++
+		}
+	}
+	if failed == 0 {
+		return Violation{}, false
+	}
+	return Violation{
+		Rule:     "tests_failed",
+		Detail:   fmt.Sprintf("%d tests failed (tests[].outcome == failed)", failed),
+		Severity: resolvedSeverity(p.TestsFailed, ""),
+	}, true
 }
 
 // BudgetViolation reports a run that breached the soft-fail budget. The

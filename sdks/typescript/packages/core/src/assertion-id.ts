@@ -84,9 +84,15 @@ function jcs(value: unknown, where: string, identity: AssertionIdentity | undefi
   }
 }
 
-/** RFC 8785 (JCS) serialization of an assertion spec; no spec is `{}`. */
-export function canonicalSpec(spec: unknown, identity?: AssertionIdentity): string {
-  return jcs(spec ?? {}, "spec", identity);
+/** RFC 8785 (JCS) serialization of identity fields; effect.world is runtime evidence. */
+export function canonicalSpec(spec: unknown, identity: AssertionIdentity): string {
+  const value = spec ?? {};
+  if (identity.type === "effect" && typeof value === "object" && !Array.isArray(value)) {
+    // Project only the top-level evidence field, without mutating the wire spec.
+    const contract = Object.fromEntries(Object.entries(value).filter(([key]) => key !== "world"));
+    return jcs(contract, "spec", identity);
+  }
+  return jcs(value, "spec", identity);
 }
 
 /** The exact bytes (as text) that are hashed: the JCS array `[scope_id, type, spec, occurrence_index]`. */

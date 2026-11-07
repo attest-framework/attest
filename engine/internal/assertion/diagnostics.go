@@ -37,7 +37,7 @@ func annotateDiagnostics(r *types.AssertionResult, a *types.Assertion) {
 		r.ScopeID = a.ScopeID
 	}
 	if r.SpecHash == "" {
-		r.SpecHash = SpecHash(a.Spec)
+		r.SpecHash = SpecHash(a.Type, a.Spec)
 	}
 	if err := assertionid.Validate(a.ScopeID, a.Type, a.Spec); err != nil {
 		r.Status = types.StatusHardFail
@@ -158,12 +158,11 @@ func notEvaluatedResult(assertion *types.Assertion, start time.Time, reason, exp
 	}
 }
 
-// SpecHash returns the sha256 (hex) of a spec's RFC 8785 (JCS) canonical
-// bytes, the same canonical_spec the assertion id recipe uses. An empty or
-// non-canonicalizable spec hashes the empty string so the row still carries a
-// stable value.
-func SpecHash(spec json.RawMessage) string {
-	canon, err := assertionid.Canonicalize(spec)
+// SpecHash returns the sha256 (hex) of the canonical identity spec, excluding
+// only effect.world runtime evidence, just as the assertion id recipe does.
+// A non-canonicalizable spec hashes the empty string.
+func SpecHash(assertionType string, spec json.RawMessage) string {
+	canon, err := assertionid.CanonicalSpec(assertionType, spec)
 	if err != nil {
 		canon = nil
 	}

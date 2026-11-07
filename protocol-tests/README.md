@@ -97,3 +97,5 @@ The engine checks them in `engine/internal/capture/fixture_v1_schema_test.go`, w
 ## Assertion id vectors
 
 `ids/assertion-ids.json` holds the golden vectors for assertion id scheme 2 (see "Assertion ids (id scheme 2)" in `proto/attest/v1/protocol-spec.md`). Each vector gives `scope_id`, `assertion_type`, `spec_json` (raw JSON text), `occurrence_index` and the expected `canonical_spec`, `canonical_input` and `id`. The engine tests them in `engine/internal/report/assertionid`; every SDK must reproduce all of them byte for byte.
+
+Effect vectors exclude only the top-level `world` evidence from `canonical_spec`; different worlds keep the same id, while a changed contract bound does not. Vectors may also give `spec_hash`, the full lowercase SHA-256 hex digest of UTF-8 `canonical_spec`, which every implementation checks when present. Nested `world` keys and other assertion types' `world` members remain identity-bearing.

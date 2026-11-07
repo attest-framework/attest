@@ -43,12 +43,14 @@ class LlamaIndexInstrumentationHandler(BaseAdapter):
         """Register the event handler with the LlamaIndex global dispatcher."""
         _require_llamaindex()
 
-        from llama_index.core.instrumentation import get_dispatcher
+        from llama_index.core.instrumentation import (  # type: ignore[attr-defined,unused-ignore]
+            get_dispatcher,
+        )
         from llama_index.core.instrumentation.event_handlers import BaseEventHandler
 
         outer = self
 
-        class _AttestEventHandlerImpl(BaseEventHandler):  # type: ignore[misc]
+        class _AttestEventHandlerImpl(BaseEventHandler):  # type: ignore[misc,unused-ignore]
             """Internal event handler that accumulates LlamaIndex events."""
 
             @classmethod
@@ -67,7 +69,9 @@ class LlamaIndexInstrumentationHandler(BaseAdapter):
         if self._handler is None:
             return
 
-        from llama_index.core.instrumentation import get_dispatcher
+        from llama_index.core.instrumentation import (  # type: ignore[attr-defined,unused-ignore]
+            get_dispatcher,
+        )
 
         dispatcher = get_dispatcher()
         # LlamaIndex dispatcher stores handlers in a list attribute
@@ -114,7 +118,7 @@ class LlamaIndexInstrumentationHandler(BaseAdapter):
         completion = ""
         input_tokens = 0
         output_tokens = 0
-        tool_calls: list[dict[str, Any]] = []
+        tool_calls: list[Any] = []
 
         response = getattr(event, "response", None)
         if response is not None:
@@ -218,9 +222,15 @@ class LlamaIndexInstrumentationHandler(BaseAdapter):
 
             # Add tool call steps extracted from LLM response
             for tc in llm_data.get("tool_calls", []):
-                func = tc.get("function", {})
-                tc_name = func.get("name", "unknown_tool")
-                tc_args = func.get("arguments", {})
+                func = (
+                    tc.get("function", {}) if isinstance(tc, dict) else getattr(tc, "function", {})
+                )
+                if isinstance(func, dict):
+                    tc_name = func.get("name", "unknown_tool")
+                    tc_args = func.get("arguments", {})
+                else:
+                    tc_name = getattr(func, "name", "unknown_tool")
+                    tc_args = getattr(func, "arguments", {})
                 if isinstance(tc_args, str):
                     import json
 

@@ -4,8 +4,8 @@
 //
 // Recipe:
 //
-//	canonical_spec = RFC 8785 (JCS) serialization of the assertion spec
-//	input          = JCS array [scope_id, assertion_type, spec, occurrence_index]
+//	canonical_spec = RFC 8785 (JCS) serialization of the identity spec
+//	input          = JCS array [scope_id, assertion_type, identity_spec, occurrence_index]
 //	id             = "a2_" + first 32 lowercase hex chars of SHA-256(UTF-8(input))
 package assertionid
 
@@ -32,6 +32,20 @@ const hexChars = 32
 
 // Canonicalize returns the RFC 8785 serialization of a JSON document.
 func Canonicalize(raw []byte) ([]byte, error) {
+	return canonicalize(raw, "")
+}
+
+// CanonicalSpec returns the canonical identity spec. Only effect assertions
+// exclude their top-level world snapshot, which is runtime evidence. The wire
+// spec is not modified; nested world keys and every other type remain intact.
+func CanonicalSpec(assertionType string, raw []byte) ([]byte, error) {
+	if len(bytes.TrimSpace(raw)) == 0 {
+		raw = []byte("{}")
+	}
+	return canonicalize(raw, assertionType)
+}
+
+func canonicalize(raw []byte, assertionType string) ([]byte, error) {
 	if !utf8.Valid(raw) {
 		return nil, errors.New("assertionid: input is not valid UTF-8")
 	}
@@ -46,6 +60,17 @@ func Canonicalize(raw []byte) ([]byte, error) {
 	}
 	if _, err := dec.Token(); err != io.EOF {
 		return nil, errors.New("assertionid: trailing data after JSON value")
+	}
+	if assertionType == "effect" {
+		if obj, ok := v.(*object); ok {
+			for i, key := range obj.keys {
+				if key == "world" {
+					obj.keys = append(obj.keys[:i], obj.keys[i+1:]...)
+					delete(obj.vals, key)
+					break
+				}
+			}
+		}
 	}
 	var out bytes.Buffer
 	if err := write(&out, v); err != nil {
@@ -68,10 +93,7 @@ func Input(scopeID, assertionType string, spec []byte, occurrence int) ([]byte, 
 	if occurrence < 0 {
 		return nil, fmt.Errorf("assertionid: occurrence index %d is negative", occurrence)
 	}
-	if len(bytes.TrimSpace(spec)) == 0 {
-		spec = []byte("{}")
-	}
-	canon, err := Canonicalize(spec)
+	canon, err := CanonicalSpec(assertionType, spec)
 	if err != nil {
 		return nil, err
 	}

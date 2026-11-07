@@ -2,6 +2,7 @@
   "description": "Golden vectors for assertion id scheme 2 (contract C3). Every SDK and the engine must reproduce canonical_spec, canonical_input and id exactly from scope_id, assertion_type, spec_json (raw JSON text, kept as a string so 1.0, -0 and 1e21 survive parsing) and occurrence_index.",
   "recipe": [
     "canonical_spec = RFC 8785 (JCS) serialization of spec_json: object keys sorted by UTF-16 code units, ES6 Number::toString numbers (1.0 -\u003e 1, -0 -\u003e 0, 1e21 -\u003e 1e+21), minimal string escaping (only quote, backslash and control characters below U+0020), no whitespace, UTF-8 output.",
+    "For assertion_type effect only, remove the top-level world member before canonicalizing: it is runtime evidence, not contract. Keep every other member, including nested world keys. spec_hash, when present, is the full lowercase SHA-256 hex digest of UTF-8(canonical_spec).",
     "canonical_input = JCS array [scope_id, assertion_type, canonical_spec_value, occurrence_index]; scope_id is the raw scope identifier string (test node id or ContinuousEvalRunner name), never a hash; occurrence_index is a 0-based integer.",
     "id = \"a2_\" + first 32 lowercase hex characters of SHA-256 over the UTF-8 bytes of canonical_input."
   ],
@@ -295,6 +296,127 @@
       "occurrence_index": 0,
       "scope_id": "tests/test_a.py::test_x",
       "spec_json": "{\"a\":[],\"b\":{}}"
+    },
+    {
+      "assertion_type": "effect",
+      "canonical_input": "[\"tests/test_effect.py::test_refunds\",\"effect\",{\"check\":\"count\",\"equals\":1,\"resource\":\"refunds\",\"where\":{\"order_id\":\"O-1042\"}},0]",
+      "canonical_spec": "{\"check\":\"count\",\"equals\":1,\"resource\":\"refunds\",\"where\":{\"order_id\":\"O-1042\"}}",
+      "id": "a2_6b83d499613b20ba059c82c12c523995",
+      "name": "effect_world_baseline",
+      "occurrence_index": 0,
+      "scope_id": "tests/test_effect.py::test_refunds",
+      "spec_json": "{\"check\":\"count\",\"resource\":\"refunds\",\"equals\":1,\"where\":{\"order_id\":\"O-1042\"},\"world\":{\"world_version\":1,\"state\":{\"refunds\":[{\"id\":\"r1\"}]}}}",
+      "spec_hash": "e14df86f1635bbe6b435c3ffd12dcf283073eb9405397a19df73ce52e3e04348"
+    },
+    {
+      "assertion_type": "effect",
+      "canonical_input": "[\"tests/test_effect.py::test_refunds\",\"effect\",{\"check\":\"count\",\"equals\":1,\"resource\":\"refunds\",\"where\":{\"order_id\":\"O-1042\"}},0]",
+      "canonical_spec": "{\"check\":\"count\",\"equals\":1,\"resource\":\"refunds\",\"where\":{\"order_id\":\"O-1042\"}}",
+      "id": "a2_6b83d499613b20ba059c82c12c523995",
+      "name": "effect_world_head",
+      "occurrence_index": 0,
+      "scope_id": "tests/test_effect.py::test_refunds",
+      "spec_json": "{\"check\":\"count\",\"resource\":\"refunds\",\"equals\":1,\"where\":{\"order_id\":\"O-1042\"},\"world\":{\"world_version\":1,\"state\":{\"refunds\":[{\"id\":\"r1\"},{\"id\":\"r2\"}]}}}",
+      "spec_hash": "e14df86f1635bbe6b435c3ffd12dcf283073eb9405397a19df73ce52e3e04348"
+    },
+    {
+      "assertion_type": "effect",
+      "canonical_input": "[\"tests/test_effect.py::test_refunds\",\"effect\",{\"check\":\"count\",\"equals\":2,\"resource\":\"refunds\",\"where\":{\"order_id\":\"O-1042\"}},0]",
+      "canonical_spec": "{\"check\":\"count\",\"equals\":2,\"resource\":\"refunds\",\"where\":{\"order_id\":\"O-1042\"}}",
+      "id": "a2_c41f8c9ba2017b403822c04a94e30903",
+      "name": "effect_bound_changed",
+      "occurrence_index": 0,
+      "scope_id": "tests/test_effect.py::test_refunds",
+      "spec_json": "{\"check\":\"count\",\"resource\":\"refunds\",\"equals\":2,\"where\":{\"order_id\":\"O-1042\"},\"world\":{\"world_version\":1,\"state\":{\"refunds\":[{\"id\":\"r1\"},{\"id\":\"r2\"}]}}}",
+      "spec_hash": "82f3795710214c72667770c6fc6d4121bdbd9c883a9aaa5e67d4a7a082b2f13d"
+    },
+    {
+      "assertion_type": "effect",
+      "canonical_input": "[\"tests/test_effect.py::test_refunds\",\"effect\",{\"check\":\"count\",\"equals\":1,\"resource\":\"refunds\",\"where\":{\"order_id\":\"O-1042\"}},0]",
+      "canonical_spec": "{\"check\":\"count\",\"equals\":1,\"resource\":\"refunds\",\"where\":{\"order_id\":\"O-1042\"}}",
+      "id": "a2_6b83d499613b20ba059c82c12c523995",
+      "name": "effect_world_null",
+      "occurrence_index": 0,
+      "scope_id": "tests/test_effect.py::test_refunds",
+      "spec_json": "{\"check\":\"count\",\"resource\":\"refunds\",\"equals\":1,\"where\":{\"order_id\":\"O-1042\"},\"world\":null}",
+      "spec_hash": "e14df86f1635bbe6b435c3ffd12dcf283073eb9405397a19df73ce52e3e04348"
+    },
+    {
+      "assertion_type": "effect",
+      "canonical_input": "[\"tests/test_effect.py::test_refunds\",\"effect\",{\"check\":\"count\",\"equals\":1,\"resource\":\"refunds\",\"where\":{\"world\":\"contract-value\"}},0]",
+      "canonical_spec": "{\"check\":\"count\",\"equals\":1,\"resource\":\"refunds\",\"where\":{\"world\":\"contract-value\"}}",
+      "id": "a2_35675aa6e412e18cd9e2e37a215de70f",
+      "name": "effect_nested_world_significant",
+      "occurrence_index": 0,
+      "scope_id": "tests/test_effect.py::test_refunds",
+      "spec_json": "{\"check\":\"count\",\"resource\":\"refunds\",\"equals\":1,\"where\":{\"world\":\"contract-value\"},\"world\":{\"world_version\":1,\"state\":{\"refunds\":[{\"id\":\"r1\"}]}}}",
+      "spec_hash": "e4b478bd11e399e3f621c5cab23bbbde705a5f6d626402ec07614f56f2591f55"
+    },
+    {
+      "assertion_type": "content",
+      "canonical_input": "[\"tests/test_effect.py::test_refunds\",\"content\",{\"check\":\"count\",\"equals\":1,\"resource\":\"refunds\",\"where\":{\"order_id\":\"O-1042\"},\"world\":{\"state\":{\"refunds\":[{\"id\":\"r1\"}]},\"world_version\":1}},0]",
+      "canonical_spec": "{\"check\":\"count\",\"equals\":1,\"resource\":\"refunds\",\"where\":{\"order_id\":\"O-1042\"},\"world\":{\"state\":{\"refunds\":[{\"id\":\"r1\"}]},\"world_version\":1}}",
+      "id": "a2_14d62be85a76b4e3cdacc1be03093e29",
+      "name": "non_effect_world_significant",
+      "occurrence_index": 0,
+      "scope_id": "tests/test_effect.py::test_refunds",
+      "spec_json": "{\"check\":\"count\",\"resource\":\"refunds\",\"equals\":1,\"where\":{\"order_id\":\"O-1042\"},\"world\":{\"world_version\":1,\"state\":{\"refunds\":[{\"id\":\"r1\"}]}}}",
+      "spec_hash": "de3c7e371895882bf2a7f3b2897badd7bfea5adbcd85985d5625eadc4a04aa10"
+    },
+    {
+      "assertion_type": "effect",
+      "canonical_input": "[\"tests/test_effect.py::test_refunds\",\"effect\",{\"check\":\"count\",\"equals\":1,\"resource\":\"refunds\",\"where\":{\"order_id\":\"O-1042\"}},0]",
+      "canonical_spec": "{\"check\":\"count\",\"equals\":1,\"resource\":\"refunds\",\"where\":{\"order_id\":\"O-1042\"}}",
+      "id": "a2_6b83d499613b20ba059c82c12c523995",
+      "name": "effect_world_absent",
+      "occurrence_index": 0,
+      "scope_id": "tests/test_effect.py::test_refunds",
+      "spec_json": "{\"check\":\"count\",\"resource\":\"refunds\",\"equals\":1,\"where\":{\"order_id\":\"O-1042\"}}",
+      "spec_hash": "e14df86f1635bbe6b435c3ffd12dcf283073eb9405397a19df73ce52e3e04348"
+    },
+    {
+      "assertion_type": "effect",
+      "canonical_input": "[\"tests/test_effect.py::test_refunds\",\"effect\",{\"check\":\"count\",\"equals\":1,\"resource\":\"refunds\",\"where\":{\"order_id\":\"O-1042\"}},0]",
+      "canonical_spec": "{\"check\":\"count\",\"equals\":1,\"resource\":\"refunds\",\"where\":{\"order_id\":\"O-1042\"}}",
+      "id": "a2_6b83d499613b20ba059c82c12c523995",
+      "name": "effect_world_escaped_key",
+      "occurrence_index": 0,
+      "scope_id": "tests/test_effect.py::test_refunds",
+      "spec_json": "{\"check\":\"count\",\"resource\":\"refunds\",\"equals\":1,\"where\":{\"order_id\":\"O-1042\"},\"w\\u006frld\":{\"state\":{\"refunds\":[]}}}",
+      "spec_hash": "e14df86f1635bbe6b435c3ffd12dcf283073eb9405397a19df73ce52e3e04348"
+    },
+    {
+      "assertion_type": "effect",
+      "canonical_input": "[\"tests/test_effect.py::test_refunds\",\"effect\",{\"check\":\"matches\",\"field\":\"customer_id\",\"related\":{\"field\":\"customer_id\",\"on\":\"order_id\",\"resource\":\"orders\"},\"resource\":\"notifications\"},0]",
+      "canonical_spec": "{\"check\":\"matches\",\"field\":\"customer_id\",\"related\":{\"field\":\"customer_id\",\"on\":\"order_id\",\"resource\":\"orders\"},\"resource\":\"notifications\"}",
+      "id": "a2_21de85f6491f4b4cb18bb2b825e8bc60",
+      "name": "effect_relational_matches",
+      "occurrence_index": 0,
+      "scope_id": "tests/test_effect.py::test_refunds",
+      "spec_json": "{\"check\":\"matches\",\"resource\":\"notifications\",\"field\":\"customer_id\",\"related\":{\"resource\":\"orders\",\"field\":\"customer_id\",\"on\":\"order_id\"},\"world\":{\"world_version\":1,\"state\":{\"refunds\":[{\"id\":\"r1\"}]}}}",
+      "spec_hash": "81f30f5ff38b8affde50243d5462b16579cbae317e0819d5edeff2af8b3527de"
+    },
+    {
+      "assertion_type": "effect",
+      "canonical_input": "[\"tests/test_effect.py::test_refunds\",\"effect\",{\"at_most\":{\"related\":{\"field\":\"amount_cents\",\"on\":\"order_id\",\"resource\":\"orders\"}},\"check\":\"sum\",\"field\":\"amount_cents\",\"resource\":\"refunds\"},0]",
+      "canonical_spec": "{\"at_most\":{\"related\":{\"field\":\"amount_cents\",\"on\":\"order_id\",\"resource\":\"orders\"}},\"check\":\"sum\",\"field\":\"amount_cents\",\"resource\":\"refunds\"}",
+      "id": "a2_ff8084f2a4a55d97cd9baf466292c569",
+      "name": "effect_relational_sum",
+      "occurrence_index": 0,
+      "scope_id": "tests/test_effect.py::test_refunds",
+      "spec_json": "{\"check\":\"sum\",\"resource\":\"refunds\",\"field\":\"amount_cents\",\"at_most\":{\"related\":{\"resource\":\"orders\",\"field\":\"amount_cents\",\"on\":\"order_id\"}},\"world\":{\"world_version\":1,\"state\":{\"refunds\":[{\"id\":\"r1\"},{\"id\":\"r2\"}]}}}",
+      "spec_hash": "2a830f6691ff0a761f1f88b52d205d5132c5c5f97dfd5643ea9b0839eede4e14"
+    },
+    {
+      "assertion_type": "effect",
+      "canonical_input": "[\"tests/test_effect.py::test_refunds\",\"effect\",[\"world\",{\"world\":{\"expected\":1}}],0]",
+      "canonical_spec": "[\"world\",{\"world\":{\"expected\":1}}]",
+      "id": "a2_906e807024373130be4d5cc6abbfec53",
+      "name": "effect_non_object_spec",
+      "occurrence_index": 0,
+      "scope_id": "tests/test_effect.py::test_refunds",
+      "spec_json": "[\"world\",{\"world\":{\"expected\":1}}]",
+      "spec_hash": "c85100ed13f06e658e92ef0b5812b8cd750170937eda6855c41c65da547dd1ca"
     }
   ],
   "invalid_description": "Inputs for which no id can be computed. Implementations MUST reject a lone (unpaired) surrogate and invalid UTF-8 in spec keys, spec string values, scope_id and assertion_type; expected is always \"error\". spec_json is raw JSON text; scope_id_bytes_hex, when present, is the scope_id as raw UTF-8 bytes (hex) that cannot be decoded.",
