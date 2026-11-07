@@ -75,9 +75,9 @@ not_evaluated: warn
  * its own Dependabot config (not written by `attest init`) would bump them from there.
  */
 export const ACTION_PINS = {
-  "actions/checkout": { sha: "d23441a48e516b6c34aea4fa41551a30e30af803", version: "v6.1.0" },
-  "actions/setup-node": { sha: "249970729cb0ef3589644e2896645e5dc5ba9c38", version: "v6.5.0" },
-  "astral-sh/setup-uv": { sha: "37802adc94f370d6bfd71619e3f0bf239e1f3b78", version: "v7.6.0" },
+  "actions/checkout": { sha: "3d3c42e5aac5ba805825da76410c181273ba90b1", version: "v7.0.1" },
+  "actions/setup-node": { sha: "949feb2413d6458794dcd2491c4babbbce0c15c1", version: "v7.1.0" },
+  "astral-sh/setup-uv": { sha: "68559e99cc807c1eb7e9238fd43a15bba460eec2", version: "v10.3.3" },
   "actions/upload-artifact": { sha: "cf430e030ddbb5b0abf93d22962f4752f3646cd9", version: "v7.0.2" },
   "actions/download-artifact": {
     sha: "9000827ccba6bdab643e8b6fd33ac0654aef8333",

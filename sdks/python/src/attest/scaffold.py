@@ -85,8 +85,8 @@ not_evaluated: warn
 # follows, so a new release ships current pins. The pins are then fixed in a generated project;
 # its own Dependabot config (not written by `attest init`) would bump them from there.
 ACTION_PINS: dict[str, tuple[str, str]] = {
-    "actions/checkout": ("d23441a48e516b6c34aea4fa41551a30e30af803", "v6.1.0"),
-    "astral-sh/setup-uv": ("37802adc94f370d6bfd71619e3f0bf239e1f3b78", "v7.6.0"),
+    "actions/checkout": ("3d3c42e5aac5ba805825da76410c181273ba90b1", "v7.0.1"),
+    "astral-sh/setup-uv": ("68559e99cc807c1eb7e9238fd43a15bba460eec2", "v10.3.3"),
     "actions/upload-artifact": ("cf430e030ddbb5b0abf93d22962f4752f3646cd9", "v7.0.2"),
     "actions/download-artifact": ("9000827ccba6bdab643e8b6fd33ac0654aef8333", "v8.0.2"),
     "attest-framework/attest/.github/actions/pr-annotate": (
