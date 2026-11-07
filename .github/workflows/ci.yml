@@ -267,11 +267,12 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: ${{ matrix.node-version }}
-          cache: pnpm
+          cache: ${{ matrix.node-version == '22' && 'pnpm' || '' }}
           cache-dependency-path: sdks/typescript/pnpm-lock.yaml
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: "1.27"
+          cache: ${{ matrix.node-version == '22' }}
           cache-dependency-path: engine/go.sum
       - name: Build engine
         # Engine-backed tests (replay end to end) skip without bin/attest-engine.
@@ -282,7 +283,7 @@ jobs:
       - name: Use Vitest 4 for Node 20 consumer coverage
         # Vitest 5 requires Node >=22.12. Keep testing the SDK on Node 20 with its
         # supported Vitest 4 runtime; the committed dev default remains Vitest 5.
-        # Like vitest-range, this override changes only the runner checkout.
+        # This unlocked runner-only override neither restores nor saves shared pnpm/Go caches.
         if: matrix.node-version == '20'
         run: pnpm -r add -D vitest@4
       - name: Build
