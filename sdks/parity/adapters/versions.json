@@ -3,7 +3,7 @@
   "packages": {
     "openai": "2.54.0",
     "anthropic": "2.4.0",
-    "google-genai": "1.63.0",
+    "google-genai": "1.75.0",
     "ollama": "0.6.3",
     "langchain-core": "1.7.4",
     "crewai": "1.10.1"
