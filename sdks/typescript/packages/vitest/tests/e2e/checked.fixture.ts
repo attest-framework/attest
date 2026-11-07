@@ -1,5 +1,5 @@
 // Run by checked.test.ts in a vitest subprocess against the real engine.
-import { it } from "vitest";
+import { beforeEach, describe, it } from "vitest";
 import { attestExpect, TraceBuilder, type AttestPlugin } from "@attest-ai/core";
 import { attestPlugins, evaluate } from "../../src/index.js";
 
@@ -20,6 +20,29 @@ it("never evaluated", () => {
 });
 
 it("chain in early beforeEach", () => {});
+
+const sharedChain = attestExpect(trace).outputContains("ok");
+it("evaluates shared chain", async (context) => {
+  await evaluate(sharedChain, { context });
+});
+it("extends shared chain without evaluation", () => {
+  sharedChain.outputContains("absent");
+});
+it("leaves shared chain untouched", () => {});
+
+it("re-evaluated duplicate identities", async (context) => {
+  const chain = attestExpect(trace).outputContains("ok");
+  await evaluate(chain, { context });
+  chain.outputContains("ok");
+  await evaluate(chain, { context });
+});
+
+describe.concurrent("concurrent hook ownership", () => {
+  beforeEach(() => {
+    attestExpect(trace).outputContains("absent");
+  });
+  it("never evaluates hook chain", () => {});
+});
 
 it("two never evaluated", () => {
   attestExpect(trace).outputContains("x");

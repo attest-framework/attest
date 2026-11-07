@@ -16,9 +16,8 @@ export function installChainGuard(): void {
   const pending = new WeakMap<object, {
     retry: number;
     repeat: number;
-    chains: ExpectChain[];
+    chains: Set<ExpectChain>;
   }>();
-  const hooked = new WeakSet<object>();
   const aroundEach = (vitest as Partial<typeof vitest>).aroundEach;
   if (aroundEach !== undefined) {
     aroundEach((run, context) =>
@@ -26,7 +25,6 @@ export function installChainGuard(): void {
     );
   }
   vitest.beforeEach((context) => {
-    hooked.add(context.task);
     if (aroundEach === undefined) bindTestContext(context);
   });
   setChainObserver((chain) => {
@@ -35,26 +33,25 @@ export function installChainGuard(): void {
     const test = scoped?.context.task ?? runningTest();
     if (test === undefined) return;
     if (scoped === undefined && test.concurrent === true) {
-      // Legacy runners cannot scope concurrent lifecycle hooks; preserve their prior behavior.
-      if (hooked.has(test)) return;
       throw new Error(
-        "Attest cannot bind this concurrent test's chain guard. Enable Vitest test isolation " +
-          "and import @attest-ai/vitest before running the test.",
+        "Attest cannot bind this concurrent test's chain guard. Build the chain inside the " +
+          "test body, or upgrade to Vitest >=4.1. Enable test isolation if the integration is cached.",
       );
     }
     const retry = test.result?.retryCount ?? 0;
     const repeat = test.result?.repeatCount ?? 0;
     const state = pending.get(test);
     if (state !== undefined && state.retry === retry && state.repeat === repeat) {
-      state.chains.push(chain);
+      state.chains.add(chain);
       return;
     }
-    const created = [chain];
+    const created = new Set([chain]);
     pending.set(test, { retry, repeat, chains: created });
     const onTestFinished = scoped?.onTestFinished ?? vitest.onTestFinished;
     onTestFinished.call(scoped?.context, () => {
       pending.delete(test);
-      const unevaluated = created.filter((entry) => !entry.evaluated).length;
+      let unevaluated = 0;
+      for (const entry of created) if (!entry.evaluated) unevaluated++;
       if (unevaluated > 0) throw new Error(unevaluatedChainsMessage(unevaluated));
     });
   });

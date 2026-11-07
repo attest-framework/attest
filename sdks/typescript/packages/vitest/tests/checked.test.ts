@@ -13,6 +13,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { beforeAll, describe, expect, it } from "vitest";
+import * as vitest from "vitest";
 import { assertionIdOf } from "@attest-ai/core";
 import { engine, reportV2Validator } from "./report-schema.js";
 
@@ -123,6 +124,33 @@ describe.skipIf(!existsSync(engine))("green means checked (real engine)", () => 
     );
   });
 
+  it("never silently accepts an unevaluated concurrent beforeEach chain", () => {
+    expect(failures.get("never evaluates hook chain")).toMatch(
+      /1 expect\(\) chain built but never evaluated|Attest cannot bind this concurrent test's chain guard/,
+    );
+    expect(report.tests.find((test) => test.name.endsWith("never evaluates hook chain"))?.outcome)
+      .toBe("failed");
+  });
+
+  it("charges a shared chain only to the test that extends it", () => {
+    expect(failures.get("evaluates shared chain")).toBe("");
+    expect(failures.get("extends shared chain without evaluation")).toContain(
+      "1 expect() chain built but never evaluated",
+    );
+    expect(failures.get("leaves shared chain untouched")).toBe("");
+  });
+
+  it("preserves assigned identities and allocates only new occurrence indices", () => {
+    const testId = `${fixture} > re-evaluated duplicate identities`;
+    const spec = { target: "output.message", check: "contains", value: "ok", case_sensitive: false, soft: false };
+    expect(rowsOf("re-evaluated duplicate identities").map((row) => row.assertion_id)).toEqual([
+      assertionIdOf(testId, "content", spec, 0),
+      assertionIdOf(testId, "content", spec, 0),
+      assertionIdOf(testId, "content", spec, 1),
+    ]);
+    expect(failures.get("re-evaluated duplicate identities")).toBe("");
+  });
+
   it("fails a chain with an assertion appended after evaluation", () => {
     expect(failures.get("assertion appended after evaluation")).toContain(
       "1 expect() chain built but never evaluated",
@@ -148,9 +176,16 @@ describe.skipIf(!existsSync(engine))("green means checked (real engine)", () => 
     expect(rowsOf("guard resets for retry")).toHaveLength(1);
   });
 
-  it("preserves evaluation from a concurrent finish handler", () => {
-    expect(failures.get("evaluates a chain in finish handler")).toBe("");
-    expect(rowsOf("evaluates a chain in finish handler")).toHaveLength(1);
+  it("evaluates concurrent finish chains when scoped, otherwise fails with body guidance", () => {
+    if ((vitest as Partial<typeof vitest>).aroundEach === undefined) {
+      expect(failures.get("evaluates a chain in finish handler")).toContain(
+        "Build the chain inside the test body, or upgrade to Vitest >=4.1",
+      );
+      expect(rowsOf("evaluates a chain in finish handler")).toHaveLength(0);
+    } else {
+      expect(failures.get("evaluates a chain in finish handler")).toBe("");
+      expect(rowsOf("evaluates a chain in finish handler")).toHaveLength(1);
+    }
   });
 
   it("does not let a late failure handler leave the next attempt unguarded", () => {

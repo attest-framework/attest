@@ -190,9 +190,9 @@ type ChainObserver = (chain: ExpectChain) => void;
 let chainObserver: ChainObserver | undefined;
 
 /**
- * Register the function called with every new {@link ExpectChain}. The Vitest integration uses
- * it to fail a test that builds a chain it never evaluates. One observer at a time; pass
- * `undefined` to remove it.
+ * Register the function called when an {@link ExpectChain} is created or gains an assertion.
+ * The Vitest integration uses it to track chains authored or extended by the current test.
+ * One observer at a time; pass `undefined` to remove it.
  */
 export function setChainObserver(observer: ChainObserver | undefined): void {
   chainObserver = observer;
@@ -233,6 +233,7 @@ export class ExpectChain {
       type: assertionType,
       spec,
     });
+    chainObserver?.(this);
     return this;
   }
 
