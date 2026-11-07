@@ -6,17 +6,16 @@ with the optional reporter. Use it with `@attest-ai/core` to test agent traces.
 
 ## Install
 
-Install the core SDK and test integration at the same version. `next` selects
-the prerelease channel:
+Install the core SDK and test integration at the same version:
 
 <!-- snippet: skip reason="installs packages from npm (network)" -->
 ```bash
-npm install -D @attest-ai/core@next @attest-ai/vitest@next "vitest@^4"
+npm install -D "@attest-ai/core@>=1.0.1" "@attest-ai/vitest@>=1.0.1" "vitest@^4"
 ```
 
 Attest discovers or downloads an engine matching the SDK version. To use a
 matching local engine instead, set `ATTEST_ENGINE_PATH`. See
-[configuration](https://attest-framework.github.io/guides/configuration/).
+[configuration](https://attest-framework.github.io/sdk-guides/configuration/).
 
 ## Minimal test
 

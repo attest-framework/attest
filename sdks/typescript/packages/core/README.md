@@ -6,17 +6,16 @@ Deterministic checks run first; model-scored checks run last.
 
 ## Install
 
-For Vitest, install the core SDK and its test integration at the same version.
-`next` selects the prerelease channel:
+For Vitest, install the core SDK and its test integration at the same version:
 
 <!-- snippet: skip reason="installs packages from npm (network)" -->
 ```bash
-npm install -D @attest-ai/core@next @attest-ai/vitest@next "vitest@^4"
+npm install -D "@attest-ai/core@>=1.0.1" "@attest-ai/vitest@>=1.0.1" "vitest@^4"
 ```
 
 Attest runs a separate engine binary. The SDK discovers or downloads an engine
 matching its version; set `ATTEST_ENGINE_PATH` to use a matching local binary.
-See [configuration](https://attest-framework.github.io/guides/configuration/).
+See [configuration](https://attest-framework.github.io/sdk-guides/configuration/).
 
 ## Minimal Vitest test
 
