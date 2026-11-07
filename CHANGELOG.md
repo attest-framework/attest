@@ -4,6 +4,10 @@ All notable changes to Attest are documented in this file. The format follows [K
 
 ## [Unreleased]
 
+### Changed
+
+- Python development and adapter conformance use OpenAI 2.54.0, with the compatible CrewAI 1.10.1, Instructor 1.13.0 and LlamaIndex OpenAI 0.6.8 lockfile versions. User-facing optional dependency ranges are unchanged; OpenAI 3.x cannot currently resolve alongside the framework test dependencies.
+
 ## [1.1.0-rc.4] — 2026-11-07
 
 Fourth release candidate of 1.1.0, themed "Evidence". Relational world-effect contracts, semantic refresh diffs, per-operator mutation scores and executable public claims make the evidence behind a green gate visible. Changes that alter results are marked **Behavior change** below.
