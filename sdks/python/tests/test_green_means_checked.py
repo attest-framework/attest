@@ -126,6 +126,233 @@ def test_chain_teardown_fails_unevaluated_and_empty_chains(scratch: pytest.Pytes
     assert "the test's own failure" in output
 
 
+@pytest.mark.parametrize("asynchronous", [False, True], ids=["sync", "async"])
+def test_appending_assertions_requires_another_evaluation(
+    scratch: pytest.Pytester, asynchronous: bool
+) -> None:
+    prefix = "@pytest.mark.asyncio\nasync " if asynchronous else ""
+    evaluate = "await attest.evaluate_async" if asynchronous else "attest.evaluate"
+    scratch.makepyfile(
+        test_append=_PRELUDE
+        + "\nimport pytest\n\n"
+        + f"""
+{prefix}def test_append_without_evaluation(attest):
+    chain = expect(_result()).output_contains("ok")
+    {evaluate}(chain)
+    chain.output_contains("missing")
+
+{prefix}def test_append_and_evaluate_again(attest):
+    chain = expect(_result()).output_contains("ok")
+    {evaluate}(chain)
+    chain.output_not_contains("missing")
+    {evaluate}(chain)
+
+{prefix}def test_world_append_without_evaluation(attest):
+    chain = expect(_result()).output_contains("ok")
+    {evaluate}(chain)
+    chain.world(None).count("refunds", equals=1)
+
+def test_next_test_is_clean():
+    pass
+"""
+    )
+
+    result = scratch.runpytest_subprocess("--attest-report=r.json", "-p", "no:cacheprovider")
+
+    result.assert_outcomes(passed=2, failed=2)
+    assert _outcomes(_report(scratch)) == {
+        "test_append_without_evaluation": "failed",
+        "test_append_and_evaluate_again": "passed",
+        "test_world_append_without_evaluation": "failed",
+        "test_next_test_is_clean": "passed",
+    }
+    assert result.stdout.str().count("Failed: 1 expect() chain built but never evaluated") == 2
+
+
+def test_function_fixture_chains_belong_to_the_consuming_test(scratch: pytest.Pytester) -> None:
+    scratch.makepyfile(
+        test_fixtures=_PRELUDE
+        + """
+import pytest
+
+@pytest.fixture
+def chain():
+    return expect(_result()).output_contains("ok")
+
+@pytest.fixture
+def evaluated_in_setup(attest):
+    chain = expect(_result()).output_contains("ok")
+    attest.evaluate(chain)
+    return chain
+
+def test_forgotten_with_attest(chain, attest):
+    assert chain.trace.output["message"] == "ok"
+
+def test_forgotten_without_attest(chain):
+    assert chain.trace.output["message"] == "ok"
+
+def test_evaluate_in_call(chain, attest):
+    attest.evaluate(chain)
+
+def test_setup_evaluation(evaluated_in_setup):
+    assert evaluated_in_setup.evaluated
+
+@pytest.mark.parametrize("index", [0, 1])
+def test_parametrized_fixture(chain, index):
+    assert index >= 0
+
+def test_next_test_is_clean():
+    pass
+"""
+    )
+
+    result = scratch.runpytest_subprocess("--attest-report=r.json", "-p", "no:cacheprovider")
+
+    result.assert_outcomes(passed=3, failed=4)
+    report = _report(scratch)
+    outcomes = _outcomes(report)
+    assert outcomes == {
+        "test_forgotten_with_attest": "failed",
+        "test_forgotten_without_attest": "failed",
+        "test_evaluate_in_call": "passed",
+        "test_setup_evaluation": "passed",
+        "test_parametrized_fixture[0]": "failed",
+        "test_parametrized_fixture[1]": "failed",
+        "test_next_test_is_clean": "passed",
+    }
+    assert [row["scope_id"] for row in report["results"]] == [
+        "test_fixtures.py::test_evaluate_in_call",
+        "test_fixtures.py::test_setup_evaluation",
+    ]
+    ids_by_test = {test["name"]: test["assertion_ids"] for test in report["tests"]}
+    assert ids_by_test["test_evaluate_in_call"] == [report["results"][0]["assertion_id"]]
+    assert ids_by_test["test_setup_evaluation"] == [report["results"][1]["assertion_id"]]
+    assert ids_by_test["test_next_test_is_clean"] == []
+    assert result.stdout.str().count("Failed: 1 expect() chain built but never evaluated") == 4
+
+
+@pytest.mark.parametrize("scope", ["module", "session"])
+def test_shared_fixture_chains_belong_to_the_first_setup_test(
+    scratch: pytest.Pytester, scope: str
+) -> None:
+    scratch.makepyfile(
+        test_shared=_PRELUDE
+        + f"""
+import pytest
+
+@pytest.fixture(scope="{scope}")
+def shared_chain():
+    return expect(_result()).output_contains("missing")
+
+def test_first_consumer(shared_chain):
+    assert not shared_chain.evaluated
+
+def test_cached_consumer(shared_chain):
+    assert not shared_chain.evaluated
+
+def test_next_test_is_clean():
+    pass
+"""
+    )
+
+    result = scratch.runpytest_subprocess("--attest-report=r.json", "-p", "no:cacheprovider")
+
+    result.assert_outcomes(passed=2, failed=1)
+    assert _outcomes(_report(scratch)) == {
+        "test_first_consumer": "failed",
+        "test_cached_consumer": "passed",
+        "test_next_test_is_clean": "passed",
+    }
+
+
+def test_fixture_teardown_chains_are_checked_without_leaking(scratch: pytest.Pytester) -> None:
+    scratch.makepyfile(
+        test_teardown=_PRELUDE
+        + """
+import pytest
+
+@pytest.fixture
+def teardown_chain():
+    yield
+    expect(_result()).output_contains("missing")
+
+@pytest.fixture
+def broken_setup():
+    expect(_result()).output_contains("missing")
+    raise RuntimeError("fixture setup failed")
+
+def test_teardown(teardown_chain):
+    pass
+
+def test_broken_setup(broken_setup):
+    pass
+
+def test_next_test_is_clean():
+    pass
+"""
+    )
+
+    result = scratch.runpytest_subprocess("--attest-report=r.json", "-p", "no:cacheprovider")
+
+    result.assert_outcomes(passed=2, errors=2)
+    assert _outcomes(_report(scratch)) == {
+        "test_teardown": "failed",
+        "test_broken_setup": "failed",
+        "test_next_test_is_clean": "passed",
+    }
+    assert result.stdout.str().count("Failed: 1 expect() chain built but never evaluated") == 1
+
+
+@pytest.mark.parametrize("phase", ["setup", "call"])
+@pytest.mark.parametrize("uses_attest", [False, True], ids=["ledger", "run"])
+@pytest.mark.parametrize("interrupt", ["pytest.exit('inner aborted')", "raise KeyboardInterrupt"])
+def test_aborted_nested_sessions_release_chain_ownership(
+    scratch: pytest.Pytester, phase: str, uses_attest: bool, interrupt: str
+) -> None:
+    dependency = "attest" if uses_attest else ""
+    inner = "import pytest\n\n"
+    if phase == "setup":
+        inner += (
+            f"@pytest.fixture\ndef abort({dependency}):\n    {interrupt}\n\n"
+            "def test_inner(abort):\n    pass\n"
+        )
+    else:
+        inner += f"def test_inner({dependency}):\n    {interrupt}\n"
+    scratch.makeconftest("pytest_plugins = ['pytester']")
+    scratch.makepyfile(
+        test_outer=_PRELUDE
+        + f"""
+import pytest
+from attest import trials
+
+def test_nested_abort_does_not_disable_guard(pytester):
+    ledger_depth = len(trials._ledgers)
+    pytester.makepyfile(test_inner={inner!r})
+    try:
+        result = pytester.runpytest_inprocess("-p", "no:cacheprovider")
+    except KeyboardInterrupt:
+        pass  # pytester's in-process helper re-raises KeyboardInterrupt on some versions.
+    else:
+        assert result.ret == pytest.ExitCode.INTERRUPTED
+    assert trials.current_run() is None
+    assert len(trials._ledgers) == ledger_depth
+    expect(_result()).output_contains("missing")
+
+def test_next_test_is_clean():
+    pass
+"""
+    )
+
+    result = scratch.runpytest_subprocess("--attest-report=r.json", "-p", "no:cacheprovider")
+
+    result.assert_outcomes(passed=1, failed=1)
+    assert _outcomes(_report(scratch)) == {
+        "test_nested_abort_does_not_disable_guard": "failed",
+        "test_next_test_is_clean": "passed",
+    }
+    assert "Failed: 1 expect() chain built but never evaluated" in result.stdout.str()
+
+
 def test_identical_assertions_in_one_test_get_distinct_ids_and_both_report(
     scratch: pytest.Pytester,
 ) -> None:

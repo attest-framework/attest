@@ -117,7 +117,7 @@ class TestBudget:
 
 @dataclass
 class TestRun:
-    """State of one running test (pytest call phase of a test using the
+    """State of one running test (setup through teardown of a test using the
     ``attest`` fixture): assertion ordinal, current trial, usage and agent
     spend so far, and every evaluation grouped by trial."""
 
@@ -228,7 +228,7 @@ _current_run: TestRun | None = None
 
 
 def current_run() -> TestRun | None:
-    """The running test's state, or ``None`` outside the pytest call phase of
+    """The running test's state, or ``None`` outside the setup/call/teardown of
     a test using the ``attest`` fixture."""
     return _current_run
 

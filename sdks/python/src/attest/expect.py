@@ -244,10 +244,14 @@ class ExpectChain:
         self._result = result
         self._assertions: list[Assertion] = []
         self._world_bytes = 0
-        #: Set when the chain was sent for evaluation; teardown fails a test with a chain
-        #: that never was.
-        self.evaluated = False
+        #: Number of assertions in the last evaluation snapshot; -1 means never evaluated.
+        self._evaluated_assertion_count = -1
         track_chain(self)
+
+    @property
+    def evaluated(self) -> bool:
+        """Whether the current assertions were sent for evaluation, including later additions."""
+        return self._evaluated_assertion_count == len(self._assertions)
 
     @property
     def assertions(self) -> list[Assertion]:
