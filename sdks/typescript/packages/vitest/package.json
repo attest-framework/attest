@@ -1,6 +1,6 @@
 {
   "name": "@attest-ai/vitest",
-  "version": "1.1.0-rc.4",
+  "version": "1.1.0-rc.5",
   "description": "Attest vitest integration — global setup, fixtures, report-v2 reporter, tier filtering",
   "type": "module",
   "main": "./dist/index.js",
