@@ -26,6 +26,10 @@ severity: block
 # Assertions with no verdict. warn (default) exits 2; block exits 1.
 not_evaluated: warn
 
+# Failed test outcomes, including failures outside Attest assertions.
+# block (default) exits 1; warn exits 2; off disables only this rule.
+tests_failed: block
+
 # Fail the gate when the report's total cost exceeds this many dollars.
 max_cost_usd: 0.50
 
@@ -54,7 +58,15 @@ regression: { confidence: 0.95, tolerance: 0.05 }
 min_mutation_score: { score: 0.8, severity: block }
 ```
 
-Every field is optional. An empty policy has no rules to block on, but the `not_evaluated` rule still applies, so it exits 2 when any assertion was not evaluated. A severity other than `block` or `warn` is a load error, so a typo cannot quietly weaken a rule. A `.json` policy takes the same fields.
+Every field is optional. An empty policy still applies `tests_failed: block` and `not_evaluated: warn`: failed tests exit 1; not-evaluated assertions alone exit 2. Severities must be `block` or `warn`, except that `tests_failed` also accepts `off`; an unrecognized value is a load error, so a typo cannot quietly weaken a rule. A `.json` policy takes the same fields.
+
+## Failed tests block by default
+
+`tests_failed` counts only report-v2 rows whose `tests[].outcome` is `"failed"`. This includes native pytest/Vitest assertion failures and setup/teardown failures, even if every Attest assertion passed or the test had no Attest assertions. Skipped tests and normalized expected failures (`xfail` / `it.fails`) are excluded; strict XPASS is a failed outcome and counts.
+
+The default is `tests_failed: block` (exit 1), independent of the global `severity`. Setting `severity: warn` does **not** downgrade failed tests. Set `tests_failed: warn` explicitly to warn (exit 2), or `tests_failed: off` to disable this rule. Other violations still determine the final exit code: `off` does not disable assertion rules, baseline regression/removal checks, or input validation.
+
+Policy evaluation requires a `tests` array, even with `tests_failed: off`. A report with missing or `null` `tests`, or a test outcome other than `"passed"`, `"failed"` or `"skipped"`, exits 3 instead of producing a verdict.
 
 ## Not evaluated is not pass
 
@@ -84,7 +96,11 @@ A run whose engine session passed `ATTEST_MAX_SOFT_FAILURES` still reports every
 
 ## Report completeness
 
-A report that records `tests_collected` above 0 and an empty `tests` array lost its results (a crashed worker or reporter), so `attest policy evaluate` exits 3 instead of passing an empty run. A report without `tests_collected` is accepted. The pytest plugin writes the field from pytest's own collected count, independent of the rows, so the check protects pytest reports (under pytest-xdist the controller writes one report that merges every worker's tests). The Vitest reporter sets `tests_collected` to the number of rows it reports, so the check cannot fire on Vitest reports. A test module that fails to import is in neither the rows nor the count, so this check does not catch it.
+A report that records `tests_collected` above 0 and an empty `tests` array lost its results (a crashed worker or reporter), so `attest policy evaluate` exits 3 instead of passing an empty run. A report without `tests_collected` is accepted as long as its required `tests` array and outcomes are valid. The pytest plugin writes the field from pytest's own collected count, independent of the rows, so the check protects pytest reports (under pytest-xdist the controller writes one report that merges every worker's tests).
+
+The Vitest reporter sets `tests_collected` to the number of rows it reports, so the empty-run check cannot independently detect lost Vitest rows. A failing suite/module `beforeAll` or `afterAll` marks its existing descendant test rows as `"failed"`, including descendants that Vitest left passed or skipped; it does not invent a hook test or increase `tests_collected`. Unaffected sibling suites keep their outcomes. If a hook's returned cleanup fails and Vitest loses the precise error attribution, a failed module with no failed row is reported conservatively by marking all its existing rows failed. An ordinary test failure alone does not mark its siblings failed.
+
+A module that fails to import before any tests are discovered has no test rows; these checks cannot detect that failure from an empty report with `tests_collected: 0`. Keep the test runner's own exit status as a CI gate too.
 
 ## Render the report for reviewers
 
