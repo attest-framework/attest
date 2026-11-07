@@ -117,7 +117,7 @@ class TestBudget:
 
 @dataclass
 class TestRun:
-    """State of one running test (pytest call phase of a test using the
+    """State of one running test (setup through teardown of a test using the
     ``attest`` fixture): assertion ordinal, current trial, usage and agent
     spend so far, and every evaluation grouped by trial."""
 
@@ -139,6 +139,8 @@ class TestRun:
     _spent_trace_ids: set[str] = field(default_factory=set)
     _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
     _occurrences: OccurrenceCounter = field(init=False, repr=False)
+    # Retain assertion objects alongside their ids so object-id reuse cannot alias a new row.
+    _assigned_assertions: dict[int, tuple[Assertion, str]] = field(default_factory=dict, repr=False)
 
     def __post_init__(self) -> None:
         self._occurrences = OccurrenceCounter(self.test_id)
@@ -148,15 +150,23 @@ class TestRun:
         return BatchContext(test_id=self.test_id, file=self.file, line=self.line)
 
     def assign_ids(self, assertions: Sequence[Assertion]) -> None:
-        """Give ``assertions`` their scheme-2 ids in this test's scope, in evaluation order;
-        the occurrence counts restart with each trial."""
-        for assertion in assertions:
-            self._occurrences.assign(assertion)
+        """Assign each assertion once per scope/trial; re-evaluation preserves its id and
+        does not consume another occurrence. A new trial restarts both assignments and counts."""
+        with self._lock:
+            for assertion in assertions:
+                assigned = self._assigned_assertions.get(id(assertion))
+                if assigned is None:
+                    self._occurrences.assign(assertion)
+                    self._assigned_assertions[id(assertion)] = (assertion, assertion.assertion_id)
+                else:
+                    assertion.assertion_id = assigned[1]
+                    assertion.scope_id = self.test_id
 
     def track_chain(self, chain: ExpectChain) -> None:
-        """Register a chain built during the test."""
+        """Register a chain built or mutated during the test, once per item."""
         with self._lock:
-            self.chains.append(chain)
+            if chain not in self.chains:
+                self.chains.append(chain)
 
     def unevaluated_chains(self) -> list[ExpectChain]:
         """Chains built during the test that were never sent for evaluation."""
@@ -165,8 +175,9 @@ class TestRun:
 
     def start_trial(self, trial: int) -> None:
         """Enter trial ``trial`` (1-based): restart the occurrence counts."""
-        self._occurrences.reset()
         with self._lock:
+            self._occurrences.reset()
+            self._assigned_assertions.clear()
             self.trial = trial
             self.results_by_trial[trial] = []
 
@@ -228,7 +239,7 @@ _current_run: TestRun | None = None
 
 
 def current_run() -> TestRun | None:
-    """The running test's state, or ``None`` outside the pytest call phase of
+    """The running test's state, or ``None`` outside the setup/call/teardown of
     a test using the ``attest`` fixture."""
     return _current_run
 
@@ -266,14 +277,14 @@ def end_chain_ledger() -> None:
 
 
 def track_chain(chain: ExpectChain) -> None:
-    """Register a chain built by ``expect()`` with the running test, or with the ledger of a
-    test that has no run; a chain built outside any test is not tracked."""
+    """Register a chain built or mutated by ``expect()`` with the running test, or with the
+    ledger of a test that has no run; a chain touched outside any test is not tracked."""
     run = _current_run
     if run is not None:
         run.track_chain(chain)
         return
     with _ledger_lock:
-        if _ledgers:
+        if _ledgers and chain not in _ledgers[-1]:
             _ledgers[-1].append(chain)
 
 
