@@ -66,6 +66,16 @@ all = ["attest-ai[openai,anthropic,gemini,ollama,otel,langchain,google-adk,llama
 # The dev extra stays for CI and `pip install -e ".[dev]"`.
 dev = ["attest-ai[dev]"]
 
+[tool.uv]
+# CrewAI 1.9.3 pins the vulnerable OpenTelemetry 1.34 family (CVE-2026-114603).
+# Override only the workspace lock for dev/test; published optional ranges stay unchanged.
+# Remove these overrides when CrewAI relaxes its OpenTelemetry pins.
+override-dependencies = [
+    "opentelemetry-api>=1.45.1",
+    "opentelemetry-sdk>=1.45.1",
+    "opentelemetry-exporter-otlp-proto-http>=1.45.1",
+]
+
 [project.urls]
 Homepage = "https://github.com/attest-framework/attest"
 Repository = "https://github.com/attest-framework/attest"
