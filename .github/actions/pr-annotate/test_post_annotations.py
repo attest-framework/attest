@@ -764,6 +764,35 @@ class TestRealEngine(ActionCase):
     def tearDownClass(cls) -> None:
         cls.engine_dir.cleanup()
 
+    def test_native_test_failure_is_in_policy_summary_without_assertion_annotations(self) -> None:
+        report = Path(self.report())
+        report.write_text(json.dumps({
+            "report_version": 2,
+            "tests_collected": 1,
+            "results": [{"assertion_id": "a", "status": "pass", "test_id": "test_business_limit"}],
+            "tests": [{
+                "test_id": "test_business_limit", "name": "test_business_limit",
+                "file": "tests/test_agent.py", "line": 8, "outcome": "failed",
+            }],
+        }))
+        (self.root / "attest.policy.yaml").write_text(_POLICY)
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(out):
+            code = _pa.main(
+                ["--report", str(report), "--policy", "attest.policy.yaml", "--engine", self.engine],
+                self.env,
+            )
+
+        self.assertEqual(code, 0, out.getvalue())
+        self.assertEqual(self.exit_code_output(), "1")
+        summary = (self.root / "step-summary.md").read_text()
+        self.assertIn("0 passed · 1 failed", summary)
+        self.assertIn("**Policy:** fail (exit 1)", summary)
+        self.assertIn("`tests_failed`", summary)
+        self.assertIn("1 tests failed", summary)
+        self.assertIn("`tests_failed`", self.github.comments[0]["body"])
+        self.assertNotIn("::error", out.getvalue())
+
     def test_summary_annotations_and_policy_come_from_the_real_commands(self) -> None:
         fixture = _REPO_ROOT / "engine" / "internal" / "report" / "testdata" / "ci"
         report = self.root / "py" / "attest-report.json"

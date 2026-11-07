@@ -32,6 +32,7 @@ func writeGateReport(t *testing.T, dir, name string, idScheme int, budgetExceede
 	}
 	env := map[string]any{
 		"report_version": 2, "timestamp": "2026-11-05T00:00:00Z", "results": results,
+		"tests":      []any{},
 		"total_cost": 0, "total_duration_ms": 1, "budget_exceeded": budgetExceeded,
 		"effect_world_excluded": true,
 	}

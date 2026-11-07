@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from collections.abc import Generator
-from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
@@ -60,13 +59,15 @@ def test_plugin_batch_context_outside_a_test_is_none() -> None:
     assert plugin._batch_context() is None
 
 
-def test_runtest_call_hook_sets_file_and_one_based_line_of_the_test(tmp_path: Path) -> None:
+def test_runtest_setup_hook_sets_file_and_one_based_line_of_the_test() -> None:
     item = MagicMock()
     item.nodeid = "tests/test_a.py::test_b"
     item.fixturenames = ["attest"]
     item.location = ("tests/test_a.py", 6, "test_b")  # pytest's line is 0-based
     item.get_closest_marker.return_value = None
-    hook = plugin.pytest_runtest_call(item)
+    item.stash = pytest.Stash()
+    plugin.pytest_runtest_setup(item)
+    hook = plugin.pytest_runtest_teardown(item)
     next(hook)
     try:
         assert plugin._batch_context() == BatchContext(
@@ -79,13 +80,15 @@ def test_runtest_call_hook_sets_file_and_one_based_line_of_the_test(tmp_path: Pa
             hook.send(outcome)
 
 
-def test_runtest_call_hook_omits_line_when_pytest_has_none() -> None:
+def test_runtest_setup_hook_omits_line_when_pytest_has_none() -> None:
     item = MagicMock()
     item.nodeid = "tests/test_a.py::test_b"
     item.fixturenames = ["attest"]
     item.location = ("tests/test_a.py", None, "test_b")
     item.get_closest_marker.return_value = None
-    hook = plugin.pytest_runtest_call(item)
+    item.stash = pytest.Stash()
+    plugin.pytest_runtest_setup(item)
+    hook = plugin.pytest_runtest_teardown(item)
     next(hook)
     try:
         context = plugin._batch_context()
