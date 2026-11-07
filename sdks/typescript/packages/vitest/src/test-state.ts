@@ -52,6 +52,8 @@ interface AttemptState {
   attempt: number;
   /** Gives ids to the assertions of this test (this trial, under trials()). */
   ids: AssertionIdAssigner;
+  /** Keep existing assertion identities when a chain is re-evaluated in this scope. */
+  assignedAssertions: WeakMap<Assertion, Assertion>;
   /** Attest usage of this attempt so far. */
   usage: Usage;
   /** Sum of `metadata.cost_usd` of the traces evaluated in this attempt. */
@@ -70,10 +72,16 @@ export function attemptState(test: RunningTest): AttemptState {
   const attempt = attemptOf(test);
   let state = attempts.get(test);
   if (state === undefined || state.attempt !== attempt) {
-    state = { attempt, ids: new AssertionIdAssigner(testIdOf(test)), usage: zeroUsage(), agentSpendUsd: 0, traceIds: new Set() };
+    state = { attempt, ids: new AssertionIdAssigner(testIdOf(test)), assignedAssertions: new WeakMap(), usage: zeroUsage(), agentSpendUsd: 0, traceIds: new Set() };
     attempts.set(test, state);
   }
   return state;
+}
+
+type TestBody = () => unknown;
+interface TestFunctions {
+  getFn(test: RunningTest): TestBody | undefined;
+  setFn(test: RunningTest, fn: TestBody): void;
 }
 
 // Vitest before 4.1 has no TestRunner; its running test comes from `vitest/suite`. Loaded only
@@ -84,13 +92,37 @@ export function attemptState(test: RunningTest): AttemptState {
 const LEGACY_SUITE = "vitest/suite";
 const legacySuite =
   (vitest as Partial<typeof vitest>).TestRunner === undefined
-    ? ((await import(/* @vite-ignore */ LEGACY_SUITE)) as { getCurrentTest(): RunningTest | undefined })
+    ? ((await import(/* @vite-ignore */ LEGACY_SUITE)) as TestFunctions & {
+        getCurrentTest(): RunningTest | undefined;
+      })
     : undefined;
 
 /** The running test: `TestRunner.getCurrentTest()` on Vitest 4.1+, `vitest/suite` before that. */
 export function runningTest(): RunningTest | undefined {
   const runner = (vitest as Partial<typeof vitest>).TestRunner;
   return runner !== undefined ? runner.getCurrentTest() : legacySuite?.getCurrentTest();
+}
+
+/** The context of the test body, preserved across awaits and concurrent sibling tests. */
+export const testScope = new AsyncLocalStorage<{
+  context: TestContext;
+  // Vitest temporarily replaces this method while finish/fail handlers run.
+  onTestFinished: TestContext["onTestFinished"];
+}>();
+const boundTests = new WeakSet<RunningTest>();
+
+/**
+ * Before Vitest's aroundEach API, bind the runner's test callback. Merely entering an async
+ * scope in beforeEach does not enclose the body. vitest/suite was removed in Vitest 5.
+ */
+export function bindTestContext(context: TestContext): void {
+  const test = context.task;
+  if (boundTests.has(test)) return;
+  const fn = legacySuite?.getFn(test);
+  if (fn === undefined) throw new Error("Attest cannot bind the Vitest test context");
+  const scope = { context, onTestFinished: context.onTestFinished };
+  legacySuite?.setFn(test, () => testScope.run(scope, fn));
+  boundTests.add(test);
 }
 
 /**
@@ -162,7 +194,9 @@ export function recordUnattachedUsage(usage: Usage): void {
 
 /** Restart the occurrence counts of `test`: each trial of trials() gives its assertions the same ids. */
 export function restartAssertionIds(test: RunningTest): void {
-  attemptState(test).ids = new AssertionIdAssigner(testIdOf(test));
+  const state = attemptState(test);
+  state.ids = new AssertionIdAssigner(testIdOf(test));
+  state.assignedAssertions = new WeakMap();
 }
 
 /**
@@ -174,8 +208,19 @@ export function assignAssertionIds(
   test: RunningTest,
   assertions: readonly Assertion[],
 ): Assertion[] {
-  const { ids } = attemptState(test);
-  return assertions.map((a) => ({ ...a, assertion_id: ids.next(a.type, a.spec), scope_id: ids.scopeId }));
+  const { ids, assignedAssertions } = attemptState(test);
+  return assertions.map((assertion) => {
+    let assigned = assignedAssertions.get(assertion);
+    if (assigned === undefined) {
+      assigned = {
+        ...assertion,
+        assertion_id: ids.next(assertion.type, assertion.spec),
+        scope_id: ids.scopeId,
+      };
+      assignedAssertions.set(assertion, assigned);
+    }
+    return assigned;
+  });
 }
 
 /** Reject a budget with unknown keys or negative/non-numeric limits. */

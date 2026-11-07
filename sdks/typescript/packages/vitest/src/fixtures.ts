@@ -176,8 +176,9 @@ export class AttestEngineFixture {
 
   /** Evaluate collected assertions without enforcing the test outcome. */
   async inspect(chain: ExpectChain, options?: InspectOptions): Promise<AgentResult> {
+    let assertions = chain.assertions;
     chain.markEvaluated();
-    if (chain.assertions.length === 0) {
+    if (assertions.length === 0) {
       throw new Error("expect() chain has no assertions: add at least one assertion before evaluating it");
     }
     await this.ensureStarted();
@@ -194,7 +195,6 @@ export class AttestEngineFixture {
         : scope !== undefined && scope.test === test
           ? scope.budget
           : undefined;
-    let assertions = chain.assertions;
     let batchBudget: BatchBudget | undefined;
     if (test !== undefined) {
       assertions = assignAssertionIds(test, assertions);

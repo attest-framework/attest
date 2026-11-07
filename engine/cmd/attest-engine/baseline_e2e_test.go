@@ -64,6 +64,7 @@ func minimalReportV2(passed, failed int) string {
 		IDScheme        int      `json:"id_scheme"`
 		Timestamp       string   `json:"timestamp"`
 		Results         []result `json:"results"`
+		Tests           []any    `json:"tests"`
 		TotalCost       float64  `json:"total_cost"`
 		TotalDurationMS int64    `json:"total_duration_ms"`
 	}
@@ -71,6 +72,7 @@ func minimalReportV2(passed, failed int) string {
 		ReportVersion: 2,
 		IDScheme:      2,
 		Timestamp:     "2026-05-01T00:00:00Z",
+		Tests:         []any{},
 	}
 	for i := 0; i < passed; i++ {
 		env.Results = append(env.Results, result{
