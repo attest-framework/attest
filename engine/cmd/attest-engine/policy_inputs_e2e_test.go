@@ -10,7 +10,7 @@ import (
 func reportWithStatuses(a, b string) string {
 	return `{"report_version":2,"id_scheme":2,"results":[` +
 		`{"assertion_id":"a","status":"` + a + `","score":1,"layer":1,"type":"schema"},` +
-		`{"assertion_id":"b","status":"` + b + `","score":1,"layer":1,"type":"schema"}]}`
+		`{"assertion_id":"b","status":"` + b + `","score":1,"layer":1,"type":"schema"}],"tests":[]}`
 }
 
 // pinBaseline pins a report where both assertions pass as tag in cacheDir.
@@ -90,7 +90,7 @@ func TestPolicyEvaluate_ReportWithNoTestsButCollected_ExitsUsage(t *testing.T) {
 		{"collected 4, tests absent", `{"report_version":2,"results":[],"tests_collected":4}`, 3},
 		{"collected absent, tests empty", `{"report_version":2,"results":[],"tests":[]}`, 0},
 		{"collected 0, tests empty", `{"report_version":2,"results":[],"tests":[],"tests_collected":0}`, 0},
-		{"collected 1, one test", `{"report_version":2,"results":[],"tests":[{"test_id":"t","name":"t","file":"f","line":1,"outcome":"pass"}],"tests_collected":1}`, 0},
+		{"collected 1, one test", `{"report_version":2,"results":[],"tests":[{"test_id":"t","name":"t","file":"f","line":1,"outcome":"passed"}],"tests_collected":1}`, 0},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
