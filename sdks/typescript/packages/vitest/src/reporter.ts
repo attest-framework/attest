@@ -7,7 +7,7 @@ import {
   sumUsage,
   type Usage,
 } from "@attest-ai/core";
-import type { Reporter, TestModule, Vitest } from "vitest/node";
+import type { ReportedHookContext, Reporter, TestModule, TestSuite, Vitest } from "vitest/node";
 import { buildReport, reportTracesEnabled, summaryLines, type TestRecord } from "./report.js";
 import { BUDGET_MARKER_EXT, ROOT_ENV, USAGE_DIR_ENV } from "./process-env.js";
 
@@ -40,6 +40,10 @@ export class AttestReporter implements Reporter {
   private root = process.cwd();
   private vitest: Vitest | undefined;
   private usageDir: string | undefined;
+  private readonly suiteHooks = {
+    beforeAll: new Set<TestSuite | TestModule>(),
+    afterAll: new Set<TestSuite | TestModule>(),
+  };
 
   constructor(options: AttestReporterOptions = {}) {
     this.outputFile = options.outputFile;
@@ -61,7 +65,21 @@ export class AttestReporter implements Reporter {
   }
 
   onTestRunStart(): void {
+    this.suiteHooks.beforeAll.clear();
+    this.suiteHooks.afterAll.clear();
     if (this.usageDir !== undefined) mkdirSync(this.usageDir, { recursive: true });
+  }
+
+  onHookStart({ name, entity }: ReportedHookContext): void {
+    if (name === "beforeAll" || name === "afterAll") {
+      this.suiteHooks[name].add(entity);
+    }
+  }
+
+  onHookEnd({ name, entity }: ReportedHookContext): void {
+    if (name === "beforeAll" || name === "afterAll") {
+      this.suiteHooks[name].delete(entity);
+    }
   }
 
   /**
@@ -84,6 +102,8 @@ export class AttestReporter implements Reporter {
     const tests: TestRecord[] = [];
     for (const testModule of testModules) {
       const file = relative(this.root, testModule.moduleId).split(sep).join("/");
+      const firstTest = tests.length;
+      let hasFailedTest = false;
       for (const testCase of testModule.children.allTests()) {
         const location = testCase.location;
         // The location matters only for the report file; summary lines need none.
@@ -95,16 +115,47 @@ export class AttestReporter implements Reporter {
           );
         }
         const state = testCase.result().state;
+        // Hook errors belong to the suite/module, not its tests: beforeAll can
+        // leave them skipped, and afterAll can leave them passed. Fail the existing
+        // descendant rows rather than inventing tests and inflating tests_collected.
+        // Vitest omits onHookEnd on rejection. Keep that evidence as well as
+        // errors(): flattening an empty AggregateError leaves the latter empty.
+        // State alone also covers ordinary child failures, so it is not enough.
+        let parent = testCase.parent;
+        let suiteError = false;
+        while (true) {
+          if (
+            parent.errors().length > 0 ||
+            (parent.state() === "failed" &&
+              (this.suiteHooks.beforeAll.has(parent) || this.suiteHooks.afterAll.has(parent)))
+          ) {
+            suiteError = true;
+            break;
+          }
+          if (parent.type === "module") break;
+          parent = parent.parent;
+        }
+        const outcome = suiteError ? "failed" : state === "passed" || state === "failed" ? state : "skipped";
+        hasFailedTest ||= outcome === "failed";
         tests.push({
           testId: `${file} > ${testCase.fullName}`,
           name: testCase.name,
           file,
           line: location?.line ?? 0,
-          outcome: state === "passed" || state === "failed" ? state : "skipped",
+          outcome,
           durationMs: testCase.diagnostic()?.duration ?? 0,
           attest: testCase.meta().attest,
           replay: testCase.meta().attestReplay,
         });
+      }
+      // Returned hook cleanups emit no hook events. If Vitest failed this module
+      // but none of its existing rows explains the failure, fail those rows
+      // conservatively rather than writing a false-green report.
+      if (!hasFailedTest && testModule.state() === "failed") {
+        for (let index = firstTest; index < tests.length; index++) {
+          const test = tests[index];
+          if (test !== undefined) test.outcome = "failed";
+        }
       }
     }
     const { usage: unattached, budgetExceeded: unattachedBudgetExceeded } = this.takeUnattached();
