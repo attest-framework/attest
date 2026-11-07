@@ -169,6 +169,103 @@ def test_next_test_is_clean():
     assert result.stdout.str().count("Failed: 1 expect() chain built but never evaluated") == 2
 
 
+@pytest.mark.parametrize("trials", [1, 3])
+def test_reevaluation_preserves_assertion_ids_within_each_trial(
+    scratch: pytest.Pytester, trials: int
+) -> None:
+    scratch.makepyfile(
+        test_identity=_PRELUDE
+        + """
+from attest.assertion_id import compute_assertion_id
+
+def test_reevaluate(attest):
+    chain = expect(_result()).output_contains("ok")
+    attest.evaluate(chain)
+    first = chain.assertions[0]
+    first_id = first.assertion_id
+    chain.output_contains("ok")
+    attest.evaluate(chain)
+    assert chain.assertions[0].assertion_id == first_id
+    assert [a.assertion_id for a in chain.assertions] == [
+        compute_assertion_id(first.scope_id, first.type, first.spec, index)
+        for index in (0, 1)
+    ]
+    attest.evaluate(chain)
+    later = expect(_result()).output_contains("ok")
+    attest.evaluate(later)
+    assert later.assertions[0].assertion_id == compute_assertion_id(
+        first.scope_id, first.type, first.spec, 2
+    )
+"""
+    )
+
+    result = scratch.runpytest_subprocess(
+        "--attest-report=r.json", "-p", "no:cacheprovider", f"--attest-trials={trials}"
+    )
+
+    result.assert_outcomes(passed=1)
+    report = _report(scratch)
+    scope = "test_identity.py::test_reevaluate"
+    assertion = (
+        expect(AgentResult(trace=TraceBuilder("agent").set_output(message="ok").build()))
+        .output_contains("ok")
+        .assertions[0]
+    )
+    ids = [
+        compute_assertion_id(scope, assertion.type, assertion.spec, index) for index in (0, 1, 2)
+    ]
+    for trial in range(1, trials + 1):
+        rows = [row for row in report["results"] if trials == 1 or row.get("trial") == trial]
+        assert [row["assertion_id"] for row in rows] == [
+            ids[0],
+            ids[0],
+            ids[1],
+            ids[0],
+            ids[1],
+            ids[2],
+        ]
+
+
+@pytest.mark.parametrize("uses_attest", [False, True], ids=["ledger", "run"])
+def test_cached_fixture_mutation_belongs_to_the_mutating_test(
+    scratch: pytest.Pytester, uses_attest: bool
+) -> None:
+    fixture = ", attest" if uses_attest else ""
+    scratch.makepyfile(
+        test_mutation=_PRELUDE
+        + f"""
+import pytest
+
+@pytest.fixture(scope="module")
+def shared_chain():
+    return expect(_result()).output_contains("ok")
+
+def test_first(shared_chain, attest):
+    attest.evaluate(shared_chain)
+
+def test_second(shared_chain{fixture}):
+    shared_chain.output_contains("missing").output_not_contains("ok")
+
+def test_untouched_cached_chain(shared_chain):
+    assert not shared_chain.evaluated
+
+def test_next_test_is_clean():
+    pass
+"""
+    )
+
+    result = scratch.runpytest_subprocess("--attest-report=r.json", "-p", "no:cacheprovider")
+
+    result.assert_outcomes(passed=3, failed=1)
+    assert _outcomes(_report(scratch)) == {
+        "test_first": "passed",
+        "test_second": "failed",
+        "test_untouched_cached_chain": "passed",
+        "test_next_test_is_clean": "passed",
+    }
+    assert result.stdout.str().count("Failed: 1 expect() chain built but never evaluated") == 1
+
+
 def test_function_fixture_chains_belong_to_the_consuming_test(scratch: pytest.Pytester) -> None:
     scratch.makepyfile(
         test_fixtures=_PRELUDE

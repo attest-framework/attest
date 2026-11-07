@@ -388,9 +388,10 @@ def _release_chain_state(item: pytest.Item) -> None:
 def pytest_runtest_setup(item: pytest.Item) -> None:
     """Start per-item tracking before fixtures run.
 
-    A module/session-scoped fixture's chains belong to the first item that executes its
-    setup, not every item that later receives its cached value. Teardown-created chains
-    belong to the item executing that teardown. No chain is carried into the next item.
+    A module/session-scoped fixture's chains belong to the first item that executes setup.
+    Receiving an unchanged cached value does not transfer responsibility; appending an
+    assertion registers it with the mutating item. Teardown-created chains belong to the item
+    executing that teardown. No outstanding chain is carried into the next item.
     """
     item.stash[_CHAIN_CALL_PASSED] = False
     if _CHAIN_MARKER_ERROR in item.stash:

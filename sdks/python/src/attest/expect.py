@@ -277,6 +277,9 @@ class ExpectChain:
                 spec=spec,
             )
         )
+        # A cached fixture may hand this chain to a different test. Only a mutation,
+        # not receiving its unchanged value, transfers evaluation responsibility.
+        track_chain(self)
         return self
 
     # ── Layer 1: Schema ──
