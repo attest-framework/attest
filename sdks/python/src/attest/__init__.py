@@ -60,8 +60,8 @@ from attest.trace import TraceBuilder
 from attest.trace_tree import TraceTree
 from attest.world import WorldError, WorldSession, start_world
 
-__version__: str = "1.1.0-rc.5"
-ENGINE_VERSION: str = "1.1.0-rc.5"
+__version__: str = "1.1.0"
+ENGINE_VERSION: str = "1.1.0"
 
 __all__ = [
     # Core types
