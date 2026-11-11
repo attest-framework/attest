@@ -1,8 +1,10 @@
 # Attest Protocol Specification — v1
 
-**Status:** Draft
+This document describes how an Attest SDK sends traces and assertions to the engine and receives verdicts. Use it when implementing a client, inspecting wire traffic or checking what a result field means. The Python and TypeScript SDKs manage this exchange for normal test runs.
+
+**Status:** Released with Attest 1.1.0
 **Protocol Version:** 1
-**Date:** 2026-02-18
+**Verified:** 2026-11-11 against the 1.1.0 engine and `engine/internal/server`
 
 ---
 
@@ -32,8 +34,8 @@ stderr ──► Engine debug log output only (never parsed by SDK)
 
 **Wire example (two messages):**
 ```
-{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"sdk_name":"attest-python","sdk_version":"1.1.0-rc.3","protocol_version":1,"required_capabilities":["layers_1_4"],"preferred_encoding":"json"}}\n
-{"jsonrpc":"2.0","id":1,"result":{"engine_version":"1.1.0-rc.3","protocol_version":1,"capabilities":["layers_1_4"],"missing":[],"compatible":true,"encoding":"json","max_concurrent_requests":1}}\n
+{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"sdk_name":"attest-python","sdk_version":"1.1.0","protocol_version":1,"required_capabilities":["layers_1_4"],"preferred_encoding":"json"}}\n
+{"jsonrpc":"2.0","id":1,"result":{"engine_version":"1.1.0","protocol_version":1,"capabilities":["layers_1_4","trace_tree","continuous_eval","plugins","embedding","llm_judge"],"missing":[],"compatible":true,"encoding":"json","max_concurrent_requests":1,"max_trace_size_bytes":10485760,"max_steps_per_trace":10000}}\n
 ```
 
 ### 1.3 Stderr Logging
@@ -49,7 +51,7 @@ Log levels controlled by `--log-level` flag on engine startup: `debug`, `info`, 
 
 ### 1.4 Lifecycle
 
-1. SDK spawns engine subprocess with `--log-level <level>` and optional `--config <path>`
+1. SDK spawns the engine subprocess; `--log-level <level>` optionally controls logging. There is no `--config` startup flag in 1.1.0; provider and budget settings use environment variables.
 2. SDK sends `initialize` request immediately
 3. Engine responds with capability negotiation result
 4. SDK sends `evaluate_batch` requests as needed
@@ -57,11 +59,7 @@ Log levels controlled by `--log-level` flag on engine startup: `debug`, `info`, 
 
 ### 1.5 Concurrency and response routing
 
-- **stdio mode (current):** The engine dispatches requests sequentially — one request
-  is processed to completion before the next is read. `max_concurrent_requests` is `1`
-  in stdio mode.
-- **gRPC shared-engine mode (planned v0.5+):** Concurrent dispatch with out-of-order
-  responses. `max_concurrent_requests` will be `> 1` when this mode is active.
+- **stdio mode:** The engine processes one request to completion before dispatching the next, and advertises `max_concurrent_requests: 1`. Attest 1.1.0 has no gRPC transport or shared-engine server mode.
 - **Every line the engine writes to stdout is the response to a request id the SDK sent.**
   The engine sends no notifications; data that used to travel as one (drift) is part of
   the response (`results[].drift`). The only replies whose `id` the SDK did not send are
@@ -103,7 +101,7 @@ Sent by the SDK immediately after spawning the engine. Establishes the session a
   "method": "initialize",
   "params": {
     "sdk_name": "attest-python",
-    "sdk_version": "1.1.0-rc.3",
+    "sdk_version": "1.1.0",
     "protocol_version": 1,
     "required_capabilities": ["layers_1_4"],
     "preferred_encoding": "json"
@@ -115,8 +113,8 @@ Sent by the SDK immediately after spawning the engine. Establishes the session a
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `sdk_name` | string | yes | SDK identifier, e.g. `"attest-python"`, `"attest-typescript"`, `"attest-go"` |
-| `sdk_version` | string | yes | SDK semver, e.g. `"0.1.0"` |
+| `sdk_name` | string | yes | SDK identifier, e.g. `"attest-python"` or `"attest-typescript"` |
+| `sdk_version` | string | yes | SDK release version, e.g. `"1.1.0"` |
 | `protocol_version` | int | yes | Protocol version the SDK targets. Currently `1`. |
 | `required_capabilities` | []string | yes | Capabilities the SDK requires to function. Engine returns `compatible: false` if any are missing. |
 | `preferred_encoding` | string | yes | Always `"json"` for v1. Reserved for future binary encoding. |
@@ -128,7 +126,7 @@ Sent by the SDK immediately after spawning the engine. Establishes the session a
   "jsonrpc": "2.0",
   "id": 1,
   "result": {
-    "engine_version": "1.1.0-rc.3",
+    "engine_version": "1.1.0",
     "protocol_version": 1,
     "capabilities": ["layers_1_4", "trace_tree", "continuous_eval", "plugins", "embedding", "llm_judge"],
     "missing": [],
@@ -140,6 +138,8 @@ Sent by the SDK immediately after spawning the engine. Establishes the session a
   }
 }
 ```
+
+This is the response from a 1.1.0 engine with no model providers configured and simulation mode off. Provider configuration can add the capability identifiers below; `embedding` and `llm_judge` remain present even without providers.
 
 **Fields:**
 
@@ -159,20 +159,21 @@ Sent by the SDK immediately after spawning the engine. Establishes the session a
 
 Capabilities are additive. New capabilities never remove or alter old ones, with one exception in v1.0: `embedding` and `llm_judge` used to mean "a provider is configured" and now mean "the assertion type is accepted". From v1.0, L5/L6 assertions are always accepted, and `layers_5_6` signals only that at least one L5/L6 provider is configured. SDKs must not withhold L5/L6 assertions when `layers_5_6` is absent; the engine answers them with `not_evaluated(provider_not_configured)`.
 
-| Capability | Version | Description |
-|------------|---------|-------------|
-| `layers_1_4` | v0.1+ | Deterministic assertion layers: schema, constraint, trace, content |
-| `layers_5_6` | v0.2+ | At least one L5/L6 provider (embedding or judge) is configured. Since v1.0, L5/L6 assertions do not require it |
-| `soft_failures` | v0.2+ | Soft failure classification and per-test-suite budgets |
-| `simulation` | v0.3+ | Simulated users, mock tools, fault injection |
-| `multi_agent` | v0.3+ | Hierarchical trace trees, cross-agent assertions |
-| `continuous_eval` | v0.4+ | Production trace ingestion and sampling pipelines |
-| `plugins` | v0.4+ | Custom assertions and judges via plugin interface |
-| `embedding` | v0.2+ | `embedding` assertions accepted. Since v1.0 always advertised; without a provider they return `not_evaluated(provider_not_configured)` |
-| `llm_judge` | v0.2+ | `llm_judge` assertions accepted. Since v1.0 always advertised; without a provider they return `not_evaluated(provider_not_configured)` |
-| `judge_configured` | v1.1+ | A judge provider is configured. `llm_judge` only says the assertion type is accepted |
-| `embedding_configured` | v1.1+ | An embedding provider is configured. `embedding` only says the assertion type is accepted |
-| `simulation_mode` | v1.0+ | The engine started with `ATTEST_SIMULATION` set: L5/L6 assertions return `not_evaluated(simulation)` |
+| Capability | Advertised in 1.1.0 | Description |
+|------------|---------------------|-------------|
+| `layers_1_4` | always | Deterministic schema, constraint, trace and content assertions |
+| `trace_tree` | always | Hierarchical trace validation and multi-agent assertions (layer 3) |
+| `continuous_eval` | always | Engine history and `query_drift` support used by the SDK's continuous-eval runner |
+| `plugins` | always | Custom assertion results computed in the SDK and submitted to the engine |
+| `embedding` | always | Embedding assertions accepted; without a provider, the result is `not_evaluated(provider_not_configured)` |
+| `llm_judge` | always | Judge assertions accepted; without a provider, the result is `not_evaluated(provider_not_configured)` |
+| `layers_5_6` | at least one embedding or judge provider configured | A provider is configured, not a requirement for sending L5/L6 assertions |
+| `embedding_configured` | embedding provider configured | Distinguishes a configured provider from an accepted assertion type |
+| `judge_configured` | judge provider configured | Distinguishes a configured provider from an accepted assertion type |
+| `simulation` | judge provider configured | Simulated-user message generation through `generate_user_message`; the simulation runtime itself lives in the SDK |
+| `simulation_mode` | engine simulation mode enabled | L5/L6 assertions return `not_evaluated(simulation)` without calling a provider |
+
+`soft_failures` and `multi_agent` are not advertised capability identifiers in 1.1.0. Soft assertions do not require a separate capability; use `trace_tree` for multi-agent support.
 
 #### Error: Incompatible Protocol Version
 
@@ -182,11 +183,11 @@ Capabilities are additive. New capabilities never remove or alter old ones, with
   "id": 1,
   "error": {
     "code": 3003,
-    "message": "protocol version 3 not supported; engine supports versions 1 and 2",
+    "message": "protocol version 2 not supported; engine supports versions 1–1",
     "data": {
       "error_type": "SESSION_ERROR",
       "retryable": false,
-      "detail": "Upgrade the engine binary or downgrade the SDK protocol_version"
+      "detail": "Upgrade the engine binary to support this SDK's protocol version"
     }
   }
 }
@@ -1131,7 +1132,7 @@ Effect assertions check what an agent did to the external system it acts on, not
   "type": "effect",
   "spec": {
     "check": "count",
-    "world": { "world_version": 1, "definition_sha256": "…", "state": { "refunds": [ … ] }, "faults_fired": [] },
+    "world": { "world_version": 1, "definition_sha256": "…", "state": { "refunds": [{ "order_id": "O-1042" }] }, "faults_fired": [] },
     "resource": "refunds",
     "where": { "order_id": "O-1042" },
     "equals": 1
@@ -1310,9 +1311,9 @@ Computes semantic similarity between agent output and a reference text using emb
 
 ### Layer 6 — LLM-as-Judge
 
-Uses a configurable LLM to evaluate agent output against a rubric. Supports built-in rubrics (faithfulness, helpfulness, safety) and custom judge prompts.
+Uses a configurable LLM to evaluate agent output against a named rubric and optional custom criteria.
 
-**Engine-side provider support:** OpenAI only. Planned v0.4: Anthropic, Gemini, Ollama.
+**Engine-side provider support in 1.1.0:** OpenAI (including OpenAI-compatible endpoints), Anthropic, Gemini and local-only ACP. ACP is refused in CI; native Ollama is not a provider family, but its OpenAI-compatible endpoint can be used. See [judges](../../../docs/guides/judges.md) for configuration and failure semantics.
 
 **Requires capability:** `llm_judge` (always advertised since v1.0; without a judge provider the result is `not_evaluated(provider_not_configured)`)
 
@@ -1322,22 +1323,23 @@ Uses a configurable LLM to evaluate agent output against a rubric. Supports buil
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `rubric` | string | yes (if no `prompt`) | Built-in rubric: `faithfulness`, `helpfulness`, `safety`, `conciseness`, `tone` |
-| `prompt` | string | yes (if no `rubric`) | Custom judge prompt. Use `{{output}}` and `{{input}}` as placeholders. |
-| `threshold` | float | no | Minimum score to pass. Default: `0.7`. |
-| `model` | string | no | LLM model to use as judge. Default from engine config. |
-| `soft` | bool | no | If `true`, failure is `soft_fail`. Default: `false`. |
-| `target` | string | no | JSONPath to text to evaluate. Default: `output.message`. |
+| `rubric` | string | no | Built-in rubric: `default`, `helpfulness`, `accuracy` or `safety`. Default: `default`. |
+| `criteria` | string | no | Additional evaluation criteria, sent with the selected target text. There is no `prompt` field or `{{input}}` / `{{output}}` interpolation. |
+| `threshold` | number or `"dynamic"` | no | Minimum score to pass. Missing or non-positive numeric values use `0.8`; a value above `1` is a spec error. `"dynamic"` uses assertion history with a floor of `0.8`. |
+| `model` | string | no | LLM model to use as judge. Default from engine provider configuration. |
+| `soft` | bool | no | If `true`, a below-threshold score is `soft_fail`. Default: `false`. |
+| `target` | string | yes | Path to the text to evaluate, for example `output.message`. The SDK fills this default; a raw wire request must supply it. |
+| `repeat` | int | no | Number of judge samples, from `1` to `16`; the median scored sample decides the verdict. |
+| `bias_probes` | []string | no | Optional `verbosity`, `position`, `self_preference`, or `["all"]`. Unknown names are a spec error. |
 
 **Built-in rubrics:**
 
 | Rubric | Description |
 |--------|-------------|
-| `faithfulness` | Does the output accurately reflect information from the retrieved context? No hallucinations. |
-| `helpfulness` | Does the output directly address the user's request in a useful, actionable way? |
-| `safety` | Does the output avoid harmful, offensive, or dangerous content? |
-| `conciseness` | Is the output appropriately brief without omitting critical information? |
-| `tone` | Is the tone professional, polite, and appropriate for the context? |
+| `default` | Holistic correctness, coherence, helpfulness and completeness |
+| `helpfulness` | Whether the reply addresses the request with useful, actionable detail |
+| `accuracy` | Factual correctness and unsupported claims |
+| `safety` | Harmful content, bias, privacy violations and appropriateness |
 
 **Examples:**
 
@@ -1347,6 +1349,7 @@ Built-in rubric:
   "assertion_id": "helpfulness_check",
   "type": "llm_judge",
   "spec": {
+    "target": "output.message",
     "rubric": "helpfulness",
     "threshold": 0.75,
     "model": "gpt-4.1"
@@ -1354,13 +1357,14 @@ Built-in rubric:
 }
 ```
 
-Custom judge prompt:
+Custom criteria:
 ```json
 {
   "assertion_id": "refund_policy_compliance",
   "type": "llm_judge",
   "spec": {
-    "prompt": "You are evaluating a customer service agent response. The agent was asked: {{input}}. The agent responded: {{output}}. Score from 0.0 to 1.0: Does the response comply with a standard 30-day refund policy and accurately state the timeline? Return JSON: {\"score\": <float>, \"reason\": <string>}",
+    "target": "output.message",
+    "criteria": "The refund policy allows returns within 30 days. Does the response follow that policy and accurately explain the refund timeline?",
     "threshold": 0.8,
     "model": "gpt-4.1"
   }
@@ -1541,9 +1545,8 @@ The following changes break compatibility and increment `protocol_version`:
 
 ### Backward Compatibility Window
 
-- The engine supports the **current** `protocol_version` and **current - 1**.
-- Example: engine at `protocol_version: 2` accepts requests from SDKs at `protocol_version: 1` or `protocol_version: 2`.
-- SDKs using `protocol_version: 0` against a v2 engine receive a `SESSION_ERROR` with a migration message.
+- The 1.1.0 engine accepts only `protocol_version: 1` (`minProtocolVersion` and `protocolVersion` are both `1`).
+- A higher or lower version returns `SESSION_ERROR` before the session is initialized. Do not infer a previous-version compatibility window from the release version.
 
 ### SDK Implementation Requirements
 
@@ -1567,7 +1570,7 @@ MUST:
   - Ignore unknown fields in all SDK requests
   - Accept unknown assertion types and return ASSERTION_ERROR (not crash)
   - Return method_not_found for unknown methods
-  - Honor protocol_version compatibility window (current and current - 1)
+  - Enforce the supported protocol-version range (only version 1 in Attest 1.1.0)
 
 MUST NOT:
   - Fail to parse requests that have additional unknown fields
