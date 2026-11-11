@@ -120,8 +120,7 @@ make engine-lint
 
 ```bash
 cd sdks/python
-uv venv .venv
-uv pip install -e ".[dev]"
+uv sync --frozen --extra dev
 ```
 
 ### Testing
@@ -177,6 +176,22 @@ make generate-claims   # rewrite the generated regions from the built engine
 make check-claims      # exit 1 on drift or on a retired claim listed in scripts/generate_claims.py
 ```
 
+After editing a guide or skill, regenerate the embedded engine copies and check them:
+
+```bash
+make generate
+cd engine && go test ./internal/assets/
+```
+
+Runnable README and guide snippets are executed by CI. Build the engine, then check an edited page locally:
+
+```bash
+make engine
+uv run --project sdks/python --frozen python scripts/run_doc_snippets.py --engine bin/attest-engine README.md
+```
+
+Use the documented `snippet` markers in `scripts/run_doc_snippets.py` for fragments or commands that genuinely require network access; each marker must explain why.
+
 - Layers and assertion types come from `engine/pkg/types`.
 - Adapters and feature maturity come from `engine/internal/capabilities/data.json`. Adding or removing a file in `sdks/python/src/attest/adapters/` or `sdks/typescript/packages/core/src/adapters/` fails the engine, Python and TypeScript tests until that file lists it with a tier.
 - Public docs describe six evaluated layers plus plugins. The internal plugin layer id 8 is not a public layer.
@@ -186,16 +201,16 @@ make check-claims      # exit 1 on drift or on a retired claim listed in scripts
 CI runs automatically on pull requests as one workflow, `.github/workflows/ci.yml`. Its first job, `changes`, detects which paths the pull request touches, and each suite runs only when the paths it guards changed:
 
 - **Engine** (`engine/**`, `proto/**`, `protocol-tests/**`, `docs/guides/**`, `skills/**`, plugin manifests, `VERSION`)
-  - `go test -race`, `go vet`, `govulncheck`, `go build`
+  - `go test -race`, `go vet`, golangci-lint, `govulncheck`, `go build`
 - **Python SDK** (`sdks/python/**`, `sdks/parity/**`, `protocol-tests/**`, `engine/**`, `proto/**`)
-  - Matrix: Python 3.10, 3.11, 3.12
+  - Matrix: Python 3.10–3.14
   - `pytest`, `ruff`, `mypy`, `pip-audit`
 - **TypeScript SDK** (`sdks/typescript/**`, `sdks/parity/**`, `protocol-tests/**`, `engine/**`)
   - Matrix: Node 20, 22
   - build, test, `tsc --noEmit`
 - **setup-attest** (`.github/actions/setup-attest/**`), **GitHub config** (`.github/**`), **version sources** (the files `scripts/verify-versions.sh` compares) and the **release dry run** (`release.yml`, the release scripts, `CHANGELOG.md`, `VERSION`)
 
-The final job, `required`, always runs. It fails when any job it depends on failed or was cancelled, and passes when they succeeded or were skipped, so a pull request that touches only `README.md` runs `changes` and `required` and nothing else. `required` is the one status check to require in branch protection.
+The final job, `required`, always runs. It fails when any job it depends on failed or was cancelled, and passes when they succeeded or were skipped. README and guide edits also run **Public claims** and **Documentation snippets**; generated skill and guide copies are checked by the engine asset tests. `required` is the one status check to require in branch protection.
 
 ## Code Standards
 
@@ -208,7 +223,7 @@ feat(engine): add Layer 3 trace ordering assertions
 fix(sdk-python): handle empty trace output
 docs(proto): clarify capability negotiation
 test(engine): add constraint assertion edge cases
-chore(ci): update Go version to 1.24
+chore(ci): update Go version to 1.27
 ```
 
 ### Go

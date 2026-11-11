@@ -22,7 +22,7 @@ The generated workflow has two jobs. `attest` (`contents: read`) runs the tests;
 
 ## 3. The policy
 
-`attest.policy.yaml` (generated): any hard failure blocks, `not_evaluated` warns. Read `attest guide policies` for `max_cost_usd`, per-layer caps, `failure_classes` and baseline regression rules. Check it locally against a real report:
+`attest.policy.yaml` (generated): any hard failure or failed native test (`tests_failed`) blocks, `not_evaluated` warns. Baseline regression rules also block removed assertions. Read `attest guide policies` for `max_cost_usd`, per-layer caps, `failure_classes` and baseline regression rules. Check it locally against a real report:
 
 ```bash
 uv run pytest --attest-report=attest-report.json
@@ -34,7 +34,7 @@ uv run attest policy evaluate --policy attest.policy.yaml --report attest-report
 | 0 | pass | pass |
 | 1 | a `block` rule was violated | fail |
 | 2 | warnings only | warning annotation, pass |
-| 3 | usage error, or the policy or report could not be loaded | fail; fix the path or the YAML |
+| 3 | usage error, invalid report input (including missing `tests` or unknown outcomes), or the policy/report could not be loaded | fail; fix the input, path or YAML |
 
 ## 4. Pull request annotations
 

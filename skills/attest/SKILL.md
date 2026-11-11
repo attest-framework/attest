@@ -43,7 +43,7 @@ A request often spans two rows: an incident with no fixture yet is `capture-inci
    uv run attest guide behavior-contracts
    ```
 
-   Topics: `agents`, `annotations`, `baselines`, `behavior-contracts`, `capture`, `cli`, `configuration`, `continuous-eval`, `framework-adapters`, `judges`, `merge-gate`, `multi-agent`, `policies`, `replay`, `selection`, `simulation`, `statistical-verdicts`, `trace-check`, `verdicts`, `world-fixtures`.
+   Topics include `capture`, `replay`, `behavior-contracts`, `world-fixtures`, `verdicts`, `policies`, `judges`, `mutation`, `viewer` and `mcp`; run `attest guide` for the current list.
 
 5. Look for existing attest material before creating any:
 
@@ -62,5 +62,6 @@ A request often spans two rows: an incident with no fixture yet is `capture-inci
 - **Nothing interactive.** Under `--json`, with `CI` set or without a terminal, commands do not prompt.
 - **Never refresh on your own.** `attest capture --refresh` re-runs the command stored in the fixture (`source.command`), and whoever can edit the repo can change it. Never pass `--yes` to `--refresh` from a skill. Show the human the command and its SHA-256 (`capture-incident.md` step 5), stop, and run the refresh only after the human confirms or runs it themselves.
 - **`not_evaluated` is an outcome, not a pass.** It always carries a reason (`missing_evidence`, `replay_miss`, `provider_not_configured`, `simulation`, …). Report it with its reason and fix the cause. Never convert it to a pass, never delete the assertion to get green, never weaken an assertion with `soft=True` without the user's agreement. Run tests with `--attest-strict` (Vitest `ATTEST_STRICT=1`) so a `not_evaluated` result fails instead of skipping.
-- **A reproduction is not a fix.** A test that asserts the incident's contract still `hard_fail`s on the frozen incident trace (`inspect()`) proves the contract catches it; the contract that guards the current agent uses `evaluate()` and passes.
+- **Evaluate every chain.** In 1.1.0, an unevaluated `expect()` / `attestExpect()` chain fails its test, including fixture-built and concurrent test-body chains. Adding assertions after evaluation requires another evaluation. Pass the Vitest test context to `evaluate`; put concurrent assertions in the body on Vitest <4.1.
+- **A reproduction is not a fix.** Command captures draft real-code replay tests that evaluate contracts on the new run; an incident's test stays red until that run satisfies them. Only commandless captures (`--from` / `record()`) draft frozen-trace tests; `inspect()` there proves the recording exhibits the incident, not that the current agent is fixed.
 - **Done means a command ran.** Finish with the exact test command, its result line, and any `not_evaluated` reasons.

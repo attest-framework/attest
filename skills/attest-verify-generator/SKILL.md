@@ -55,6 +55,7 @@ Fill this table. Ask the user only for rows the discovery could not answer, in o
 | Side effects that must never repeat or must never happen | HTTP calls, incident write-ups, user |
 | Known incidents and the rule each one broke | `incidents/`, issues, user |
 | Fixtures and what run each recorded (incident with `--expect-fail`, or a good run) | `*.attest.json` `name`, `verification.expect_fail`, `source.command` |
+| Does each test rerun the current agent or only inspect a frozen recording? | command-capture drafted tests use `replay_run` / `replayRun`; commandless captures load fixture traces |
 | Worlds and the base URL variable each sets | `*.world.yaml` `base_url_env` |
 | Environment the agent requires and safe placeholder values | settings code, `.env.example`, Makefile |
 | The exact test commands, and which run without model calls | Makefile, package.json scripts, CI workflow |
@@ -65,6 +66,8 @@ Never copy secret values into the skill, even from `.env` files; name the variab
 ## 3. Verify the commands
 
 Run every command the generated skill will list. A command goes in the "Run" section only if it ran with zero live model calls (`0 live model calls` in the replay line, or no model client involved) and its result is recorded. A command that needs a model, a missing world or missing setup goes under "Gaps" with the reason. Do not call paid models to fill a gap.
+
+For Attest 1.1.0, verify that every chain is evaluated (again after adding assertions), not just constructed. A green frozen-incident `inspect()` test is reproduction evidence, not a guard on the current code. For TypeScript, run `npx attest doctor` before the first Vitest run to download and check the engine outside the first test's timeout.
 
 If no fixture or contract exists yet, say so under "Gaps" and point to the `attest` skill (`references/capture-incident.md`, `references/write-contracts.md`) instead of inventing commands.
 
