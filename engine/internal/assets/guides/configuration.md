@@ -6,7 +6,7 @@ The engine reads its configuration from environment variables when it starts. An
 
 ## Engine discovery and the `attest` command
 
-Each SDK release requires one engine version, `ENGINE_VERSION`, equal to the SDK's own version (**1.1.0** for the current release). The SDK looks for an engine in this order and uses the first one it finds:
+Each SDK release requires one engine version, `ENGINE_VERSION`, equal to the SDK's own version (**1.1.1** for the current release). The SDK looks for an engine in this order and uses the first one it finds:
 
 1. `--attest-engine` (pytest) or the `engine_path` / `enginePath` argument of `EngineManager`
 2. `ATTEST_ENGINE_PATH`

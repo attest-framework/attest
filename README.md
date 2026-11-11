@@ -15,7 +15,7 @@
 
 Attest is an open-source testing framework purpose-built for AI agents and LLM-powered systems. It treats deterministic assertions as first-class citizens alongside probabilistic evaluation. Deterministic checks run first; model-scored checks run last.
 
-> **Status:** v1.1.0 "Hardened" — capture real agent runs, replay the current code without model calls, and gate merges on evaluated assertions, behavior contracts and test outcomes in Python and TypeScript.
+> **Status:** v1.1.1 (documentation patch on 1.1.0 "Hardened") — capture real agent runs, replay the current code without model calls, and gate merges on evaluated assertions, behavior contracts and test outcomes in Python and TypeScript.
 
 ## How it works in 30 seconds
 
@@ -295,6 +295,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) to build the engine and run the SDK test 
 | 1.0.0 | First stable capture → real-code replay → merge-gate workflow, agent tools and mutation testing |
 | 1.0.1 | "Red stays red": request routing, parallel-run reports and fail-closed policy inputs |
 | 1.1.0 | "Hardened": fail-closed judges, evaluated-chain enforcement, relational effects, semantic refresh diffs and stronger policy gates |
+| 1.1.1 | Documentation patch: refreshed guides, package READMEs and agent skills; `attest init --ci github` pins `pr-annotate` v1.1.0 |
 
 See [CHANGELOG.md](CHANGELOG.md) for release details and upgrade behavior changes.
 

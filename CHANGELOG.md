@@ -4,6 +4,24 @@ All notable changes to Attest are documented in this file. The format follows [K
 
 ## [Unreleased]
 
+## [1.1.1] — 2026-11-11
+
+Documentation patch on 1.1.0 "Hardened". It ships the refreshed guides, package READMEs and agent skills to PyPI, npm, `attest guide`, `attest init --skills` and the website, and moves the `attest init --ci github` annotate pin to v1.1.0. No change to evaluation, replay or policy behavior.
+
+### Changed
+
+- `attest init --ci github` (Python and TypeScript) pins `pr-annotate` to the v1.1.0 commit and fetches `attest-ai==1.1.0` in the annotate job, instead of v1.0.1 (#254).
+- `@attest-ai/vitest` requires `@attest-ai/core >=1.1.0` as its peer, instead of `>=1.1.0-rc`.
+
+### Docs
+
+- README: 1.1 status, a 30-second overview, every capability with its guide, a release history in place of the stale roadmap, the `attest doctor` warm-up before the first Vitest run, and a current banner (#256).
+- PyPI and npm READMEs: `uv` install commands, minimal examples that evaluate their chain, supported Python and Vitest ranges (#256).
+- Guides: commands, flags, environment variables and exit codes checked against 1.1.0; plain-language openings and minimal examples where a guide had none; 1.1 behavior documented where it belongs (fail-closed judges and budgets, relational effects, `tests_failed`, semantic refresh, per-operator mutation scores); `uv` instead of `pip` throughout (#255, #257).
+- Agent skills: the capture skill describes the real-code replay test that capture scaffolds, not a frozen-fixture test (#256).
+- Protocol spec: describes protocol v1 as shipped (stdio JSON-RPC only, no planned gRPC mode), with `initialize` examples checked against the engine (#258).
+- `pyproject.toml`: the `attest.plugins` entry-point example names a plugin instance, which is what the loader expects, not a class.
+
 ## [1.1.0] — 2026-11-11
 
 Stable release themed "Hardened". 1.1.0 is 1.1.0-rc.5 unchanged, after three consecutive green nightly walkthroughs of every refund-desk incident on the released channel. The release candidates added each piece: fail-closed judges, stable assertion ids and failing unevaluated chains (rc.1), runner parity on Vitest 3 and 4 and safe capture defaults (rc.2), a SHA-pinned supply chain, least-privilege pull-request annotation and Vitest 5 support (rc.3), relational world-effect contracts, semantic refresh diffs, per-operator mutation scores and executable public claims (rc.4), checked-chain ownership and failed-test policy gates (rc.5). No changes since rc.5.
@@ -601,7 +619,8 @@ Tagged, not published to registries. No GitHub release was created.
 
 Versions 0.1.0 through 0.6.0 are described in their [GitHub releases](https://github.com/attest-framework/attest/releases); 0.6.1 exists only as a tag. 0.1.0–0.6.0 were published to PyPI; 0.3.0–0.6.0 were also published to npm.
 
-[Unreleased]: https://github.com/attest-framework/attest/compare/v1.1.0...HEAD
+[Unreleased]: https://github.com/attest-framework/attest/compare/v1.1.1...HEAD
+[1.1.1]: https://github.com/attest-framework/attest/releases/tag/v1.1.1
 [1.1.0]: https://github.com/attest-framework/attest/releases/tag/v1.1.0
 [1.1.0-rc.5]: https://github.com/attest-framework/attest/releases/tag/v1.1.0-rc.5
 [1.1.0-rc.4]: https://github.com/attest-framework/attest/releases/tag/v1.1.0-rc.4
