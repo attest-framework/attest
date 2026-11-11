@@ -113,7 +113,7 @@ def test_scaffold_project_ci_github_writes_merge_gate_workflow(tmp_path: Path) -
     assert "needs: attest" in annotate_job
     assert "always() && github.event_name == 'pull_request' &&" in annotate_job
     assert "github.event.pull_request.head.repo.full_name == github.repository" in annotate_job
-    assert "pr-annotate@5d5b748b13da7ba034b3acfce631cee8fcae720c # v1.0.1" in annotate_job
+    assert "pr-annotate@101de1cdd703b04abf5fd854f347565fd37715b8 # v1.1.0" in annotate_job
     assert "name: attest-report" in annotate_job
     final = steps[-1]
     assert "if: always() && steps.tests.outcome == 'failure'" in final

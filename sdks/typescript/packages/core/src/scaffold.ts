@@ -84,8 +84,8 @@ export const ACTION_PINS = {
     version: "v8.0.2",
   },
   "attest-framework/attest/.github/actions/pr-annotate": {
-    sha: "5d5b748b13da7ba034b3acfce631cee8fcae720c",
-    version: "v1.0.1",
+    sha: "101de1cdd703b04abf5fd854f347565fd37715b8",
+    version: "v1.1.0",
   },
 } as const;
 
@@ -99,10 +99,10 @@ export const ANNOTATE_ENGINE_VERSION = ACTION_PINS[ANNOTATE_ACTION].version.repl
 
 /**
  * The annotate job holds a write token, so the install resolves attest-ai's dependencies as of one
- * day after the ANNOTATE_ENGINE_VERSION release (attest-ai 1.0.1 was uploaded 2026-11-05) instead
+ * day after the ANNOTATE_ENGINE_VERSION release (attest-ai 1.1.0 was uploaded 2026-11-10) instead
  * of whatever is newest on the runner. Move it with the version.
  */
-export const ANNOTATE_EXCLUDE_NEWER = "2026-11-06";
+export const ANNOTATE_EXCLUDE_NEWER = "2026-11-11";
 
 function uses(action: keyof typeof ACTION_PINS): string {
   const { sha, version } = ACTION_PINS[action];

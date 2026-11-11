@@ -171,7 +171,7 @@ describe("attest init", () => {
       expect(byName.get("Evaluate the merge policy")).toContain('"$code" -eq 2');
       expect(annotateJob).toContain("needs: attest");
       expect(annotateJob).toContain(
-        "pr-annotate@5d5b748b13da7ba034b3acfce631cee8fcae720c # v1.0.1",
+        "pr-annotate@101de1cdd703b04abf5fd854f347565fd37715b8 # v1.1.0",
       );
       expect(annotateJob).toContain(
         "github.event.pull_request.head.repo.full_name == github.repository",

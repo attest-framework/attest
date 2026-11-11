@@ -90,8 +90,8 @@ ACTION_PINS: dict[str, tuple[str, str]] = {
     "actions/upload-artifact": ("cf430e030ddbb5b0abf93d22962f4752f3646cd9", "v7.0.2"),
     "actions/download-artifact": ("9000827ccba6bdab643e8b6fd33ac0654aef8333", "v8.0.2"),
     "attest-framework/attest/.github/actions/pr-annotate": (
-        "5d5b748b13da7ba034b3acfce631cee8fcae720c",
-        "v1.0.1",
+        "101de1cdd703b04abf5fd854f347565fd37715b8",
+        "v1.1.0",
     ),
 }
 
@@ -100,9 +100,9 @@ ANNOTATE_ACTION = "attest-framework/attest/.github/actions/pr-annotate"
 # annotate job fetches exactly the release the pr-annotate pin's tag names.
 ANNOTATE_ENGINE_VERSION = ACTION_PINS[ANNOTATE_ACTION][1].removeprefix("v")
 # The annotate job holds a write token, so the install resolves attest-ai's dependencies as of one
-# day after the ANNOTATE_ENGINE_VERSION release (attest-ai 1.0.1 was uploaded 2026-11-05) instead of
+# day after the ANNOTATE_ENGINE_VERSION release (attest-ai 1.1.0 was uploaded 2026-11-10) instead of
 # whatever is newest on the runner. Move it with the version.
-ANNOTATE_EXCLUDE_NEWER = "2026-11-06"
+ANNOTATE_EXCLUDE_NEWER = "2026-11-11"
 _ANNOTATE_FETCH_COMMAND = (
     f"uvx --no-config --exclude-newer {ANNOTATE_EXCLUDE_NEWER} "
     f'--from "attest-ai=={ANNOTATE_ENGINE_VERSION}" attest doctor'
