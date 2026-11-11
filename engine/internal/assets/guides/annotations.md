@@ -17,7 +17,7 @@ steps:
       policy: attest.policy.yaml   # optional
 ```
 
-**1.1.0 scaffold limitation:** `attest init --ci github` still writes the v1.0.1 action pin (`5d5b748b13da7ba034b3acfce631cee8fcae720c`), fetches `attest-ai==1.0.1` and sets `engine-version: 1.0.1`. The scaffold pin is scheduled to move in the next patch. To use 1.1.0 now, update all three together and move the fetch step's `--exclude-newer` date to after the 1.1.0 publication; see [keeping the pins current](merge-gate.md#keeping-the-pins-current).
+`attest init --ci github` writes this v1.1.0 action pin, fetches `attest-ai==1.1.0` and sets `engine-version: 1.1.0` in the separate annotation job. Keep all three versions aligned when upgrading; see [keeping the pins current](merge-gate.md#keeping-the-pins-current).
 
 | Input | Meaning |
 |---|---|
