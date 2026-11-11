@@ -34,7 +34,7 @@ tests_failed: block
 # Fail the gate when the report's total cost exceeds this many dollars.
 max_cost_usd: 0.50
 
-# Per-layer caps on failures (keys 1–6, and 8 for plugin assertions; 0 means any layer).
+# Per-layer failure caps; 0 applies across all six layers and plugins.
 layers:
   3: { max_hard_fails: 0 }
   6: { max_soft_fails: 2, severity: warn }
