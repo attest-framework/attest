@@ -12,6 +12,7 @@ uv run attest policy evaluate --policy attest.policy.yaml --report attest-report
 | 0 | Every rule passed |
 | 1 | A rule with severity `block` was violated |
 | 2 | Only rules with severity `warn` were violated |
+| 3 | Usage error, invalid input, or a required input could not be loaded |
 
 A policy or report that cannot be read or is invalid exits 3 with the error on stderr; leaving out `--policy` or `--report` also exits 3. Exit 3 is neither a warning (2) nor a block (1), and CI steps that treat only 0, 1 and 2 as verdicts fail on it.
 

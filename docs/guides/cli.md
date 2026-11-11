@@ -13,6 +13,13 @@ attest guide <topic>    # print one guide as Markdown, offline
 
 `attest help --json` prints `{"commands": [{"name", "summary", "schema", "subcommands", "exit_codes"}]}`. `schema` and each subcommand's `schema` are paths relative to `proto/attest/v1/` in the attest repository. Run through the SDK (`uv run attest help --json`, `npx attest help --json`), the document also lists `init`, which the SDK implements itself (schema `cli/init.schema.json`; exit 0 success, 1 `--skills` or `--mcp` could not install, 2 usage error). The text form (`attest help`) is unchanged.
 
+For example, ask what this installed engine supports, then read a guide without opening a browser:
+
+```bash
+uv run attest capabilities --json
+uv run attest guide replay --json
+```
+
 ## JSON output
 
 Every command and subcommand accepts `--json`. With `--json` a successful command writes exactly one JSON document to stdout and sends diagnostics to stderr. On a usage, load or runtime error the command writes nothing to stdout; the exit code and stderr describe the error. Errors are not JSON objects: read the exit code and stderr. Without it, output stays human-readable.

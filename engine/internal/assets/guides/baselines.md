@@ -1,6 +1,6 @@
 # Baselines
 
-A baseline is a pinned report-v2: the status, score, cost and duration of every assertion at a point you trust, stored under a tag. `attest policy evaluate --baseline <tag>` compares a new report with it, so a policy can block a change that makes assertions that used to pass fail, or lowers a pass rate measured over fixed-N trials. See [policies](policies.md) for the rules that act on the comparison.
+A baseline saves the assertion results of a run you trust, so you can spot regressions in a later run. It pins a report-v2 under a tag, keeping each assertion's status, score, cost and duration. `attest policy evaluate --baseline <tag>` compares a new report with it; [policy rules](policies.md) can block regressions, removed assertions or lower pass rates measured over fixed-N trials.
 
 ## Pin a baseline
 
@@ -44,7 +44,7 @@ A baselined assertion id that is missing from the report is a regression: deleti
 
 ```yaml
 block_on_removal: true        # default when --baseline is given; false turns the rule off
-allow_removed: [3f9a1c0e5b7d2a44]   # ids whose removal is accepted
+allow_removed: [a2_3f9a1c0e5b7d2a443f9a1c0e5b7d2a44]   # use ids from your baseline
 ```
 
 Reordering distinct contracts keeps their ids, so it passes. An id is a hash of the test (or `ContinuousEvalRunner` name), the assertion type, the canonical spec and the occurrence index among identical projected contracts in that test, so editing a spec produces a new id. Repeated identical contracts still depend on evaluation order: for example, the same effect check on before/after worlds has one projected spec, so its occurrence indices follow the order of evaluation. When the same test still holds an assertion of the same type with a different spec, the missing id is reported as `changed` instead of removed: the policy output lists it under `changed` (`assertion_id`, `new_assertion_id`) and it does not block. Re-pin the baseline to accept the edit.

@@ -1,20 +1,23 @@
 # Annotations and the summary comment
 
-`pr-annotate` turns report-v2 files into what a reviewer sees on a pull request: one summary comment, plus an annotation on the file and line of each failing test. `attest init --ci github` wires it into the workflow ([merge gate guide](merge-gate.md)). To use it directly:
+`pr-annotate` turns report-v2 files into what a reviewer sees on a pull request: one summary comment, plus file-and-line annotations for hard-failing assertions and replay misses. `attest init --ci github` wires it into the workflow ([merge gate guide](merge-gate.md)). To use it directly:
 
-`pr-annotate` v2 ships in `1.0.0-rc.3`. Pin the commit SHA of the release you use, with the release in a trailing comment, as `attest init --ci github` writes it. A tag can be moved to other code; a SHA cannot, and this action runs with a token that can write to the pull request.
+Pin `pr-annotate` to the full commit SHA of the release you use, with the release in a trailing comment. A tag can be moved to other code; a SHA cannot, and this action runs with a token that can write to the pull request. The example below uses **1.1.0**.
 
 ```yaml
 permissions:
   contents: read
   pull-requests: write
 steps:
-  - uses: attest-framework/attest/.github/actions/pr-annotate@5d5b748b13da7ba034b3acfce631cee8fcae720c # v1.0.1
+  - uses: attest-framework/attest/.github/actions/pr-annotate@101de1cdd703b04abf5fd854f347565fd37715b8 # v1.1.0
     if: always() && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
     with:
       report: attest-report.json
+      engine-version: 1.1.0
       policy: attest.policy.yaml   # optional
 ```
+
+**1.1.0 scaffold limitation:** `attest init --ci github` still writes the v1.0.1 action pin (`5d5b748b13da7ba034b3acfce631cee8fcae720c`), fetches `attest-ai==1.0.1` and sets `engine-version: 1.0.1`. The scaffold pin is scheduled to move in the next patch. To use 1.1.0 now, update all three together and move the fetch step's `--exclude-newer` date to after the 1.1.0 publication; see [keeping the pins current](merge-gate.md#keeping-the-pins-current).
 
 | Input | Meaning |
 |---|---|
@@ -44,10 +47,11 @@ Each row from `attest report rows` becomes a workflow command, which GitHub show
 |---|---|
 | hard failure | `::error` |
 | replay miss (`not_evaluated`, reason `replay_miss`) | `::error` |
-| soft failure | `::warning` |
-| other not-evaluated | `::warning` |
+| strict replay miss (synthesized from a failed test) | `::error` |
 
 Annotations are not limited to lines in the diff, unlike review comments, so a failing test on an untouched line still annotates.
+
+In 1.1.0, `report rows` emits hard failures and replay misses only, excluding expected failures and hard-fail trial rows from tests that passed their required pass rate. Other not-evaluated results and soft failures remain in the summary/report; they do not produce inline warning annotations.
 
 GitHub shows 10 errors and 10 warnings per step. The action emits at most 10 errors and 9 warnings (one warning slot stays free for a comment failure); when more exist, the tenth is one annotation counting the rest. The full list is in the summary and the report artifact. Messages are capped at 1000 characters, control characters are removed, and `%`, line breaks, `:` and `,` are escaped as the workflow-command format requires. Report content is treated as untrusted: it can contain agent output.
 

@@ -4,8 +4,8 @@ A behavior contract states what the agent did, not what it said: how often a too
 
 <!-- snippet: skip reason="installs packages or runs npm tooling (network)" -->
 ```bash
-uv add "attest-ai>=1.0.1"
-npm install -D "@attest-ai/core@>=1.0.1" "@attest-ai/vitest@>=1.0.1" "vitest@^4"
+uv add "attest-ai>=1.1.0"
+npm install -D "@attest-ai/core@>=1.1.0" "@attest-ai/vitest@>=1.1.0" "vitest@^4"
 ```
 
 ## Example: one refund per order
@@ -59,6 +59,8 @@ it("INC-1042 refunds twice", async () => {
 ```
 
 `inspect()` returns the results without failing the test, which is how a reproduction test asserts that a contract reports a known violation. Use `evaluate()` (Python `attest.evaluate(...)`, Vitest `evaluate(...)`) when the contract should fail the test.
+
+In 1.1.0, building a chain without evaluating or inspecting it fails the test, including chains built in pytest fixtures and isolated Vitest concurrent test bodies. Adding an assertion after evaluation makes the chain unevaluated again: evaluate the complete chain after its final change. For concurrent lifecycle-hook limits on older Vitest versions, see [verdicts](verdicts.md).
 
 ## Contracts
 

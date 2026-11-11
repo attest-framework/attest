@@ -1,6 +1,6 @@
 # From first test to merge gate
 
-This guide takes a project from no tests to a GitHub Actions job that blocks merges on agent regressions. No API key, model or network access is needed: the sample test checks a recorded agent run with deterministic assertions (layers 1–4).
+This guide takes a project from no tests to a GitHub Actions job that blocks merges on agent regressions. After installing the packages and engine, the sample test needs no API key, model or network access: it checks a hand-built agent trace with deterministic assertions (layers 1–4).
 
 ## 1. Scaffold a passing test
 
@@ -8,7 +8,7 @@ Python:
 
 <!-- snippet: skip reason="installs packages or runs npm tooling (network)" -->
 ```bash
-uv add "attest-ai>=1.0.1" pytest
+uv add "attest-ai>=1.1.0" pytest
 uv run attest init
 uv run pytest            # 1 passed
 ```
@@ -17,10 +17,13 @@ TypeScript:
 
 <!-- snippet: skip reason="installs packages or runs npm tooling (network)" -->
 ```bash
-npm install -D "@attest-ai/core@>=1.0.1" "@attest-ai/vitest@>=1.0.1" "vitest@^4"
+npm install -D "@attest-ai/core@>=1.1.0" "@attest-ai/vitest@>=1.1.0" "vitest@^4"
 npx attest init
+npx attest doctor       # download/check the engine before the first test
 npx vitest run          # 1 passed
 ```
+
+On a cold `HOME`, the first engine download can exceed Vitest's default 5-second test timeout. Run `npx attest doctor` once before the first test run, or use the global setup in step 3.
 
 `attest init` never overwrites a file that exists. It writes:
 
@@ -86,11 +89,11 @@ uv run attest policy evaluate --report attest-report.json --policy attest.policy
 | Exit | Meaning |
 |---|---|
 | 0 | Every rule passed |
-| 1 | A blocking rule failed — the generated policy blocks on any hard failure |
+| 1 | A blocking rule failed — the generated policy blocks on any hard failure and on failed test outcomes (`tests_failed: block` by default) |
 | 2 | Warnings only — the generated policy warns when assertions were not evaluated (`not_evaluated: warn`) |
 | 3 | The policy could not be evaluated: a load error, a rule without its input (`block_on_regression` or `regression` without `--baseline`, `min_mutation_score` without `--mutation`), a report with 0 tests while `tests_collected` is above 0, or a baseline pinned under id scheme 1 (`baseline uses id scheme 1; re-pin it on 1.1`) |
 
-With `--baseline <tag>` the gate also blocks when a baselined assertion is missing from the report (`block_on_removal`, allowlist with `allow_removed`) and when the run exceeded the soft-fail budget (`budget_exceeded`). See [baselines](baselines.md#removed-and-changed-assertions).
+With `--baseline <tag>` the gate also blocks when a baselined assertion is missing from the report (`block_on_removal`, allowlist with `allow_removed`). Exceeding the soft-fail budget adds a `budget_exceeded` violation whether or not a baseline is supplied. See [baselines](baselines.md#removed-and-changed-assertions) and [policies](policies.md).
 
 ## 5. Gate merges in GitHub Actions
 
@@ -100,7 +103,7 @@ The `attest` job:
 
 1. **Run tests** has `continue-on-error: true` and `id: tests`, so a failing test does not stop the job before the report is handled.
 2. **Write the JUnit report** runs `attest report junit --report attest-report.json --out attest-junit.xml`. **Write the failure viewer** runs `attest view attest-report.json --no-open --out attest-report.html`. **Upload the Attest report** uploads the report, the JUnit file and the HTML page as the `attest-report` artifact. Without traces the page still shows failures, expected versus actual and the baseline metrics. To add the trace tree, uncomment `ATTEST_REPORT_TRACES: "1"` on the test step, on private repositories only: traces hold prompts, outputs and tool arguments, and they are not redacted. See [Failure viewer](viewer.md).
-3. **Evaluate the merge policy** treats exit 2 as a warning and fails on exit 1.
+3. **Evaluate the merge policy** treats exit 2 as a warning, fails on exit 1, and fails on evaluator errors such as exit 3.
 4. **Fail the job when tests failed** checks `steps.tests.outcome == 'failure'` and exits 1, so a red test is never hidden by `continue-on-error`.
 
 Steps 2 and 3 run with `if: always()`.
@@ -112,7 +115,7 @@ The `annotate` job needs `attest`, runs with `if: always()` for pull requests fr
 
 Permissions are minimal and split by job. The workflow grants `contents: read`; only `annotate` adds `pull-requests: write`, which the summary comment needs. The `annotate` job does not restore the cache the test job filled (`enable-cache: false` on `setup-uv`).
 
-Every action in the generated workflow is pinned to a full commit SHA with the release in a trailing comment (`uses: actions/checkout@<40-hex sha> # v6.1.0`), not a tag. A tag can be moved to different code after you reviewed it; a SHA cannot. This matters most in the job that holds a write token.
+Every action in the generated workflow is pinned to a full commit SHA with the release in a trailing comment (`uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1`), not a tag. A tag can be moved to different code after you reviewed it; a SHA cannot. This matters most in the job that holds a write token.
 
 ### Keeping the pins current
 
@@ -131,5 +134,7 @@ updates:
 ```
 
 Two values in the `annotate` job are not actions, so Dependabot does not touch them: the `attest-ai==<version>` in the engine fetch step and `engine-version`. They must equal the release of the `pr-annotate` pin (the `v1.0.1` in its comment). When you move the `pr-annotate` pin, change the `attest-ai==` pin, `engine-version` and, if you want a fresh bound, the `--exclude-newer` date in the same pull request. To check for a tag-pinned action, run `grep -nE 'uses: *[^ ]+@' .github/workflows/*.yml | grep -vE '@[0-9a-f]{40}( |$)'`; it prints nothing when every action is pinned.
+
+**1.1.0 scaffold limitation:** the generated annotation job still uses v1.0.1, even when the test job installs 1.1.0. The next patch is scheduled to bump it. For 1.1.0 annotation and policy behavior now, use `attest-framework/attest/.github/actions/pr-annotate@101de1cdd703b04abf5fd854f347565fd37715b8 # v1.1.0`, fetch `attest-ai==1.1.0`, set `engine-version: 1.1.0`, and move `--exclude-newer` to after the 1.1.0 publication. The complete action example is in [annotations](annotations.md).
 
 `pr-annotate` also evaluates a policy itself when you pass `policy:`. Its `exit-code` output is the evaluator's exit code; the step fails on 1 (unless `fail-on-violation: false`) and on any code other than 0, 1 and 2. The workflow above evaluates the policy in its own step instead, so the action runs without `policy:`.

@@ -1,6 +1,6 @@
 # Replay: run the agent's real code with zero model calls
 
-A fixture captured by [`attest capture`](capture.md) holds every model exchange the run made. Replay serves those recorded responses to your agent's real code through a local proxy, so a test runs the agent end to end, in CI, with no provider key and no live call. Each test ends in one of three ways:
+Replay lets you test your agent's real code using recorded model responses instead of calling a provider again. A fixture captured by [`attest capture`](capture.md) holds the model exchanges; a local proxy serves them back. Use `strict` mode for offline regression tests (the default when `CI` is set); the local default, `auto`, can call a provider on a miss when credentials are present. Each test ends in one of three ways:
 
 | Result | When |
 | --- | --- |
@@ -106,3 +106,12 @@ Attest's own L6 integration tests run the engine's judge from fixtures: with the
 ## Command line
 
 `attest-engine replay --name inc-1042 -- <command>` runs a command against the replay proxy, prints the summary and exits 1 on a miss or a failing command. `--serve` is the protocol the SDK helpers use: the engine prints `{"env": {...}}`, serves until a `stop` line (or end of input) arrives on stdin, then prints `{"summary": {...}}`.
+
+For an explicit offline command run:
+
+<!-- snippet: skip reason="requires your recorded inc-1042 fixture and agent.py command" -->
+```bash
+uv run attest replay --name inc-1042 --mode strict --no-live -- uv run python agent.py
+```
+
+This blocks live fallback through the replay proxy, not arbitrary network access by the child command. Keep provider keys out of the environment and use network isolation when you need a hard guarantee.

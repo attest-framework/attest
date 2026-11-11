@@ -1,5 +1,7 @@
 # Trace check: integrity and coverage of an OTLP export
 
+Use trace check before trusting an exported agent run: it finds broken span relationships and missing evidence. Convert the export when you want to apply Attest assertions to it.
+
 `attest trace check` reads an OpenTelemetry trace export (OTLP/JSON, the `ExportTraceServiceRequest` shape that the OTLP file exporter and collectors write) and reports whether its structure can be trusted and which evidence it lacks. `attest trace convert` turns the same export into an Attest trace (schema version 2) that assertions run against.
 
 Both commands run in `attest-engine`; `uv run attest trace …` and `npx attest trace …` forward to the engine of the installed SDK version.
@@ -63,6 +65,8 @@ Coverage counts spans that lack evidence some assertions need:
 | `tool_content` | tool calls | `gen_ai.tool.call.arguments`, `gen_ai.tool.call.result` (or `gen_ai.prompt` / `gen_ai.completion` / a `tool.output` event) |
 
 An assertion whose evidence is absent does not fail: it reports `not_evaluated` with reason `missing_evidence`. For example `cost_under(0.05)` on a trace converted from an export without `gen_ai.usage.cost` reports `not_evaluated: missing_evidence (metadata.cost_usd absent)`. Message content is opt-in in most GenAI instrumentations (for OpenTelemetry Python, `OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT=true`).
+
+Missing evidence is not a pass. A policy warns by default (`not_evaluated: warn`); set `not_evaluated: block` to make it block the merge gate. See [policies](policies.md#not-evaluated-is-not-pass).
 
 ## Convert an export
 
