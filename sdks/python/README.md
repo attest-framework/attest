@@ -1,28 +1,30 @@
 # attest-ai
 
-Test framework for AI agents. Deterministic assertions (schema validation, cost constraints, trace ordering, content matching) over agent execution traces.
+Test framework for AI agents. Check an agent's output, tool calls and side effects, replay recorded model responses in CI, and gate merges on the results. Deterministic checks run first; model-scored checks run last.
+
+Current release: **1.1.0 "Hardened"**. Requires **Python ≥3.10**.
 
 ## Install
 
 <!-- snippet: skip reason="installs packages or runs npm tooling (network)" -->
 ```bash
-uv add "attest-ai>=1.0.1" pytest
+uv add "attest-ai>=1.1.0" pytest
 ```
 
 With LLM provider support:
 
 <!-- snippet: skip reason="installs packages or runs npm tooling (network)" -->
 ```bash
-uv add "attest-ai[openai]>=1.0.1"      # OpenAI
-uv add "attest-ai[anthropic]>=1.0.1"   # Anthropic
-uv add "attest-ai[gemini]>=1.0.1"      # Google Gemini
-uv add "attest-ai[ollama]>=1.0.1"      # Ollama (local)
-uv add "attest-ai[all]>=1.0.1"         # All providers
+uv add "attest-ai[openai]>=1.1.0"      # OpenAI
+uv add "attest-ai[anthropic]>=1.1.0"   # Anthropic
+uv add "attest-ai[gemini]>=1.1.0"      # Google Gemini
+uv add "attest-ai[ollama]>=1.1.0"      # Ollama (local)
+uv add "attest-ai[all]>=1.1.0"         # All providers
 ```
 
 ## Quick start
 
-Save as `test_refund_agent.py`. The `attest` fixture starts the engine, and `attest.evaluate(chain)` runs every assertion in the chain and fails the test on a hard failure. A chain that is never passed to `evaluate()` checks nothing.
+Save as `test_refund_agent.py`. This example builds a trace locally, so it needs no model or API key. The `attest` fixture starts the engine, and `attest.evaluate(chain)` runs every assertion and fails the test on a hard failure. In 1.1.0, building a chain without evaluating it fails the test; evaluate again if you add assertions afterwards.
 
 ```python
 from attest import AgentResult, TraceBuilder, expect
@@ -61,7 +63,7 @@ def test_refund_agent(attest):
 
 <!-- snippet: setup=project -->
 ```bash
-pytest test_refund_agent.py --attest-report=report.json
+uv run pytest test_refund_agent.py --attest-report=report.json
 ```
 
 Change one assertion, for example `.output_contains("refund")` to `.output_contains("chargeback")`, and the test fails with a diagnostic for that assertion.
@@ -78,11 +80,15 @@ Attest registers as a pytest plugin automatically:
 
 <!-- snippet: fragment reason="`/path/to/attest-engine` is a placeholder" -->
 ```bash
-pytest tests/ --attest-engine=/path/to/attest-engine
+uv run pytest tests/ --attest-engine=/path/to/attest-engine
 ```
 
 ## Links
 
 - [Repository](https://github.com/attest-framework/attest)
+- [Documentation](https://attest-framework.github.io/)
+- [Guides on GitHub](https://github.com/attest-framework/attest/tree/main/docs/guides)
+- [Capture and real-code replay](https://github.com/attest-framework/attest/blob/main/docs/guides/capture.md)
+- [Merge policies](https://github.com/attest-framework/attest/blob/main/docs/guides/policies.md)
 - [Contributing](https://github.com/attest-framework/attest/blob/main/CONTRIBUTING.md)
 - [License](https://github.com/attest-framework/attest/blob/main/LICENSE) (Apache-2.0)

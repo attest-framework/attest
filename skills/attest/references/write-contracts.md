@@ -30,7 +30,7 @@ No fixture yet: follow `capture-incident.md` first, then return here. No trace a
 | The rule is about | Use | Needs |
 | --- | --- | --- |
 | which tools the agent calls, how often per key, in what order, with which arguments | trace contract: `tool_cardinality`, `forbidden_tools`, `tool_called_before`, `trajectory`, `tool_arg_satisfies`, `no_tool_cycles`, `max_tool_failure_streak` | a trace (replayed run, fixture trace or OTLP export) |
-| what ended up in the external system (records created, duplicates, idempotency keys) | world-effect contract: `world(state).count`, `.unique`, `.idempotent` | a `world.yaml` for the system, and the agent reading its base URL from the world's `base_url_env` variable |
+| what ended up in the external system (records created, duplicates, idempotency keys, totals or related recipients) | world-effect contract: `world(state).count`, `.unique`, `.idempotent`, `.sum`, `.matches`, with `related()` for cross-resource comparisons | a `world.yaml` for the system, and the agent reading its base URL from the world's `base_url_env` variable |
 
 Decision rule: a duplicate the model causes (it calls the tool twice) shows in the trace. A duplicate below the tool (an HTTP retry after a timeout that already committed) leaves one tool call and two records: only the effect contract catches it. For "prevent duplicate X", write both when a world exists; write the trace contract alone when none exists, and tell the user the effect is unchecked.
 
@@ -93,7 +93,7 @@ const { customer_message } = JSON.parse(
   readFileSync(new URL("incidents/INC-7/request.json", root), "utf8"),
 ) as { customer_message: string };
 
-it("INC-7: charges the order once", async () => {
+it("INC-7: charges the order once", async (context) => {
   const world = await useWorld(fileURLToPath(new URL("world/billing-timeout.world.yaml", root)));
   const exporter = new InMemorySpanExporter();
   const provider = new BasicTracerProvider({ spanProcessors: [new SimpleSpanProcessor(exporter)] });
@@ -109,14 +109,16 @@ it("INC-7: charges the order once", async () => {
       .count("charges", { equals: 1, where: { order_id: "A-17" } })
       .world(state)
       .idempotent("charges", { where: { order_id: "A-17" } }),
+    { context },
   );
 });
 ```
 
 Adapt names, paths and the entry point to the repo. Rules for the chain:
 
-- Each effect check (`count`, `unique`, `idempotent`) returns the chain, not the world; call `.world(state)` again before the next one.
+- Each effect check (`count`, `unique`, `idempotent`, `sum`, `matches`) returns the chain, not the world; call `.world(state)` again before the next one.
 - `evaluate` enforces (fails or skips the test). `inspect` only returns results: use it for a reproduction that asserts the frozen incident trace still `hard_fail`s, never for the guarding contract.
+- Every chain must be evaluated; in 1.1.0, building it without evaluating fails the test. Evaluate again after adding assertions.
 - `attest_replay(name)` reads `tests/attest/fixtures/<name>.attest.json` under the pytest root; `useReplay(name)` reads it under the working directory. Pass `fixtures_dir` / `fixturesDir` when the repo keeps fixtures elsewhere.
 - A frozen trace without the agent: `OTelAdapter.from_otlp(Path("incidents/INC-7/trace.otlp.json"))`, `load_fixture(path).trace` (Python) or `loadFixture(path)` from `@attest-ai/core` (TS).
 

@@ -15,7 +15,11 @@
 
 Attest is an open-source testing framework purpose-built for AI agents and LLM-powered systems. It treats deterministic assertions as first-class citizens alongside probabilistic evaluation. Deterministic checks run first; model-scored checks run last.
 
-> **Status:** v1.0.1 — capture → replay → merge gate on real agent runs, six evaluated assertion layers plus plugins, Python and TypeScript adapters with a maturity tier each (see Key Features), behavior contracts, mutation testing, HTML failure viewer, MCP server + agent skills, judges on four provider families, continuous eval with drift detection, pytest + vitest integrations.
+> **Status:** v1.1.0 "Hardened" — capture real agent runs, replay the current code without model calls, and gate merges on evaluated assertions, behavior contracts and test outcomes in Python and TypeScript.
+
+## How it works in 30 seconds
+
+Record a real run once as a fixture. In tests, run your agent's current code against the recorded model replies, then check its output, tool calls and side effects. A policy turns the test report into a merge decision; deterministic checks need no model or API key.
 
 ---
 
@@ -130,34 +134,23 @@ Each feature carries a maturity tier; the table is generated from `attest-engine
 - **10 Python adapters** — OpenAI (stable), Anthropic (stable), Manual (stable), Gemini (beta), Ollama (beta), LangChain (beta), CrewAI (beta), OpenTelemetry (beta), Google ADK (experimental), LlamaIndex (experimental)
 - **7 TypeScript adapters** — OpenAI (stable), Anthropic (stable), Manual (stable), Gemini (beta), Ollama (beta), LangChain.js (beta), OpenTelemetry (beta)
 <!-- claims:adapters:end -->
-- **Soft failure budgets** — scores between 0.5–0.8 warn without blocking CI
-- **Cost as a test metric** — assert on token usage, API cost, and latency
-- **Soft-failure limit** — cap soft failures per engine session via `ATTEST_MAX_SOFT_FAILURES`
-- **`attest-engine doctor`** — reports engine version, capabilities and judge/embedding configuration (`--json` for tooling); see [configuration](docs/guides/configuration.md)
-- **CI reports and selection** — `attest report junit|summary|rows` render report-v2 as JUnit XML, a pull-request summary (pass / fail / not evaluated, replayed vs live model calls, usage and retry cost) and annotation rows; `attest select --base <ref>` lists the tests a diff needs. Guides: [policies](docs/guides/policies.md), [baselines](docs/guides/baselines.md), [selection](docs/guides/selection.md)
-- **Mutation testing** — `attest mutate <fixtures> [--contracts DIR]` builds behavior mutants of your fixtures (drop, duplicate or reorder tool calls, perturb arguments, inject tool errors, alter world effects, truncate output), runs the suite's contracts against each at no model cost, and reports a mutation score, the surviving mutants and a contract that would kill each; the policy rule `min_mutation_score` gates on it. Guide: [mutation](docs/guides/mutation.md)
-- **Failure viewer** — `attest view report.json [--baseline report.json] [--mutation mutate.json]` writes one self-contained offline HTML page (no scripts, no external resources, all trace content escaped): the test list, the trace tree with the failing span highlighted, expected versus actual, replay or live provenance, cost, a baseline-versus-head diff and surviving mutants; `ATTEST_REPORT_TRACES=1` embeds the traces in the report. Guide: [viewer](docs/guides/viewer.md)
-- **Agent-facing CLI** — every command takes `--json` and prints one document that validates against a published schema (on an error it prints nothing to stdout: the exit code and stderr describe it); `attest help --json` lists commands with schemas and exit codes; `attest guide <topic>` prints the shipped guides offline; `attest init --skills` installs the attest agent skills (also published as Claude Code, Cursor and Codex plugins). Guides: [cli](docs/guides/cli.md), [agents](docs/guides/agents.md)
-- **TypeScript parity** — every Python capability has a TypeScript counterpart or a documented exception, enforced by a generated matrix in the test suites; see [parity](docs/guides/parity.md)
-- **MCP server** — `attest mcp` serves six fixed tools to coding agents over stdio (`trace_check`, `evaluate`, `explain_failure`, `draft_contract`, `run_contract`, `fixture_info`), read-only, offline and confined to the project root; `run_contract` parses a closed contract grammar, never code; `attest init --mcp` writes the Claude Code, Cursor and Codex configs. Guide: [mcp](docs/guides/mcp.md)
-- **Judges on four provider families** — Layer 6 runs natively on OpenAI, Anthropic and Gemini, or any OpenAI-compatible endpoint via `ATTEST_JUDGE_BASE_URL`, each with its own rate limit, plus a local-only ACP judge on your Claude Code or Codex subscription; see [judges](docs/guides/judges.md)
-- **Python & TypeScript SDKs** — `attest-ai` (PyPI) + `@attest-ai/core` / `@attest-ai/vitest` (npm)
-- **`attest init`** — scaffolds a passing sample test, a merge policy and, with `--ci github`, a GitHub Actions merge gate (Python + TypeScript)
-- **CJS/ESM dual output** — TypeScript SDK supports both `require()` and `import`, tree-shakeable
-- **Branded types** — `TraceId`, `AssertionId`, `AgentId` prevent accidental string assignment (TypeScript)
-- **Discriminated union specs** — type-safe assertion specs per layer (TypeScript)
-- **Local ONNX embeddings** — optional all-MiniLM-L6-v2 provider, zero API cost for Layer 5
-- **Judge meta-evaluation** — 3x judge runs with median scoring and variance detection
-- **CI-ready** — composite GitHub Action, tiered testing workflow, adversarial hardening
-- **Simulation runtime** — simulated users with personas, mock tools, fault injection, multi-turn orchestration
-- **Multi-agent testing** — hierarchical trace trees, cross-agent assertions, delegation tracking, temporal assertions, aggregate metrics
-- **Continuous eval & drift detection** — sample production traces, σ-based drift alerts to webhooks/Slack (Python + TypeScript)
-- **Plugin system** — extend with custom assertions via `attest.plugins` entry points (Python) or an `"attest": {"plugins": [...]}` entry in an installed package's `package.json` (TypeScript, `loadPackagePlugins`); see [simulation](docs/guides/simulation.md#plugins-in-typescript)
-- **Result history** — SQLite-backed with configurable retention, automatic pruning
-- **Engine performance** — schema compiler cache, deferred LRU writes, batch SQL eviction, `segmentio/encoding` (2.4x JSON speedup)
-- **Configurable timeouts** — engine read timeout, concurrent request support, judge cache sizing
-- **CLI** — `attest init` scaffolding; `attest doctor`, `baseline`, `policy` and every other command forwarded to a version-checked engine (Python + TypeScript)
-- **Single binary engine** — no runtime dependencies, cross-platform
+- **Capture and real-code replay** — turn a run or incident into a verified fixture and a regression test; `attest capture --refresh` shows semantic differences in prompts, tools, messages, results, model and parameters. Guides: [capture](docs/guides/capture.md), [replay](docs/guides/replay.md)
+- **Behavior and world-effect contracts** — check tool order, cardinality per business key and external side effects; relational `sum` and `matches` checks compare refunds with order totals or notification recipients with customers. Guides: [behavior contracts](docs/guides/behavior-contracts.md), [world fixtures](docs/guides/world-fixtures.md)
+- **Evaluated-chain enforcement** — building `expect()` / `attestExpect()` is not enough: unevaluated chains fail tests, including fixture-built chains and concurrent Vitest test bodies. Evaluate again after adding assertions. Guide: [verdicts](docs/guides/verdicts.md)
+- **CI policy, baselines and reports** — gate on assertion regressions, removed baseline assertions and failed native tests (`tests_failed`, blocking by default); invalid report input exits 3. Render JUnit, PR summaries and annotation rows, or select tests from a diff. Guides: [policies](docs/guides/policies.md), [baselines](docs/guides/baselines.md), [annotations](docs/guides/annotations.md), [selection](docs/guides/selection.md)
+- **Mutation testing** — mutate recorded behavior without model calls, inspect surviving mutants and suggested contracts, and gate on `min_mutation_score`; reports include generated, killed, survived and inapplicable counts and scores per operator. Guide: [mutation](docs/guides/mutation.md)
+- **Failure viewer** — one self-contained offline HTML page shows failing spans, expected versus actual values, replay provenance, costs, baseline differences and mutation results. Guide: [viewer](docs/guides/viewer.md)
+- **Fail-closed judges on four provider families** — OpenAI, Anthropic, Gemini and local-only ACP, plus OpenAI-compatible endpoints; malformed replies and rejected credentials are `not_evaluated`, not passes. This only warns under the default merge policy: use `not_evaluated: block` to block. Guides: [judges](docs/guides/judges.md), [policies](docs/guides/policies.md)
+- **Budgets and calibration** — assert on run cost, tokens and latency; cap soft failures with `ATTEST_MAX_SOFT_FAILURES`, judge requests with `ATTEST_MAX_JUDGE_CALLS`, and Attest-initiated model spend with `ATTEST_BUDGET_USD`. Repeat judge scores, probe bias and persist calibrated thresholds with `attest calibrate --persist`. Guides: [judges](docs/guides/judges.md), [configuration](docs/guides/configuration.md)
+- **Safe offline tests** — strict replay rejects unknown model requests; `--attest-egress=block` (TypeScript: `ATTEST_EGRESS=block`) blocks external HTTP, including through HTTP proxies. Guides: [replay](docs/guides/replay.md), [capture](docs/guides/capture.md)
+- **Python and TypeScript SDKs** — Python ≥3.10 with pytest; TypeScript with Vitest 3, 4 or 5, CJS/ESM core output and typed assertions. Shared capabilities and documented exceptions are checked by a generated [parity matrix](docs/guides/parity.md); see [framework adapters](docs/guides/framework-adapters.md) for provider integrations.
+- **Agent-facing CLI, MCP and skills** — machine-readable commands and schemas, offline `attest guide`, six project-confined MCP tools and installable coding-agent skills. `attest doctor` checks engine and provider configuration. Guides: [CLI](docs/guides/cli.md), [MCP](docs/guides/mcp.md), [agents](docs/guides/agents.md)
+- **Merge-gate scaffolding** — `attest init` writes a passing sample and policy; `--ci github` adds a SHA-pinned workflow with a least-privilege annotation job. The 1.1.0 scaffold still pins `pr-annotate` to v1.0.1. Guide: [merge gate](docs/guides/merge-gate.md)
+- **Multi-agent trace trees** — check delegation, cross-agent behavior, timing and aggregate metrics. Guide: [multi-agent](docs/guides/multi-agent.md)
+- **Simulation and plugins** — simulated users, personas, mock tools, fault injection and multi-turn orchestration; custom SDK-process assertions through Python entry points or TypeScript package discovery. Guide: [simulation](docs/guides/simulation.md)
+- **Local ONNX embeddings** — optional all-MiniLM-L6-v2 semantic similarity without API charges. Guide: [configuration](docs/guides/configuration.md)
+- **Continuous evaluation and history** — sample production traces, store results in SQLite with retention, and detect drift with webhook/Slack alerts. Guide: [continuous evaluation](docs/guides/continuous-eval.md)
+- **Single binary engine** — a version-matched Go subprocess handles evaluation for both SDKs over JSON-RPC; no Go runtime installation is needed. Guide: [configuration](docs/guides/configuration.md)
 
 ## Repository Layout
 
@@ -187,7 +180,7 @@ No API key, model or network access is needed: the sample test checks a recorded
 <!-- snippet: skip reason="installs packages or runs npm tooling (network)" -->
 ```bash
 uv init --bare my-agent-tests && cd my-agent-tests
-uv add "attest-ai>=1.0.1" pytest
+uv add "attest-ai>=1.1.0" pytest
 uv run attest init
 uv run pytest
 ```
@@ -269,33 +262,43 @@ uv run attest init --ci github
 
 `attest init --ci github` writes `.github/workflows/attest.yml`: the test step records its outcome and continues, the report upload, policy evaluation and the `pr-annotate` action always run, and a last step fails the job when the tests failed. Failures are annotated at the failing test's file and line. See the [merge gate guide](docs/guides/merge-gate.md).
 
+In 1.1.0, the generated workflow still pins `pr-annotate` to v1.0.1; the engine and SDK install remains 1.1.0.
+
 ### TypeScript
 
 <!-- snippet: skip reason="installs packages or runs npm tooling (network)" -->
 ```bash
 npm init -y && npm pkg set type=module
-npm install -D "@attest-ai/core@>=1.0.1" "@attest-ai/vitest@>=1.0.1" "vitest@^4"
+npm install -D "@attest-ai/core@>=1.1.0" "@attest-ai/vitest@>=1.1.0" "vitest@^4"
 npx attest init
+npx attest doctor
 npx vitest run
 ```
 
 `npx attest init` writes `tests/my-agent.test.ts` and `attest.policy.yaml`; the line marked `ATTEST-DEMO` works the same way. `npx vitest run --reporter=default --reporter=@attest-ai/vitest/reporter --outputFile.attest=attest-report.json` writes the report and `npx attest init --ci github` writes the workflow, which installs with `npm ci` from the `package-lock.json` that `npm install` writes.
 
+Run `npx attest doctor` before the first Vitest run: it downloads and checks the matching engine. On a cold home directory, doing that inside the first test can exceed Vitest's 5-second timeout. Vitest 3, 4 and 5 are supported.
+
 ### Build from source
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) to build the engine and run the SDK test suites.
 
-## Roadmap
+## Release history
 
-| Phase | Version | Status       | Description                                                                                                                      |
-| ----- | ------- | ------------ | -------------------------------------------------------------------------------------------------------------------------------- |
-| 0     | —       | **Complete** | Repository scaffolding, toolchain, protocol spec                                                                                 |
-| 1     | v0.1    | **Complete** | Go engine (Layers 1–4), Python SDK, pytest plugin, 4 LLM adapters                                                                |
-| 2     | v0.2    | **Complete** | Layers 5–6 (embeddings, LLM-as-judge), soft failures, CI integration                                                             |
-| 3     | v0.3    | **Complete** | Simulation runtime, multi-agent testing, TypeScript SDK, framework adapters, temporal assertions                                 |
-| 4     | v0.4    | **Complete** | Continuous eval, drift detection, plugin system, CrewAI adapter, result history, CLI                                             |
-| 5     | v0.5.0  | **Complete** | The Alignment Release — engine/SDK version unification, schema cache, segmentio/encoding, full TypeScript parity, test coverage  |
-| 6     | v0.6.0  | **Complete** | SDK parity with engine — `queryDrift`, `generateUserMessage`, dynamic thresholds, vitest simulation mode, 4 personas, sampleRate |
+| Release | Theme |
+| --- | --- |
+| 0.1 | Go engine with deterministic checks, Python SDK and pytest integration |
+| 0.2 | Embeddings, LLM judges, soft failures and CI integration |
+| 0.3 | Simulation, multi-agent testing, TypeScript SDK and framework adapters |
+| 0.4 | Continuous evaluation, drift detection, plugins and result history |
+| 0.5 | Unified engine/SDK versions, performance work and TypeScript parity |
+| 0.6 | SDK access to drift queries, simulated users and dynamic thresholds |
+| 0.9 | Judge calibration, repeat scoring, bias probes and OpenTelemetry GenAI parity |
+| 1.0.0 | First stable capture → real-code replay → merge-gate workflow, agent tools and mutation testing |
+| 1.0.1 | "Red stays red": request routing, parallel-run reports and fail-closed policy inputs |
+| 1.1.0 | "Hardened": fail-closed judges, evaluated-chain enforcement, relational effects, semantic refresh diffs and stronger policy gates |
+
+See [CHANGELOG.md](CHANGELOG.md) for release details and upgrade behavior changes.
 
 ## Contributing
 

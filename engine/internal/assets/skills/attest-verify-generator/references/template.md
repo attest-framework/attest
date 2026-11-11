@@ -23,6 +23,7 @@ General attest procedures: the `attest` skill, `attest help --json` and `attest 
 | Tools (business key) | `<tool>(<args>)` (key `<arg>`), … |
 | Side effects | <system> at `$<BASE_URL_ENV>` |
 | Fixtures | `<path>.attest.json`: <incident reproduction (expect-fail) / good run>, recorded from `<source.command>` |
+| Test evidence | <current agent rerun with `replay_run` / `replayRun`, or frozen fixture trace only> |
 | Worlds (optional) | `<path>.world.yaml`: sets `<BASE_URL_ENV>`; faults: <fault on resource/route> |
 | Incidents (optional) | `<ID>`: <one line>; frozen trace `<path>` |
 | Required environment | `<VAR>=<placeholder>` … (placeholders only; replay needs no real key) |
@@ -46,7 +47,7 @@ Expected: <`N passed`> and `attest replay: N replayed · 0 live model calls · $
 ## Extend
 
 - **New rule on tool calls:** add a method to the chain in `<test file>` (`attest guide behavior-contracts`), rerun the Run commands.
-- **New rule on side effects (optional):** add `.world(state).count|unique|idempotent(...)` in `<test file>` against `<world path>` (`attest guide world-fixtures`).
+- **New rule on side effects (optional):** add `.world(state).count|unique|idempotent|sum|matches(...)` in `<test file>` against `<world path>`; use `related()` for cross-resource comparisons (`attest guide world-fixtures`).
 - **New incident:** `<uv run|npx> attest capture --name <id> --expect-fail <--world path> -- <command>`; it calls <capture upstream>, so <get approval / start the local server first>. Then add the guarding contract next to `<test file>`.
 - **Intended prompt, tool or model change:** strict replay fails with `replay miss: … changed`. Show the human `source.command` from `<fixture path>` with its SHA-256 (`capture-incident.md` step 5) and stop for their confirmation; never pass `--yes` from a skill. After the human refreshes, review the fixture diff and rerun.
 
@@ -55,6 +56,7 @@ Expected: <`N passed`> and `attest replay: N replayed · 0 live model calls · $
 - No real API keys in commands, tests or fixtures. `attest capture --check-redaction <fixture>` before committing a fixture.
 - Run tests with `--attest-replay=strict --attest-egress=block --attest-strict` (Vitest: `ATTEST_REPLAY=strict ATTEST_EGRESS=block ATTEST_STRICT=1`) unless the Run commands already set them.
 - `not_evaluated` is never a pass; report the reason.
+- Evaluate every assertion chain, again after adding assertions. A frozen incident test does not prove the current agent is fixed.
 - Fix the agent when a contract fails on the behavior it guards; change a contract only with the user's agreement.
 
 ## Gaps (optional)

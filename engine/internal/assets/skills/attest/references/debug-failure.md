@@ -40,6 +40,8 @@ Attest diagnostic — 1 of 4 assertions failed:
 
 `hard_fail`: decide whether the agent or the assertion is wrong. If the explanation describes the bug the contract exists for (example: `charge_card called 2× for order_id=A-17 (max 1)`, `effect violated: 2 charges for A-17 (expected 1)`), fix the agent. Change an assertion only when it encodes a wrong rule, and tell the user.
 
+`expect() chain built but never evaluated`: evaluate every chain, including fixture-built chains, and evaluate again after appending assertions. In Vitest, pass the test context; on Vitest <4.1 move concurrent lifecycle assertions into the test body. Another test's evaluation does not evaluate your chain.
+
 `not_evaluated` reasons (never treat as pass):
 
 | Reason | Cause | Fix |
@@ -82,9 +84,12 @@ Other forms: `messages changed`, `tools changed`, `params changed`, `model chang
 | 0 | every rule passed | |
 | 1 | a `block` rule was violated | read `violations`; fix the failures they name |
 | 2 | only `warn` rules were violated (default: `not_evaluated`) | report the reasons; not a pass to hide |
+| 3 | invalid report-v2 `tests` or test outcome | restore complete test outcomes (`passed`, `failed`, `skipped`) rather than weakening policy |
 | 3 | usage error or the policy/report could not be loaded | check paths and YAML; `attest help --json` for flags |
 
 Other commands: 0 success, 1 the result is a failure, 2 usage error (`attest guide cli` has the full table).
+
+The default `tests_failed` rule blocks native test failures even when all Attest assertions passed. A removed baseline assertion also blocks a regression policy; keep the check or review the intentional baseline change, rather than suppressing the gate.
 
 ## 6. Trace problems
 
