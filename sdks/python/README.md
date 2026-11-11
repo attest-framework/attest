@@ -2,7 +2,7 @@
 
 Test framework for AI agents. Check an agent's output, tool calls and side effects, replay recorded model responses in CI, and gate merges on the results. Deterministic checks run first; model-scored checks run last.
 
-Current release: **1.1.0 "Hardened"**. Requires **Python ≥3.10**.
+Current release: **1.1.1** (documentation patch on 1.1.0 "Hardened"). Requires **Python ≥3.10**.
 
 ## Install
 
@@ -24,7 +24,7 @@ uv add "attest-ai[all]>=1.1.0"         # All providers
 
 ## Quick start
 
-Save as `test_refund_agent.py`. This example builds a trace locally, so it needs no model or API key. The `attest` fixture starts the engine, and `attest.evaluate(chain)` runs every assertion and fails the test on a hard failure. In 1.1.0, building a chain without evaluating it fails the test; evaluate again if you add assertions afterwards.
+Save as `test_refund_agent.py`. This example builds a trace locally, so it needs no model or API key. The `attest` fixture starts the engine, and `attest.evaluate(chain)` runs every assertion and fails the test on a hard failure. Since 1.1.0, building a chain without evaluating it fails the test; evaluate again if you add assertions afterwards.
 
 ```python
 from attest import AgentResult, TraceBuilder, expect

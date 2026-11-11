@@ -2,7 +2,7 @@
 
 The TypeScript SDK for [Attest](https://github.com/attest-framework/attest#readme): build traces, check agent output and tool calls, and communicate with the Attest engine. Deterministic checks run first; model-scored checks run last.
 
-Current release: **1.1.0 "Hardened"**. The test integration supports **Vitest 3, 4 and 5** (`>=3.0.0 <6`); use a Node version supported by your chosen Vitest release.
+Current release: **1.1.1** (documentation patch on 1.1.0 "Hardened"). The test integration supports **Vitest 3, 4 and 5** (`>=3.0.0 <6`); use a Node version supported by your chosen Vitest release.
 
 ## Install
 
@@ -50,7 +50,7 @@ npx vitest run
 
 Run `npx attest doctor` once before the first test run: it downloads and checks the engine. On a cold home directory, the download inside the first test can exceed Vitest's 5-second timeout.
 
-`attestExpect()` collects assertions; `await evaluate()` actually runs them and fails the test on a hard failure. A chain that is never evaluated fails the test in 1.1.0; evaluate again after adding assertions. A returned `not_evaluated` result skips the test by default; `{ context, strict: true }` makes it fail instead. Pass the test context as shown, including in `it.concurrent`.
+`attestExpect()` collects assertions; `await evaluate()` actually runs them and fails the test on a hard failure. Since 1.1.0, a chain that is never evaluated fails the test; evaluate again after adding assertions. A returned `not_evaluated` result skips the test by default; `{ context, strict: true }` makes it fail instead. Pass the test context as shown, including in `it.concurrent`.
 
 ## Learn more
 
