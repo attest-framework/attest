@@ -2,11 +2,13 @@
 
 `attest mcp` gives a coding agent (Claude Code, Cursor, Codex) six tools over the Model Context Protocol on stdio. The agent drafts behavior contracts from a captured run, iterates them against it, reads failures and gets the test lines to paste. The server is read-only and offline: it writes no files, opens no sockets and makes no model calls.
 
+**Status in 1.1.0: beta.** Installation writes client configuration; serving the six tools does not modify the project.
+
 ## Set up a client
 
 ```bash
 uv run attest init --mcp      # Python
-attest-engine mcp install --dir . --command '["attest","mcp"]'   # without an SDK
+attest-engine mcp install --dir . --command '["attest-engine","mcp"]'   # engine-only installation
 ```
 
 <!-- snippet: skip reason="npx resolves @attest-ai/core from the npm registry (network)" -->
@@ -140,7 +142,7 @@ A statement is one call in Python call syntax with literal arguments. The parser
 
 Arguments are literals only: strings in `"` or `'` (escapes `\\ \" \' \n \t`), integers, floats, `True`/`False`/`None` (also `true`/`false`/`null`), lists, and maps with string keys. Keyword arguments follow positional ones. Limits: 8 KiB per statement, 8 levels of nesting, 50 statements per call.
 
-Everything else is rejected with a position: identifiers as values, attribute access, operators, calls in arguments, f-strings, comments, lambdas, imports, a second call, unknown methods, unknown or repeated keyword arguments, and wrong argument types.
+Except for the restricted `related(...)` literal described below, everything else is rejected with a position: identifiers as values, attribute access, operators, arbitrary calls in arguments, f-strings, comments, lambdas, imports, a second call, unknown methods, unknown or repeated keyword arguments, and wrong argument types.
 
 The methods are a closed catalog. Each is accepted under its Python name or its TypeScript name (`tool_cardinality` or `toolCardinality`), with keywords in snake_case or camelCase.
 

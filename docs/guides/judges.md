@@ -1,6 +1,8 @@
 # Judges
 
-Layer 6 (`llm_judge`) asks a model to score agent output against a rubric. The engine runs the judge itself, so the provider is chosen with environment variables and every SDK gets the same behavior. Deterministic layers (1–4, 7) never call a judge; prefer them, and use a judge for what only a model can check.
+Use a judge when the question needs interpretation, such as whether a reply explains a refund clearly. Layer 6 (`llm_judge`) asks a model to score the output against a rubric. The engine runs the judge itself, so every SDK uses the provider selected by environment variables; prefer deterministic checks first.
+
+**Status in 1.1.0: beta.** Judges fail closed: a rejected credential, abstention or malformed reply is `not_evaluated`, never a fabricated score or a pass. The default policy only warns about missing evaluations; set `not_evaluated: block` to require a measurement before merging.
 
 ## Choose a provider
 
@@ -19,7 +21,7 @@ Anthropic and Gemini have no built-in default model: a judge whose model silentl
 export ATTEST_JUDGE_PROVIDER=anthropic
 export ANTHROPIC_API_KEY=...
 export ATTEST_JUDGE_MODEL=<an Anthropic model id>
-attest doctor        # shows provider, model, base URL and which variable supplied the key
+uv run attest doctor  # shows provider, model, base URL and which variable supplied the key
 ```
 
 With no key for the selected provider, the judge is not configured and every judge assertion returns `not_evaluated` with reason `provider_not_configured`.
@@ -27,6 +29,8 @@ With no key for the selected provider, the judge is not configured and every jud
 ### Keys and custom endpoints
 
 `ATTEST_JUDGE_BASE_URL` points the selected provider at another host: a local OpenAI-compatible server, or an Anthropic/Gemini gateway that speaks the same API. For OpenAI-compatible servers the base URL includes `/v1` (`http://localhost:11434/v1`); for Anthropic and Gemini it is the root without a version segment (`https://gateway.example`), because the engine appends `/v1/messages` or `/v1beta/models/<model>:generateContent`. With a base URL set, only `ATTEST_JUDGE_API_KEY` is sent; a provider's standard key (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, `GOOGLE_API_KEY`) never reaches a custom endpoint. Base URLs must be `http`/`https` without credentials, query or fragment. Plain `http` to a non-loopback host works but is flagged as insecure by the startup log and `doctor`. Keys travel in headers (`Authorization`, `x-api-key`, `x-goog-api-key`), never in URLs, and never appear in errors, logs or `doctor` output: a provider error that echoes the key has it replaced by `[redacted]`. Redirects are not followed.
+
+A custom endpoint requires a non-empty `ATTEST_JUDGE_API_KEY`, even if it does not authenticate requests; use a placeholder such as `local-only` for a local server. Omitting it is a startup error, not a fallback to your standard provider key.
 
 Anthropic requests use the model's default sampling (current Claude models reject a non-default `temperature`); OpenAI and Gemini requests use temperature 0. Anthropic and Gemini requests carry an output budget of at least 4096 tokens, because their current models count reasoning against it and a budget sized for the JSON verdict alone would end before any text.
 
@@ -43,7 +47,7 @@ Three credential channels still reach the agent, and an agent tool steered by th
 export ATTEST_JUDGE_PROVIDER=acp
 export ATTEST_JUDGE_ACP_COMMAND="npx -y @zed-industries/claude-code-acp"   # or your agent's ACP command
 export ATTEST_JUDGE_TIMEOUT_S=120    # agents start slower than an HTTP call
-attest doctor
+uv run attest doctor
 ```
 
 - **Never in CI.** A personal subscription is not a CI credential, so the engine refuses to start (and `doctor` exits 1) when any of `CI`, `GITHUB_ACTIONS`, `GITLAB_CI`, `BUILDKITE`, `CIRCLECI`, `JENKINS_URL`, `TF_BUILD` or `TEAMCITY_VERSION` is defined, even as an empty string, with a message naming the API-key providers to use instead.
@@ -98,7 +102,7 @@ History lives under `ATTEST_CACHE_DIR`. A CI job that starts with an empty cache
 
 ## Budgets
 
-`ATTEST_MAX_JUDGE_CALLS` caps judge requests per engine session and `ATTEST_BUDGET_USD` caps the spend of judge and embedding calls. Every call reserves one request and its worst-case cost before it is sent, so concurrent assertions, `repeat` runs, bias probes and retries cannot exceed the budget. The `acp` judge reports no token usage, so any USD limit, including a test's, refuses its calls; limit it by calls (a call that fails after it was sent keeps its reservation, and a request without an output limit is capped at 1024 tokens); a call that cannot reserve is not sent and its assertion is `not_evaluated: budget_exhausted`. Costs come from a built-in price table (`gpt-4.1`, `gpt-4.1-mini`, `gpt-4.1-nano`, `text-embedding-3-small`, `text-embedding-3-large`) or `ATTEST_JUDGE_PRICE_IN` / `ATTEST_JUDGE_PRICE_OUT` (USD per 1M tokens), and are reconciled to the token usage each provider reports. See [configuration](configuration.md#evaluation).
+`ATTEST_MAX_JUDGE_CALLS` caps judge-provider requests per engine session; `ATTEST_BUDGET_USD` covers judge and paid embedding calls. Each judge request reserves one call and its worst-case cost before it is sent; embeddings reserve cost only. Concurrent assertions, repeated judge samples, bias probes and retries share these limits. A refused call is not sent, and the assertion is `not_evaluated: budget_exhausted`. An ACP judge has no token usage: a session USD limit is a startup error, and a test USD limit refuses its calls; use a call-count limit instead. Sent calls that fail keep their reservation. Prices come from the built-in table (`gpt-4.1`, `gpt-4.1-mini`, `gpt-4.1-nano`, `text-embedding-3-small`, `text-embedding-3-large`) or the paired `ATTEST_JUDGE_PRICE_IN` / `ATTEST_JUDGE_PRICE_OUT` values (USD per 1M tokens). See [budgets](statistical-verdicts.md#4-budgets) for test limits and the agent's own spend.
 
 ## What a result records
 
@@ -110,7 +114,7 @@ Agreement with human labels is a property of one judge model. `attest calibrate`
 
 <!-- snippet: fragment reason="`<model id>` is a placeholder; calibration needs a judge provider" -->
 ```bash
-attest calibrate --labels labels.jsonl --rubric default \
+uv run attest calibrate --labels labels.jsonl --rubric default \
   --persist --judge-provider anthropic --judge-model <model id>
 ```
 

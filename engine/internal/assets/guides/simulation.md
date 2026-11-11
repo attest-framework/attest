@@ -1,6 +1,8 @@
 # Simulation Runtime Guide
 
-Attest's simulation runtime enables testing AI agents under controlled conditions with simulated users, mocked tools, fault injection, and multi-turn orchestration. All simulation primitives are decorators that compose with Attest's assertion pipeline.
+Use simulation helpers to repeat an agent run, supply controlled tool results and test how it handles faults or different user personas. These helpers compose with the assertion pipeline and are beta in 1.1.0. They do not automatically stop your agent's own model or network calls.
+
+This runtime is distinct from `ATTEST_SIMULATION=1`: that setting disables Attest's embedding and judge providers while deterministic checks still run ([verdicts](verdicts.md#simulation-mode)). Mocking a tool here affects calls recorded through `TraceBuilder.add_tool_call()`, not arbitrary external HTTP clients.
 
 ## Overview
 
@@ -310,13 +312,13 @@ def test_multi_turn_resilience():
 
 1. **Set seeds for reproducibility.** Both `@scenario` and `@fault_inject` accept a `seed` parameter. Use it in CI to ensure deterministic fault patterns.
 
-2. **Use `@repeat` for statistical confidence.** A single test run under adversarial conditions proves nothing. Run 10-50 times and assert on `pass_rate`.
+2. **Choose a fixed trial count before running.** Use `@repeat` to measure pass rates; use [statistical verdicts](statistical-verdicts.md) to compare them with a baseline. A small sample may be inconclusive rather than proof of reliability.
 
 3. **Start with FRIENDLY_USER, then escalate.** Validate basic behavior with cooperative input before testing adversarial and confused personas.
 
 4. **Mock expensive tools.** Use `mock_tools` to avoid real API calls during simulation runs. Reserve integration tests for a separate suite.
 
-5. **Combine with assertions.** Simulation decorators aggregate verdicts. Return `attest.inspect(chain)` from the decorated function so each trial carries its assertion results; a chain that is never evaluated checks nothing:
+5. **Combine with assertions.** Simulation decorators aggregate verdicts. Return `attest.inspect(chain)` from the decorated function so each trial carries its assertion results; in 1.1.0, an unevaluated chain fails the test:
 
 <!-- snippet: fragment reason="excerpt: relies on `my_agent`, defined outside the snippet" -->
 ```python
