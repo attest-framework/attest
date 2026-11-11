@@ -1,10 +1,12 @@
 # Engine configuration
 
+Use this guide to choose an engine, limit model spending, or keep tests offline. Settings come from environment variables; check the effective configuration with `uv run attest doctor --json` before running tests.
+
 The engine reads its configuration from environment variables when it starts. An invalid provider, URL or integer setting stops the engine with an error naming the variable. Since 1.1.0 that includes `ATTEST_EVAL_CONCURRENCY`, `ATTEST_EMBEDDING_CACHE_MAX_MB`, `ATTEST_JUDGE_CACHE_MAX_MB`, `ATTEST_HISTORY_MAX_ROWS`, `ATTEST_HISTORY_MAX_AGE_DAYS` and `ATTEST_JUDGE_TIMEOUT_S`: a value that is not a positive integer makes the engine and `attest-engine doctor` exit 1, naming every offending variable. `ATTEST_JUDGE_META_EVAL` keeps its historical behavior: it is enabled only by the exact value `true`.
 
 ## Engine discovery and the `attest` command
 
-Each SDK release requires one engine version, `ENGINE_VERSION`, equal to the SDK's own version (for example `1.0.0`). The SDK looks for an engine in this order and uses the first one it finds:
+Each SDK release requires one engine version, `ENGINE_VERSION`, equal to the SDK's own version (**1.1.0** for the current release). The SDK looks for an engine in this order and uses the first one it finds:
 
 1. `--attest-engine` (pytest) or the `engine_path` / `enginePath` argument of `EngineManager`
 2. `ATTEST_ENGINE_PATH`
@@ -122,6 +124,15 @@ A `similar_to` / `output_similar_to` assertion with `threshold="dynamic"` compar
 | `ATTEST_ENGINE_TIMEOUT` | How long the SDK waits for the engine's reply to one request. Read by the SDK, not the engine. Seconds in both Python and TypeScript (TypeScript read milliseconds before 1.1.0; a value above 3600 is rejected with a message naming the unit). On a timeout the SDK restarts the engine and fails every pending request, so a late reply never reaches another test. The new engine gets the session budget that is left. Each request lost in the restart that can call a model (a batch with a judge or embedding assertion, or a simulated-user message) holds its `budget` limits if it sent them, otherwise everything that is left; deterministic requests hold nothing. Spend the SDK could not observe earlier (simulated-user messages, engine errors) leaves no budget after a restart. So a timeout can exhaust `ATTEST_MAX_JUDGE_CALLS` / `ATTEST_BUDGET_USD` for the rest of the session. | `30` (seconds) |
 
 Under pytest-xdist each worker is a separate pytest process with its own engine session, so `ATTEST_MAX_JUDGE_CALLS`, `ATTEST_BUDGET_USD` and `ATTEST_MAX_SOFT_FAILURES` apply per worker, not across the run. Split the budget by the worker count: with `-n 4` and a total of 40 judge calls, set `ATTEST_MAX_JUDGE_CALLS=10`.
+
+Both spending limits accept zero (`ATTEST_MAX_JUDGE_CALLS` is an integer; `ATTEST_BUDGET_USD` is a finite non-negative number). Set them before starting the test runner to refuse new judge requests and paid embedding calls in its engine session:
+
+```bash
+export ATTEST_MAX_JUDGE_CALLS=0 ATTEST_BUDGET_USD=0
+uv run attest doctor --json
+```
+
+`doctor` checks configuration; the limits are enforced when evaluation runs. A refused call returns `not_evaluated: budget_exhausted`, not a pass. Set `not_evaluated: block` in the [policy](policies.md#not-evaluated-is-not-pass) if that must block the gate. These budgets cover Attest's judges and embeddings, not model calls made by your agent; use [strict replay and the egress guard](replay.md#block-direct-provider-connections) for those.
 
 ## Cache and history
 

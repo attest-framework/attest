@@ -1,11 +1,11 @@
 # Agent skills: let coding agents operate Attest
 
-Attest ships agent skills, in the Agent Skills format (a directory with a `SKILL.md` that has `name` and `description` frontmatter), that teach a coding agent such as Claude Code, Codex or Cursor to write contracts, capture incidents, debug failures, set up the merge gate and migrate eval suites. The skills are embedded in `attest-engine`, so they match the installed version and need no network. They hold procedures only: the reference material stays in these guides, which the agent reads with `attest guide <topic>`.
+Use these skills when you want a coding agent to write or debug Attest tests, capture an incident, or set up a merge gate. They ship inside the engine and work offline, so the procedures match your installed version. Reference material stays in these guides, which the agent reads with `attest guide <topic>`.
 
 <!-- snippet: skip reason="installs packages or runs npm tooling (network)" -->
 ```bash
-uv add "attest-ai>=1.0.1"
-npm install -D "@attest-ai/core@>=1.0.1" "@attest-ai/vitest@>=1.0.1" "vitest@^4"
+uv add "attest-ai>=1.1.0"
+npm install -D "@attest-ai/core@>=1.1.0" "@attest-ai/vitest@>=1.1.0" "vitest@^4"
 ```
 
 ## The skills
@@ -86,6 +86,8 @@ The skills tell the agent to discover instead of guessing:
 | `attest guide <topic>` | the guide's Markdown, offline; `--json` gives `{topic, title, markdown}`. An unknown topic exits 2 and lists the topics |
 
 `attest` is `uv run attest` or `npx attest`; both forward to the engine of the installed SDK version. Every command accepts `--json` and then writes exactly one JSON document to stdout on success, with diagnostics on stderr; on a usage, load or runtime error it writes nothing to stdout, and the exit code plus stderr describe the error. Exit codes are 0 success, 1 a failed result, 2 usage error; `attest policy evaluate` exits 0 pass, 1 block, 2 warn, 3 usage or load error. Nothing prompts in CI, under `--json` or without a terminal: `attest capture --refresh` refuses there unless given `--yes`. See [cli](cli.md) for the full command and exit-code reference.
+
+In 1.1.0 the capture procedure shows the recorded command and its SHA-256 and stops for human confirmation before a refresh. It does not tell the agent to auto-confirm with `--yes`: a fixture can contain a command changed by someone else.
 
 ## Ask your agent
 

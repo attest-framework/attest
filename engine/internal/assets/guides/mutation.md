@@ -1,6 +1,6 @@
 # Mutation testing
 
-A suite that stays green when the agent's behavior breaks is not protecting anything. `attest mutate` measures that: it builds behavior mutants from your captured fixtures, runs your contracts against each one at no model cost, and reports a mutation score, the mutants nobody noticed, and a contract that would notice each.
+Use mutation testing to find gaps in your contracts: would they notice if the agent called a tool twice or changed the wrong record? `attest mutate` deliberately changes captured behavior, runs your contracts against each change with no model calls, and reports an overall score, per-operator scores, survivors and suggested contracts that catch them.
 
 Only behavior is mutated, never source code. A mutant is a copy of a fixture's trace or world snapshot with one deliberate change.
 

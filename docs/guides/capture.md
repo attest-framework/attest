@@ -1,8 +1,10 @@
 # Capture: turn a run into a regression fixture
 
-`attest capture` runs your agent once, records what it did (its trace and every model call it made), removes secrets, and writes a fixture: `tests/attest/fixtures/<name>.attest.json`. It drafts deterministic contracts from the run, checks them against it, and writes a test file that runs those contracts. Capture an incident and you get a test that reproduces it; capture a good run and you get a test that keeps it good.
+`attest capture` runs your agent once and saves its trace and model exchanges as a regression fixture: `tests/attest/fixtures/<name>.attest.json`. It applies secret redaction, drafts deterministic contracts, checks them against the recording, and writes a test. Capture an incident to reproduce it, or a good run to guard its behavior; review the contracts and fixture before committing either.
 
 The command runs in `attest-engine`; `uv run attest capture …` and `npx attest capture …` forward to the engine of the installed SDK version and then draft the test file in that SDK's language.
+
+Capture is a live recording, not an offline test: the command can call providers and change external systems. Use a [world fixture](world-fixtures.md) or a disposable environment for side effects. Redaction is pattern-based, not a guarantee that all sensitive data is removed; [check the fixture](#secrets) before sharing it. A refresh asks before running the recorded command, and generated command-based tests run a reviewed literal `COMMAND` under strict replay rather than executing arbitrary argv from the fixture.
 
 ## Capture a command
 
@@ -137,7 +139,7 @@ refresh refund: 1 of 1 exchanges changed
 
 Chat Completions, Responses and Messages requests are normalized to the same form. Each block prints at most 20 lines, then `... N more changed lines elided`. Responses and the trace are not compared. The diff is read from the redacted fixtures as written and every string passes through the capture redactor again, so a secret in a prompt is never printed; control characters are escaped, so a line break in a name cannot forge a diff line.
 
-A refresh that changes nothing prints one line, and the fixture keeps its bytes:
+A refresh with no request-level semantic change prints one line. This does not guarantee identical fixture bytes: model responses, trace evidence and framework-internal ids are outside the semantic comparison.
 
 ```text
 refresh refund: no semantic change
@@ -336,7 +338,7 @@ A fixture follows `proto/attest/v1/fixture-v1.schema.json`:
 | `verification` | `verified`, `expect_fail`, the capture-time trace check, each contract's status and explanation, and `expected_failures` |
 | `world` | the final state of the [world](world-fixtures.md) hosted with `--world` (`world_version`, `definition_sha256`, `state`, `faults_fired`, `faults_fired_count`), redacted like the rest of the fixture, with email addresses templated to the trace's `{{email_N}}` tokens (ids and timestamps in records are kept as they were); evidence only, never fed back into a replay's world; `null` for a capture without `--world` |
 
-Each exchange's `key` identifies the request: the `model`, the request parameters other than the prompt and the tools (`params`), and SHA-256 hashes of the prompt (`messages`; `input` and `instructions`; `system` and `messages`) and of the tool schemas. Fixtures record the exchanges and their keys; replaying them is not part of this release.
+Each exchange's `key` identifies the request: the `model`, the request parameters other than the prompt and the tools (`params`), and SHA-256 hashes of the prompt (`messages`; `input` and `instructions`; `system` and `messages`) and of the tool schemas. [Replay](replay.md) recomputes these keys to match new requests to recorded responses.
 
 ### Secrets
 
