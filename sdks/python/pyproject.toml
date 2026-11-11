@@ -38,7 +38,7 @@ dev = [
     # Official SDK types the adapter conformance corpus is built from and
     # rehydrated with (sdks/parity/adapters/versions.json records the same pins).
     "openai==2.54.0",
-    "anthropic==2.4.0",
+    "anthropic==2.6.0",
     "google-genai==1.75.0",
     "ollama==0.6.3",
     "langchain-core==1.7.4",
