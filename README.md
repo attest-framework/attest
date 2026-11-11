@@ -145,7 +145,7 @@ Each feature carries a maturity tier; the table is generated from `attest-engine
 - **Safe offline tests** — strict replay rejects unknown model requests; `--attest-egress=block` (TypeScript: `ATTEST_EGRESS=block`) blocks external HTTP, including through HTTP proxies. Guides: [replay](docs/guides/replay.md), [capture](docs/guides/capture.md)
 - **Python and TypeScript SDKs** — Python ≥3.10 with pytest; TypeScript with Vitest 3, 4 or 5, CJS/ESM core output and typed assertions. Shared capabilities and documented exceptions are checked by a generated [parity matrix](docs/guides/parity.md); see [framework adapters](docs/guides/framework-adapters.md) for provider integrations.
 - **Agent-facing CLI, MCP and skills** — machine-readable commands and schemas, offline `attest guide`, six project-confined MCP tools and installable coding-agent skills. `attest doctor` checks engine and provider configuration. Guides: [CLI](docs/guides/cli.md), [MCP](docs/guides/mcp.md), [agents](docs/guides/agents.md)
-- **Merge-gate scaffolding** — `attest init` writes a passing sample and policy; `--ci github` adds a SHA-pinned workflow with a least-privilege annotation job. The 1.1.0 scaffold still pins `pr-annotate` to v1.0.1. Guide: [merge gate](docs/guides/merge-gate.md)
+- **Merge-gate scaffolding** — `attest init` writes a passing sample and policy; `--ci github` adds a SHA-pinned workflow with a least-privilege annotation job. Guide: [merge gate](docs/guides/merge-gate.md)
 - **Multi-agent trace trees** — check delegation, cross-agent behavior, timing and aggregate metrics. Guide: [multi-agent](docs/guides/multi-agent.md)
 - **Simulation and plugins** — simulated users, personas, mock tools, fault injection and multi-turn orchestration; custom SDK-process assertions through Python entry points or TypeScript package discovery. Guide: [simulation](docs/guides/simulation.md)
 - **Local ONNX embeddings** — optional all-MiniLM-L6-v2 semantic similarity without API charges. Guide: [configuration](docs/guides/configuration.md)
@@ -261,8 +261,6 @@ uv run attest init --ci github
 ```
 
 `attest init --ci github` writes `.github/workflows/attest.yml`: the test step records its outcome and continues, the report upload, policy evaluation and the `pr-annotate` action always run, and a last step fails the job when the tests failed. Failures are annotated at the failing test's file and line. See the [merge gate guide](docs/guides/merge-gate.md).
-
-In 1.1.0, the generated workflow still pins `pr-annotate` to v1.0.1; the engine and SDK install remains 1.1.0.
 
 ### TypeScript
 
