@@ -4,8 +4,8 @@ A trace records what an agent said and which tools it called. It cannot tell whe
 
 <!-- snippet: skip reason="installs packages or runs npm tooling (network)" -->
 ```bash
-uv add "attest-ai>=1.0.1"
-npm install -D "@attest-ai/core@>=1.0.1" "@attest-ai/vitest@>=1.0.1" "vitest@^4"
+uv add "attest-ai>=1.1.0"
+npm install -D "@attest-ai/core@>=1.1.0" "@attest-ai/vitest@>=1.1.0" "vitest@^4"
 ```
 
 ## world.yaml
@@ -79,11 +79,11 @@ Python (pytest):
 ```python
 from attest import expect
 
-def test_refund_is_applied_once(attest_world):
+def test_refund_is_applied_once(attest, attest_world):
     world = attest_world("tests/payments.world.yaml")   # sets PAYMENTS_BASE_URL until the test ends
     trace = run_refund_agent("O-1042")                  # construct HTTP clients here, after the call
 
-    expect(trace).world(world.state()).count("refunds", equals=1, order_id="O-1042")
+    attest.evaluate(expect(trace).world(world.state()).count("refunds", equals=1, order_id="O-1042"))
 ```
 
 TypeScript (Vitest):
@@ -92,13 +92,13 @@ TypeScript (Vitest):
 ```ts
 import { it } from "vitest";
 import { attestExpect } from "@attest-ai/core";
-import { useWorld } from "@attest-ai/vitest";
+import { evaluate, useWorld } from "@attest-ai/vitest";
 
 it("applies the refund once", async () => {
   const world = await useWorld("tests/payments.world.yaml"); // sets PAYMENTS_BASE_URL until the test ends
   const trace = await runRefundAgent("O-1042");               // construct HTTP clients after the call
 
-  attestExpect(trace).world(await world.state()).count("refunds", { equals: 1, where: { order_id: "O-1042" } });
+  await evaluate(attestExpect(trace).world(await world.state()).count("refunds", { equals: 1, where: { order_id: "O-1042" } }));
 });
 ```
 
@@ -125,6 +125,8 @@ effect violated: 2 refunds for O-1042 (expected 1)
 A filter on several fields renders as `for amount_cents=4999, order_id=O-1042`, and a count of one drops the plural. The same agent sending the same `Idempotency-Key` on both POSTs leaves one record and passes. `world(None)` / `world(null)` (a test that ran without a world helper) is `not_evaluated` with reason `missing_evidence`. The wire format is in the "Layer 3 — Effect Checks" section of `proto/attest/v1/protocol-spec.md`.
 
 ### Relational effects: totals and recipients
+
+**Available in 1.1.0.** `sum` and `matches` extend the stable world-effect contract DSL: check the total refunded amount and the notification recipient, not just how many records were created.
 
 A business invariant often compares two resources: the refunds against an order stay within its amount, a notification goes to the order's customer. `related(resource, field, on=key)` names the record of another resource that holds the same `key` value as the checked record, and the field to compare with. `related(...)` is the only non-literal value the contract grammar accepts, and only as the `at_most` value of `sum` or as the third argument of `matches`.
 
@@ -195,11 +197,11 @@ A replay serves recorded model responses; a world serves the system the agent ac
 
 <!-- snippet: skip reason="needs the inc-1042 fixture and its world file" -->
 ```python
-def test_inc_1042_replay(attest_replay, attest_world):
+def test_inc_1042_replay(attest, attest_replay, attest_world):
     world = attest_world("tests/payments.world.yaml")
     with attest_replay("inc-1042"):
         trace = run_refund_agent("O-1042")
-    expect(trace).world(world.state()).count("refunds", equals=1, order_id="O-1042")
+    attest.evaluate(expect(trace).world(world.state()).count("refunds", equals=1, order_id="O-1042"))
 ```
 
 <!-- snippet: skip reason="needs the inc-1042 fixture and its world file" -->

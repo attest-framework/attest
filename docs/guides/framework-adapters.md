@@ -1,6 +1,6 @@
 # Adapter Guide
 
-Attest adapters capture LLM interactions as `Trace` objects. Two adapter tiers exist, backed by a shared class hierarchy.
+Adapters turn a model response or an agent run into a `Trace` that Attest can check. Choose a provider adapter for one model call, a framework adapter for the events that framework exposes, or the manual adapter for your own trace-building code.
 
 Maturity of each adapter, generated from `attest-engine capabilities --json`:
 
@@ -36,21 +36,36 @@ BaseAdapter                          ← shared utilities
 ├── LangChainCallbackHandler         ← framework: LangChain callbacks
 ├── LlamaIndexInstrumentationHandler ← framework: LlamaIndex dispatcher
 ├── OTelAdapter                      ← framework: OpenTelemetry spans (engine conversion)
+├── CrewAIAdapter                     ← framework: output and usage summary only
 └── ManualAdapter                    ← utility: builder function
 ```
 
-**Provider adapters** capture a single LLM request/response cycle. They inherit `BaseProviderAdapter` and override 4 extraction methods.
+**Provider adapters** capture a single LLM request/response cycle. In Python they inherit `BaseProviderAdapter` and override four extraction methods.
 
-**Framework adapters** capture a complete agent run (multiple LLM calls, tool calls, sub-agent delegations). They inherit `BaseAdapter` for shared utilities but implement their own capture mechanics.
+**Framework adapters** capture the evidence their framework exposes. LangChain, Google ADK and LlamaIndex can record events across an agent run; CrewAI's adapter records only the final output, token usage and latency, not agent or tool-call steps. Python's provider adapters share `BaseProviderAdapter`; TypeScript adapters implement `TraceAdapter` directly.
 
 ```
 provider adapter (BaseProviderAdapter)  — one LLM call → one Trace
 framework adapter (BaseAdapter)         — one agent run (N LLM calls, M tool calls) → one Trace
 ```
 
+## Manual adapter: no provider required
+
+Use this when your agent does not have a dedicated adapter. Record what actually ran; a tool-call record is evidence supplied by your code, not proof that Attest executed the tool.
+
+```python
+from attest import ManualAdapter, expect
+
+def test_manual_trace(attest):
+    builder = ManualAdapter(agent_id="support").create_builder()
+    builder.add_tool_call("lookup_order", args={"order_id": "O-1"}, result={"status": "delivered"})
+    builder.set_output(message="Order delivered")
+    attest.evaluate(expect(builder.build()).required_tools(["lookup_order"]))
+```
+
 ## Provider Adapters
 
-Every example below runs inside a pytest test that takes the `attest` fixture. `attest.evaluate(chain)` runs every assertion in the chain and fails the test on a hard failure; a chain that is never passed to `evaluate()` checks nothing.
+Every example below runs inside a pytest test that takes the `attest` fixture. `attest.evaluate(chain)` runs every assertion in the chain and fails the test on a hard failure. In 1.1.0, building a chain without evaluating it fails the test; see [verdicts](verdicts.md#every-chain-must-be-evaluated).
 
 ### OpenAI
 
@@ -120,8 +135,6 @@ trace = adapter.trace_from_response(
 )
 ```
 
-> **Migration note:** The `input_text` parameter is deprecated. Use `input_messages=[{"role": "user", "content": text}]` instead.
-
 ### Ollama
 
 <!-- snippet: fragment reason="excerpt: relies on `response_dict`, defined outside the snippet" -->
@@ -143,7 +156,7 @@ trace = adapter.trace_from_response(
 
 <!-- snippet: skip reason="installs packages or runs npm tooling (network)" -->
 ```bash
-uv add 'attest-ai[langchain]>=1.0.1'
+uv add "attest-ai[langchain]>=1.1.0"
 ```
 
 **Context manager usage:**
@@ -189,11 +202,27 @@ trace = handler.build_trace()
 | `on_tool_start` / `on_tool_end`      | `tool_call` step with args and result |
 | `on_tool_error`                      | `tool_call` step with error field     |
 
+### CrewAI
+
+Install with `uv add "attest-ai[crewai]>=1.1.0"`. The adapter is summary-only: it cannot prove that an agent or tool ran from the crew's configuration. Assert on the returned output and recorded usage instead.
+
+<!-- snippet: fragment reason="needs your configured CrewAI crew; kickoff may make model calls" -->
+```python
+from attest import CrewAIAdapter, expect
+
+def test_crew_reply(attest):
+    adapter = CrewAIAdapter(agent_id="support-crew")
+    with adapter.capture() as capture:
+        output = crew.kickoff()
+        trace = capture.trace_from_crew_output(output, crew)
+    attest.evaluate(expect(trace).output_contains("refund"))
+```
+
 ### Google ADK
 
 <!-- snippet: skip reason="installs packages or runs npm tooling (network)" -->
 ```bash
-uv add 'attest-ai[google-adk]>=1.0.1'
+uv add "attest-ai[google-adk]>=1.1.0"
 ```
 
 **Async capture:**
@@ -245,7 +274,7 @@ trace = GoogleADKAdapter.from_events(
 
 <!-- snippet: skip reason="installs packages or runs npm tooling (network)" -->
 ```bash
-uv add 'attest-ai[llamaindex]>=1.0.1'
+uv add "attest-ai[llamaindex]>=1.1.0"
 ```
 
 **Context manager usage:**
@@ -293,7 +322,7 @@ trace = handler.build_trace(query="...", response="...")
 
 <!-- snippet: skip reason="installs packages or runs npm tooling (network)" -->
 ```bash
-uv add 'attest-ai[otel]>=1.0.1'
+uv add "attest-ai[otel]>=1.1.0"
 ```
 
 **From collected spans or an OTLP/JSON export:**
@@ -325,6 +354,10 @@ const fromExport = await OTelAdapter.fromOtlp(readFileSync("incident.otlp.json",
 The conversion runs in the engine (`attest-engine trace convert`), the same mapping the TypeScript adapter and `attest trace check` use, so every SDK produces the same trace v2 for the same spans. It follows the current OpenTelemetry GenAI semantic conventions: `chat`, `text_completion`, `generate_content` and `embeddings` spans become `llm_call` steps, `execute_tool` spans `tool_call` steps with `args` and `result` from `gen_ai.tool.call.arguments` / `gen_ai.tool.call.result`, nested `invoke_agent` spans `agent_call` steps with handoffs, and top-level `invoke_agent` spans conversation turns. Spans without GenAI attributes are skipped. Malformed input raises `attest.exceptions.OTLPConversionError` (TypeScript: rejects with `OTLPConversionError`) with the engine's message. The full mapping, and `attest trace check` for integrity and coverage, are in [trace-check.md](trace-check.md).
 
 `attest.adapters.otel.to_otel_spans(trace)` exports a trace as OTLP-shaped span dicts under an `invoke_agent` root; `OTelAdapter.from_otel_span_dicts` converts them back.
+
+## TypeScript test runner compatibility
+
+The 1.1.0 Vitest integration supports Vitest 3, 4 and 5. Pass the test context in concurrent tests and when using Vitest before 4.1; the [verdict guide](verdicts.md#vitest) explains the chain guard's lifecycle-hook limits. On a cold machine, run `npx attest doctor` once before the first `npx vitest run`: the initial engine download can exceed Vitest's default five-second test timeout.
 
 ## Combining Provider and Framework Adapters
 
@@ -409,48 +442,27 @@ def _build_output(
 
 Inherit `BaseAdapter` for shared utilities. Framework adapters have diverse input mechanics, so there is no template method — implement your own capture method.
 
-<!-- snippet: harness=adapter_framework -->
+This example maps your own event dictionaries; it does not infer events from a framework's configured agents or tools.
+
 ```python
-from __future__ import annotations
-
-from typing import Any
-
-from attest._proto.types import Trace
 from attest.adapters import BaseAdapter
 
-
-class CrewAIAdapter(BaseAdapter):
-    """Adapter for CrewAI task execution."""
-
-    def trace_from_crew(self, crew_output: Any, **metadata: Any) -> Trace:
+class WorkflowAdapter(BaseAdapter):
+    def trace_from_events(self, events, output):
         builder = self._create_builder()
-        total_tokens = 0
-
-        for task_output in crew_output.tasks_output:
-            agent_name = task_output.agent
-            completion = task_output.raw
-
-            builder.add_llm_call(
-                name=agent_name,
-                result={"completion": completion},
+        for event in events:
+            builder.add_tool_call(
+                event["name"], args=event["args"], result=event["result"]
             )
-
-            for tool_use in getattr(task_output, "tool_uses", []):
-                builder.add_tool_call(
-                    name=tool_use.tool_name,
-                    args=tool_use.args,
-                    result=tool_use.result,
-                    agent_id=agent_name,
-                )
-                total_tokens += getattr(tool_use, "tokens", 0)
-
-        builder.set_output(message=crew_output.raw)
-        builder.set_metadata(
-            total_tokens=total_tokens if total_tokens > 0 else None,
-            cost_usd=metadata.get("cost_usd"),
-        )
-
+        builder.set_output(message=output)
         return builder.build()
+
+trace = WorkflowAdapter(agent_id="support").trace_from_events(
+    [{"name": "lookup_order", "args": {"order_id": "O-1"}, "result": {"status": "delivered"}}],
+    "Order found",
+)
+assert trace.steps[0].name == "lookup_order"
+assert trace.output["message"] == "Order found"
 ```
 
 **Shared utilities from `BaseAdapter`:**

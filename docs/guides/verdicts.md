@@ -15,7 +15,7 @@ Attest reports one of four statuses for every assertion you request, and turns t
 | --- | --- |
 | `provider_unavailable` | The embedding or judge provider is configured but the call failed (outage, timeout, rate limit or server error that outlasted the retries). |
 | `provider_not_configured` | No embedding or judge provider is configured, for example no judge API key. |
-| `simulation` | `ATTEST_SIMULATION=1`: layers 1–4 run for real, layers 5–6 are not called. |
+| `simulation` | `ATTEST_SIMULATION=1`: deterministic checks run for real, layers 5–6 are not called. |
 | `missing_evidence` | The trace does not record the checked field, for example `metadata.cost_usd` unset. |
 | `short_circuited` | A layer 5–6 assertion did not run because a layer 1–4 assertion in the same batch hard-failed. |
 | `budget_exhausted` | An embedding or judge call could not reserve its cost or call count against the session budget (`ATTEST_MAX_JUDGE_CALLS`, `ATTEST_BUDGET_USD`) or the test's budget, so it was not sent. |
@@ -131,6 +131,8 @@ Keep test isolation enabled. With `isolate: false`, a later test file can reuse 
 # attest.policy.yaml
 not_evaluated: block   # exit 1 instead of 2
 ```
+
+In 1.1.0, `tests_failed` also blocks by default: a failed pytest or Vitest test blocks the policy even if all of its Attest assertions passed. Use `tests_failed: warn` or `tests_failed: off` only when you intentionally want a non-blocking result. Missing or null `tests`, or a test outcome other than `passed`, `failed` or `skipped`, is invalid report input (exit 3), not a passing gate.
 
 With `--baseline <tag>`, a `regression` rule compares each assertion's pass rate with the pinned baseline using a Wilson interval and prints `verdict` (`pass`, `regressed` or `inconclusive`) with per-assertion `trials` in the JSON output. `regressed` blocks (exit 1, or `severity: warn`), `inconclusive` warns (exit 2):
 
