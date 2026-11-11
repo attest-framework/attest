@@ -1,14 +1,14 @@
 # Attest Protocol v1
 
+This is the wire contract between an Attest SDK and its engine subprocess. Attest 1.1.0 ships protocol version `1` for both the Python and TypeScript SDKs.
+
 **Transport:** JSON-RPC 2.0 over stdio (SDK spawns engine as subprocess)
 **Encoding:** JSON (newline-delimited)
 **Direction:** SDK → Engine (requests), Engine → SDK (responses only)
 
-## Upgrade Path
+## Shipped transport
 
-- v0.1–v0.2: JSON-RPC over stdio (current)
-- v0.3+: Evaluate gRPC if TypeScript SDK needs shared engine process
-- v1.0+: Formal .proto files with buf schema registry
+JSON-RPC over stdio is the only SDK-to-engine transport in 1.1.0. There is no gRPC transport or shared-engine server mode. The request, response and trace schemas are JSON schemas in this directory; this release does not use `.proto` files or a buf schema registry.
 
 ## Message Types
 
