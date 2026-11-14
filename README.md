@@ -25,6 +25,10 @@ Record a real run once as a fixture. In tests, run your agent's current code aga
 
 ![Attest demo — the INC-1042 double refund becomes a replayed regression test: incident, capture, replay with zero model calls](assets/demo.gif)
 
+The full story in 48 seconds, from the double refund to the merge gate that blocks the regression (no sound; source file [`assets/demo.mp4`](assets/demo.mp4)):
+
+https://github.com/user-attachments/assets/8885e246-4800-48a2-892b-b23152ee0be3
+
 ## Why Attest
 
 The current ecosystem defaults to LLM-as-judge for everything. This creates cost explosion, flaky tests, and slow suites. Attest provides six evaluated layers plus plugins, ordered from free and deterministic (layers 1–4) to model-scored (layers 5–6, whose cost depends on the configured provider), and reaches for the cheapest valid assertion first. The table below is generated from `attest-engine capabilities --json`.

@@ -4,6 +4,10 @@ All notable changes to Attest are documented in this file. The format follows [K
 
 ## [Unreleased]
 
+### Docs
+
+- README: a 48-second launch video under the demo GIF, from the INC-1042 double refund through capture and replay to the merge gate blocking the regression; the source file is `assets/demo.mp4` (#267).
+
 ## [1.1.1] — 2026-11-11
 
 Documentation patch on 1.1.0 "Hardened". It ships the refreshed guides, package READMEs and agent skills to PyPI, npm, `attest guide`, `attest init --skills` and the website, and moves the `attest init --ci github` annotate pin to v1.1.0. No change to evaluation, replay or policy behavior.
