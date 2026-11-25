@@ -94,6 +94,18 @@ The engine checks them in `engine/internal/capture/fixture_v1_schema_test.go`, w
 
 `contracts/effect-dsl.json` does the same for the effect DSL (`world(snapshot)` then `count`, `unique` or `idempotent`), kept apart because the engine's conformance test evaluates every `dsl.json` case as a trace spec. `worlds` names the snapshots; a case's `world` picks one (or `null`), the spec both SDKs must emit has that snapshot as its `world`, and `result` is the engine's status (and optionally the exact explanation). Python and TypeScript check the emitted specs; the Python integration tests evaluate each case with the engine.
 
+## Incident fixtures
+
+`incidents/` holds recorded refund-desk runs that must fail on the contracts they broke and pass the rest. `incidents/cases.json` lists:
+
+- `recordings`: the INC-1042 incident traces (the Python and TypeScript exports above), the INC-1077 incident captures in both languages, and the fixed agent's captures for both incidents. The `*.attest.json` files are copied from attest-framework/refund-desk at the commit in `source`.
+- `contracts`: each contract as a Python and a TypeScript DSL call, like `contracts/dsl.json`. `"effect": true` marks a call on `world(<the recording's world snapshot>)`, and `{"$related": {"resource", "field", "on"}}` stands for `related(...)`.
+- `expected`: for each recording, its applicable contracts in order with the status each must get, and the exact explanation of every `hard_fail`.
+
+Both SDKs build each recording's contracts, evaluate them through the built engine in one batch, and compare every row (`sdks/python/tests/integration/test_incident_recordings.py`, `sdks/typescript/tests/integration/incident-recordings.test.ts`). A false pass, a contract that fires on the wrong recording, or a verdict routed to the wrong row fails both. Two rows are deliberate: the fixed INC-1077 run makes two valid partial refunds, so one refund per order fails there (the partial-refund limit of 2 passes); and the INC-1077 incident passes idempotency-key uniqueness, because its two refunds ($12.00, then the full $126.00) have different keys, so only the per-order and order-amount checks catch the over-refund.
+
+To add a recording, copy it here, list it under `recordings`, and add its expected rows; derive them from the engine, then check every `hard_fail` against what the incident actually did.
+
 ## Assertion id vectors
 
 `ids/assertion-ids.json` holds the golden vectors for assertion id scheme 2 (see "Assertion ids (id scheme 2)" in `proto/attest/v1/protocol-spec.md`). Each vector gives `scope_id`, `assertion_type`, `spec_json` (raw JSON text), `occurrence_index` and the expected `canonical_spec`, `canonical_input` and `id`. The engine tests them in `engine/internal/report/assertionid`; every SDK must reproduce all of them byte for byte.
