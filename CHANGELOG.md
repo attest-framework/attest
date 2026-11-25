@@ -8,6 +8,12 @@ All notable changes to Attest are documented in this file. The format follows [K
 
 - README: a 48-second launch video under the demo GIF, from the INC-1042 double refund through capture and replay to the merge gate blocking the regression; the source file is `assets/demo.mp4` (#267).
 
+### Dependencies
+
+- Engine `modernc.org/sqlite` 1.61.1 → 1.62.0 (re-vendored SQLite; new opt-in `fdatasync` mode, off by default). (#260)
+- Python `anthropic` 2.4.0 → 2.8.0 and `langchain-core` 1.7.4 → 1.7.7 (development/conformance only); the adapter conformance corpus is regenerated with them, and `sdks/parity/adapters/generate.py` builds OpenAI Responses usage with the `cache_write_tokens` field openai 2.54.0 requires, so the corpus can be rebuilt again; user-facing optional ranges are unchanged. (#281)
+- TypeScript `@langchain/core` 1.3.3 → 1.4.1 and `@biomejs/biome` 2.6.5 → 2.6.7 (development only). (#270, #272)
+
 ## [1.1.1] — 2026-11-11
 
 Documentation patch on 1.1.0 "Hardened". It ships the refreshed guides, package READMEs and agent skills to PyPI, npm, `attest guide`, `attest init --skills` and the website, and moves the `attest init --ci github` annotate pin to v1.1.0. No change to evaluation, replay or policy behavior.
