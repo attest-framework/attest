@@ -8,8 +8,8 @@ below; they are the specification, never the output of an adapter.
 Run (no network, no model calls)::
 
     uv run --no-project \
-        --with openai==2.54.0 --with anthropic==2.4.0 --with google-genai==1.75.0 \
-        --with ollama==0.6.3 --with langchain-core==1.7.4 --with crewai==1.10.1 \
+        --with openai==2.54.0 --with anthropic==2.8.0 --with google-genai==1.75.0 \
+        --with ollama==0.6.3 --with langchain-core==1.7.7 --with crewai==1.10.1 \
         python sdks/parity/adapters/generate.py [--check]
 
 ``--check`` fails when a committed file differs from what the script generates.
@@ -229,7 +229,7 @@ def openai_cases() -> list[Case]:
                 input_tokens=12,
                 output_tokens=8,
                 total_tokens=20,
-                input_tokens_details=InputTokensDetails(cached_tokens=0),
+                input_tokens_details=InputTokensDetails(cached_tokens=0, cache_write_tokens=0),
                 output_tokens_details=OutputTokensDetails(reasoning_tokens=0),
             ),
         )
