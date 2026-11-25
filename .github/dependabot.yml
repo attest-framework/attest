@@ -1,19 +1,42 @@
 version: 2
 updates:
+  # Patch and minor updates arrive grouped, one PR per ecosystem; major updates arrive one PR each.
   - package-ecosystem: "gomod"
     directory: "/engine"
     schedule:
       interval: "weekly"
+    groups:
+      engine:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
 
-  - package-ecosystem: "pip"
+  # The uv ecosystem updates uv.lock with pyproject.toml; CI runs `uv sync --locked`.
+  - package-ecosystem: "uv"
     directory: "/sdks/python"
     schedule:
       interval: "weekly"
+    groups:
+      # The adapter conformance corpus is built with these exact versions
+      # (sdks/parity/adapters/versions.json). Bumping any of them means updating
+      # versions.json and generate.py and regenerating the corpus, so they share one PR.
+      adapter-sdks:
+        patterns: ["openai", "anthropic", "google-genai", "ollama", "langchain-core", "crewai"]
+      python:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+    ignore:
+      # crewai requires openai<3; revisit when it allows openai 3.
+      - dependency-name: "openai"
+        update-types: ["version-update:semver-major"]
 
   - package-ecosystem: "npm"
     directory: "/sdks/typescript"
     schedule:
       interval: "weekly"
+    groups:
+      typescript:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
     ignore:
       # TypeScript 7.0 ships no compiler API, so tsup's declaration build crashes (egoist/tsup#1405).
       # Revisit when Vitest and ESLint support TS 7 and tsup emits declarations with typescript@7.
