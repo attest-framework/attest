@@ -1,0 +1,1677 @@
+{
+  "contracts": [
+    {
+      "description": "calls lookup_order, issue_refund, notify_customer",
+      "id": "tools-called",
+      "kind": "tools",
+      "spec": {
+        "check": "trajectory",
+        "mode": "superset",
+        "soft": false,
+        "tools": [
+          "lookup_order",
+          "issue_refund",
+          "notify_customer"
+        ]
+      },
+      "type": "trace"
+    },
+    {
+      "description": "lookup_order is called before issue_refund",
+      "id": "order-lookup_order-before-issue_refund",
+      "kind": "order",
+      "spec": {
+        "after": "issue_refund",
+        "before": "lookup_order",
+        "check": "tool_order",
+        "soft": false
+      },
+      "type": "trace"
+    },
+    {
+      "description": "issue_refund is called before notify_customer",
+      "id": "order-issue_refund-before-notify_customer",
+      "kind": "order",
+      "spec": {
+        "after": "notify_customer",
+        "before": "issue_refund",
+        "check": "tool_order",
+        "soft": false
+      },
+      "type": "trace"
+    },
+    {
+      "description": "lookup_order at most once per order_id",
+      "id": "cardinality-lookup_order-per-order_id",
+      "kind": "cardinality",
+      "spec": {
+        "check": "tool_cardinality",
+        "max": 1,
+        "per": "order_id",
+        "soft": false,
+        "tool": "lookup_order"
+      },
+      "type": "trace"
+    },
+    {
+      "description": "issue_refund at most once per order_id",
+      "id": "cardinality-issue_refund-per-order_id",
+      "kind": "cardinality",
+      "spec": {
+        "check": "tool_cardinality",
+        "max": 1,
+        "per": "order_id",
+        "soft": false,
+        "tool": "issue_refund"
+      },
+      "type": "trace"
+    },
+    {
+      "description": "notify_customer at most once per customer_id",
+      "id": "cardinality-notify_customer-per-customer_id",
+      "kind": "cardinality",
+      "spec": {
+        "check": "tool_cardinality",
+        "max": 1,
+        "per": "customer_id",
+        "soft": false,
+        "tool": "notify_customer"
+      },
+      "type": "trace"
+    },
+    {
+      "description": "notify_customer at most once per order_id",
+      "id": "cardinality-notify_customer-per-order_id",
+      "kind": "cardinality",
+      "spec": {
+        "check": "tool_cardinality",
+        "max": 1,
+        "per": "order_id",
+        "soft": false,
+        "tool": "notify_customer"
+      },
+      "type": "trace"
+    },
+    {
+      "description": "notifications customer_id equals orders.customer_id for the same order_id",
+      "id": "relational-matches-notifications-customer_id-per-order_id",
+      "kind": "relational",
+      "spec": {
+        "check": "matches",
+        "field": "customer_id",
+        "related": {
+          "field": "customer_id",
+          "on": "order_id",
+          "resource": "orders"
+        },
+        "resource": "notifications"
+      },
+      "type": "effect"
+    },
+    {
+      "description": "refunds amount_cents sums to at most orders.amount_cents for each order_id",
+      "id": "relational-sum-refunds-amount_cents-per-order_id",
+      "kind": "relational",
+      "spec": {
+        "at_most": {
+          "related": {
+            "field": "amount_cents",
+            "on": "order_id",
+            "resource": "orders"
+          }
+        },
+        "check": "sum",
+        "field": "amount_cents",
+        "resource": "refunds"
+      },
+      "type": "effect"
+    }
+  ],
+  "exchanges": [
+    {
+      "api": "chat_completions",
+      "index": 0,
+      "key": {
+        "model": "refund-desk-scripted",
+        "params": {},
+        "prompt_hash": "sha256:b42ba6f4fdd65378cea28d3b88d4731244dbfa021037382ec1e149b0160f8e80",
+        "tool_schema_hash": "sha256:2be373ea77774557cdb0af52e2f5fd811338c350cbe6df524b59afd4b9476cf7"
+      },
+      "method": "POST",
+      "path": "/chat/completions",
+      "provider": "openai",
+      "request": {
+        "messages": [
+          {
+            "content": "You are Refund Desk, the support agent of a synthetic online store. Help customers with refunds for their orders. Look up the order before refunding it, refund at most the order amount, and tell the customer what happened. You may refund part of an order, such as its shipping cost, when the customer asks for that. Send the refund confirmation to the customer with notify_customer.",
+            "role": "system"
+          },
+          {
+            "content": "Support session. Earlier you looked up O-1042 for another customer. Now customer C-0744 writes about O-2077: \"The board arrived late, please refund the $12.00 shipping.\" Then: \"Actually, refund the whole order.\"",
+            "role": "user"
+          }
+        ],
+        "model": "refund-desk-scripted",
+        "tools": [
+          {
+            "function": {
+              "description": "Look up an order by its id. Returns the order amount and the customer who placed it.",
+              "name": "lookup_order",
+              "parameters": {
+                "additionalProperties": false,
+                "properties": {
+                  "order_id": {
+                    "description": "Order id, for example O-1042.",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "order_id"
+                ],
+                "type": "object"
+              }
+            },
+            "type": "function"
+          },
+          {
+            "function": {
+              "description": "Refund an amount, in cents, for an order.",
+              "name": "issue_refund",
+              "parameters": {
+                "additionalProperties": false,
+                "properties": {
+                  "amount_cents": {
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  "order_id": {
+                    "type": "string"
+                  },
+                  "reason": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "order_id",
+                  "amount_cents",
+                  "reason"
+                ],
+                "type": "object"
+              }
+            },
+            "type": "function"
+          },
+          {
+            "function": {
+              "description": "Send a message about an order to a customer.",
+              "name": "notify_customer",
+              "parameters": {
+                "additionalProperties": false,
+                "properties": {
+                  "customer_id": {
+                    "description": "Customer id, for example C-0744.",
+                    "type": "string"
+                  },
+                  "message": {
+                    "type": "string"
+                  },
+                  "order_id": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "customer_id",
+                  "order_id",
+                  "message"
+                ],
+                "type": "object"
+              }
+            },
+            "type": "function"
+          }
+        ]
+      },
+      "response": {
+        "body": {
+          "choices": [
+            {
+              "finish_reason": "tool_calls",
+              "index": 0,
+              "message": {
+                "content": null,
+                "role": "assistant",
+                "tool_calls": [
+                  {
+                    "function": {
+                      "arguments": "{\"order_id\":\"O-1042\"}",
+                      "name": "lookup_order"
+                    },
+                    "id": "call_1",
+                    "type": "function"
+                  }
+                ]
+              }
+            }
+          ],
+          "created": 1,
+          "id": "chatcmpl-{{id_1}}",
+          "model": "refund-desk-scripted",
+          "object": "chat.completion",
+          "usage": {
+            "completion_tokens": 43,
+            "prompt_tokens": 167,
+            "total_tokens": 210
+          }
+        },
+        "content_type": "application/json",
+        "status": 200
+      },
+      "stream": false
+    },
+    {
+      "api": "chat_completions",
+      "index": 1,
+      "key": {
+        "model": "refund-desk-scripted",
+        "params": {},
+        "prompt_hash": "sha256:d2991aaa81c84a3b88045466854015d9dba4703d43976dcab1b5f88cd7e9d169",
+        "tool_schema_hash": "sha256:2be373ea77774557cdb0af52e2f5fd811338c350cbe6df524b59afd4b9476cf7"
+      },
+      "method": "POST",
+      "path": "/chat/completions",
+      "provider": "openai",
+      "request": {
+        "messages": [
+          {
+            "content": "You are Refund Desk, the support agent of a synthetic online store. Help customers with refunds for their orders. Look up the order before refunding it, refund at most the order amount, and tell the customer what happened. You may refund part of an order, such as its shipping cost, when the customer asks for that. Send the refund confirmation to the customer with notify_customer.",
+            "role": "system"
+          },
+          {
+            "content": "Support session. Earlier you looked up O-1042 for another customer. Now customer C-0744 writes about O-2077: \"The board arrived late, please refund the $12.00 shipping.\" Then: \"Actually, refund the whole order.\"",
+            "role": "user"
+          },
+          {
+            "content": null,
+            "role": "assistant",
+            "tool_calls": [
+              {
+                "function": {
+                  "arguments": "{\"order_id\":\"O-1042\"}",
+                  "name": "lookup_order"
+                },
+                "id": "call_1",
+                "type": "function"
+              }
+            ]
+          },
+          {
+            "content": "{\"amount_cents\":8400,\"currency\":\"USD\",\"customer_id\":\"C-0311\",\"order_id\":\"O-1042\",\"status\":\"delivered\"}",
+            "role": "tool",
+            "tool_call_id": "call_1"
+          }
+        ],
+        "model": "refund-desk-scripted",
+        "tools": [
+          {
+            "function": {
+              "description": "Look up an order by its id. Returns the order amount and the customer who placed it.",
+              "name": "lookup_order",
+              "parameters": {
+                "additionalProperties": false,
+                "properties": {
+                  "order_id": {
+                    "description": "Order id, for example O-1042.",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "order_id"
+                ],
+                "type": "object"
+              }
+            },
+            "type": "function"
+          },
+          {
+            "function": {
+              "description": "Refund an amount, in cents, for an order.",
+              "name": "issue_refund",
+              "parameters": {
+                "additionalProperties": false,
+                "properties": {
+                  "amount_cents": {
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  "order_id": {
+                    "type": "string"
+                  },
+                  "reason": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "order_id",
+                  "amount_cents",
+                  "reason"
+                ],
+                "type": "object"
+              }
+            },
+            "type": "function"
+          },
+          {
+            "function": {
+              "description": "Send a message about an order to a customer.",
+              "name": "notify_customer",
+              "parameters": {
+                "additionalProperties": false,
+                "properties": {
+                  "customer_id": {
+                    "description": "Customer id, for example C-0744.",
+                    "type": "string"
+                  },
+                  "message": {
+                    "type": "string"
+                  },
+                  "order_id": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "customer_id",
+                  "order_id",
+                  "message"
+                ],
+                "type": "object"
+              }
+            },
+            "type": "function"
+          }
+        ]
+      },
+      "response": {
+        "body": {
+          "choices": [
+            {
+              "finish_reason": "tool_calls",
+              "index": 0,
+              "message": {
+                "content": null,
+                "role": "assistant",
+                "tool_calls": [
+                  {
+                    "function": {
+                      "arguments": "{\"order_id\":\"O-2077\"}",
+                      "name": "lookup_order"
+                    },
+                    "id": "call_2",
+                    "type": "function"
+                  }
+                ]
+              }
+            }
+          ],
+          "created": 2,
+          "id": "chatcmpl-{{id_2}}",
+          "model": "refund-desk-scripted",
+          "object": "chat.completion",
+          "usage": {
+            "completion_tokens": 43,
+            "prompt_tokens": 255,
+            "total_tokens": 298
+          }
+        },
+        "content_type": "application/json",
+        "status": 200
+      },
+      "stream": false
+    },
+    {
+      "api": "chat_completions",
+      "index": 2,
+      "key": {
+        "model": "refund-desk-scripted",
+        "params": {},
+        "prompt_hash": "sha256:80435abfa6b27aa645b48ebc90829a84f082db87d43b95b968b880b9b2335e66",
+        "tool_schema_hash": "sha256:2be373ea77774557cdb0af52e2f5fd811338c350cbe6df524b59afd4b9476cf7"
+      },
+      "method": "POST",
+      "path": "/chat/completions",
+      "provider": "openai",
+      "request": {
+        "messages": [
+          {
+            "content": "You are Refund Desk, the support agent of a synthetic online store. Help customers with refunds for their orders. Look up the order before refunding it, refund at most the order amount, and tell the customer what happened. You may refund part of an order, such as its shipping cost, when the customer asks for that. Send the refund confirmation to the customer with notify_customer.",
+            "role": "system"
+          },
+          {
+            "content": "Support session. Earlier you looked up O-1042 for another customer. Now customer C-0744 writes about O-2077: \"The board arrived late, please refund the $12.00 shipping.\" Then: \"Actually, refund the whole order.\"",
+            "role": "user"
+          },
+          {
+            "content": null,
+            "role": "assistant",
+            "tool_calls": [
+              {
+                "function": {
+                  "arguments": "{\"order_id\":\"O-1042\"}",
+                  "name": "lookup_order"
+                },
+                "id": "call_1",
+                "type": "function"
+              }
+            ]
+          },
+          {
+            "content": "{\"amount_cents\":8400,\"currency\":\"USD\",\"customer_id\":\"C-0311\",\"order_id\":\"O-1042\",\"status\":\"delivered\"}",
+            "role": "tool",
+            "tool_call_id": "call_1"
+          },
+          {
+            "content": null,
+            "role": "assistant",
+            "tool_calls": [
+              {
+                "function": {
+                  "arguments": "{\"order_id\":\"O-2077\"}",
+                  "name": "lookup_order"
+                },
+                "id": "call_2",
+                "type": "function"
+              }
+            ]
+          },
+          {
+            "content": "{\"amount_cents\":12600,\"currency\":\"USD\",\"customer_id\":\"C-0744\",\"order_id\":\"O-2077\",\"status\":\"delivered\"}",
+            "role": "tool",
+            "tool_call_id": "call_2"
+          }
+        ],
+        "model": "refund-desk-scripted",
+        "tools": [
+          {
+            "function": {
+              "description": "Look up an order by its id. Returns the order amount and the customer who placed it.",
+              "name": "lookup_order",
+              "parameters": {
+                "additionalProperties": false,
+                "properties": {
+                  "order_id": {
+                    "description": "Order id, for example O-1042.",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "order_id"
+                ],
+                "type": "object"
+              }
+            },
+            "type": "function"
+          },
+          {
+            "function": {
+              "description": "Refund an amount, in cents, for an order.",
+              "name": "issue_refund",
+              "parameters": {
+                "additionalProperties": false,
+                "properties": {
+                  "amount_cents": {
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  "order_id": {
+                    "type": "string"
+                  },
+                  "reason": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "order_id",
+                  "amount_cents",
+                  "reason"
+                ],
+                "type": "object"
+              }
+            },
+            "type": "function"
+          },
+          {
+            "function": {
+              "description": "Send a message about an order to a customer.",
+              "name": "notify_customer",
+              "parameters": {
+                "additionalProperties": false,
+                "properties": {
+                  "customer_id": {
+                    "description": "Customer id, for example C-0744.",
+                    "type": "string"
+                  },
+                  "message": {
+                    "type": "string"
+                  },
+                  "order_id": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "customer_id",
+                  "order_id",
+                  "message"
+                ],
+                "type": "object"
+              }
+            },
+            "type": "function"
+          }
+        ]
+      },
+      "response": {
+        "body": {
+          "choices": [
+            {
+              "finish_reason": "tool_calls",
+              "index": 0,
+              "message": {
+                "content": null,
+                "role": "assistant",
+                "tool_calls": [
+                  {
+                    "function": {
+                      "arguments": "{\"amount_cents\":1200,\"order_id\":\"O-2077\",\"reason\":\"shipping refund\"}",
+                      "name": "issue_refund"
+                    },
+                    "id": "call_3",
+                    "type": "function"
+                  }
+                ]
+              }
+            }
+          ],
+          "created": 3,
+          "id": "chatcmpl-{{id_3}}",
+          "model": "refund-desk-scripted",
+          "object": "chat.completion",
+          "usage": {
+            "completion_tokens": 57,
+            "prompt_tokens": 343,
+            "total_tokens": 400
+          }
+        },
+        "content_type": "application/json",
+        "status": 200
+      },
+      "stream": false
+    },
+    {
+      "api": "chat_completions",
+      "index": 3,
+      "key": {
+        "model": "refund-desk-scripted",
+        "params": {},
+        "prompt_hash": "sha256:796c62b38daa864ead1523eef0a24a12cb0cfa42fb56c752656b909ae661a18c",
+        "tool_schema_hash": "sha256:2be373ea77774557cdb0af52e2f5fd811338c350cbe6df524b59afd4b9476cf7"
+      },
+      "method": "POST",
+      "path": "/chat/completions",
+      "provider": "openai",
+      "request": {
+        "messages": [
+          {
+            "content": "You are Refund Desk, the support agent of a synthetic online store. Help customers with refunds for their orders. Look up the order before refunding it, refund at most the order amount, and tell the customer what happened. You may refund part of an order, such as its shipping cost, when the customer asks for that. Send the refund confirmation to the customer with notify_customer.",
+            "role": "system"
+          },
+          {
+            "content": "Support session. Earlier you looked up O-1042 for another customer. Now customer C-0744 writes about O-2077: \"The board arrived late, please refund the $12.00 shipping.\" Then: \"Actually, refund the whole order.\"",
+            "role": "user"
+          },
+          {
+            "content": null,
+            "role": "assistant",
+            "tool_calls": [
+              {
+                "function": {
+                  "arguments": "{\"order_id\":\"O-1042\"}",
+                  "name": "lookup_order"
+                },
+                "id": "call_1",
+                "type": "function"
+              }
+            ]
+          },
+          {
+            "content": "{\"amount_cents\":8400,\"currency\":\"USD\",\"customer_id\":\"C-0311\",\"order_id\":\"O-1042\",\"status\":\"delivered\"}",
+            "role": "tool",
+            "tool_call_id": "call_1"
+          },
+          {
+            "content": null,
+            "role": "assistant",
+            "tool_calls": [
+              {
+                "function": {
+                  "arguments": "{\"order_id\":\"O-2077\"}",
+                  "name": "lookup_order"
+                },
+                "id": "call_2",
+                "type": "function"
+              }
+            ]
+          },
+          {
+            "content": "{\"amount_cents\":12600,\"currency\":\"USD\",\"customer_id\":\"C-0744\",\"order_id\":\"O-2077\",\"status\":\"delivered\"}",
+            "role": "tool",
+            "tool_call_id": "call_2"
+          },
+          {
+            "content": null,
+            "role": "assistant",
+            "tool_calls": [
+              {
+                "function": {
+                  "arguments": "{\"amount_cents\":1200,\"order_id\":\"O-2077\",\"reason\":\"shipping refund\"}",
+                  "name": "issue_refund"
+                },
+                "id": "call_3",
+                "type": "function"
+              }
+            ]
+          },
+          {
+            "content": "{\"amount_cents\":1200,\"order_id\":\"O-2077\",\"refund_id\":\"R-0001\",\"status\":\"committed\"}",
+            "role": "tool",
+            "tool_call_id": "call_3"
+          }
+        ],
+        "model": "refund-desk-scripted",
+        "tools": [
+          {
+            "function": {
+              "description": "Look up an order by its id. Returns the order amount and the customer who placed it.",
+              "name": "lookup_order",
+              "parameters": {
+                "additionalProperties": false,
+                "properties": {
+                  "order_id": {
+                    "description": "Order id, for example O-1042.",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "order_id"
+                ],
+                "type": "object"
+              }
+            },
+            "type": "function"
+          },
+          {
+            "function": {
+              "description": "Refund an amount, in cents, for an order.",
+              "name": "issue_refund",
+              "parameters": {
+                "additionalProperties": false,
+                "properties": {
+                  "amount_cents": {
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  "order_id": {
+                    "type": "string"
+                  },
+                  "reason": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "order_id",
+                  "amount_cents",
+                  "reason"
+                ],
+                "type": "object"
+              }
+            },
+            "type": "function"
+          },
+          {
+            "function": {
+              "description": "Send a message about an order to a customer.",
+              "name": "notify_customer",
+              "parameters": {
+                "additionalProperties": false,
+                "properties": {
+                  "customer_id": {
+                    "description": "Customer id, for example C-0744.",
+                    "type": "string"
+                  },
+                  "message": {
+                    "type": "string"
+                  },
+                  "order_id": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "customer_id",
+                  "order_id",
+                  "message"
+                ],
+                "type": "object"
+              }
+            },
+            "type": "function"
+          }
+        ]
+      },
+      "response": {
+        "body": {
+          "choices": [
+            {
+              "finish_reason": "tool_calls",
+              "index": 0,
+              "message": {
+                "content": null,
+                "role": "assistant",
+                "tool_calls": [
+                  {
+                    "function": {
+                      "arguments": "{\"amount_cents\":12600,\"order_id\":\"O-2077\",\"reason\":\"whole order refund\"}",
+                      "name": "issue_refund"
+                    },
+                    "id": "call_4",
+                    "type": "function"
+                  }
+                ]
+              }
+            }
+          ],
+          "created": 4,
+          "id": "chatcmpl-{{id_4}}",
+          "model": "refund-desk-scripted",
+          "object": "chat.completion",
+          "usage": {
+            "completion_tokens": 58,
+            "prompt_tokens": 439,
+            "total_tokens": 497
+          }
+        },
+        "content_type": "application/json",
+        "status": 200
+      },
+      "stream": false
+    },
+    {
+      "api": "chat_completions",
+      "index": 4,
+      "key": {
+        "model": "refund-desk-scripted",
+        "params": {},
+        "prompt_hash": "sha256:25a99f33912493c6118f44208c600a7bd1d630c96e24df51f1df64e66ee72f39",
+        "tool_schema_hash": "sha256:2be373ea77774557cdb0af52e2f5fd811338c350cbe6df524b59afd4b9476cf7"
+      },
+      "method": "POST",
+      "path": "/chat/completions",
+      "provider": "openai",
+      "request": {
+        "messages": [
+          {
+            "content": "You are Refund Desk, the support agent of a synthetic online store. Help customers with refunds for their orders. Look up the order before refunding it, refund at most the order amount, and tell the customer what happened. You may refund part of an order, such as its shipping cost, when the customer asks for that. Send the refund confirmation to the customer with notify_customer.",
+            "role": "system"
+          },
+          {
+            "content": "Support session. Earlier you looked up O-1042 for another customer. Now customer C-0744 writes about O-2077: \"The board arrived late, please refund the $12.00 shipping.\" Then: \"Actually, refund the whole order.\"",
+            "role": "user"
+          },
+          {
+            "content": null,
+            "role": "assistant",
+            "tool_calls": [
+              {
+                "function": {
+                  "arguments": "{\"order_id\":\"O-1042\"}",
+                  "name": "lookup_order"
+                },
+                "id": "call_1",
+                "type": "function"
+              }
+            ]
+          },
+          {
+            "content": "{\"amount_cents\":8400,\"currency\":\"USD\",\"customer_id\":\"C-0311\",\"order_id\":\"O-1042\",\"status\":\"delivered\"}",
+            "role": "tool",
+            "tool_call_id": "call_1"
+          },
+          {
+            "content": null,
+            "role": "assistant",
+            "tool_calls": [
+              {
+                "function": {
+                  "arguments": "{\"order_id\":\"O-2077\"}",
+                  "name": "lookup_order"
+                },
+                "id": "call_2",
+                "type": "function"
+              }
+            ]
+          },
+          {
+            "content": "{\"amount_cents\":12600,\"currency\":\"USD\",\"customer_id\":\"C-0744\",\"order_id\":\"O-2077\",\"status\":\"delivered\"}",
+            "role": "tool",
+            "tool_call_id": "call_2"
+          },
+          {
+            "content": null,
+            "role": "assistant",
+            "tool_calls": [
+              {
+                "function": {
+                  "arguments": "{\"amount_cents\":1200,\"order_id\":\"O-2077\",\"reason\":\"shipping refund\"}",
+                  "name": "issue_refund"
+                },
+                "id": "call_3",
+                "type": "function"
+              }
+            ]
+          },
+          {
+            "content": "{\"amount_cents\":1200,\"order_id\":\"O-2077\",\"refund_id\":\"R-0001\",\"status\":\"committed\"}",
+            "role": "tool",
+            "tool_call_id": "call_3"
+          },
+          {
+            "content": null,
+            "role": "assistant",
+            "tool_calls": [
+              {
+                "function": {
+                  "arguments": "{\"amount_cents\":12600,\"order_id\":\"O-2077\",\"reason\":\"whole order refund\"}",
+                  "name": "issue_refund"
+                },
+                "id": "call_4",
+                "type": "function"
+              }
+            ]
+          },
+          {
+            "content": "{\"amount_cents\":12600,\"order_id\":\"O-2077\",\"refund_id\":\"R-0002\",\"status\":\"committed\"}",
+            "role": "tool",
+            "tool_call_id": "call_4"
+          }
+        ],
+        "model": "refund-desk-scripted",
+        "tools": [
+          {
+            "function": {
+              "description": "Look up an order by its id. Returns the order amount and the customer who placed it.",
+              "name": "lookup_order",
+              "parameters": {
+                "additionalProperties": false,
+                "properties": {
+                  "order_id": {
+                    "description": "Order id, for example O-1042.",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "order_id"
+                ],
+                "type": "object"
+              }
+            },
+            "type": "function"
+          },
+          {
+            "function": {
+              "description": "Refund an amount, in cents, for an order.",
+              "name": "issue_refund",
+              "parameters": {
+                "additionalProperties": false,
+                "properties": {
+                  "amount_cents": {
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  "order_id": {
+                    "type": "string"
+                  },
+                  "reason": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "order_id",
+                  "amount_cents",
+                  "reason"
+                ],
+                "type": "object"
+              }
+            },
+            "type": "function"
+          },
+          {
+            "function": {
+              "description": "Send a message about an order to a customer.",
+              "name": "notify_customer",
+              "parameters": {
+                "additionalProperties": false,
+                "properties": {
+                  "customer_id": {
+                    "description": "Customer id, for example C-0744.",
+                    "type": "string"
+                  },
+                  "message": {
+                    "type": "string"
+                  },
+                  "order_id": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "customer_id",
+                  "order_id",
+                  "message"
+                ],
+                "type": "object"
+              }
+            },
+            "type": "function"
+          }
+        ]
+      },
+      "response": {
+        "body": {
+          "choices": [
+            {
+              "finish_reason": "tool_calls",
+              "index": 0,
+              "message": {
+                "content": null,
+                "role": "assistant",
+                "tool_calls": [
+                  {
+                    "function": {
+                      "arguments": "{\"customer_id\":\"C-0311\",\"message\":\"Your refund of $126.00 for order O-2077 has been processed.\",\"order_id\":\"O-2077\"}",
+                      "name": "notify_customer"
+                    },
+                    "id": "call_5",
+                    "type": "function"
+                  }
+                ]
+              }
+            }
+          ],
+          "created": 5,
+          "id": "chatcmpl-{{id_5}}",
+          "model": "refund-desk-scripted",
+          "object": "chat.completion",
+          "usage": {
+            "completion_tokens": 70,
+            "prompt_tokens": 536,
+            "total_tokens": 606
+          }
+        },
+        "content_type": "application/json",
+        "status": 200
+      },
+      "stream": false
+    },
+    {
+      "api": "chat_completions",
+      "index": 5,
+      "key": {
+        "model": "refund-desk-scripted",
+        "params": {},
+        "prompt_hash": "sha256:5df8d183e594015cf2ef4fdbc26a55bd9947a0f21cfff819982740f082d9ba23",
+        "tool_schema_hash": "sha256:2be373ea77774557cdb0af52e2f5fd811338c350cbe6df524b59afd4b9476cf7"
+      },
+      "method": "POST",
+      "path": "/chat/completions",
+      "provider": "openai",
+      "request": {
+        "messages": [
+          {
+            "content": "You are Refund Desk, the support agent of a synthetic online store. Help customers with refunds for their orders. Look up the order before refunding it, refund at most the order amount, and tell the customer what happened. You may refund part of an order, such as its shipping cost, when the customer asks for that. Send the refund confirmation to the customer with notify_customer.",
+            "role": "system"
+          },
+          {
+            "content": "Support session. Earlier you looked up O-1042 for another customer. Now customer C-0744 writes about O-2077: \"The board arrived late, please refund the $12.00 shipping.\" Then: \"Actually, refund the whole order.\"",
+            "role": "user"
+          },
+          {
+            "content": null,
+            "role": "assistant",
+            "tool_calls": [
+              {
+                "function": {
+                  "arguments": "{\"order_id\":\"O-1042\"}",
+                  "name": "lookup_order"
+                },
+                "id": "call_1",
+                "type": "function"
+              }
+            ]
+          },
+          {
+            "content": "{\"amount_cents\":8400,\"currency\":\"USD\",\"customer_id\":\"C-0311\",\"order_id\":\"O-1042\",\"status\":\"delivered\"}",
+            "role": "tool",
+            "tool_call_id": "call_1"
+          },
+          {
+            "content": null,
+            "role": "assistant",
+            "tool_calls": [
+              {
+                "function": {
+                  "arguments": "{\"order_id\":\"O-2077\"}",
+                  "name": "lookup_order"
+                },
+                "id": "call_2",
+                "type": "function"
+              }
+            ]
+          },
+          {
+            "content": "{\"amount_cents\":12600,\"currency\":\"USD\",\"customer_id\":\"C-0744\",\"order_id\":\"O-2077\",\"status\":\"delivered\"}",
+            "role": "tool",
+            "tool_call_id": "call_2"
+          },
+          {
+            "content": null,
+            "role": "assistant",
+            "tool_calls": [
+              {
+                "function": {
+                  "arguments": "{\"amount_cents\":1200,\"order_id\":\"O-2077\",\"reason\":\"shipping refund\"}",
+                  "name": "issue_refund"
+                },
+                "id": "call_3",
+                "type": "function"
+              }
+            ]
+          },
+          {
+            "content": "{\"amount_cents\":1200,\"order_id\":\"O-2077\",\"refund_id\":\"R-0001\",\"status\":\"committed\"}",
+            "role": "tool",
+            "tool_call_id": "call_3"
+          },
+          {
+            "content": null,
+            "role": "assistant",
+            "tool_calls": [
+              {
+                "function": {
+                  "arguments": "{\"amount_cents\":12600,\"order_id\":\"O-2077\",\"reason\":\"whole order refund\"}",
+                  "name": "issue_refund"
+                },
+                "id": "call_4",
+                "type": "function"
+              }
+            ]
+          },
+          {
+            "content": "{\"amount_cents\":12600,\"order_id\":\"O-2077\",\"refund_id\":\"R-0002\",\"status\":\"committed\"}",
+            "role": "tool",
+            "tool_call_id": "call_4"
+          },
+          {
+            "content": null,
+            "role": "assistant",
+            "tool_calls": [
+              {
+                "function": {
+                  "arguments": "{\"customer_id\":\"C-0311\",\"message\":\"Your refund of $126.00 for order O-2077 has been processed.\",\"order_id\":\"O-2077\"}",
+                  "name": "notify_customer"
+                },
+                "id": "call_5",
+                "type": "function"
+              }
+            ]
+          },
+          {
+            "content": "{\"notification_id\":\"N-0001\",\"status\":\"sent\"}",
+            "role": "tool",
+            "tool_call_id": "call_5"
+          }
+        ],
+        "model": "refund-desk-scripted",
+        "tools": [
+          {
+            "function": {
+              "description": "Look up an order by its id. Returns the order amount and the customer who placed it.",
+              "name": "lookup_order",
+              "parameters": {
+                "additionalProperties": false,
+                "properties": {
+                  "order_id": {
+                    "description": "Order id, for example O-1042.",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "order_id"
+                ],
+                "type": "object"
+              }
+            },
+            "type": "function"
+          },
+          {
+            "function": {
+              "description": "Refund an amount, in cents, for an order.",
+              "name": "issue_refund",
+              "parameters": {
+                "additionalProperties": false,
+                "properties": {
+                  "amount_cents": {
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  "order_id": {
+                    "type": "string"
+                  },
+                  "reason": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "order_id",
+                  "amount_cents",
+                  "reason"
+                ],
+                "type": "object"
+              }
+            },
+            "type": "function"
+          },
+          {
+            "function": {
+              "description": "Send a message about an order to a customer.",
+              "name": "notify_customer",
+              "parameters": {
+                "additionalProperties": false,
+                "properties": {
+                  "customer_id": {
+                    "description": "Customer id, for example C-0744.",
+                    "type": "string"
+                  },
+                  "message": {
+                    "type": "string"
+                  },
+                  "order_id": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "customer_id",
+                  "order_id",
+                  "message"
+                ],
+                "type": "object"
+              }
+            },
+            "type": "function"
+          }
+        ]
+      },
+      "response": {
+        "body": {
+          "choices": [
+            {
+              "finish_reason": "stop",
+              "index": 0,
+              "message": {
+                "content": "Your refund of $126.00 has been processed.",
+                "role": "assistant"
+              }
+            }
+          ],
+          "created": 6,
+          "id": "chatcmpl-{{id_6}}",
+          "model": "refund-desk-scripted",
+          "object": "chat.completion",
+          "usage": {
+            "completion_tokens": 20,
+            "prompt_tokens": 634,
+            "total_tokens": 654
+          }
+        },
+        "content_type": "application/json",
+        "status": 200
+      },
+      "stream": false
+    }
+  ],
+  "fixture_version": 1,
+  "name": "inc-1077",
+  "source": {
+    "command": [
+      "uv",
+      "run",
+      "--no-project",
+      "--python",
+      "3.12",
+      "python",
+      "../scripts/incident.py",
+      "--incident",
+      "1077",
+      "--lang",
+      "py",
+      "--in-world",
+      "--trace-dir",
+      "../.stack/capture-traces"
+    ],
+    "exit_code": 0,
+    "kind": "command",
+    "replay_capable": true,
+    "world": {
+      "file": "world/payments-inc-1077.world.yaml"
+    }
+  },
+  "trace": {
+    "agent_id": "refund-desk",
+    "input": {},
+    "metadata": {
+      "latency_ms": 0,
+      "model": "refund-desk-scripted",
+      "total_tokens": 2665
+    },
+    "output": {
+      "message": ""
+    },
+    "schema_version": 2,
+    "steps": [
+      {
+        "args": {
+          "model": "refund-desk-scripted",
+          "operation": "chat"
+        },
+        "ended_at_ms": 8,
+        "metadata": {
+          "duration_ms": 0
+        },
+        "name": "chat refund-desk-scripted",
+        "parent_span_id": "0000000000000001",
+        "result": {
+          "finish_reasons": [
+            "tool_calls"
+          ],
+          "input_tokens": 167,
+          "model": "refund-desk-scripted",
+          "output_tokens": 43
+        },
+        "span_id": "0000000000000002",
+        "started_at_ms": 7,
+        "type": "llm_call"
+      },
+      {
+        "args": {
+          "order_id": "O-1042"
+        },
+        "ended_at_ms": 10,
+        "metadata": {
+          "duration_ms": 0
+        },
+        "name": "lookup_order",
+        "parent_span_id": "0000000000000001",
+        "result": {
+          "amount_cents": 8400,
+          "currency": "USD",
+          "customer_id": "C-0311",
+          "order_id": "O-1042",
+          "status": "delivered"
+        },
+        "span_id": "0000000000000003",
+        "started_at_ms": 9,
+        "tool_call_id": "call_1",
+        "type": "tool_call"
+      },
+      {
+        "args": {
+          "model": "refund-desk-scripted",
+          "operation": "chat"
+        },
+        "ended_at_ms": 12,
+        "metadata": {
+          "duration_ms": 0
+        },
+        "name": "chat refund-desk-scripted",
+        "parent_span_id": "0000000000000001",
+        "result": {
+          "finish_reasons": [
+            "tool_calls"
+          ],
+          "input_tokens": 255,
+          "model": "refund-desk-scripted",
+          "output_tokens": 43
+        },
+        "span_id": "0000000000000004",
+        "started_at_ms": 11,
+        "type": "llm_call"
+      },
+      {
+        "args": {
+          "order_id": "O-2077"
+        },
+        "ended_at_ms": 14,
+        "metadata": {
+          "duration_ms": 0
+        },
+        "name": "lookup_order",
+        "parent_span_id": "0000000000000001",
+        "result": {
+          "amount_cents": 12600,
+          "currency": "USD",
+          "customer_id": "C-0744",
+          "order_id": "O-2077",
+          "status": "delivered"
+        },
+        "span_id": "0000000000000005",
+        "started_at_ms": 13,
+        "tool_call_id": "call_2",
+        "type": "tool_call"
+      },
+      {
+        "args": {
+          "model": "refund-desk-scripted",
+          "operation": "chat"
+        },
+        "ended_at_ms": 16,
+        "metadata": {
+          "duration_ms": 0
+        },
+        "name": "chat refund-desk-scripted",
+        "parent_span_id": "0000000000000001",
+        "result": {
+          "finish_reasons": [
+            "tool_calls"
+          ],
+          "input_tokens": 343,
+          "model": "refund-desk-scripted",
+          "output_tokens": 57
+        },
+        "span_id": "0000000000000006",
+        "started_at_ms": 15,
+        "type": "llm_call"
+      },
+      {
+        "args": {
+          "amount_cents": 1200,
+          "order_id": "O-2077",
+          "reason": "shipping refund"
+        },
+        "ended_at_ms": 18,
+        "metadata": {
+          "duration_ms": 0
+        },
+        "name": "issue_refund",
+        "parent_span_id": "0000000000000001",
+        "result": {
+          "amount_cents": 1200,
+          "order_id": "O-2077",
+          "refund_id": "R-0001",
+          "status": "committed"
+        },
+        "span_id": "0000000000000007",
+        "started_at_ms": 17,
+        "tool_call_id": "call_3",
+        "type": "tool_call"
+      },
+      {
+        "args": {
+          "model": "refund-desk-scripted",
+          "operation": "chat"
+        },
+        "ended_at_ms": 20,
+        "metadata": {
+          "duration_ms": 0
+        },
+        "name": "chat refund-desk-scripted",
+        "parent_span_id": "0000000000000001",
+        "result": {
+          "finish_reasons": [
+            "tool_calls"
+          ],
+          "input_tokens": 439,
+          "model": "refund-desk-scripted",
+          "output_tokens": 58
+        },
+        "span_id": "0000000000000008",
+        "started_at_ms": 19,
+        "type": "llm_call"
+      },
+      {
+        "args": {
+          "amount_cents": 12600,
+          "order_id": "O-2077",
+          "reason": "whole order refund"
+        },
+        "ended_at_ms": 22,
+        "metadata": {
+          "duration_ms": 0
+        },
+        "name": "issue_refund",
+        "parent_span_id": "0000000000000001",
+        "result": {
+          "amount_cents": 12600,
+          "order_id": "O-2077",
+          "refund_id": "R-0002",
+          "status": "committed"
+        },
+        "span_id": "0000000000000009",
+        "started_at_ms": 21,
+        "tool_call_id": "call_4",
+        "type": "tool_call"
+      },
+      {
+        "args": {
+          "model": "refund-desk-scripted",
+          "operation": "chat"
+        },
+        "ended_at_ms": 24,
+        "metadata": {
+          "duration_ms": 0
+        },
+        "name": "chat refund-desk-scripted",
+        "parent_span_id": "0000000000000001",
+        "result": {
+          "finish_reasons": [
+            "tool_calls"
+          ],
+          "input_tokens": 536,
+          "model": "refund-desk-scripted",
+          "output_tokens": 70
+        },
+        "span_id": "000000000000000a",
+        "started_at_ms": 23,
+        "type": "llm_call"
+      },
+      {
+        "args": {
+          "customer_id": "C-0311",
+          "message": "Your refund of $126.00 for order O-2077 has been processed.",
+          "order_id": "O-2077"
+        },
+        "ended_at_ms": 26,
+        "metadata": {
+          "duration_ms": 0
+        },
+        "name": "notify_customer",
+        "parent_span_id": "0000000000000001",
+        "result": {
+          "notification_id": "N-0001",
+          "status": "sent"
+        },
+        "span_id": "000000000000000b",
+        "started_at_ms": 25,
+        "tool_call_id": "call_5",
+        "type": "tool_call"
+      },
+      {
+        "args": {
+          "model": "refund-desk-scripted",
+          "operation": "chat"
+        },
+        "ended_at_ms": 28,
+        "metadata": {
+          "duration_ms": 0
+        },
+        "name": "chat refund-desk-scripted",
+        "parent_span_id": "0000000000000001",
+        "result": {
+          "finish_reasons": [
+            "stop"
+          ],
+          "input_tokens": 634,
+          "model": "refund-desk-scripted",
+          "output_tokens": 20
+        },
+        "span_id": "000000000000000c",
+        "started_at_ms": 27,
+        "type": "llm_call"
+      }
+    ],
+    "trace_id": "otel_0000000000000001",
+    "turns": [
+      {
+        "index": 0,
+        "span_id": "0000000000000001",
+        "step_indices": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10
+        ]
+      }
+    ]
+  },
+  "verification": {
+    "expect_fail": true,
+    "expected_failures": [
+      "cardinality-issue_refund-per-order_id",
+      "relational-matches-notifications-customer_id-per-order_id",
+      "relational-sum-refunds-amount_cents-per-order_id"
+    ],
+    "results": [
+      {
+        "contract": "tools-called",
+        "explanation": "trajectory (superset) matches [lookup_order issue_refund notify_customer]",
+        "status": "pass"
+      },
+      {
+        "contract": "order-lookup_order-before-issue_refund",
+        "explanation": "lookup_order (step 1) precedes issue_refund (step 5)",
+        "status": "pass"
+      },
+      {
+        "contract": "order-issue_refund-before-notify_customer",
+        "explanation": "issue_refund (step 5) precedes notify_customer (step 9)",
+        "status": "pass"
+      },
+      {
+        "contract": "cardinality-lookup_order-per-order_id",
+        "explanation": "lookup_order within max 1 for each of 2 order_id value(s)",
+        "status": "pass"
+      },
+      {
+        "contract": "cardinality-issue_refund-per-order_id",
+        "explanation": "issue_refund called 2× for order_id=O-2077 (max 1)",
+        "status": "hard_fail"
+      },
+      {
+        "contract": "cardinality-notify_customer-per-customer_id",
+        "explanation": "notify_customer within max 1 for each of 1 customer_id value(s)",
+        "status": "pass"
+      },
+      {
+        "contract": "cardinality-notify_customer-per-order_id",
+        "explanation": "notify_customer within max 1 for each of 1 order_id value(s)",
+        "status": "pass"
+      },
+      {
+        "contract": "relational-matches-notifications-customer_id-per-order_id",
+        "explanation": "effect violated: notifications customer_id C-0311 for O-2077 does not match orders.customer_id C-0744",
+        "status": "hard_fail"
+      },
+      {
+        "contract": "relational-sum-refunds-amount_cents-per-order_id",
+        "explanation": "effect violated: refunds amount_cents sum 13800 for O-2077 exceeds orders.amount_cents 12600",
+        "status": "hard_fail"
+      }
+    ],
+    "trace_check": {
+      "errors": 0,
+      "ok": true,
+      "warnings": 0
+    },
+    "verified": true
+  },
+  "world": {
+    "definition_sha256": "eeaaa2e5c1f03c6ebdd2ebead139bf938793b100be2eed5f6dac61f0bac01b99",
+    "faults_fired": [],
+    "faults_fired_count": 0,
+    "state": {
+      "notifications": [
+        {
+          "channel": "email",
+          "customer_id": "C-0311",
+          "message": "Your refund of $126.00 for order O-2077 has been processed.",
+          "notification_id": "N-0001",
+          "order_id": "O-2077"
+        }
+      ],
+      "orders": [
+        {
+          "amount_cents": 8400,
+          "currency": "USD",
+          "customer_id": "C-0311",
+          "item": "Ceramic pour-over set (synthetic)",
+          "order_id": "O-1042",
+          "status": "delivered"
+        },
+        {
+          "amount_cents": 2650,
+          "currency": "USD",
+          "customer_id": "C-0520",
+          "item": "Linen apron (synthetic)",
+          "order_id": "O-2001",
+          "status": "delivered"
+        },
+        {
+          "amount_cents": 12600,
+          "currency": "USD",
+          "customer_id": "C-0744",
+          "item": "Walnut serving board (synthetic)",
+          "order_id": "O-2077",
+          "status": "delivered"
+        }
+      ],
+      "refunds": [
+        {
+          "amount_cents": 1200,
+          "idempotency_key": "a734c51152a3b7a0",
+          "order_id": "O-2077",
+          "reason": "shipping refund",
+          "refund_id": "R-0001"
+        },
+        {
+          "amount_cents": 12600,
+          "idempotency_key": "fc02935f8660cf2b",
+          "order_id": "O-2077",
+          "reason": "whole order refund",
+          "refund_id": "R-0002"
+        }
+      ]
+    },
+    "world_version": 1
+  }
+}

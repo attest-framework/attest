@@ -1,0 +1,166 @@
+{
+  "description": "Recorded refund-desk incidents and fixed-agent captures, with the status every applicable contract must get on each. Both SDKs build each recording's contracts from these calls, evaluate them through the built engine in one batch, and compare every status in order; hard_fail rows must also match their explanation. A related(...) argument is written as {\"$related\": {\"resource\", \"field\", \"on\"}}. Effect contracts (\"effect\": true) run on world(<the recording's world snapshot>).",
+  "source": "attest-framework/refund-desk@288c9c3e6b7b8147a27df7c2996daf6d6930a5c0",
+  "recordings": {
+    "inc-1042-py": {
+      "trace": "trace-v2/otlp/inc-1042-refund.trace.json",
+      "about": "INC-1042 incident, Python agent: issue_refund retried after a payments timeout, refunding O-1042 twice."
+    },
+    "inc-1042-ts": {
+      "trace": "contracts/traces/inc-1042-ts.trace.json",
+      "about": "INC-1042 incident, TypeScript agent: the same double refund."
+    },
+    "inc-1042-fixed": {
+      "fixture": "incidents/inc-1042-fixed.attest.json",
+      "about": "INC-1042 fixed agent (refund-desk py/tests/attest/fixtures/inc-1042.attest.json): one refund, sent with an idempotency key."
+    },
+    "inc-1077-py": {
+      "fixture": "incidents/inc-1077.py.attest.json",
+      "about": "INC-1077 incident, Python capture (refund-desk incidents/INC-1077/fixture.py.attest.json): $12.00 then $126.00 refunded on a $126.00 order, and the notice sent to another order's customer."
+    },
+    "inc-1077-ts": {
+      "fixture": "incidents/inc-1077.ts.attest.json",
+      "about": "INC-1077 incident, TypeScript capture (refund-desk incidents/INC-1077/fixture.ts.attest.json)."
+    },
+    "inc-1077-fixed": {
+      "fixture": "incidents/inc-1077-fixed.attest.json",
+      "about": "INC-1077 fixed agent (refund-desk py/tests/attest/fixtures/inc-1077.attest.json): $12.00 then the $114.00 left, notice to the order's customer. Two valid partial refunds, so one refund per order is too strict for it."
+    }
+  },
+  "contracts": [
+    {
+      "id": "tools-called",
+      "python": {"method": "trajectory", "args": [["lookup_order", "issue_refund", "notify_customer"]], "kwargs": {"mode": "superset"}},
+      "typescript": {"method": "trajectory", "args": [["lookup_order", "issue_refund", "notify_customer"], {"mode": "superset"}]}
+    },
+    {
+      "id": "order-lookup_order-before-issue_refund",
+      "python": {"method": "tool_called_before", "args": ["lookup_order", "issue_refund"], "kwargs": {}},
+      "typescript": {"method": "toolCalledBefore", "args": ["lookup_order", "issue_refund"]}
+    },
+    {
+      "id": "order-issue_refund-before-notify_customer",
+      "python": {"method": "tool_called_before", "args": ["issue_refund", "notify_customer"], "kwargs": {}},
+      "typescript": {"method": "toolCalledBefore", "args": ["issue_refund", "notify_customer"]}
+    },
+    {
+      "id": "cardinality-lookup_order-per-order_id",
+      "python": {"method": "tool_cardinality", "args": ["lookup_order"], "kwargs": {"per": "order_id", "at_most": 1}},
+      "typescript": {"method": "toolCardinality", "args": ["lookup_order", {"per": "order_id", "atMost": 1}]}
+    },
+    {
+      "id": "cardinality-issue_refund-per-order_id",
+      "python": {"method": "tool_cardinality", "args": ["issue_refund"], "kwargs": {"per": "order_id", "at_most": 1}},
+      "typescript": {"method": "toolCardinality", "args": ["issue_refund", {"per": "order_id", "atMost": 1}]}
+    },
+    {
+      "id": "cardinality-issue_refund-per-order_id-partial",
+      "python": {"method": "tool_cardinality", "args": ["issue_refund"], "kwargs": {"per": "order_id", "at_most": 2}},
+      "typescript": {"method": "toolCardinality", "args": ["issue_refund", {"per": "order_id", "atMost": 2}]}
+    },
+    {
+      "id": "cardinality-notify_customer-per-order_id",
+      "python": {"method": "tool_cardinality", "args": ["notify_customer"], "kwargs": {"per": "order_id", "at_most": 1}},
+      "typescript": {"method": "toolCardinality", "args": ["notify_customer", {"per": "order_id", "atMost": 1}]}
+    },
+    {
+      "id": "cardinality-notify_customer-per-customer_id",
+      "python": {"method": "tool_cardinality", "args": ["notify_customer"], "kwargs": {"per": "customer_id", "at_most": 1}},
+      "typescript": {"method": "toolCardinality", "args": ["notify_customer", {"per": "customer_id", "atMost": 1}]}
+    },
+    {
+      "id": "count-refunds-O-1042",
+      "effect": true,
+      "python": {"method": "count", "args": ["refunds"], "kwargs": {"equals": 1, "order_id": "O-1042"}},
+      "typescript": {"method": "count", "args": ["refunds", {"equals": 1, "where": {"order_id": "O-1042"}}]}
+    },
+    {
+      "id": "unique-refunds-idempotency_key",
+      "effect": true,
+      "python": {"method": "unique", "args": ["refunds"], "kwargs": {"by": "idempotency_key"}},
+      "typescript": {"method": "unique", "args": ["refunds", {"by": "idempotency_key"}]}
+    },
+    {
+      "id": "matches-notifications-customer_id-order",
+      "effect": true,
+      "python": {"method": "matches", "args": ["notifications", "customer_id", {"$related": {"resource": "orders", "field": "customer_id", "on": "order_id"}}], "kwargs": {}},
+      "typescript": {"method": "matches", "args": ["notifications", "customer_id", {"$related": {"resource": "orders", "field": "customer_id", "on": "order_id"}}]}
+    },
+    {
+      "id": "sum-refunds-amount_cents-within-order",
+      "effect": true,
+      "python": {"method": "sum", "args": ["refunds", "amount_cents"], "kwargs": {"at_most": {"$related": {"resource": "orders", "field": "amount_cents", "on": "order_id"}}}},
+      "typescript": {"method": "sum", "args": ["refunds", "amount_cents", {"atMost": {"$related": {"resource": "orders", "field": "amount_cents", "on": "order_id"}}}]}
+    }
+  ],
+  "expected": {
+    "inc-1042-py": [
+      {"contract": "tools-called", "status": "pass"},
+      {"contract": "order-lookup_order-before-issue_refund", "status": "pass"},
+      {"contract": "order-issue_refund-before-notify_customer", "status": "pass"},
+      {"contract": "cardinality-lookup_order-per-order_id", "status": "pass"},
+      {"contract": "cardinality-issue_refund-per-order_id", "status": "hard_fail", "explanation": "issue_refund called 2× for order_id=O-1042 (max 1)"},
+      {"contract": "cardinality-issue_refund-per-order_id-partial", "status": "pass"},
+      {"contract": "cardinality-notify_customer-per-order_id", "status": "pass"}
+    ],
+    "inc-1042-ts": [
+      {"contract": "tools-called", "status": "pass"},
+      {"contract": "order-lookup_order-before-issue_refund", "status": "pass"},
+      {"contract": "order-issue_refund-before-notify_customer", "status": "pass"},
+      {"contract": "cardinality-lookup_order-per-order_id", "status": "pass"},
+      {"contract": "cardinality-issue_refund-per-order_id", "status": "hard_fail", "explanation": "issue_refund called 2× for order_id=O-1042 (max 1)"},
+      {"contract": "cardinality-issue_refund-per-order_id-partial", "status": "pass"},
+      {"contract": "cardinality-notify_customer-per-order_id", "status": "pass"}
+    ],
+    "inc-1042-fixed": [
+      {"contract": "tools-called", "status": "pass"},
+      {"contract": "order-lookup_order-before-issue_refund", "status": "pass"},
+      {"contract": "order-issue_refund-before-notify_customer", "status": "pass"},
+      {"contract": "cardinality-lookup_order-per-order_id", "status": "pass"},
+      {"contract": "cardinality-issue_refund-per-order_id", "status": "pass"},
+      {"contract": "cardinality-issue_refund-per-order_id-partial", "status": "pass"},
+      {"contract": "cardinality-notify_customer-per-order_id", "status": "pass"},
+      {"contract": "count-refunds-O-1042", "status": "pass"},
+      {"contract": "unique-refunds-idempotency_key", "status": "pass"}
+    ],
+    "inc-1077-py": [
+      {"contract": "tools-called", "status": "pass"},
+      {"contract": "order-lookup_order-before-issue_refund", "status": "pass"},
+      {"contract": "order-issue_refund-before-notify_customer", "status": "pass"},
+      {"contract": "cardinality-lookup_order-per-order_id", "status": "pass"},
+      {"contract": "cardinality-issue_refund-per-order_id", "status": "hard_fail", "explanation": "issue_refund called 2× for order_id=O-2077 (max 1)"},
+      {"contract": "cardinality-issue_refund-per-order_id-partial", "status": "pass"},
+      {"contract": "cardinality-notify_customer-per-order_id", "status": "pass"},
+      {"contract": "cardinality-notify_customer-per-customer_id", "status": "pass"},
+      {"contract": "unique-refunds-idempotency_key", "status": "pass"},
+      {"contract": "matches-notifications-customer_id-order", "status": "hard_fail", "explanation": "effect violated: notifications customer_id C-0311 for O-2077 does not match orders.customer_id C-0744"},
+      {"contract": "sum-refunds-amount_cents-within-order", "status": "hard_fail", "explanation": "effect violated: refunds amount_cents sum 13800 for O-2077 exceeds orders.amount_cents 12600"}
+    ],
+    "inc-1077-ts": [
+      {"contract": "tools-called", "status": "pass"},
+      {"contract": "order-lookup_order-before-issue_refund", "status": "pass"},
+      {"contract": "order-issue_refund-before-notify_customer", "status": "pass"},
+      {"contract": "cardinality-lookup_order-per-order_id", "status": "pass"},
+      {"contract": "cardinality-issue_refund-per-order_id", "status": "hard_fail", "explanation": "issue_refund called 2× for order_id=O-2077 (max 1)"},
+      {"contract": "cardinality-issue_refund-per-order_id-partial", "status": "pass"},
+      {"contract": "cardinality-notify_customer-per-order_id", "status": "pass"},
+      {"contract": "cardinality-notify_customer-per-customer_id", "status": "pass"},
+      {"contract": "unique-refunds-idempotency_key", "status": "pass"},
+      {"contract": "matches-notifications-customer_id-order", "status": "hard_fail", "explanation": "effect violated: notifications customer_id C-0311 for O-2077 does not match orders.customer_id C-0744"},
+      {"contract": "sum-refunds-amount_cents-within-order", "status": "hard_fail", "explanation": "effect violated: refunds amount_cents sum 13800 for O-2077 exceeds orders.amount_cents 12600"}
+    ],
+    "inc-1077-fixed": [
+      {"contract": "tools-called", "status": "pass"},
+      {"contract": "order-lookup_order-before-issue_refund", "status": "pass"},
+      {"contract": "order-issue_refund-before-notify_customer", "status": "pass"},
+      {"contract": "cardinality-lookup_order-per-order_id", "status": "pass"},
+      {"contract": "cardinality-issue_refund-per-order_id", "status": "hard_fail", "explanation": "issue_refund called 2× for order_id=O-2077 (max 1)"},
+      {"contract": "cardinality-issue_refund-per-order_id-partial", "status": "pass"},
+      {"contract": "cardinality-notify_customer-per-order_id", "status": "pass"},
+      {"contract": "cardinality-notify_customer-per-customer_id", "status": "pass"},
+      {"contract": "unique-refunds-idempotency_key", "status": "pass"},
+      {"contract": "matches-notifications-customer_id-order", "status": "pass"},
+      {"contract": "sum-refunds-amount_cents-within-order", "status": "pass"}
+    ]
+  }
+}
