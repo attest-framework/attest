@@ -53,6 +53,7 @@
       "tasks_output": [
         {
           "agent": "Researcher",
+          "artifact": null,
           "description": "Research the topic",
           "expected_output": null,
           "json_dict": null,
@@ -61,10 +62,12 @@
           "output_format": "raw",
           "pydantic": null,
           "raw": "notes",
-          "summary": "Research the topic..."
+          "summary": "Research the topic...",
+          "tool_failures": []
         },
         {
           "agent": "Writer",
+          "artifact": null,
           "description": "Write the report",
           "expected_output": null,
           "json_dict": null,
@@ -73,13 +76,16 @@
           "output_format": "raw",
           "pydantic": null,
           "raw": "Final report",
-          "summary": "Write the report..."
+          "summary": "Write the report...",
+          "tool_failures": []
         }
       ],
       "token_usage": {
+        "cache_creation_tokens": 0,
         "cached_prompt_tokens": 0,
         "completion_tokens": 120,
         "prompt_tokens": 300,
+        "reasoning_tokens": 0,
         "successful_requests": 3,
         "total_tokens": 420
       }
