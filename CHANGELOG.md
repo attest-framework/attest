@@ -4,6 +4,10 @@ All notable changes to Attest are documented in this file. The format follows [K
 
 ## [Unreleased]
 
+### Added
+
+- Incident conformance fixtures (`protocol-tests/incidents/`): the recorded refund-desk INC-1042 and INC-1077 incidents and the fixed agent's runs, with the status every applicable contract must get on each. Both SDKs evaluate each recording's whole contract set through the engine and compare every row, so a false pass, a contract firing on the wrong recording or a misrouted verdict fails CI. (#291)
+
 ### Docs
 
 - README: a 48-second launch video under the demo GIF, from the INC-1042 double refund through capture and replay to the merge gate blocking the regression; the source file is `assets/demo.mp4` (#267).
