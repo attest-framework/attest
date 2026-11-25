@@ -233,6 +233,84 @@ func TestRun_EffectCountSpec_KillsWorldDuplicate(t *testing.T) {
 	}
 }
 
+// A retry that mints a new idempotency key writes a second refund that key
+// uniqueness cannot see: only a count per order (or a bound on the order)
+// catches it, while the plain duplicate, which reuses the key, dies to either.
+func TestRun_FreshKeyDuplicate_SurvivesKeyUniquenessAndDiesToPerOrderCount(t *testing.T) {
+	s, fx := loadSubject(t)
+	world := string(fx.World)
+	keyUnique := mutate.Spec{AssertionID: "unique-key", Type: "effect",
+		Spec: json.RawMessage(`{"check":"unique","resource":"refunds","fields":["idempotency_key"],"world":` + world + `}`)}
+	keyIdempotent := mutate.Spec{AssertionID: "idempotent-key", Type: "effect",
+		Spec: json.RawMessage(`{"check":"idempotent","resource":"refunds","field":"idempotency_key","world":` + world + `}`)}
+	perOrder := mutate.Spec{AssertionID: "one-refund", Type: "effect",
+		Spec: json.RawMessage(`{"check":"count","resource":"refunds","where":{"order_id":"O-1042"},"equals":1,"world":` + world + `}`)}
+	keyChecks := []mutate.Spec{keyUnique, keyIdempotent}
+	const freshKey = "duplicate refunds record 0 (order_id=O-1042) with a new idempotency_key"
+
+	keyOnly, err := mutate.Run([]mutate.Subject{s}, keyChecks, mutate.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m := find(t, keyOnly, mutate.AlterWorldEffect, "duplicate refunds record 0 (order_id=O-1042)"); m.Status != mutate.StatusKilled {
+		t.Errorf("plain duplicate with the key checks: %s", m.Status)
+	}
+	if m := find(t, keyOnly, mutate.AlterWorldEffect, freshKey); m.Status != mutate.StatusSurvived {
+		t.Errorf("fresh-key duplicate with the key checks: %s, killed by %v", m.Status, m.KilledBy)
+	}
+
+	withCount, err := mutate.Run([]mutate.Subject{s}, append(keyChecks, perOrder), mutate.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := find(t, withCount, mutate.AlterWorldEffect, freshKey)
+	if m.Status != mutate.StatusKilled || len(m.KilledBy) != 1 || m.KilledBy[0].AssertionID != "one-refund" {
+		t.Fatalf("fresh-key duplicate with the per-order count: %s %v", m.Status, m.KilledBy)
+	}
+	if !strings.HasSuffix(m.ID, ":alter_world_effect:refunds.0.duplicate_new_key") {
+		t.Errorf("id %s", m.ID)
+	}
+}
+
+// The copy is a new request for the same order: new key and refund id, same
+// order and amount.
+func TestGenerate_FreshKeyDuplicate_KeepsTheOrderAndRenewsKeyAndID(t *testing.T) {
+	s, _ := loadSubject(t)
+	ms, err := mutate.Generate([]mutate.Subject{s}, mutate.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, m := range ms {
+		if !strings.HasSuffix(m.ID, "refunds.0.duplicate_new_key") {
+			continue
+		}
+		var w struct {
+			State struct {
+				Refunds []map[string]any `json:"refunds"`
+			} `json:"state"`
+		}
+		if err := json.Unmarshal(m.World, &w); err != nil {
+			t.Fatal(err)
+		}
+		if len(w.State.Refunds) != 2 {
+			t.Fatalf("%d refunds", len(w.State.Refunds))
+		}
+		a, b := w.State.Refunds[0], w.State.Refunds[1]
+		for _, k := range []string{"order_id", "amount_cents", "reason"} {
+			if !reflect.DeepEqual(a[k], b[k]) {
+				t.Errorf("%s changed: %v -> %v", k, a[k], b[k])
+			}
+		}
+		for _, k := range []string{"idempotency_key", "refund_id"} {
+			if a[k] == b[k] {
+				t.Errorf("%s not renewed: %v", k, a[k])
+			}
+		}
+		return
+	}
+	t.Fatal("no refunds.0.duplicate_new_key mutant")
+}
+
 func TestRun_EffectSpecOfOtherWorld_IsNotApplicable(t *testing.T) {
 	s, fx := loadSubject(t)
 	var world map[string]json.RawMessage

@@ -20,7 +20,7 @@ Mutants are enumerated in this fixed order, so the same fixtures give the same m
 | `reorder_tool_calls` | Swaps two neighbouring tool calls | `tool_order` |
 | `perturb_argument` | Changes one scalar argument: a string gets a suffix, a number doubles, a bool flips | `arg_predicate` pinning the argument to the captured values |
 | `inject_tool_error` | Marks a tool call failed with an error message (trace-v2 fixtures) | `failure_streak` with `max` set to the fixture's longest existing failure streak (0 when it has none) |
-| `alter_world_effect` | In the fixture's world snapshot: duplicates a record, drops a record, changes one field, raises a numeric field one above the bound of its related record (exceed), or points a shared `*_id` field away from its related record's value (redirect) | an effect `idempotent` or `count` check; for exceed, `sum(... at_most=related(...))`; for redirect, `matches(... related(...))` |
+| `alter_world_effect` | In the fixture's world snapshot: duplicates a record, duplicates a record that has an `idempotency_key` as a retry that sent a new key (new key, new record id, same business key), drops a record, changes one field, raises a numeric field one above the bound of its related record (exceed), or points a shared `*_id` field away from its related record's value (redirect) | an effect `idempotent` or `count` check; for a retry with a new key, a `count` per business key (key uniqueness passes on it); for exceed, `sum(... at_most=related(...))`; for redirect, `matches(... related(...))` |
 | `truncate_output` | Cuts a string in the final output to its first half | a `content` `contains` check on the cut text |
 
 The exceed and redirect mutants exist only where the world has a relation: a `<name>_id` field whose target resource (`<name>`, `<name>s`, `<name>es`, or the `y`→`ies` plural) holds exactly one record with that key. A world without one generates exactly the mutants it did before. Their ids end in the relation, `refunds.0.exceed.orders.order_id.amount_cents`, and their descriptions read `raise refunds record 0 (order_id=O-1042): amount_cents 8400 -> 8401, above orders.amount_cents 8400`. A suite with no `sum` or `matches` check leaves them alive, and the report suggests the contract that kills them.
@@ -80,9 +80,9 @@ Each suggested contract was checked before it was reported: it passes on the unm
 One score hides which kinds of change the suite misses. The report breaks it down by operator, in enumeration order, for the refund-desk INC-1042 fixture:
 
 ```text
-mutation score: 33% (10 killed, 20 survived)
-fixtures: inc-1042 | seed 0 | 30 mutants
-contracts: 38 applicable, 4 skipped (not deterministic)
+mutation score: 35% (11 killed, 20 survived)
+fixtures: inc-1042 | seed 0 | 31 mutants
+contracts: 60 applicable, 4 skipped (not deterministic)
 
 operator               generated  killed  survived   n/a  score
 drop_tool_call                 3       3         0     0   100%
@@ -90,7 +90,7 @@ duplicate_tool_call            3       3         0     0   100%
 reorder_tool_calls             2       2         0     0   100%
 perturb_argument               6       0         6     0     0%
 inject_tool_error              3       0         3     0     0%
-alter_world_effect            13       2        11     0    15%
+alter_world_effect            14       3        11     0    21%
 
 excluded from the score: 0 mutant(s) with no applicable contract; 4 spec(s): llm_judge specs are not deterministic
 ```
@@ -104,6 +104,8 @@ The score leaves two populations out, and the line under the table counts them: 
 ## Example: the double refund
 
 A fixture captured from the fixed refund agent has one `issue_refund` for `O-1042`. A suite that only reads the reply (`output_contains("refund of $84.00")`) lets the `duplicate issue_refund` mutant survive: the reply is the same whether the customer was refunded once or twice. Trace mutants keep the fixture's world, so an effect check cannot see them: the suggested `tool_cardinality` contract kills the duplicate call. The world mutant `duplicate refunds record 0` is the one an effect `count` or `idempotent` check on the `refunds` resource kills.
+
+Its sibling `duplicate refunds record 0 (order_id=O-1042) with a new idempotency_key` is the retry that generates a new key on each attempt. Both refunds have unique keys, so `unique("refunds", by="idempotency_key")` and `idempotent` pass on it; `count("refunds", equals=1, order_id="O-1042")` kills it. A suite whose only refund check is key uniqueness kills the plain duplicate and lets this one survive.
 
 ## Gate on the score
 

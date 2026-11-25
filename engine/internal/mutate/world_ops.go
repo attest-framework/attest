@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math/big"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 
@@ -129,14 +130,16 @@ func genWorld(s Subject, add func(Mutant) error) error {
 			dup.state[res] = append(dup.state[res][:i+1], dup.state[res][i:]...)
 			dup.state[res][i+1] = copyRecord(rec)
 			cands := []Contract{}
-			if f, ok := rec["idempotency_key"].(string); ok && f != "" {
-				spec := map[string]any{"check": "idempotent", "resource": res, "field": "idempotency_key"}
+			key, hasKey := rec[idempotencyField].(string)
+			hasKey = hasKey && key != ""
+			if hasKey {
+				spec := map[string]any{"check": "idempotent", "resource": res, "field": idempotencyField}
 				if len(where) > 0 {
 					spec["where"] = where
 				}
 				cands = append(cands, Contract{
 					Type: types.TypeEffect, Spec: rawJSON(spec),
-					Description: fmt.Sprintf("each idempotency_key in %s is written once", res),
+					Description: fmt.Sprintf("each %s in %s is written once", idempotencyField, res),
 				})
 			}
 			cands = append(cands, countCandidate(res, where, n))
@@ -146,6 +149,11 @@ func genWorld(s Subject, add func(Mutant) error) error {
 				Trace:       s.Trace, World: dup.marshal(), candidates: cands,
 			}); err != nil {
 				return err
+			}
+			if hasKey {
+				if err := add(freshKeyDuplicate(ws, s, res, i, where, n)); err != nil {
+					return err
+				}
 			}
 
 			drop := ws.clone()
@@ -180,6 +188,57 @@ func genWorld(s Subject, add func(Mutant) error) error {
 		}
 	}
 	return nil
+}
+
+// idempotencyField is the record field a world stores a request's idempotency
+// key in.
+const idempotencyField = "idempotency_key"
+
+// freshKeyDuplicate copies record i of res as a retry that minted a new
+// idempotency key instead of reusing the first one. The backend accepts such a
+// retry as a new request, so the copy also gets an unused value in every other
+// id field unique to the record (the record's own id, assigned by the
+// backend); the business key stays, since the retry is for the same intent.
+// Key uniqueness passes on this mutant; a count per business key, or a bound
+// on the related record, catches it.
+func freshKeyDuplicate(ws *worldState, s Subject, res string, i int, where map[string]any, n int) Mutant {
+	recs := ws.state[res]
+	rec := recs[i]
+	cp := copyRecord(rec)
+	// bizKey is "" when the record has none, and "" is never an id field.
+	bizKey, _, _ := businessKey(rec)
+	for _, k := range sortedKeys(rec) {
+		v, ok := rec[k].(string)
+		if !ok || v == "" {
+			continue
+		}
+		ownID := (k == "id" || strings.HasSuffix(k, "_id")) && k != bizKey &&
+			countMatching(recs, map[string]any{k: v}) == 1
+		if k == idempotencyField || ownID {
+			cp[k] = unusedValue(recs, k, v)
+		}
+	}
+	w := ws.clone()
+	w.state[res] = append(w.state[res][:i+1], w.state[res][i:]...)
+	w.state[res][i+1] = cp
+	return Mutant{
+		site: fmt.Sprintf("%s.%d.duplicate_new_key", res, i), Operator: AlterWorldEffect,
+		Description: fmt.Sprintf("duplicate %s record %d%s with a new %s", res, i, describeRecord(rec), idempotencyField),
+		Trace:       s.Trace, World: w.marshal(), candidates: []Contract{countCandidate(res, where, n)},
+	}
+}
+
+// unusedValue derives a value of field that no record of recs holds.
+func unusedValue(recs []map[string]any, field, base string) string {
+	for k := 1; ; k++ {
+		v := base + "-new"
+		if k > 1 {
+			v += strconv.Itoa(k)
+		}
+		if countMatching(recs, map[string]any{field: v}) == 0 {
+			return v
+		}
+	}
 }
 
 func copyRecord(rec map[string]any) map[string]any {
