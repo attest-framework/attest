@@ -6,6 +6,7 @@ All notable changes to Attest are documented in this file. The format follows [K
 
 ### Added
 
+- `attest mutate`: `alter_world_effect` duplicates each world record that has an `idempotency_key` as a retry that sent a new key (`<resource>.<i>.duplicate_new_key`: new key and record id, same business key). Key uniqueness and `idempotent` checks pass on it; a count per business key kills it. Fixtures with keyed world records get one more mutant per such record, so scores and `--max-mutants` samples can differ from 1.1.x. (#292)
 - Incident conformance fixtures (`protocol-tests/incidents/`): the recorded refund-desk INC-1042 and INC-1077 incidents and the fixed agent's runs, with the status every applicable contract must get on each. Both SDKs evaluate each recording's whole contract set through the engine and compare every row, so a false pass, a contract firing on the wrong recording or a misrouted verdict fails CI. (#291)
 
 ### Docs
