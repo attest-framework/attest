@@ -8,7 +8,7 @@ require (
 	github.com/pelletier/go-toml/v2 v2.4.3
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3
 	github.com/segmentio/encoding v0.5.4
-	github.com/yalue/onnxruntime_go v1.31.0
+	github.com/yalue/onnxruntime_go v1.38.0
 	go.opentelemetry.io/proto/otlp v1.11.1
 	golang.org/x/text v0.44.0
 	golang.org/x/time v0.16.0
