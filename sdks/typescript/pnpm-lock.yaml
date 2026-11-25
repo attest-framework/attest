@@ -44,8 +44,8 @@ importers:
   packages/core:
     devDependencies:
       '@langchain/core':
-        specifier: 1.3.3
-        version: 1.3.3
+        specifier: 1.4.1
+        version: 1.4.1
       '@types/node':
         specifier: ^26.6.6
         version: 26.6.6
@@ -331,8 +331,8 @@ packages:
   '@jridgewell/trace-mapping@0.3.31':
     resolution: {integrity: sha512-zzNR+SdQSDJzc8joaeP8QQoCQr8NuYx2dIIytl1QeBEZHJ9uW6hebsrYgbz8hJwUQao3TWCMtmfV8Nu1twOLAw==}
 
-  '@langchain/core@1.3.3':
-    resolution: {integrity: sha512-kSJ+R1F2FxJjFrHn8Dpxg1wFtOxtb6K2OnmvQ+DUswIyTqEqr1D+Ldc0AIcXyAoLtsEVYvT0R7gRO3YuZVevyw==}
+  '@langchain/core@1.4.1':
+    resolution: {integrity: sha512-dHY2boSPhbOrguEcFxhR+uPjI21pKiuLO19Q4Wa5wbAPPa9pGr6vaSXM9iDyRbZfI+coadeH6fMWTMdplgszJg==}
     engines: {node: '>=20'}
 
   '@napi-rs/lzma-linux-x64-gnu@1.5.1':
@@ -707,8 +707,8 @@ packages:
   json-schema-traverse@1.0.0:
     resolution: {integrity: sha512-NM8/P9n3XjXhIZn1lLhkFaACTOURQXjWhV4BA/RnOv8xvgqtqpAX9IO4mRQxSx1Rlo4tqzeqb0sOlruaOy3dug==}
 
-  langsmith@0.11.8:
-    resolution: {integrity: sha512-rAskvQCNjwGqwjA9fOJGugZ1vLB66yaivxWGSTA9ldtF9+P00gvXH1DEr0kW798cyUyBlZolFO0kPb//zDNc7w==}
+  langsmith@0.13.0:
+    resolution: {integrity: sha512-5+zSEYICCC0wihmdM2neQFuT3GSOJv4jGzFEBE69uhWxnBUZe9ocG4BBl/2fngcN6bhMK+yVjs4V+odAev5gfA==}
     peerDependencies:
       '@opentelemetry/api': '*'
       '@opentelemetry/exporter-trace-otlp-proto': '*'
@@ -1234,12 +1234,12 @@ snapshots:
       '@jridgewell/resolve-uri': 3.1.2
       '@jridgewell/sourcemap-codec': 1.5.5
 
-  '@langchain/core@1.3.3':
+  '@langchain/core@1.4.1':
     dependencies:
       '@cfworker/json-schema': 4.1.6
       '@standard-schema/spec': 1.1.0
       js-tiktoken: 1.0.21
-      langsmith: 0.11.8
+      langsmith: 0.13.0
       mustache: 4.2.0
       p-queue: 6.6.2
       zod: 4.6.7
@@ -1522,7 +1522,7 @@ snapshots:
 
   json-schema-traverse@1.0.0: {}
 
-  langsmith@0.11.8:
+  langsmith@0.13.0:
     dependencies:
       p-queue: 6.6.2
 
